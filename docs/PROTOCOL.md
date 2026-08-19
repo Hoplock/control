@@ -41,7 +41,7 @@ Read in this order and **stop reading as soon as you have what you need**:
 3. `docs/learnings/*` — read **only the summary block** at the top of each file
    first. Open the full body **only** when its summary shows it's relevant.
 4. Your target prompt in `prompts/queued/`.
-5. `contract/management.yaml` — **only the endpoints your prompt touches.** It is
+5. `contract/control.yaml` — **only the endpoints your prompt touches.** It is
    a large document and reading it whole will cost you the context budget you
    need for the work.
 
@@ -202,11 +202,11 @@ Any prompt must be runnable by a **fresh** session with no prior context. It mus
 ## 9. Guardrails (reduce hallucination)
 
 - The durable truth is: this protocol, `docs/PLAN.md`, `docs/learnings/`, and
-  `contract/management.yaml`. Trust them over memory. If they conflict, the
+  `contract/control.yaml`. Trust them over memory. If they conflict, the
   contract wins for wire shapes, the plan wins for architecture, and the protocol
   wins for process — and you flag the conflict to the user.
 - **Never invent a contract shape.** If an endpoint, field, or enum value is not
-  in `contract/management.yaml`, it does not exist. Adding one is an upstream
+  in `contract/control.yaml`, it does not exist. Adding one is an upstream
   change (Section 3).
 - If a prompt seems to contradict the plan, **stop and ask the user** rather than
   guessing.

@@ -6,7 +6,7 @@
 - `docs/learnings/` — read summaries; open `0005` (the engine's signature and
   output vocabulary), `0006` (`Path` and the no-path outcome), `0007` (the
   listener and the `Deny`-vs-`error` mechanism), `0003` (decision table).
-- `contract/management.yaml` — `/v1/authorize` and every schema it references.
+- `contract/control.yaml` — `/v1/authorize` and every schema it references.
 
 ## Objective
 Serve the endpoint the whole system turns on. One call assembles the inputs,
@@ -33,6 +33,27 @@ direction**, `decision_id`, and — only when policy says so — a cache hint.
 Anything the engine can express and the contract cannot carry is a **contract
 gap**: stop and report it (PROTOCOL §3). Do not approximate it, and do not edit
 `contract/`.
+
+### Vocabulary negotiation (`policy_version`, PLAN §4)
+The request carries `policy_version`: the highest policy vocabulary the calling
+proxy implements (absent means `1`, the pre-v2 vocabulary — `permitted_channels`
+and a filter rule list only). **Answer within it.** The proxy decodes this
+response strictly and fails the session closed on a field it does not
+understand, so a field sent outside the declared version is not ignored — it
+takes the session down, as an outage rather than a deny.
+
+That cuts both ways and both halves need building:
+- **Never emit a field the declared version does not include.** Assembly is
+  version-aware, in one place, not sprinkled through the mapping.
+- **When policy needs a field the proxy cannot read, that is an outage, not a
+  quiet downgrade.** Return `5xx` (M11) naming the version mismatch. Silently
+  dropping the restriction and allowing the session is the one behaviour this
+  rule exists to prevent: it turns a mid-upgrade fleet into a fleet enforcing
+  less than its policy says, invisibly. Dropping a *permission* is merely wrong;
+  dropping a *restriction* is a breach.
+
+Hoplock Proxy's `cmd/mock-control` implements this and is the reference: read
+its authorize handler if the intended behaviour is unclear.
 
 ### Cache hints (PLAN §5.4)
 - Authored per rule, never global, never invented.
@@ -82,6 +103,12 @@ it is the path that matters most and the easiest one to forget.
   identities against one target).
 - A proxy with an unhealthy event stream receives **no** cache hint even when
   policy grants one.
+- **Vocabulary negotiation, both directions:** a request declaring the current
+  version gets the full snapshot; a request declaring `1` (or omitting the
+  field) against a policy that only needs the v1 vocabulary gets a valid v1
+  response with none of the newer fields invented; and a request declaring `1`
+  against a policy that **requires** a newer field gets a `5xx` naming the
+  mismatch — never a thinned snapshot, and never a `401`.
 - A benchmark reports p50/p99 against the stated budget, with the bundle and
   fleet size documented.
 

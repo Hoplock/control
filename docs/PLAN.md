@@ -88,9 +88,9 @@ management; the proxy's decisions keep their `D` numbers.
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
-  `github.com/mauroasilva/Hoplock Proxy`. This
-  repo keeps a pinned copy under `contract/`, together with the upstream commit
-  it came from, and treats it as generated: nobody edits it here. A change
+  `github.com/hoplock/proxy`. This repo keeps a pinned copy under `contract/`,
+  together with the upstream commit it came from, and treats it as generated:
+  nobody edits it here. A change
   starts in the Hoplock Proxy repository, lands there, and is pulled in with
   `make contract-sync`, which is also a CI check — a silently edited local copy
   is how two components stop agreeing while both test green.
@@ -309,13 +309,28 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
 | `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
-| `GET /v1/bastions/{id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` |
+| `GET /v1/proxies/{id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` |
 
-Two obligations are easy to miss and are graded by the conformance suite:
+Three obligations are easy to miss and are graded by the conformance suite:
 
 - **The priority ack means durable.** The proxy acts on a critical security
   event knowing this server recorded it. Acking before the write lands turns
   that guarantee into a lie that only shows up after an incident.
+- **Answer within the vocabulary the proxy declared.** Contract v2 made every
+  policy field additive with a documented absent-value default, and in exchange
+  the proxy **fails a session closed on an authorize field it does not
+  understand** rather than dropping it — an unknown field may be a restriction,
+  and a dropped restriction is a silently widened session. The proxy therefore
+  sends `policy_version` on the authorize request, naming the highest vocabulary
+  it implements, and this server MUST NOT answer with policy fields introduced
+  after it.
+
+  This is the obligation that fails the worst: get it wrong and every session
+  through an older proxy in the fleet breaks at once, as an outage rather than a
+  deny, at exactly the moment a fleet is mid-upgrade. A server holding policy it
+  cannot express within the declared version says so (`5xx`, M11) instead of
+  sending fields that will be refused — the proxy's mock does exactly this and
+  is the reference behaviour.
 - **Heartbeats are liveness, and their absence is a signal.** A proxy that
   stops hearing them reconnects and, past its staleness threshold, stops serving
   cached decisions entirely. A server that stalls its heartbeat writer degrades

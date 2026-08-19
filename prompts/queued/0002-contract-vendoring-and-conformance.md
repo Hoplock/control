@@ -7,7 +7,11 @@
   obligations the suite must grade).
 - `docs/learnings/` — read summaries; open `0001` (Makefile targets, CI shape).
 - In the **Hoplock Proxy repository**: `api/control.yaml` and `api/README.md`.
-  Read the ground rules and the endpoint table; read individual schemas as you
+  Read the ground rules, the endpoint table, and — before writing any
+  assertion — **"Versioning: additive fields, and a proxy that fails closed"**
+  and **"Policy vocabulary v2"**. The second carries the absent-value default of
+  every policy field in one table, which is what tells you whether a missing
+  field in a response is a pass or a failure. Read individual schemas as you
   need them. Do not read the proxy's Go code.
 
 ## Objective
@@ -19,9 +23,12 @@ so the suite's honesty matters more than its size.
 ## In scope
 
 ### Vendoring (M1)
-- `contract/management.yaml` — a byte-for-byte copy of Hoplock Proxy's
+- `contract/control.yaml` — a byte-for-byte copy of Hoplock Proxy's
   `api/control.yaml`, plus `contract/UPSTREAM` recording the source
-  repository, the commit SHA, and the date it was taken.
+  repository, the commit SHA, and the date it was taken. **Keep the upstream
+  filename.** A vendored artifact that is renamed on the way in makes every
+  cross-repo conversation ("look at `control.yaml`") ambiguous, and
+  `make contract-sync` has one less thing to get wrong.
 - `make contract-sync` — fetches a given ref from the Hoplock Proxy repository, replaces the
   copy, and rewrites `contract/UPSTREAM`. Takes the ref as a variable so a
   session can pin a specific commit.
@@ -53,6 +60,14 @@ It must cover, at minimum:
 - **Authorize**: `direct`, `nexthop`, `401`, and a response carrying every field
   the document defines — assert **shape**, not policy content, because policy is
   the implementation's business and the contract's is the envelope.
+- **Vocabulary negotiation**: the same authorize request sent with
+  `policy_version` set to the current version and to `1`. Assert the low-version
+  answer carries **no field introduced after version 1** — or is a `5xx` naming
+  the mismatch, which is the correct answer when the policy needs one. Both are
+  passes; a thinned snapshot that drops a restriction and returns `200` is not,
+  and neither is a `401`. This is the assertion that stops a server from
+  breaking every older proxy in a fleet mid-upgrade, and no other assertion here
+  catches it: a response tested only at the current version looks perfect.
 - **Host keys**: first sighting and a known key.
 - **Logs**: batch ingest returns `202` and counts accepted records; **the same
   batch replayed does not double-count** (idempotency on `record_id` — a proxy
@@ -90,7 +105,7 @@ change in the *other* repo), and a suite bug is yours to fix.
 
 ## Acceptance criteria
 - `make contract-check` passes on a clean tree and **fails** if a byte of
-  `contract/management.yaml` is changed (test this, don't assume it).
+  `contract/control.yaml` is changed (test this, don't assume it).
 - `internal/contract` compiles, and the enum test passes against the document.
 - `make conform BASE_URL=... ` runs the suite and reports per-assertion results
   with a non-zero exit on any failure.
