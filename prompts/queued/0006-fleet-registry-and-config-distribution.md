@@ -23,10 +23,17 @@ hold a live outbound relay registration.
 ## In scope
 
 ### Enrollment & liveness (`internal/fleet`)
-- A proxy enrolls with an identity (its `bastion_id` and public key) and
+- A proxy enrolls with an identity (its `proxy_id` and public key) and
   declares: its **zone**, which zones it can reach and how (`dial` to a given
   address, or `relay` meaning a downstream proxy registers outbound to it),
   and its capabilities (contract version, supported credential methods).
+
+  The enrolled contract version is **operational data, not the authority on
+  what a given connection may be answered with**: the proxy declares that
+  per call in `policy_version` on the authorize request (contract v2), and
+  0008 answers within *that*. Treat the enrolled value as a fleet-readiness
+  signal — "can this zone be routed through yet" — and never as a substitute
+  for the request field, which is the only one that cannot be stale.
 - Liveness from the revocation stream's subscription plus an explicit heartbeat.
   Define **stale** precisely and make it configurable: a proxy that has not
   been heard from is not a routing option, and routing through one is an outage

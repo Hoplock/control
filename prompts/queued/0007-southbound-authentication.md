@@ -7,7 +7,7 @@
   §2 (M2, M5, M11).
 - `docs/learnings/` — read summaries; open `0002` (contract types + the
   conformance assertions you must now pass), `0003` (identity tables).
-- `contract/management.yaml` — `/v1/auth/cert`, `/v1/auth/password`,
+- `contract/control.yaml` — `/v1/auth/cert`, `/v1/auth/password`,
   `/v1/auth/mfa/poll`, `/v1/hostkeys/report`.
 
 ## Objective

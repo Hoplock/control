@@ -7,7 +7,7 @@
 - `docs/learnings/` — read summaries; open `0006` (the liveness interface you
   now implement), `0008` (hint issuance reads stream health), `0002` (the
   conformance suite's event assertions).
-- `contract/management.yaml` — `GET /v1/bastions/{bastion_id}/events`.
+- `contract/control.yaml` — `GET /v1/proxies/{proxy_id}/events`.
 - In the **Hoplock Proxy repository**, `api/README.md` §"Revoking" and `docs/PLAN.md`
   §6.4 — the consumer's fail-closed behaviour is what this stream's guarantees
   are for.

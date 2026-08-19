@@ -7,7 +7,7 @@
 - `docs/learnings/` — read summaries; open `0003` (audit table + the
   database-enforced `record_id` uniqueness), `0002` (the suite's idempotency and
   durability assertions), `0008` (decision records, which audit joins to).
-- `contract/management.yaml` — `/v1/logs/batch`, `/v1/logs/priority`.
+- `contract/control.yaml` — `/v1/logs/batch`, `/v1/logs/priority`.
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` §7 — what the proxy sends and
   why the priority path exists.
 
