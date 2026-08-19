@@ -269,7 +269,7 @@ control/
 ├── ui/                     # management console, embedded into the binary
 ├── contract/               # VENDORED from the Hoplock Proxy repository — read-only (M1)
 ├── deploy/                 # docker-compose: this server + Postgres + a proxy
-├── docs/                   # this plan, protocol, learnings
+├── docs/                   # this plan, protocol, cross-repo protocol, learnings
 ├── prompts/                # queued and implemented phase prompts
 └── migrations/             # versioned SQL, forward-only
 ```
