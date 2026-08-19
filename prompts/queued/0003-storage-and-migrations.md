@@ -10,39 +10,40 @@
 ## Objective
 Put a real database under the server: schema, migrations, repositories, and a
 test harness later phases can use without each inventing their own. Model only
-what the phases through 0009 need — a schema written for features nobody has
+what the phases through 0010 need — a schema written for features nobody has
 designed yet is a guess that costs a migration to correct.
 
 ## In scope
 
 ### Migrations (`migrations/`)
 Versioned, **forward-only**, plain SQL, applied by an explicit command
-(`cmd/management migrate` or a `policyctl`-style subcommand — pick one and
+(`cmd/hoplock-control migrate` or a `policyctl`-style subcommand — pick one and
 document it). Never on boot in production: two nodes starting together must not
 race. Include a `--dry-run` that prints what would be applied.
 
 Initial schema, all tables carrying the tenant column (M12) and every query
 filtering on it:
 - **subjects / identities** — subject id, source, display name, principals,
-  groups, claims. Enough to answer an auth call; the IdP integration (0010)
+  groups, claims. Enough to answer an auth call; the IdP integration (0011)
   extends it.
 - **targets** — hostname, zone, labels (key/value, indexed — policy matches on
   them), credential method hint.
-- **bastions** — id, zone, public key, enrollment state, last heartbeat.
-  0005 owns the semantics; the table lands here.
+- **proxies** — id, zone, public key, enrollment state, last heartbeat.
+  0006 owns the semantics; the table lands here.
 - **policy bundles** — versioned, immutable rows: the source, its hash, who
   uploaded it, when, and which version is active.
 - **decisions** — the decision record (M4): decision id, subject, target, inputs
   digest, matched rule, obligations, the snapshot returned, timestamp.
 - **audit records** — the log ingest destination (M8): `record_id` (client
   assigned, **unique** — this is the idempotency key), session id, kind,
-  severity, payload, chain fields (0009 fills them; the columns exist here).
+  severity, payload, chain fields (0010 fills them; the columns exist here).
 - **grants** — JIT access grants (M10): subject, scope, expiry, approval
-  reference. 0012 owns the flow; the table lands here.
+  reference. 0012 owns manual grants and Hoplock Enterprise extends them with
+  approval workflows; the table lands here and serves both.
 
 Index deliberately and say why in a comment: the decision path (M5) is the only
 latency-critical reader, and its queries are "identity by subject",
-"target + labels by hostname", "live grants by subject", and "bastion by id".
+"target + labels by hostname", "live grants by subject", and "proxy by id".
 Everything else may be slower.
 
 ### Repositories (`internal/store`)
@@ -50,7 +51,7 @@ Everything else may be slower.
 - Context-aware, with timeouts, and typed errors that distinguish **not found**
   from **failed** — collapsing those two is how a database outage becomes a
   `401` and violates M11 three phases later.
-- A transaction helper, because authorize (0007) writes a decision record on the
+- A transaction helper, because authorize (0008) writes a decision record on the
   same path it reads policy inputs.
 
 ### Test harness
@@ -63,8 +64,9 @@ Everything else may be slower.
   inserts.
 
 ## Out of scope
-- Policy semantics (0004), fleet semantics (0005), audit chaining (0009), grant
-  workflow (0012). This phase provides tables and access, not behaviour.
+- Policy semantics (0005), fleet semantics (0006), audit chaining (0010), grant
+  workflow (0012, and its Enterprise extension). This phase provides tables and
+  access, not behaviour.
 
 ## Acceptance criteria
 - `make migrate` applies cleanly to an empty database, is idempotent on a second
@@ -76,7 +78,7 @@ Everything else may be slower.
 - Not-found and failure are distinguishable in the error API, with a test.
 - The audit table's `record_id` uniqueness is enforced **by the database**, and a
   test proves a duplicate insert is rejected rather than deduplicated in Go —
-  0009 depends on this being a database guarantee across concurrent writers.
+  0010 depends on this being a database guarantee across concurrent writers.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add

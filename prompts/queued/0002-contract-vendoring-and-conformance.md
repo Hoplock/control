@@ -6,9 +6,9 @@
 - `docs/PLAN.md` — especially **§2 (M1)**, §4 (the endpoint table and the two
   obligations the suite must grade).
 - `docs/learnings/` — read summaries; open `0001` (Makefile targets, CI shape).
-- In the **bastion repository**: `api/management.yaml` and `api/README.md`.
+- In the **Hoplock Proxy repository**: `api/control.yaml` and `api/README.md`.
   Read the ground rules and the endpoint table; read individual schemas as you
-  need them. Do not read the bastion's Go code.
+  need them. Do not read the proxy's Go code.
 
 ## Objective
 Bring the contract into this repo as a **vendored, verifiable artifact**, and
@@ -19,17 +19,17 @@ so the suite's honesty matters more than its size.
 ## In scope
 
 ### Vendoring (M1)
-- `contract/management.yaml` — a byte-for-byte copy of the bastion repo's
-  `api/management.yaml`, plus `contract/UPSTREAM` recording the source
+- `contract/management.yaml` — a byte-for-byte copy of Hoplock Proxy's
+  `api/control.yaml`, plus `contract/UPSTREAM` recording the source
   repository, the commit SHA, and the date it was taken.
-- `make contract-sync` — fetches a given ref from the bastion repo, replaces the
+- `make contract-sync` — fetches a given ref from the Hoplock Proxy repository, replaces the
   copy, and rewrites `contract/UPSTREAM`. Takes the ref as a variable so a
   session can pin a specific commit.
 - `make contract-check` — recomputes the copy's checksum and fails if it does not
   match what `contract/UPSTREAM` records. This is what catches a local edit. Wire
   it into CI as its own job so the failure names itself.
 - `contract/README.md` — one screen: this directory is generated, here is how to
-  change the contract (in the bastion repo, then sync), here is why editing it
+  change the contract (in the Hoplock Proxy repository, then sync), here is why editing it
   locally is the specific failure this rule prevents.
 
 ### Generated types (`internal/contract`)
@@ -39,7 +39,7 @@ so the suite's honesty matters more than its size.
   only if generation costs more than it saves, and say which you chose and why in
   your learnings.
 - Named constants for every enum, and a test asserting they match the document —
-  the bastion repo does exactly this and it is what catches an enum drifting.
+  the Hoplock Proxy repository does exactly this and it is what catches an enum drifting.
 - This package is the **only** place that knows wire shapes (PLAN §3).
 
 ### The conformance suite (`cmd/pdpconform`)
@@ -55,7 +55,7 @@ It must cover, at minimum:
   the implementation's business and the contract's is the envelope.
 - **Host keys**: first sighting and a known key.
 - **Logs**: batch ingest returns `202` and counts accepted records; **the same
-  batch replayed does not double-count** (idempotency on `record_id` — a bastion
+  batch replayed does not double-count** (idempotency on `record_id` — a proxy
   draining a disk buffer will resend); priority ingest returns `200`.
 - **Events**: subscribe, receive a heartbeat, receive a published event, drop the
   connection, resubscribe with `last_event_id` and get either replay or
@@ -70,19 +70,19 @@ Two obligations from PLAN §4 need real assertions rather than a status check:
   immediately after the ack, through whatever read path the implementation
   exposes to the suite (define this as a suite input — a query URL — so the
   suite stays black-box).
-- **Heartbeats arrive within the interval the server advertises**, so a bastion's
+- **Heartbeats arrive within the interval the server advertises**, so a proxy's
   staleness detection is not tripped by a healthy server.
 
 ### Proving the suite (this is the point of the phase)
-Run `cmd/pdpconform` in CI against the **bastion repository's
-`cmd/mock-management`**, which already implements the contract. A suite that has
+Run `cmd/pdpconform` in CI against the **Hoplock Proxy repository's
+`cmd/mock-control`**, which already implements the contract. A suite that has
 only ever been run against the implementation it was written beside tests
 agreement with itself. If the mock fails an assertion, decide honestly which of
 the two is wrong: a genuine mock bug is a finding to report to the user (it is a
 change in the *other* repo), and a suite bug is yours to fix.
 
 ## Out of scope
-- Implementing any endpoint here (0006 onwards). The suite is written before the
+- Implementing any endpoint here (0007 onwards). The suite is written before the
   server exists, on purpose.
 - Changing the contract (M1). If it is ambiguous, record the ambiguity in your
   learnings and tell the user — an ambiguity in a contract between two
@@ -94,10 +94,10 @@ change in the *other* repo), and a suite bug is yours to fix.
 - `internal/contract` compiles, and the enum test passes against the document.
 - `make conform BASE_URL=... ` runs the suite and reports per-assertion results
   with a non-zero exit on any failure.
-- **CI runs the suite against the bastion repo's mock server and it passes** —
+- **CI runs the suite against Hoplock Proxy's mock server and it passes** —
   or, if it does not, the PR documents exactly which assertion the mock fails and
   why the suite is right.
-- The suite's expectation file is documented well enough that phase 0014 can
+- The suite's expectation file is documented well enough that phase 0015 can
   point it at the real server with no code changes.
 
 ## Definition of Done & hand-off

@@ -1,4 +1,4 @@
-# 0006 — South-bound authentication & host keys
+# 0007 — South-bound authentication & host keys
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 (M11: `401` is a
@@ -20,7 +20,7 @@ conformance suite from 0002 grades a real implementation.
 
 ### The south-bound listener (`internal/httpapi/south`)
 - Its own listener, its own middleware chain, its own authentication: a bearer
-  token identifying a **bastion**, with mTLS as a documented seam (M2). Nothing
+  token identifying a **proxy**, with mTLS as a documented seam (M2). Nothing
   north-bound is routable from it — assert this in a test, because the day
   someone mounts an admin route on the wrong mux is not the day anyone notices.
 - Request logging with correlation ids, timeouts, and body size limits.
@@ -32,34 +32,34 @@ conformance suite from 0002 grades a real implementation.
 ### Certificate authentication
 Resolve the offered key/certificate to a subject and its claims and groups.
 Validate what the contract says to validate — including certificate validity
-windows and revocation, since bastion §6.4 notes that **certificate validation is
+windows and revocation, since proxy §6.4 notes that **certificate validation is
 where revocation bites** and authentication is never cached.
 
 ### Password + MFA orchestration (PLAN §6)
-The bastion only relays and polls; the whole conversation is yours.
+The proxy only relays and polls; the whole conversation is yours.
 - `/v1/auth/password` → `authenticated`, or `mfa_required` with a challenge
   carrying the poll interval and expiry.
 - `/v1/auth/mfa/poll` → still pending, authenticated, or `401` for denied,
   expired, or unknown.
 - Own: challenge lifetime, poll-rate enforcement, single-use semantics (a
   resolved challenge cannot be replayed), and expiry as a **deny**.
-- Provide a deterministic provider for tests and CI — the bastion's mock models
+- Provide a deterministic provider for tests and CI — the proxy's mock models
   MFA with a "pending polls" counter and the conformance suite depends on that
-  determinism being reproducible here. A real out-of-band provider is 0010.
+  determinism being reproducible here. A real out-of-band provider is 0011.
 - **Never log, store, or echo the password.** Assert it in a test against your
   actual log output, not by inspection.
 
 ### Host key reporting
 Record a reported target host key and return the trust decision. Prototype
-policy is trust-on-first-use with a record (bastion D7); return an explicit
-decision every time so a stricter per-target policy later needs no bastion
+policy is trust-on-first-use with a record (proxy D7); return an explicit
+decision every time so a stricter per-target policy later needs no proxy
 change. Store first-seen keys and detect a **changed** key for a known target —
-that is a security event worth an audit record (its ingest lands in 0009; emit
+that is a security event worth an audit record (its ingest lands in 0010; emit
 through whatever logging exists now with a stable shape).
 
 ## Out of scope
-- `/v1/authorize` (0007), the event stream (0008), log ingest (0009).
-- Real IdP federation (0010): identities come from the store (0003) for now, and
+- `/v1/authorize` (0008), the event stream (0009), log ingest (0010).
+- Real IdP federation (0011): identities come from the store (0003) for now, and
   the interface must be shaped so an IdP broker slots in behind it.
 
 ## Acceptance criteria
@@ -76,8 +76,8 @@ through whatever logging exists now with a stable shape).
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0006-southbound-authentication-learnings.md`. Summary block MUST
+`docs/learnings/0007-southbound-authentication-learnings.md`. Summary block MUST
 give the listener/middleware layout, the `Deny`-vs-`error` mechanism that keeps
-M11 honest, the identity-resolution interface 0010 will implement, the MFA
+M11 honest, the identity-resolution interface 0011 will implement, the MFA
 provider interface and its deterministic test implementation, and the host-key
 storage shape.

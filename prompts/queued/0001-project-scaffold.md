@@ -11,29 +11,35 @@ Stand the repository up so every later phase has somewhere to put its code and a
 CI job that tells it the truth. No product behaviour ships here.
 
 ## In scope
-- **Go module**: `github.com/mauroasilva/commandproxymanagemente`. Set the
+- **Go module**: `github.com/hoplock/control`. Set the
   `go` directive to the current stable minor as the floor and document that it
   moves only when a dependency forces it (PLAN §8).
+- **The public/internal split**: everything is `internal/` **except** `ext/`,
+  which is the public seam Hoplock Enterprise implements (0004 fills it in;
+  create the package with a doc comment now). Nothing else may be importable
+  from outside the module — an accidentally public package becomes a
+  compatibility promise nobody meant to make.
 - **Package layout**: create the directory skeleton from PLAN §3 with a
   `doc.go` in each `internal/` package stating what belongs there in two or
   three sentences. Empty directories do not survive git; a `doc.go` that says
   what a package is for also stops the next session inventing a different
   answer.
-- **`LICENSE` + per-file headers**: proprietary license (already in the repo
-  root) and the two-line SPDX header on every `.go` file
-  (`docs/LICENSE-HEADER.md`).
+- **`LICENSE` + per-file headers**: Apache-2.0 (already in the repo root — this
+  repository is the open-source control plane) and the two-line SPDX header on
+  every `.go` file (`docs/LICENSE-HEADER.md`). `contract/` is excluded from the
+  header check: it is vendored, not authored here.
 - **`Makefile`** with, at minimum: `build`, `test` (race), `vet`, `lint`, `fmt`,
   `license-check`, `tidy`, `clean`, `run`. Add placeholder targets for
   `contract-check`, `contract-sync` and `conform` that exit non-zero with
   "implemented in phase 0002" — a missing target and a failing target read very
   differently in a Definition-of-Done checklist.
-- **`.golangci.yml`** (schema v2), matching the bastion repo's linter set:
+- **`.golangci.yml`** (schema v2), matching Hoplock Proxy's linter set:
   `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, with `gofmt` and
   `goimports` formatters and this module as the local prefix.
 - **CI** (`.github/workflows/ci.yml`): build/vet/test on **both** the go.mod
   floor and the latest stable, with `GOTOOLCHAIN: local` so the floor is
   enforced rather than silently satisfied by a toolchain download; plus lint and
-  license jobs. Comment *why* the matrix has two legs — the bastion repo learned
+  license jobs. Comment *why* the matrix has two legs — the Hoplock Proxy repository learned
   this the hard way and the comment is what keeps it.
 - **`internal/config`**: YAML loader with **strict decoding** (unknown keys are
   an error), plus `config.example.yaml`. Cover only what the scaffold needs:
@@ -41,7 +47,7 @@ CI job that tells it the truth. No product behaviour ships here.
   because one field that later becomes two is a breaking config change), the
   Postgres DSN, log level, and a `tenant` placeholder (M12). Every field
   documented in the example file.
-- **`cmd/management`**: a `main` that loads config, logs its version, starts
+- **`cmd/hoplock-control`**: a `main` that loads config, logs its version, starts
   nothing, and exits cleanly on SIGINT/SIGTERM. `--version` works.
 
 ## Out of scope
@@ -52,7 +58,7 @@ CI job that tells it the truth. No product behaviour ships here.
 - `make build`, `make test`, `make vet`, `make lint`, `make license-check` all
   pass on a clean checkout.
 - `make contract-check` and `make conform` fail with the "phase 0002" message.
-- `cmd/management --version` prints a version derived from git.
+- `cmd/hoplock-control --version` prints a version derived from git.
 - Config loading is unit-tested: a valid file loads; an unknown key is an error;
   a missing required field is an error naming the field.
 - CI is green, and the floor leg genuinely runs on the floor (check the job log

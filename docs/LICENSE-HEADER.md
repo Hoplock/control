@@ -1,11 +1,12 @@
 # License header
 
-Every `.go` file in this repository **must** begin with the following two lines,
+Hoplock Control is **open source** under the Apache License 2.0 (see `LICENSE`).
+Every `.go` file in this repository must begin with the following two lines,
 verbatim, followed by a blank line and then the `package` clause (PLAN §8, M14):
 
 ```go
-// Copyright (c) 2026 Mauro Silva. All rights reserved.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// Copyright (c) 2026 Mauro Silva
+// SPDX-License-Identifier: Apache-2.0
 ```
 
 Notes:
@@ -17,5 +18,7 @@ Notes:
 - New files use the year they were created.
 - Non-Go files (YAML, SQL migrations, Makefile, workflows) do not carry the
   header; the repository-level `LICENSE` covers them.
-- Files under `contract/` are **vendored from the bastion repository** (PLAN M1)
-  and are excluded from this check — they are not authored here.
+- Files under `contract/` are **vendored from the Hoplock Proxy repository**
+  (PLAN M1) and are excluded from this check — they are not authored here.
+- Hoplock Enterprise is licensed separately and is **not** covered by this
+  file. Nothing in this repository may carry an Enterprise licence header.

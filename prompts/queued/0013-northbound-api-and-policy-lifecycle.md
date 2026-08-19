@@ -1,12 +1,12 @@
-# 0011 — North-bound API & policy lifecycle
+# 0013 — North-bound API & policy lifecycle
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
 - `docs/PLAN.md` — especially **§2 (M2, M3, M4)**, §5 (the bundle and the
   explanation), §7 (audit query).
-- `docs/learnings/` — read summaries; open `0004` (bundle, compiler errors,
-  explanation type), `0007` (decision records), `0009` (audit query layer),
-  `0008` (publishing an operator event), `0006` (listener conventions).
+- `docs/learnings/` — read summaries; open `0005` (bundle, compiler errors,
+  explanation type), `0008` (decision records), `0010` (audit query layer),
+  `0009` (publishing an operator event), `0007` (listener conventions).
 
 ## Objective
 Give humans and CI a surface. This is the phase where the product becomes
@@ -23,43 +23,51 @@ actions that were internal until now.
 - Every mutating action is itself audited: who, what, when, and the before/after
   version. An audit system whose own administration is unaudited has a hole
   exactly where it matters.
-- Never routable from the south-bound listener — the mirror of 0006's test.
+- Never routable from the south-bound listener — the mirror of 0007's test.
 
 ### Policy lifecycle
 - **Upload → validate → diff → activate**, with bundles immutable and versioned
   (0003). Activation names the version; rollback is activating an older one.
-- **Validation returns the compiler's errors verbatim** (0004): the rule, the
+- **Validation returns the compiler's errors verbatim** (0005): the rule, the
   line, and what to do instead. This is a product surface, so test its text.
 - **Simulation** — the feature that makes a policy change reviewable instead of
   a leap:
   - *dry-run*: evaluate a candidate bundle against synthetic inputs;
   - *replay*: evaluate it against **recorded decision inputs** from a time range
-    (0007's records) and report what would change — every decision that flips
+    (0008's records) and report what would change — every decision that flips
     allow→deny or deny→allow, grouped so a human can actually read it.
   - Replay must be pure and total: the engine takes time as an input precisely
-    so this works (0004). If it is not total, say why.
+    so this works (0005). If it is not total, say why.
 - **GitOps**: a bundle can be applied from CI with an API token, and the
   response is machine-readable enough to gate a pull request.
 
 ### Explain a decision (M4)
 Given a `decision_id` or a session id, return the whole story: the inputs, the
-matched rule, the mapping version that produced the attributes (0010), the
+matched rule, the mapping version that produced the attributes (0011), the
 obligations, the snapshot, and — if a grant was involved — which one and who
 approved it.
 
-This is the other half of the bastion's disclosure rule: the user is told
-"access denied" and a session id, deliberately vague so the bastion is not an
+This is the other half of the proxy's disclosure rule: the user is told
+"access denied" and a session id, deliberately vague so the proxy is not an
 oracle for probing the estate, and an operator resolves that id here into
 everything. Vague to the user, total to the auditor — and the pair only works if
 this endpoint is genuinely total. Make an unexplainable decision impossible to
 represent, or make it loud.
 
+### Inventory
+CRUD for the things an operator manages, all RBAC-gated and all audited:
+targets and their labels (labels are policy inputs, so editing one changes
+decisions — the audit record matters), identities and groups, roles, grants
+(0012), and proxy enrollment/approval (0006). Label edits are the sharpest
+edge here: a bulk relabel is a bulk policy change, so it is diffable and
+appears in simulation like any other change.
+
 ### Audit query & operator actions
-- Query over 0009's store, including the showcase join (blocked commands on
+- Query over 0010's store, including the showcase join (blocked commands on
   `env=prod`, with the access that permitted them).
 - Operator actions: kill a session, kill everything for a subject, invalidate
-  cached decisions (publishing through 0008), and enroll/approve a bastion
-  (0005). Each requires the right role and each is audited.
+  cached decisions (publishing through 0009), and enroll/approve a proxy
+  (0006). Each requires the right role and each is audited.
 
 ### `cmd/policyctl`
 The same operations from a terminal: `validate`, `diff`, `simulate`, `apply`,
@@ -88,8 +96,8 @@ it becomes a second implementation of the rules.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0011-northbound-api-and-policy-lifecycle-learnings.md`. Summary
+`docs/learnings/0013-northbound-api-and-policy-lifecycle-learnings.md`. Summary
 block MUST give the route table with required roles, the bundle lifecycle states,
 the simulation API and its purity requirements, the `explain` response shape, and
 the `policyctl` command set. Phase 0012 adds routes to this surface and phase
-0014 drives it end to end.
+0015 drives it end to end.

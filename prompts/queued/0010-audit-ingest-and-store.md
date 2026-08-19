@@ -1,4 +1,4 @@
-# 0009 — Log ingest & tamper-evident audit store
+# 0010 — Log ingest & tamper-evident audit store
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -6,9 +6,9 @@
   §7 (audit, query, redaction).
 - `docs/learnings/` — read summaries; open `0003` (audit table + the
   database-enforced `record_id` uniqueness), `0002` (the suite's idempotency and
-  durability assertions), `0007` (decision records, which audit joins to).
+  durability assertions), `0008` (decision records, which audit joins to).
 - `contract/management.yaml` — `/v1/logs/batch`, `/v1/logs/priority`.
-- In the **bastion repository**, `docs/PLAN.md` §7 — what the bastion sends and
+- In the **Hoplock Proxy repository**, `docs/PLAN.md` §7 — what the proxy sends and
   why the priority path exists.
 
 ## Objective
@@ -21,10 +21,10 @@ security team's actual questions.
 ### Ingest (`internal/audit`)
 - `/v1/logs/batch` → `202`, reporting how many records were actually stored.
 - `/v1/logs/priority` → `200`, and **the ack means durable**: the record is
-  committed before the response is written. The bastion acts on a critical
+  committed before the response is written. The proxy acts on a critical
   security event knowing this server recorded it; acking early turns that
   guarantee into a lie that only surfaces after an incident.
-- **Idempotent on `record_id`**, enforced by the database (0003). A bastion
+- **Idempotent on `record_id`**, enforced by the database (0003). A proxy
   draining its disk buffer after an outage will resend, and it may resend
   concurrently with a live batch, so dedupe in Go is not sufficient.
 - Validate and bound: record size, batch size, unknown record kinds. A malformed
@@ -41,7 +41,7 @@ security team's actual questions.
   detects tampering by anyone who cannot rewrite the whole chain, and it does not
   defend against an attacker who can. External anchoring is future work; claim
   only what the mechanism delivers.
-- Session capture (pty streams, bastion §7) is stored so a session can be
+- Session capture (pty streams, proxy §7) is stored so a session can be
   replayed. Address size and retention explicitly rather than discovering them.
 
 ### Query (`internal/audit`, read side)
@@ -52,17 +52,17 @@ product:
 > every blocked command on `env=prod` last week, who ran it, over which route,
 > and which decision (and, later, which approved grant) permitted the access.
 
-That is a join from audit to decisions, and it is why 0007 stores `decision_id`
+That is a join from audit to decisions, and it is why 0008 stores `decision_id`
 on both sides.
 
 ### Redaction (PLAN §7)
 The initial-auth password never reaches this server, and must never be written
-even if a malformed record contains one. Assert it here: "the bastion promises
+even if a malformed record contains one. Assert it here: "the proxy promises
 not to send it" is not a control on this side.
 
 ## Out of scope
 - SIEM export (0013) — this store is the source, the export is a consumer.
-- The north-bound query API (0011) — build the query layer, not the HTTP surface.
+- The north-bound query API (0013) — build the query layer, not the HTTP surface.
 - Retention jobs (0013).
 
 ## Acceptance criteria
@@ -83,7 +83,7 @@ not to send it" is not a control on this side.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0009-audit-ingest-and-store-learnings.md`. Summary block MUST
+`docs/learnings/0010-audit-ingest-and-store-learnings.md`. Summary block MUST
 give the record schema and kinds, the chain construction and how to verify it
 (and its honest limits), the partial-batch semantics, the query API, the
 retention knobs left for 0013, and the measured ingest throughput.

@@ -10,11 +10,11 @@ and only open a full file when it's relevant to their prompt.
 This folder is the durable hand-off channel between otherwise-independent fresh
 sessions. Keep summaries tight; put depth under `## Details`.
 
-Two things belong in a summary here that do not appear in the bastion repo's
+Two things belong in a summary here that do not appear in Hoplock Proxy's
 equivalent, because they are the two ways a session in this repo gets blocked
 by something it cannot see:
 
 - **Database tables and migrations** your phase added.
 - **Cross-repo dependencies** — anything that needs a contract change in the
-  bastion repository. Name the exact field. A later session must not discover it
+  Hoplock Proxy repository. Name the exact field. A later session must not discover it
   by being blocked halfway through its phase.

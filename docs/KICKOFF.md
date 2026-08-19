@@ -30,11 +30,14 @@ Do not start any other prompt in this session.
 - **Don't paste prompt bodies.** Point the session at the file in the repo so it
   reads the canonical version (numbers can change under the invariants in
   `docs/PROTOCOL.md` §6; the file is always current).
-- **The bastion repository is a sibling, not a dependency to edit.** A session
-  here may need to *read* the bastion's plan or its mock server; it may never
+- **Hoplock Enterprise is downstream.** A phase here may define an extension
+  point that Enterprise implements; it may never import Enterprise or assume it
+  is installed (PLAN M15).
+- **The Hoplock Proxy repository is a sibling, not a dependency to edit.** A session
+  here may need to *read* the proxy's plan or its mock server; it may never
   change them, and it may never edit `contract/` (see `docs/PLAN.md` M1). If a
   phase turns out to need a contract change, that is a separate piece of work in
-  the bastion repo — stop and tell the user.
+  the Hoplock Proxy repository — stop and tell the user.
 - **Phase 0002 is worth doing early and well.** After it lands, every later phase
   has a conformance suite it did not write itself telling it whether the server
   is correct. Before it lands, "correct" is an opinion.

@@ -1,65 +1,72 @@
-# SecureCommandProxy Management — Implementation Plan
+# Hoplock Control — Implementation Plan
 
 > Status: living document. This is the single source of architectural truth for
-> the **management server**. Every implementation session MUST read this file and
+> the **Hoplock Control**. Every implementation session MUST read this file and
 > `docs/PROTOCOL.md` before starting work. Keep it current: if a prompt changes
 > the architecture, the same PR updates this plan.
 >
-> The **bastion** has its own repository and its own `docs/PLAN.md`, and it owns
+> The **proxy** has its own repository and its own `docs/PLAN.md`, and it owns
 > the contract between the two (M1). Where this plan cites a `D`-numbered
-> decision (D1–D12), that decision lives in the bastion's plan and is quoted
+> decision (D1–D12), that decision lives in the proxy's plan and is quoted
 > here, not owned here.
 
 ---
 
 ## 1. Product summary
 
-The management server is the **Policy Decision Point (PDP)** for a fleet of
-SecureCommandProxy bastions. The bastion is deliberately thin: it terminates
-SSH, enforces a decision, and reports what happened. Everything that makes the
-decision — who someone is, what they may reach, over which route, with which
-channels, requests, destinations and commands, for how long, and who approved it
-— lives here. So does everything that happens afterwards: the audit record, the
-replayable session, and the answer to "why was I denied?".
+Hoplock Control is the **open-source control plane** for Hoplock: the Policy
+Decision Point (PDP) for a fleet of Hoplock Proxy instances, and the system an
+operator uses to manage infrastructure access.
 
-Two things follow from that, and they shape the whole repository.
+Hoplock Proxy is deliberately thin: it terminates SSH, enforces a decision, and
+reports what happened. Everything that makes the decision — who someone is, what
+they may reach, over which route, with which channels, requests, destinations
+and commands, for how long — lives here, together with everything that happens
+afterwards: the audit record, the replayable session, and the answer to "why was
+I denied?".
 
-**This is where the product is.** A bastion without this server is an SSH proxy
-that cannot decide anything. Policy authoring, simulation, identity federation,
-just-in-time access and approvals, the tamper-evident audit store, and the SIEM
-export are all north-bound features, and they are what a buyer actually
-evaluates. The bastion's job is to enforce faithfully and to fail legibly.
+### The three repositories
 
-**It has two surfaces, and they are not the same product.** South-bound is a
-machine API serving bastions under hard latency constraints (M5); north-bound is
-a human and CI API for authoring, approving, investigating and exporting. They
-share a policy model and a database and nothing else — different listeners,
-different authentication, different threat models (M2).
+| Repository | Role | Depends on |
+| --- | --- | --- |
+| `hoplock/proxy` | **Enforces** access. Data plane: SSH proxying, channel/command controls, port-forward policy, multi-hop relay, audit events. | nothing in this list |
+| `hoplock/control` (this repo) | **Manages** access. Control plane: proxies, targets, identities, routes, policies, audit, API, console. | the proxy's API contract only |
+| `hoplock/enterprise` | **Governs** access at organisational scale. Commercial extensions: approvals, compliance, retention, SIEM/SOAR, HA. | this repo (M15) |
+
+Control never imports Enterprise, and the proxy never imports either. Hoplock
+Proxy + Hoplock Control is a complete, useful, self-hosted infrastructure access
+system on its own — that is a design constraint (M15), not a marketing claim.
+
+### Two surfaces, one product
+
+South-bound is a machine API serving proxies under hard latency constraints
+(M5); north-bound is a human, CI and console API for authoring, investigating
+and administering. They share a policy model and a database and nothing else —
+different listeners, different authentication, different threat models (M2).
 
 ```
-   humans, CI, GitOps                      bastion fleet
-   (OIDC / API tokens)                     (bearer -> mTLS)
+   identity provider                       operators, CI, GitOps
+   (OIDC / SAML)                           (OIDC / API tokens)
             |                                     |
-     north-bound API                       south-bound API
-            |                                     |
-            +--------------+   +------------------+
-                           |   |
-                     policy model + decision engine
-                     fleet graph | identity | grants
-                           |   |
-                        storage (Postgres)
-                           |
-                     audit store (append-only, hash-chained)
-                           |
-                     SIEM export (downstream consumer)
+            v                                     v
+     +------------------ Hoplock Control ------------------+
+     |  policy engine | fleet graph | identity | grants     |
+     |  audit store (append-only, hash-chained)             |
+     |  ext/ <---- implemented by Hoplock Enterprise (M15)  |
+     +------------------------+-----------------------------+
+                              | policy + configuration (south-bound)
+                              v
+              Hoplock Proxy ------> Hoplock Proxy ------> target
+                              ^
+                              | audit events, host keys, revocation stream
 ```
 
 ### What one session looks like from this side
 
-1. A bastion authenticates a user's certificate or password (+ MFA) against
-   `/v1/auth/*`. This server owns the MFA conversation; the bastion only relays
+1. A proxy authenticates a user's certificate or password (+ MFA) against
+   `/v1/auth/*`. This server owns the MFA conversation; the proxy only relays
    and polls.
-2. The bastion calls `/v1/authorize` with the identity, the requested target,
+2. The proxy calls `/v1/authorize` with the identity, the requested target,
    and connection metadata.
 3. This server evaluates policy over: the identity's claims and groups, the
    target's labels, any live JIT grant, the time, the source network, and the
@@ -67,41 +74,41 @@ different authentication, different threat models (M2).
    route, channel/request/destination policy, filter policy, target credential
    method, hop direction, and optionally a cache hint.
 4. It writes a **decision record** explaining exactly how it got there (M4).
-5. The bastion enforces locally for the connection's lifetime and streams logs
+5. The proxy enforces locally for the connection's lifetime and streams logs
    back to `/v1/logs/*`. Nothing on the data path asks this server anything.
 6. If access is withdrawn mid-session, this server pushes a `session_kill` down
-   the revocation stream the bastion is already holding open (M9).
+   the revocation stream the proxy is already holding open (M9).
 
 ---
 
 ## 2. Key decisions
 
 Each decision has an ID so prompts and learnings can reference it. `M` for
-management; the bastion's decisions keep their `D` numbers.
+management; the proxy's decisions keep their `D` numbers.
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
-  PEP↔PDP contract is `api/management.yaml` in the bastion repository,
-  `github.com/mauroasilva/SecureCommandProxy`. This
+  PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
+  `github.com/mauroasilva/Hoplock Proxy`. This
   repo keeps a pinned copy under `contract/`, together with the upstream commit
   it came from, and treats it as generated: nobody edits it here. A change
-  starts in the bastion repo, lands there, and is pulled in with
+  starts in the Hoplock Proxy repository, lands there, and is pulled in with
   `make contract-sync`, which is also a CI check — a silently edited local copy
   is how two components stop agreeing while both test green.
 
   Conformance is proven, not asserted: `cmd/pdpconform` is a **black-box
   conformance suite** that drives any implementation of the contract over HTTP
-  and is run in CI against both this server and the bastion repo's
-  `cmd/mock-management`. Running it against the mock is what keeps the suite
+  and is run in CI against both this server and Hoplock Proxy's
+  `cmd/mock-control`. Running it against the mock is what keeps the suite
   honest — a suite only ever run against the implementation it was written
   beside tests agreement with itself.
 - **M2 — Two surfaces, two listeners, two authentication models.** South-bound
-  (bastions) and north-bound (humans, CI, GitOps) never share a port, a
-  middleware chain, or a credential type. A bastion token that can reach a
+  (proxies) and north-bound (humans, CI, GitOps) never share a port, a
+  middleware chain, or a credential type. A proxy token that can reach a
   policy-authoring endpoint is privilege escalation from "can ask about
   decisions" to "can author them", and the cheapest way to guarantee it cannot
   happen is for the two never to be routable from the same listener. South-bound
   is a bearer token in the prototype with mTLS as the intended production form
-  (the bastion's contract already treats this as a thin seam); north-bound is
+  (the proxy's contract already treats this as a thin seam); north-bound is
   OIDC for humans and scoped API tokens for automation.
 - **M3 — Policy is data compiled into a decision program, not an embedded
   general-purpose language.** The policy input vocabulary is closed and known:
@@ -123,37 +130,37 @@ management; the bastion's decisions keep their `D` numbers.
   evaluation produces a **decision record**: the inputs it saw, the rules it
   matched, the obligations it emitted, and the resulting snapshot, stored under
   the `decision_id` the contract already carries. This is the other half of the
-  bastion's disclosure rule (bastion PLAN §4.3): the user is told "access
+  proxy's disclosure rule (proxy PLAN §4.3): the user is told "access
   denied" and a session id — deliberately vague, because a precise denial makes
-  the bastion an oracle for probing the estate — and the operator resolves that
+  the proxy an oracle for probing the estate — and the operator resolves that
   id here into the whole story. Vague to the user, total to the auditor; that
   pair only works if this side is genuinely total.
 
   The same records back policy simulation ("what would this bundle have done to
   last week's traffic?"), which is what makes a policy change reviewable rather
   than a leap.
-- **M5 — The decision path is stateless, bounded, and cheap.** A bastion holds a
+- **M5 — The decision path is stateless, bounded, and cheap.** A proxy holds a
   user's SSH handshake open while this server answers, on every connection, per
   hop. So: no unbounded work in an authorize call, compiled policy served from
   memory, database reads on the decision path limited to what is indexed and
   small, and a hard server-side timeout that answers rather than hangs — a
-  timeout the bastion classifies as an outage is strictly better than a slow
+  timeout the proxy classifies as an outage is strictly better than a slow
   answer that looks like one. Horizontal scale-out is the only scaling story;
   nothing on the decision path may be node-local state.
-- **M6 — The fleet is a graph, not a list.** Bastions enroll, heartbeat, and
+- **M6 — The fleet is a graph, not a list.** Proxies enroll, heartbeat, and
   declare their zone, their reachability, and which connection directions they
-  support (bastion D11: `dial` or an outbound-registered `relay`). A route is a
-  **path computed over that graph** from the user's entry bastion to the target's
-  zone, and the hop metadata the bastion receives is one step of it.
+  support (proxy D11: `dial` or an outbound-registered `relay`). A route is a
+  **path computed over that graph** from the user's entry proxy to the target's
+  zone, and the hop metadata the proxy receives is one step of it.
 
   This is what makes multi-hop invisible: the user types one hostname, and the
-  fact that reaching it crosses an edge bastion, a regional gateway, and an
+  fact that reaching it crosses an edge proxy, a regional gateway, and an
   enclave relay is this server's problem. It is also the only place that can
   choose `relay` correctly, because only this server knows which downstream
-  bastions currently have a live outbound registration — which is exactly why
-  direction is a routing decision and not a bastion config flag.
+  proxies currently have a live outbound registration — which is exactly why
+  direction is a routing decision and not a proxy config flag.
 - **M7 — Identity is federated and short-lived.** OIDC and SAML are brokered
-  here; the bastion never talks to an IdP (bastion D4 makes it identity-shaped
+  here; the proxy never talks to an IdP (proxy D4 makes it identity-shaped
   precisely so that this can be added without touching it). IdP claims and
   groups map into policy attributes through an explicit, versioned mapping —
   never by trusting a raw claim name straight from a token. Local credentials
@@ -162,13 +169,13 @@ management; the bastion's decisions keep their `D` numbers.
 - **M8 — Audit is append-only and tamper-evident.** Records are immutable, hash
   chained per stream so that a removed or altered record breaks verification, and
   ingest is idempotent on the client-assigned `record_id` the contract already
-  defines (a bastion draining its disk buffer after an outage will resend). The
+  defines (a proxy draining its disk buffer after an outage will resend). The
   audit store is the system of record; the SIEM export is a downstream consumer
   and is never read back as truth. Retention is a policy, applied by a documented
   job, that records what it deleted.
 - **M9 — Revocation is fan-out with replay, and it is the kill switch.** The
-  bastion holds one long-lived outbound NDJSON subscription (bastion §6.4). This
-  server must fan an operator action out to every bastion that needs it, survive
+  proxy holds one long-lived outbound NDJSON subscription (proxy §6.4). This
+  server must fan an operator action out to every proxy that needs it, survive
   a subscriber reconnecting with a `last_event_id`, and answer `resync` when it
   cannot replay. In-process broker for the prototype behind an interface, because
   multi-node deployment turns this into the one component that genuinely needs
@@ -187,7 +194,7 @@ management; the bastion's decisions keep their `D` numbers.
   notifier interface (Slack, Teams, webhook, email) that has no other job.
 - **M11 — `401` means deny; everything else means outage.** The contract's
   ground rule binds this side hardest. A database timeout, a compile error, or a
-  panic must never surface as `401`, because the bastion will faithfully tell a
+  panic must never surface as `401`, because the proxy will faithfully tell a
   user "access denied" and the operator will spend the outage debugging
   permissions. Deny is a decision this server made on purpose; every other
   failure is a `5xx` with a message safe to disclose and a correlation id.
@@ -196,22 +203,47 @@ management; the bastion's decisions keep their `D` numbers.
   carries the tenant column and every query still filters on it. It is nearly
   free now, and retrofitting it into a populated audit store later is a
   migration nobody wants to run.
-- **M13 — Tech choices.** Go (same floor policy as the bastion: the `go`
+- **M13 — Tech choices.** Go (same floor policy as the proxy: the `go`
   directive is the minimum, CI tracks the latest stable, and the floor moves only
   when a dependency moves it). Postgres via `pgx`, with forward-only versioned
   migrations. YAML config. JSON over HTTPS. Structured logging. No ORM: the
   decision path's queries are few, hot, and worth reading.
-- **M14 — Proprietary/closed source.** Private repo, all rights reserved, per-file
-  SPDX + copyright headers, same as the bastion (`docs/LICENSE-HEADER.md`).
+- **M14 — Licensing.** This repository is the **open-source** control plane;
+  its licence is chosen at scaffold time (phase 0001) and applied per file via
+  `docs/LICENSE-HEADER.md`. Hoplock Enterprise is separately licensed and
+  carries its own entitlement machinery — no licence check, entitlement gate, or
+  "upgrade to unlock" path belongs in this repository.
+
+- **M15 — Hoplock Enterprise extends this repository; it never forks it.**
+  Commercial functionality lives in `github.com/hoplock/enterprise`, which
+  imports this module as a library, implements the interfaces in `ext/`
+  (phase 0004), and ships its own binary. Two invariants make that work, and
+  both are enforced by tests rather than by intention:
+
+  1. **Control never imports Enterprise.** The dependency runs one way. An
+     import-graph test fails the build if it ever does not.
+  2. **Every extension point ships a real default here.** A seam is not a hole
+     where core functionality used to be. Control alone must be a complete,
+     self-hostable product: a deployment of Hoplock Proxy + Hoplock Control is
+     a working infrastructure access system, not a demo waiting for a licence.
+
+  The line is **governance and scale, not capability**. Control decides access,
+  distributes policy, records what happened, and lets an operator explain any
+  decision. Enterprise adds who-may-ask-and-who-must-approve, long-horizon
+  retention and search, compliance reporting, enterprise integrations
+  (SCIM, SIEM/SOAR, HSM/KMS), and the operational shape large deployments need
+  (HA, air-gapped, licensing). Where a feature could plausibly sit on either
+  side, it goes here — an artificially crippled open-source core is a worse
+  product and a worse business.
 
 ---
 
 ## 3. Architecture & repository layout
 
 ```
-commandproxymanagemente/
+control/
 ├── cmd/
-│   ├── management/         # the server daemon (both listeners)
+│   ├── hoplock-control/    # the server daemon (both listeners)
 │   ├── pdpconform/         # black-box contract conformance suite (M1)
 │   └── policyctl/          # CLI: validate, simulate, explain, apply a bundle
 ├── internal/
@@ -222,19 +254,21 @@ commandproxymanagemente/
 │   │   ├── model/          # the policy bundle: parse, validate, version
 │   │   ├── compile/        # bundle -> decision program
 │   │   └── eval/           # the evaluator + explanation records (M3, M4)
-│   ├── fleet/              # bastion enrollment, heartbeat, zone graph, pathfinding (M6)
+│   ├── fleet/              # proxy enrollment, heartbeat, zone graph, pathfinding (M6)
 │   ├── identity/           # IdP brokers (OIDC/SAML), claim mapping, MFA orchestration
-│   ├── credential/         # target-credential brokerage + SSH CA (bastion D6a)
+│   ├── credential/         # target-credential brokerage + SSH CA (proxy D6a)
 │   ├── decision/           # authorize: assemble inputs, evaluate, snapshot, record
 │   ├── revoke/             # event bus, subscriptions, replay buffer (M9)
 │   ├── audit/              # ingest, hash chain, query, retention (M8)
 │   ├── export/             # SIEM sinks (Splunk/Sentinel/Elastic)
 │   ├── access/             # JIT requests, approvals, grants, notifiers (M10)
 │   └── httpapi/
-│       ├── south/          # bastion-facing handlers (the contract)
+│       ├── south/          # proxy-facing handlers (the contract)
 │       └── north/          # admin/operator/CI handlers
-├── contract/               # VENDORED from the bastion repo — read-only (M1)
-├── deploy/                 # docker-compose: this server + Postgres + a bastion
+├── ext/                    # PUBLIC extension points — the seam Enterprise implements (M15)
+├── ui/                     # management console, embedded into the binary
+├── contract/               # VENDORED from the Hoplock Proxy repository — read-only (M1)
+├── deploy/                 # docker-compose: this server + Postgres + a proxy
 ├── docs/                   # this plan, protocol, learnings
 ├── prompts/                # queued and implemented phase prompts
 └── migrations/             # versioned SQL, forward-only
@@ -244,7 +278,7 @@ commandproxymanagemente/
 
 - **`internal/contract`** — the only package that knows the wire shapes of the
   south-bound API. Everything else speaks domain types, so a contract revision
-  in the bastion repo lands in one package here.
+  in the Hoplock Proxy repository lands in one package here.
 - **`internal/policy`** — pure. Parse → validate → compile → evaluate, no HTTP,
   no database, no clock of its own (time is an input). This is the package that
   must be exhaustively tested, because it is where the product's promises are
@@ -263,7 +297,7 @@ commandproxymanagemente/
 
 ## 4. The south-bound API (the contract)
 
-The contract is upstream (M1). This server implements every endpoint the bastion
+The contract is upstream (M1). This server implements every endpoint the proxy
 calls, and the conformance suite is the definition of "implements":
 
 | Path | What this server must do |
@@ -279,10 +313,10 @@ calls, and the conformance suite is the definition of "implements":
 
 Two obligations are easy to miss and are graded by the conformance suite:
 
-- **The priority ack means durable.** The bastion acts on a critical security
+- **The priority ack means durable.** The proxy acts on a critical security
   event knowing this server recorded it. Acking before the write lands turns
   that guarantee into a lie that only shows up after an incident.
-- **Heartbeats are liveness, and their absence is a signal.** A bastion that
+- **Heartbeats are liveness, and their absence is a signal.** A proxy that
   stops hearing them reconnects and, past its staleness threshold, stops serving
   cached decisions entirely. A server that stalls its heartbeat writer degrades
   the whole fleet to uncached — correctly, but for the wrong reason.
@@ -297,25 +331,25 @@ Two obligations are easy to miss and are graded by the conformance suite:
 | --- | --- |
 | Subject | subject id, IdP source, groups, claims, authentication method, MFA |
 | Device | posture attributes when an endpoint supplies them (optional) |
-| Context | time of day, day of week, source network/geo, entry bastion |
+| Context | time of day, day of week, source network/geo, entry proxy |
 | Target | hostname, labels (`env=prod`, `kind=appliance`, `owner=payments`), zone |
 | Session | requested channel type, in-channel request, forwarding destination, global request, command |
 | Grants | live JIT grants for this subject and scope (M10) |
 
 ### 5.2 Outputs
 
-A **whole-connection snapshot**, because the bastion asks once and enforces for
-the connection's lifetime (bastion D2):
+A **whole-connection snapshot**, because the proxy asks once and enforces for
+the connection's lifetime (proxy D2):
 
 - route: `direct` or `nexthop`, plus the next step and hop metadata including
-  **connection direction** (bastion D11, computed from the fleet graph, M6);
+  **connection direction** (proxy D11, computed from the fleet graph, M6);
 - **channel types** permitted, in both directions;
 - **in-channel requests** permitted, subsystems named individually;
 - **forwarding destinations** permitted (host/CIDR + port);
 - **global requests** permitted;
 - **filter policy**: either an ordered rule list (guardrail) or a restricted-exec
-  allow-list (boundary) — never both (bastion D12);
-- **target credential method** and its parameters (bastion D6a);
+  allow-list (boundary) — never both (proxy D12);
+- **target credential method** and its parameters (proxy D6a);
 - **cache hint**, issued deliberately (5.4);
 - **obligations**: record the session, require approval, require step-up auth.
 
@@ -334,15 +368,15 @@ inputs that made it match, and the obligations emitted.
 
 ### 5.4 Cache hints are a policy decision, not an optimisation
 
-The bastion may reuse an authorize decision only when this server attaches a
-hint (bastion §6.4), and the lifetime is this server's to set. So the hint is
+The proxy may reuse an authorize decision only when this server attaches a
+hint (proxy §6.4), and the lifetime is this server's to set. So the hint is
 part of policy, authored per rule: omit it for anything sensitive and every
 connection is re-decided. Two invariants this server must never violate:
 
 - **A key is never shared across identities.** The key selects the sharing
   scope; one shared across subjects serves one user another user's policy.
 - **Never issue a hint the revocation stream cannot withdraw** (M9). If the
-  event path for a bastion is unhealthy, stop issuing hints to it — a cached
+  event path for a proxy is unhealthy, stop issuing hints to it — a cached
   allow with no way to revoke it is just a slower revocation.
 
 ---
@@ -354,17 +388,17 @@ connection is re-decided. Two invariants this server must never violate:
   versioned, validated, and visible in the decision record, because "why did
   Alice match the `sre` rule" is answered by the mapping as often as by the rule.
 - **MFA orchestration.** The contract makes MFA entirely this server's concern:
-  the bastion relays and polls. That means owning challenge lifetime, poll
+  the proxy relays and polls. That means owning challenge lifetime, poll
   intervals, replay resistance, and the deny-on-expiry path. Determinism matters
-  for tests — the bastion's mock models it with a "pending polls" counter, and
+  for tests — the proxy's mock models it with a "pending polls" counter, and
   the conformance suite depends on that behaviour being reproducible here.
-- **Credential brokerage (bastion D6a).** The route names the target credential
+- **Credential brokerage (proxy D6a).** The route names the target credential
   method. Beyond selecting it, this server is the natural home for the
   credentials themselves: an SSH CA issuing short-lived, narrowly-scoped target
   certificates per session beats a long-lived management certificate sitting on
-  every bastion's disk. That is an **additive** contract change (the bastion's
+  every proxy's disk. That is an **additive** contract change (the proxy's
   `target_auth` object is extensible on purpose) and therefore starts in the
-  bastion repo, not here — this plan records the intent and phase 0010 builds
+  Hoplock Proxy repository, not here — this plan records the intent and phase 0011 builds
   the CA behind it.
 
 ---
@@ -385,22 +419,22 @@ connection is re-decided. Two invariants this server must never violate:
   backpressure and retry. Downstream consumer only (M8).
 - **Redaction** — the initial-auth password never reaches this server and must
   never be written even if a malformed record contains one. Assert it in tests,
-  because "the bastion promises not to send it" is not a control on this side.
+  because "the proxy promises not to send it" is not a control on this side.
 
 ---
 
 ## 8. Cross-cutting conventions
 
-- **Module path**: `github.com/mauroasilva/commandproxymanagemente` — it tracks
+- **Module path**: `github.com/hoplock/control` — it tracks
   the repository URL, not the product name, because a Go module path that does
   not resolve to its repository cannot be fetched by path. The component is still
-  called the management server everywhere prose refers to it.
+  called Hoplock Control everywhere prose refers to it.
 - **Go**: the `go` directive is the floor; CI builds on both the floor and the
   latest stable, with `GOTOOLCHAIN: local` so the floor is enforced rather than
-  asserted. Same reasoning as the bastion's PLAN §8.
+  asserted. Same reasoning as the proxy's PLAN §8.
 - **Config**: YAML, documented in `config.example.yaml`, strict decoding
   (unknown keys are an error).
-- **License (M14)**: proprietary `LICENSE` plus the per-file header in
+- **License (M14)**: Apache-2.0 `LICENSE` plus the per-file SPDX header in
   `docs/LICENSE-HEADER.md`.
 - **Errors/logging**: no secrets, no credentials, no tokens in errors or logs.
   Every response carries a correlation id; every `5xx` says outage, never deny
@@ -410,7 +444,7 @@ connection is re-decided. Two invariants this server must never violate:
   race.
 - **Testing**: unit tests per package; the policy engine tested exhaustively and
   in isolation; Postgres-backed tests against a real database in CI; the
-  conformance suite (M1) run against this server **and** the bastion's mock.
+  conformance suite (M1) run against this server **and** the proxy's mock.
 - **CI**: build, vet, test, lint, migrations check, contract-drift check,
   conformance, `govulncheck`.
 
@@ -423,13 +457,13 @@ The prototype's full topology runs in one CI job with `docker compose`:
 | Node | Container |
 | --- | --- |
 | Postgres | stock image |
-| Management server | `cmd/management` |
-| Bastion | the bastion repo's image, pointed at this server |
+| Management server | `cmd/hoplock-control` |
+| Proxy | Hoplock Proxy's image, pointed at this server |
 | Target | `sshd` image with the provisioning account and an appliance-like account |
 | Client | thin image running scenario SSH clients |
 
 The point of this topology is the thing neither repo can test alone: a **real
-bastion** driven by a **real PDP**. The bastion repo proves it enforces what a
+proxy** driven by a **real PDP**. The Hoplock Proxy repository proves it enforces what a
 mock tells it; this repo proves it decides correctly in isolation; only here do
 "decides" and "enforces" meet.
 
@@ -441,26 +475,27 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 
 | # | Phase | Delivers |
 | --- | --- | --- |
-| 0001 | Project scaffold & conventions | module, layout, license + headers, Makefile, CI skeleton, config loader |
-| 0002 | Contract vendoring & conformance harness | `contract/`, drift check, `cmd/pdpconform` proven against the bastion's mock |
+| 0001 | Project scaffold & conventions | module, layout, licence + headers, Makefile, CI skeleton, config loader |
+| 0002 | Contract vendoring & conformance harness | `contract/`, drift check, `cmd/pdpconform` proven against Hoplock Proxy's mock |
 | 0003 | Storage layer & migrations | Postgres repositories, forward-only migrations, tenancy columns (M12) |
-| 0004 | Policy model & decision engine | bundle parse/validate/compile/evaluate + decision records (M3, M4) |
-| 0005 | Fleet registry & zone graph | enrollment, heartbeat, reachability, pathfinding, hop direction (M6) |
-| 0006 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting |
-| 0007 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
-| 0008 | Revocation & event fan-out | `/v1/bastions/{id}/events`, event bus, replay, resync, kill switch (M9) |
-| 0009 | Log ingest & tamper-evident audit store | batch + priority ingest, hash chain, verifier, query (M8) |
-| 0010 | Identity federation & credential brokerage | OIDC/SAML brokers, claim mapping, SSH CA for target credentials (M7) |
-| 0011 | North-bound API & policy lifecycle | authoring, versioning, validation, **simulation**, **explain a decision**, GitOps (M2, M4) |
-| 0012 | JIT access requests & approvals | grants, request/approve flow, notifiers, expiry (M10) |
-| 0013 | SIEM export & retention | Splunk/Sentinel/Elastic sinks, backpressure, retention jobs |
-| 0014 | Cross-repo E2E topology, CI gate & hardening | real bastion + real PDP + Postgres + target, scenario suite, `govulncheck` |
+| 0004 | **Extension points** | public `ext/` package, registration, import-graph guard (M15) |
+| 0005 | Policy model & decision engine | bundle parse/validate/compile/evaluate + decision records (M3, M4) |
+| 0006 | Fleet registry, health & config distribution | enrollment, heartbeat, zone graph, pathfinding, hop direction, versioned config rollout (M6) |
+| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting |
+| 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
+| 0009 | Revocation & event fan-out | `/v1/proxies/{id}/events`, event bus, replay, resync, kill switch (M9) |
+| 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |
+| 0011 | Identity, users, groups, roles & RBAC | local identity, roles, RBAC, OIDC/SAML federation, claim mapping, SSH CA (M7) |
+| 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
+| 0013 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4) |
+| 0014 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory |
+| 0015 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 
 Ordering rationale worth keeping: the conformance harness (0002) comes second so
 that every later phase has a red/green target it did not write itself; the
-policy engine (0004) precedes every endpoint that uses it and is pure, so it can
-be made correct before HTTP exists; the fleet graph (0005) precedes authorize
-(0007) because a route is a path over it; and the north-bound surface (0011)
+policy engine (0005) precedes every endpoint that uses it and is pure, so it can
+be made correct before HTTP exists; the fleet graph (0006) precedes authorize
+(0008) because a route is a path over it; and the north-bound surface (0013)
 comes after the south-bound one is real, because simulation and explanation need
 decision records to have been produced by something.
 
@@ -471,13 +506,20 @@ prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 
 ## 11. Out of scope for the prototype
 
+**Hoplock Enterprise's, by design (M15)** — approval workflows around grants,
+SCIM and advanced enterprise IdP, long-term audit retention/archive and session
+search, compliance reporting, SIEM export and SOAR actions, HSM/KMS,
+high availability and clustering, air-gapped deployment, licensing, and
+enterprise support tooling. Each has a seam in `ext/` (0004); none has a
+crippled placeholder here.
+
+Genuinely out of scope for now:
+
 - Editing the contract here (M1 — it is upstream, always).
 - Multi-tenant operation (schema is ready, M12; the API and UI are not).
-- A web UI. The north-bound API and `policyctl` are the surfaces; a UI is a
-  consumer of them and a separate project.
-- HA/multi-region deployment of this server. The decision path is designed to
-  scale out (M5) and the event bus is behind an interface (M9), but the
-  prototype runs one node.
+- HA/multi-region deployment. The decision path is designed to scale out (M5)
+  and the event bus is behind `ext.ClusterCoordinator` (M9, 0004), but this
+  repository runs one node; clustering is Enterprise.
 - Endpoint agents and device posture collection. The policy model has a slot for
   posture attributes; nothing here collects them.
 - Long-term storage tiering of session recordings.

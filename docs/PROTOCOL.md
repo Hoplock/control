@@ -1,4 +1,4 @@
-# SecureCommandProxy Management — Session Protocol
+# Hoplock Control — Session Protocol
 
 > **Every implementation session MUST read this file first, in full.** It is
 > short by design. It tells a fresh Claude Code session exactly how to pick up
@@ -6,7 +6,7 @@
 
 This protocol exists to keep sessions consistent, keep context windows small
 (target **< 60% context per session**), and reduce hallucination by grounding
-every session in the same durable artifacts. It mirrors the bastion repo's
+every session in the same durable artifacts. It mirrors Hoplock Proxy's
 protocol on purpose: the two repositories are worked the same way, so a session
 that has done one already knows how to do the other.
 
@@ -45,7 +45,7 @@ Read in this order and **stop reading as soon as you have what you need**:
    a large document and reading it whole will cost you the context budget you
    need for the work.
 
-Do **not** read the whole codebase, and do **not** read the bastion repository
+Do **not** read the whole codebase, and do **not** read the Hoplock Proxy repository
 unless your prompt names a file in it. If you find yourself reading broadly,
 stop and re-scope — the prompt or a learnings file should already point you at
 the right places. Staying under ~60% context is a hard goal; if you're
@@ -58,7 +58,7 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
 - Branch off the **latest default branch** (`main`):
   `git fetch origin main && git checkout -B <branch> origin/main`.
 - Branch name: `claude/NNNN-short-description` matching the prompt (e.g.
-  `claude/0004-policy-engine`).
+  `claude/0005-policy-engine`).
 - **Never push to `main`.** Never push to another prompt's branch.
 - If a prior PR for your branch name was already merged, start fresh from `main`
   (do not stack on merged history).
@@ -73,14 +73,23 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
 - **Follow the plan.** Match `docs/PLAN.md`: package layout, interfaces, naming,
   decisions (M1–M14). If reality forces a deviation, update `docs/PLAN.md` in the
   **same PR** and call it out in the PR description and learnings.
-- **Never edit `contract/` (M1).** That directory is vendored from the bastion
+- **Never edit `contract/` (M1).** That directory is vendored from the proxy
   repository and is generated, not authored. If the contract is wrong or missing
   something you need, **stop and tell the user**: the change is made in the
-  bastion repo, merged there, and pulled in with `make contract-sync`. Editing
+  Hoplock Proxy repository, merged there, and pulled in with `make contract-sync`. Editing
   the local copy makes CI green while the two components silently diverge, which
   is the exact failure this rule exists to prevent.
+- **Never import Hoplock Enterprise (M15).** The dependency runs one way:
+  Enterprise imports this module, never the reverse. If a phase seems to need
+  something from Enterprise, it needs an **extension point** in `ext/` instead —
+  and a real default implementation here, because Control alone must be a
+  complete product. An import-graph test enforces this; do not work around it.
+- **`ext/` is a compatibility promise.** It is the only non-`internal` package
+  in the module. Changing a signature there breaks Enterprise builds, so treat
+  it like the wire contract: change it deliberately, say so in your learnings,
+  and never as a drive-by.
 - **`401` is a decision (M11).** Never return it for a database failure, a
-  timeout, a compile error, or a panic. The bastion will faithfully tell a real
+  timeout, a compile error, or a panic. The proxy will faithfully tell a real
   user "access denied" and send your operator to debug permissions during an
   outage. Deny on purpose; `5xx` for everything else.
 - **Migrations are forward-only.** Never edit a migration that has been merged;
@@ -120,7 +129,7 @@ It MUST begin with a **summary block** so future sessions can decide whether to
 read further without spending tokens on the whole file:
 
 ```markdown
-# 0004 — policy engine — Learnings
+# 0005 — policy engine — Learnings
 
 ## Summary
 - What shipped: <1–3 lines>
@@ -137,7 +146,7 @@ read further without spending tokens on the whole file:
 
 Keep the summary block tight (aim ≤ ~14 lines). Put depth in Details. If you
 created follow-up prompts, list them here. If your phase needs a **contract
-change in the bastion repo**, say so explicitly and describe the exact field —
+change in the Hoplock Proxy repository**, say so explicitly and describe the exact field —
 that is a cross-repo dependency and the next session must not discover it by
 being blocked.
 
