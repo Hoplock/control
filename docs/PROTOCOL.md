@@ -71,8 +71,15 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
   discover work that belongs to a later phase, do **not** do it here — note it in
   your learnings file and/or add a new queued prompt (Section 6).
 - **Follow the plan.** Match `docs/PLAN.md`: package layout, interfaces, naming,
-  decisions (M1–M14). If reality forces a deviation, update `docs/PLAN.md` in the
+  decisions (M1–M15). If reality forces a deviation, update `docs/PLAN.md` in the
   **same PR** and call it out in the PR description and learnings.
+- **Cross-repo changes follow `docs/CROSS-REPO-PROTOCOL.md`.** This repo sits in
+  the middle of the chain: it consumes the proxy's contract (M1) and owns `ext/`,
+  which Hoplock Enterprise imports (M15). Both directions create work that has no
+  prompt number, so nothing in *this* file covers it. That one does: the ordering
+  (upstream merges first), the downstream-impact check your PR owes, and the
+  conventions for a sync PR. It lists the shared surfaces in its Section 1; if
+  your change touches none of them, you do not need to read it.
 - **Never edit `contract/` (M1).** That directory is vendored from the proxy
   repository and is generated, not authored. If the contract is wrong or missing
   something you need, **stop and tell the user**: the change is made in the
