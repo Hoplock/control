@@ -60,10 +60,32 @@ The initial-auth password never reaches this server, and must never be written
 even if a malformed record contains one. Assert it here: "the proxy promises
 not to send it" is not a control on this side.
 
+### Event kinds the privileged-access revision adds
+
+These arrive from the proxy and each has a consumer that depends on it being
+queryable in its own right rather than buried in a session blob:
+
+- **The ephemeral-account mapping event** (proxy §5.3). On a device whose
+  account-name length forces the readable login segment out of the name,
+  **this event is the only place attribution exists** — nothing on the target
+  says who the account belonged to. It arrives on the priority path, and losing
+  it loses the ability to answer who did something on a router. Treat it as a
+  first-class record with its own index, not as session metadata.
+- **The device configuration-change event** (proxy §5.3). Every provisioning
+  and teardown is a configuration change on the device, and a customer's drift
+  detection will see it. Making these queryable and exportable is what lets a
+  SIEM auto-close the resulting drift alerts — and, more usefully, lets an
+  `hl-*` account that Hoplock never reported become a detection. Enterprise's
+  SIEM export consumes this; the schema decision is made here.
+- **The credential method and enforcement rung actually in force** (proxy D14
+  and the enforcement-point revision). Both are per session and both differ from
+  what the policy requested when a ladder degraded or a rung was unavailable.
+  The record must carry what happened, not what was asked for.
+
 ## Out of scope
-- SIEM export (0013) — this store is the source, the export is a consumer.
-- The north-bound query API (0013) — build the query layer, not the HTTP surface.
-- Retention jobs (0013).
+- SIEM export (0014) — this store is the source, the export is a consumer.
+- The north-bound query API (0014) — build the query layer, not the HTTP surface.
+- Retention jobs (0014).
 
 ## Acceptance criteria
 - The conformance suite's log assertions pass, including replaying a batch not
@@ -86,4 +108,4 @@ Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0010-audit-ingest-and-store-learnings.md`. Summary block MUST
 give the record schema and kinds, the chain construction and how to verify it
 (and its honest limits), the partial-batch semantics, the query API, the
-retention knobs left for 0013, and the measured ingest throughput.
+retention knobs left for 0014, and the measured ingest throughput.
