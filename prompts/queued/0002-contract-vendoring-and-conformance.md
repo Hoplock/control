@@ -96,6 +96,16 @@ agreement with itself. If the mock fails an assertion, decide honestly which of
 the two is wrong: a genuine mock bug is a finding to report to the user (it is a
 change in the *other* repo), and a suite bug is yours to fix.
 
+### A note on contract versions
+
+The vendored contract is a moving target and this phase builds the machinery,
+not a snapshot. Upstream has queued two further revisions beyond v2 — device
+provisioning and the credential ladder, then enforcement points and session
+bounds — so the drift check and the conformance suite must treat a version bump
+as routine. If `make contract-sync` is painful to run twice in a week, it is
+wrong. Nothing here waits for those revisions; they are named so the design is
+not accidentally shaped around v2 being the last one.
+
 ## Out of scope
 - Implementing any endpoint here (0007 onwards). The suite is written before the
   server exists, on purpose.
@@ -112,7 +122,7 @@ change in the *other* repo), and a suite bug is yours to fix.
 - **CI runs the suite against Hoplock Proxy's mock server and it passes** —
   or, if it does not, the PR documents exactly which assertion the mock fails and
   why the suite is right.
-- The suite's expectation file is documented well enough that phase 0015 can
+- The suite's expectation file is documented well enough that phase 0016 can
   point it at the real server with no code changes.
 
 ## Definition of Done & hand-off

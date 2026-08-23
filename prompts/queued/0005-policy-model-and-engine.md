@@ -63,11 +63,11 @@ text is a product surface: it is what a policy author sees.
 - Ordered rules, **first match wins**, with an explicit **default-deny** that is
   always present and always recorded as the reason when it fires.
 - Time is an **input**, never `time.Now()` inside the engine — otherwise
-  simulation over historical traffic (0013) is impossible and tests are flaky.
+  simulation over historical traffic (0014) is impossible and tests are flaky.
 - Produces `(snapshot, explanation)` where the explanation names the matched
   rule, the input values that made it match, the obligations emitted, and — for
   a deny — which rule denied or that nothing matched. This is M4, and it is
-  the feature 0013 exposes and the proxy's disclosure rule depends on.
+  the feature 0014 exposes and the proxy's disclosure rule depends on.
 - **Bounded**: evaluation is linear in rule count with no unbounded constructs.
   Add a benchmark and state the budget it must fit in (M5).
 
@@ -75,7 +75,7 @@ text is a product surface: it is what a policy author sees.
 - Storing bundles or decisions (0003 has the tables; 0008 writes decisions).
 - HTTP, IdP, grants' lifecycle (0012 — but the engine reads a grant as an input
   now, so define that input type here and make it complete).
-- Simulation and the authoring API (0013) — but keep evaluation pure so both are
+- Simulation and the authoring API (0014) — but keep evaluation pure so both are
   possible without touching this package.
 
 ## Acceptance criteria
@@ -101,5 +101,5 @@ Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0005-policy-model-and-engine-learnings.md`. Summary block MUST
 give the bundle's top-level schema, every input and output field name, the
 compiler's rejection list, the evaluator's signature, the explanation type, and
-the measured evaluation budget. Phases 0008, 0013 and 0012 all build directly on
+the measured evaluation budget. Phases 0008, 0014 and 0012 all build directly on
 this and will read nothing else about it.

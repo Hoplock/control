@@ -48,7 +48,7 @@ thing that bounds the damage of every cache hint issued in 0008.
   usually to drop it and let it reconnect into `resync` — and document it.
 
 ### Operator surface (minimal here)
-Enough to publish an event: an internal API used by 0013's north-bound surface
+Enough to publish an event: an internal API used by 0014's north-bound surface
 and by tests. `session_kill` carries a `reason` that is **shown to the user**
 before their connection closes, so it must be safe to disclose; validate that it
 is present and reject an empty one. A revoked session that looks like a crash is
@@ -59,7 +59,7 @@ Implement 0006's liveness interface from subscription state, and expose the
 health signal 0008 reads before issuing a cache hint.
 
 ## Out of scope
-- The north-bound API surface itself (0013) and the audit record of an operator
+- The north-bound API surface itself (0014) and the audit record of an operator
   action (0010 stores it).
 - Multi-node fan-out.
 

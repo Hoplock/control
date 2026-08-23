@@ -147,6 +147,17 @@ management; the proxy's decisions keep their `D` numbers.
   timeout the proxy classifies as an outage is strictly better than a slow
   answer that looks like one. Horizontal scale-out is the only scaling story;
   nothing on the decision path may be node-local state.
+
+  **The magnitude is not modest.** The first target deployment is a telco with
+  ~300,000 network devices and ~50,000 Linux hosts. If machine-to-machine health
+  checking of that estate runs over SSH on a one-minute interval, the decision
+  path sees ~5,800 authorize calls per second **sustained**, plus the
+  authenticate call the proxy may never cache (proxy §6.4). That figure is
+  arithmetic rather than measurement — proxy phase 0017 exists to replace it,
+  and the SSH-versus-SNMP assumption underneath it may well collapse it by two
+  orders of magnitude — but it is the right order of magnitude to design the
+  decision path against, and it is the reason M5 is a decision rather than an
+  aspiration. Anything that is "fine at a hundred a second" is not fine here.
 - **M6 — The fleet is a graph, not a list.** Proxies enroll, heartbeat, and
   declare their zone, their reachability, and which connection directions they
   support (proxy D11: `dial` or an outbound-registered `relay`). A route is a
@@ -192,6 +203,14 @@ management; the proxy's decisions keep their `D` numbers.
   invisible to simulation and to "explain why", the two features that make the
   rest of the policy story credible. Approval notifications go out through a
   notifier interface (Slack, Teams, webhook, email) that has no other job.
+
+  A grant's **origin varies and is recorded**: an administrator created it by
+  hand, an approval workflow produced it (Enterprise E8), or an external system
+  asserted a window and a provider confirmed it (M16). All three are the same
+  object to the engine — that is the point — but the record carries which one it
+  was and, where it applies, the external reference (ticket, scan, incident) and
+  the window that was asserted. "Explain why" that cannot name the ticket is not
+  an explanation.
 - **M11 — `401` means deny; everything else means outage.** The contract's
   ground rule binds this side hardest. A database timeout, a compile error, or a
   panic must never surface as `401`, because the proxy will faithfully tell a
@@ -235,6 +254,85 @@ management; the proxy's decisions keep their `D` numbers.
   (HA, air-gapped, licensing). Where a feature could plausibly sit on either
   side, it goes here — an artificially crippled open-source core is a worse
   product and a worse business.
+
+- **M16 — External access context is an input, and the integrations that supply
+  it are extensions (new).** Some access is legitimate only while something
+  outside Hoplock says so: a vulnerability scan is running against this host, a
+  change ticket is approved and inside its window, an incident is open. Proxy
+  D15 places that squarely here — the proxy stays ignorant of Qualys, of BMC
+  Helix, and of whatever a customer builds, because a push that grants access
+  and a probe that validates one are both **policy inputs**, consumed while this
+  server decides.
+
+  It arrives in two directions and they are **not redundant**:
+
+  - **Push** — an external system tells Hoplock that a window has opened. Fast,
+    and it is the only direction that works when the external system cannot be
+    reached at decision time. It is also spoofable and lossy.
+  - **Probe** — Hoplock asks the external system whether the access is
+    legitimate right now. Authoritative, and it costs a network round trip on
+    the decision path, which M5 governs.
+
+  So the default composition is: a **push opens a pending window**, and a
+  **probe confirms at authorize time**. Where the probe cannot be reached, the
+  answer is configurable and **fails closed for privileged grants**, because the
+  access this exists to gate is the access least safe to grant on a stale
+  assertion.
+
+  Three properties belong to the framework rather than to each integration, and
+  a customer-written provider gets them for free precisely because they are not
+  its job:
+
+  1. **A push is untrusted input that names a target.** It is authenticated, and
+     it is constrained to a **pre-registered scope** — the subjects, targets, and
+     maximum window that integration may ever grant. Without that constraint the
+     push endpoint *is* an access-granting API with a vendor's software on the
+     other end, which is proxy D15's warning and this repository's problem to
+     answer. It is administrative in exactly the sense Enterprise E7 means, and
+     more so: granting access is a larger privilege than ending a session.
+  2. **Replay, idempotency, and clock skew** are handled once. An integration
+     that gets these wrong is the weakest link in a chain that includes every
+     other integration.
+  3. **A server-side ceiling on window length**, applied regardless of what the
+     external system asserted. An integration may ask for less than the ceiling
+     and never more.
+
+  A confirmed window **is a grant** (M10) — not a parallel path into the
+  decision. It carries its origin and its external reference, the engine reads
+  it like any other grant, and simulation and "explain why" keep telling the
+  truth, which is the entire reason M10 refused a bolt-on in the first place.
+
+  The seam is `ext.AccessContextProvider` (0004), and per M15 it ships a **real
+  default here**: a *declarative HTTP provider* configured rather than coded —
+  a probe endpoint, its authentication, a request template, assertions over the
+  response, and a cache TTL, plus a webhook receiver with a field mapping. That
+  default is not a stub standing in for the product; it is how a self-hosting
+  customer integrates a system nobody has heard of, and it covers most scanners
+  and ITSM systems without anyone writing Go. Packaged, vendor-specific
+  integrations — Qualys and BMC Helix first — are Enterprise's, and they are
+  packaging and support rather than capability, which is exactly where M15 draws
+  the line.
+
+- **M17 — The fleet graph carries capabilities, not just reachability (amends
+  M6, new).** M6 has proxies declare their zone, reachability, and connection
+  directions, because only this server can compute a path. The same argument
+  now applies one level down: a route may name a **credential method**, a
+  **device platform**, an **expiry posture**, and an **enforcement rung** (proxy
+  D13, D14, and the enforcement-point revision), and a proxy can satisfy those
+  only if it has the driver, the local material, and a target that supports
+  them.
+
+  A decision naming something the enforcing proxy cannot provide is not a
+  near-miss — it is a session that is denied as an outage, or worse, one whose
+  audit record claims a control that was never applied. So enrollment and
+  heartbeat carry the proxy's declared capabilities, the decision engine treats
+  them as a constraint on what it may answer, and the north-bound API shows an
+  operator why a policy cannot be satisfied on a given proxy **before** they
+  publish it rather than after a user complains.
+
+  This also makes proxy D14's ladder authorable with intent: knowing which
+  methods a proxy actually has is what separates "prefer the strong method, fall
+  back to the weaker one" from "write a ladder and hope".
 
 ---
 
@@ -349,7 +447,8 @@ Three obligations are easy to miss and are graded by the conformance suite:
 | Context | time of day, day of week, source network/geo, entry proxy |
 | Target | hostname, labels (`env=prod`, `kind=appliance`, `owner=payments`), zone |
 | Session | requested channel type, in-channel request, forwarding destination, global request, command |
-| Grants | live JIT grants for this subject and scope (M10) |
+| Grants | live JIT grants for this subject and scope (M10), including windows confirmed from external context (M16) |
+| External context | a scan, ticket, or incident asserted by an integration and confirmed at decision time (M16) |
 
 ### 5.2 Outputs
 
@@ -364,9 +463,24 @@ the connection's lifetime (proxy D2):
 - **global requests** permitted;
 - **filter policy**: either an ordered rule list (guardrail) or a restricted-exec
   allow-list (boundary) — never both (proxy D12);
-- **target credential method** and its parameters (proxy D6a);
+- **target credential method** and its parameters (proxy D6a) — an **ordered
+  ladder** since proxy D14, so the PDP states its preference *and* what it will
+  accept, with a one-entry ladder meaning "this method or nothing";
+- **device platform and expiry posture** on `ephemeral-account` routes (proxy
+  D13), and a **per-route algorithm profile** where the target speaks something
+  `x/crypto` does not enable by default;
+- **enforcement rung** per axis, where the route stands somewhere other than
+  proxy-side enforcement;
+- **session deadline** — an absolute instant the proxy enforces locally, so it
+  survives this server being unreachable (proxy D16);
+- **concurrency caps** per subject and/or target, which only the proxy can
+  count;
+- **grant context** — the external system, its reference, and the window —
+  carried opaquely by the proxy into every log record for the session;
 - **cache hint**, issued deliberately (5.4);
 - **obligations**: record the session, require approval, require step-up auth.
+  Session recording stops being advisory on unbounded-privilege routes: proxy
+  D16 makes it a requirement the proxy refuses to serve without.
 
 ### 5.3 Evaluation
 
@@ -502,15 +616,28 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |
 | 0011 | Identity, users, groups, roles & RBAC | local identity, roles, RBAC, OIDC/SAML federation, claim mapping, SSH CA (M7) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
-| 0013 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4) |
-| 0014 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory |
-| 0015 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
+| 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
+| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4) |
+| 0015 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory |
+| 0016 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
+
+> **Renumbering note (privileged-access revision).** Phase 0013 is new: external
+> access context (M16) has to exist before the north-bound API is built, because
+> that surface exposes provider registration, scope bindings, and the reason a
+> grant exists. Under `docs/PROTOCOL.md` §6 the queued prompts below it were
+> renumbered — **0013→0014, 0014→0015, 0015→0016** — and nothing is implemented
+> yet, so no frozen name moved. Anything written before this revision that hands
+> work to "0013" means the north-bound API, now **0014**.
+>
+> This revision follows an upstream one in `hoplock/proxy` (decisions D13–D17
+> there). Per `docs/CROSS-REPO-PROTOCOL.md` §2 it must not merge before that one
+> does.
 
 Ordering rationale worth keeping: the conformance harness (0002) comes second so
 that every later phase has a red/green target it did not write itself; the
 policy engine (0005) precedes every endpoint that uses it and is pure, so it can
 be made correct before HTTP exists; the fleet graph (0006) precedes authorize
-(0008) because a route is a path over it; and the north-bound surface (0013)
+(0008) because a route is a path over it; and the north-bound surface (0014)
 comes after the south-bound one is real, because simulation and explanation need
 decision records to have been produced by something.
 
@@ -524,8 +651,10 @@ prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 **Hoplock Enterprise's, by design (M15)** — approval workflows around grants,
 SCIM and advanced enterprise IdP, long-term audit retention/archive and session
 search, compliance reporting, SIEM export and SOAR actions, HSM/KMS,
-high availability and clustering, air-gapped deployment, licensing, and
-enterprise support tooling. Each has a seam in `ext/` (0004); none has a
+high availability and clustering, air-gapped deployment, licensing,
+enterprise support tooling, and the **packaged Qualys and BMC Helix access-context
+integrations** (M16 — the seam and its declarative default are here, in 0013;
+the vendor packaging is not). Each has a seam in `ext/` (0004); none has a
 crippled placeholder here.
 
 Genuinely out of scope for now:

@@ -1,10 +1,10 @@
-# 0014 — Management console (web UI)
+# 0015 — Management console (web UI)
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
 - `docs/PLAN.md` — especially §2 (M2 — the console is a north-bound client and
   authenticates like one), §3 (`ui/`).
-- `docs/learnings/` — read summaries; open `0013` (**the API this consumes** —
+- `docs/learnings/` — read summaries; open `0014` (**the API this consumes** —
   every route and its required role), `0011` (RBAC), `0010` (audit query),
   `0006` (proxy health).
 
@@ -20,7 +20,7 @@ explanation of why access was allowed or denied**.
   (`embed.FS`), so a deployment is still one binary. No separate web server, no
   Node runtime in production.
 - **It is an API client and nothing more.** The console calls the north-bound
-  API (0013) with the operator's own session; it never reaches into the database
+  API (0014) with the operator's own session; it never reaches into the database
   and never has a privileged path of its own. Any capability the console has,
   the API has, and RBAC (0011) applies identically — a console that can do what
   the API forbids is a second, unaudited authorisation system.
@@ -64,6 +64,6 @@ explanation of why access was allowed or denied**.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0014-management-console-learnings.md`. Summary block MUST give
+`docs/learnings/0015-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it.

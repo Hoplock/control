@@ -40,7 +40,7 @@ hold a live outbound relay registration.
   the user experiences as a hang.
 - Enrollment is an administrative act: a proxy cannot enroll itself into a zone
   it was not granted. Say how a new proxy is approved (a pre-registered id, an
-  enrollment token, or an operator action in 0013) and enforce it. An
+  enrollment token, or an operator action in 0014) and enforce it. An
   auto-enrolling fleet lets anyone who can reach this server insert a hop into
   other people's routes.
 
@@ -79,8 +79,30 @@ configures a fleet rather than N files.
 ### Health & status
 Per proxy: last heartbeat, contract version, running config version, live relay
 registrations, current session count, and the last error it reported. This is
-what the console's fleet screen (0014) renders and what an operator looks at
+what the console's fleet screen (0015) renders and what an operator looks at
 first during an incident.
+
+### Declared capabilities (M17)
+
+Enrollment and heartbeat carry more than reachability. A route may name a
+credential method, a device platform, an expiry posture, or an enforcement rung
+(proxy D13, D14, and the enforcement-point contract revision), and a proxy can
+serve those only if it has the driver and the local material. So a proxy
+declares what it can provide, this registry stores it, and 0008 treats it as a
+**constraint on what a decision may say** — not as advice.
+
+Two consequences worth building for rather than discovering:
+
+- **Capabilities are versioned and can go stale.** A proxy that has been
+  upgraded advertises more; one that has been downgraded advertises less. A
+  decision built on a capability set the proxy no longer has must fail as an
+  outage rather than as a session whose audit record claims a control that was
+  never applied. Decide how staleness is bounded — heartbeat freshness is the
+  obvious lever — and write it down.
+- **An operator must see the mismatch before publishing, not after.** The
+  north-bound API (0014) needs to answer "which proxies can actually satisfy
+  this policy", which is a query over this data. Build the query here; 0014
+  exposes it.
 
 ## Out of scope
 - Serving `/v1/authorize` (0008 calls into this package).

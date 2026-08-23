@@ -43,6 +43,18 @@ Define, at minimum:
 | `ActionHandler` | none | SOAR inbound: kill session, lock out user |
 | `ReportProvider` | basic audit queries | compliance reporting packs |
 | `PolicyValidator` (chain) | the compiler's own checks | governance rules, approval-before-activation |
+| `AccessContextProvider` | a **declarative HTTP provider** — probe URL, auth, request template, response assertions, TTL, plus a webhook mapping (M16) | packaged Qualys and BMC Helix integrations |
+
+`AccessContextProvider`'s default deserves a note, because it is the clearest
+case of M15's second invariant: the declarative provider is not a placeholder
+for the real thing, it **is** how a self-hosting customer integrates a scanner
+or an ITSM system nobody has heard of. Enterprise's version adds vendor
+packaging and support, not the capability. Phase 0013 builds both the interface
+and that default; this phase only has to define the point so 0013 has somewhere
+to put it. Note also that this provider returns **evidence, not a verdict** — say
+so in its doc comment, because the first instinct of anyone implementing it will
+be to return a boolean, and that quietly relocates the policy engine into a
+vendor integration.
 
 Each interface gets: a doc comment saying what varies and why, a context on
 every method, typed errors, and an explicit statement of what Control does when
@@ -58,7 +70,7 @@ interfaces, which is the idiom this codebase should use.
   request can never see a half-registered extension.
 - Registering twice for the same point is an error naming both registrants —
   silent last-wins is how two Enterprise modules fight invisibly.
-- Every registration is **logged and visible in the north-bound API** (0013):
+- Every registration is **logged and visible in the north-bound API** (0014):
   an operator debugging behaviour must be able to see that an extension is in
   play. An invisible extension is indistinguishable from a bug in Control.
 

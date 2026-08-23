@@ -1,4 +1,4 @@
-# 0013 — North-bound API & policy lifecycle
+# 0014 — North-bound API & policy lifecycle
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -78,7 +78,7 @@ it becomes a second implementation of the rules.
 - A web UI (a consumer of this API, and a separate project).
 - JIT requests and approvals (0012), though `explain` must be ready to name a
   grant.
-- SIEM export (0013).
+- SIEM export (0014).
 
 ## Acceptance criteria
 - Role enforcement is tested per route, including an auditor token being refused
@@ -96,8 +96,8 @@ it becomes a second implementation of the rules.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0013-northbound-api-and-policy-lifecycle-learnings.md`. Summary
+`docs/learnings/0014-northbound-api-and-policy-lifecycle-learnings.md`. Summary
 block MUST give the route table with required roles, the bundle lifecycle states,
 the simulation API and its purity requirements, the `explain` response shape, and
 the `policyctl` command set. Phase 0012 adds routes to this surface and phase
-0015 drives it end to end.
+0016 drives it end to end.

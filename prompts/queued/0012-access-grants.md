@@ -21,14 +21,14 @@ API or the console has real, useful JIT access. What Enterprise adds is the
 
 The engineering point is that a grant is a **policy input**, never a bypass. A
 special case that skipped the engine would be invisible to simulation and to
-"explain why" (0013) — the two features that make the rest of the policy story
+"explain why" (0014) — the two features that make the rest of the policy story
 credible.
 
 ## In scope
 - `internal/access`:
   - **Grant**: subject, scope (target or label selector, and what may be done
     with it), validity window, who created it, why, and its state.
-  - Create, list, inspect, revoke — through the north-bound API (0013) with RBAC
+  - Create, list, inspect, revoke — through the north-bound API (0014) with RBAC
     (0011): creating a grant is an administrative act and is itself audited.
   - **Expiry is enforced at evaluation time, not by a sweeper.** A grant is live
     only if its window contains the evaluation's time input. A sweeper may tidy
@@ -41,13 +41,32 @@ credible.
   registered, grants are created directly by an authorised administrator. When
   one is, grant creation is routed through it and the grant records which path
   produced it. A decision record (0008) names the grant either way, so
-  `explain` (0013) tells the same story for both.
+  `explain` (0014) tells the same story for both.
 - Integration: 0008 already reads live grants; make them real, and make sure a
   grant's contribution appears in the decision record.
 
+### Origin, reference, and window
+
+A grant records **where it came from**: an administrator created it, an approval
+workflow produced it (Enterprise E8), or an external system asserted a window
+that a provider confirmed (M16, 0013). Where it applies, it also carries the
+external reference — ticket, scan, or incident — and the window that was
+asserted, which may be shorter than the grant's own expiry after the server-side
+ceiling is applied.
+
+The engine must have **no branch on origin**. That is the whole point of M10 and
+of E8, and it is worth a test rather than a comment: the same scenario with an
+administrator-created grant and an externally-confirmed one must produce
+identical decisions. Origin exists so that "explain why" can name the ticket,
+not so that the engine can treat one kind of grant as special.
+
+Design the object now with those fields even though 0013 is what populates them
+from outside — retrofitting an origin column onto grants that already exist is a
+migration, and M12 already establishes that this repository does not enjoy those.
+
 ## Out of scope
 - Requests, approvals, notifiers, approver policy — Hoplock Enterprise.
-- A UI beyond the API (0014 builds the console).
+- A UI beyond the API (0015 builds the console).
 
 ## Acceptance criteria
 - Full lifecycle: create a grant → the **next authorize allows what it

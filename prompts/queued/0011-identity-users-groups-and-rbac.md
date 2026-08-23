@@ -28,7 +28,7 @@ disks.
 - Local users and groups as first-class records, so a deployment works before
   any IdP is connected — and so break-glass access exists when the IdP is down.
 - **Roles** with a fixed, documented permission set, and RBAC enforced in one
-  place that both the API (0013) and the console (0014) go through. At minimum:
+  place that both the API (0014) and the console (0015) go through. At minimum:
   auditor (read-only), policy author, grant admin, fleet admin, admin.
 - Group membership from either source (local or mapped IdP claims) feeds policy
   attributes identically — a rule must not care where a group came from.
@@ -73,7 +73,7 @@ disks.
   (multi-IdP federation, complex claim-transformation rules, IdP-driven
   de-provisioning): Hoplock Enterprise, behind `ext.IdentitySync`. Define that
   interface's needs here if this phase learns something it must carry.
-- A UI for mapping authoring (0013 exposes the API; 0014 builds the console).
+- A UI for mapping authoring (0014 exposes the API; 0015 builds the console).
 
 ## Acceptance criteria
 - OIDC and SAML flows are tested against a local test IdP, producing an identity

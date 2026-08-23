@@ -83,12 +83,53 @@ it is the path that matters most and the easiest one to forget.
   in your learnings.
 - A benchmark, and a documented p99 target under a realistic bundle and fleet.
 
+### Snapshot fields added by the privileged-access revision
+
+`docs/PLAN.md` §5.2 lists the full snapshot; these are the ones that did not
+exist when this prompt was first written, and each has a rule attached:
+
+- **An ordered `target_auth` ladder** (proxy D14), not a single method. Authoring
+  a ladder is a policy decision with real consequences — it states both a
+  preference and what the deployment will accept instead — so a one-entry ladder
+  must be as easy to express as a multi-entry one, and the engine must never
+  synthesise a fallback the policy did not write.
+- **Device platform and expiry posture** on `ephemeral-account` routes (proxy
+  D13), constrained by the target's own attributes and by the proxy's declared
+  capabilities (M17, 0006). Naming a platform the enforcing proxy has no driver
+  for is a decision that cannot be served.
+- **A per-route algorithm profile** where the target speaks something the
+  proxy's SSH stack does not enable by default. This deliberately weakens a leg,
+  so it is a policy choice with an audit consequence, never a default.
+- **A session deadline**, as an absolute instant. Prefer the instant over a
+  duration: a duration re-anchors at each hop of a chained route and silently
+  multiplies the window.
+- **Concurrency caps** per subject and/or target. This server cannot count live
+  sessions — only the proxy can — so it states the ceiling and the proxy
+  enforces it.
+- **Grant context**: the system, the reference, and the window that justified
+  this access, copied from the grant that supplied it (M10, M16). The proxy
+  carries it opaquely into its records; this is what makes an audit trail able
+  to answer "why was this allowed" without a human joining two systems by hand.
+- **Required session recording** as an obligation the proxy refuses to serve
+  without, on unbounded-privilege routes (proxy D16).
+
+### The latency budget is not a formality
+
+M5 now carries a magnitude: an estate where machine-to-machine health checking
+runs through the proxy can put this endpoint into five figures of requests per
+second. Two things follow for this phase. Cache hints stop being an optimisation
+and become load-shedding, so 5.4's "issued deliberately" needs a deliberate
+answer for the machine-identity pattern — one subject against very many targets,
+where a hint keyed per (subject, target) has a hit rate near zero. And the
+measured latency numbers this phase reports should be measured under fan-out,
+not only under a single hot subject.
+
 ## Out of scope
 - The revocation stream (0009) — read its liveness, do not implement it.
 - The grant *approval workflow* (a Hoplock Enterprise extension via `ext`).
   Control ships manual, time-boxed grants (0012); read live grants as an input
   and do not care which of the two created them.
-- Simulation and explain-a-decision APIs (0013) — write the records they read.
+- Simulation and explain-a-decision APIs (0014) — write the records they read.
 
 ## Acceptance criteria
 - The conformance suite's authorize assertions pass; `make conform` is green.
@@ -117,6 +158,6 @@ Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0008-southbound-authorize-and-route-learnings.md`. Summary block
 MUST give the input assembly order, the snapshot mapping (engine field → contract
 field), the cache-hint issuance rules, the decision-record shape and whether its
-write is synchronous, and the measured latency numbers. Phase 0013's simulation
-and explain features read those records; phase 0015 asserts this end to end
+write is synchronous, and the measured latency numbers. Phase 0014's simulation
+and explain features read those records; phase 0016 asserts this end to end
 against a real proxy.
