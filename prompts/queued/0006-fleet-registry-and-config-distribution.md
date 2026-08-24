@@ -51,6 +51,13 @@ hold a live outbound relay registration.
   every edge is currently live and every hop supports what the next step needs.
 - Each hop carries what the contract's hop metadata needs, including the
   **connection direction** and the hop trail that lets a proxy detect loops.
+- The trail is not only an output. Since the proxy's phase 0008
+  (`Hoplock/proxy#6`, merged) an authorize request arrives carrying
+  `conn.hop_trail`: the ids the session has *already* traversed. `Path` must
+  therefore take a real entry point rather than assuming the user's — the second
+  hop of a chain asks for itself, from where it stands (PLAN §2 M6). Shape the
+  signature for that now; 0008 is what passes the trail in, and a `Path` that
+  can only start at a user's entry proxy is one 0008 has to work around.
 - **No live path is a deliberate, distinguishable outcome**: it is an outage
   (`5xx`, M11), not a deny. A user denied by policy and a user unreachable
   because an enclave relay is down must not receive the same answer — that
@@ -109,7 +116,8 @@ Two consequences worth building for rather than discovering:
 - The revocation stream itself (0009), though liveness reads its subscription
   state — define the interface here and let 0009 implement it.
 - Geo/anycast entry selection: DNS handles which proxy a user reaches. This
-  phase starts from the entry proxy as an input.
+  phase starts from whichever proxy is asking, given as an input — the user's
+  entry proxy on a first hop, an inner hop on a chained one.
 
 ## Acceptance criteria
 - Unit tests over a multi-zone graph: a direct path, a two-hop path, a three-hop

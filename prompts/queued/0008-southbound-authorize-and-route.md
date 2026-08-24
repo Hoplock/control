@@ -6,7 +6,11 @@
 - `docs/learnings/` — read summaries; open `0005` (the engine's signature and
   output vocabulary), `0006` (`Path` and the no-path outcome), `0007` (the
   listener and the `Deny`-vs-`error` mechanism), `0003` (decision table).
-- `contract/control.yaml` — `/v1/authorize` and every schema it references.
+- `contract/control.yaml` — `/v1/authorize` and every schema it references,
+  including `ConnMeta.hop_trail`.
+- In the **Hoplock Proxy repository**, `docs/PLAN.md` §6.1 ("Hop trail, loops,
+  and the cap") — what the proxy does with the trail on its side, and why every
+  entry in it can only cause a refusal.
 
 ## Objective
 Serve the endpoint the whole system turns on. One call assembles the inputs,
@@ -20,8 +24,52 @@ on every connection, per hop.
 Assemble inputs in one place: identity and claims (0007), target and its labels
 (0003), live grants (0012 owns them; the approval *workflow* is a Hoplock
 Enterprise extension), connection metadata from
-the request, the current time, and the fleet path (0006). Evaluate (0005). Build
-the snapshot. Persist the decision record. Return.
+the request — **including `conn.hop_trail`, see below** — the current time, and
+the fleet path (0006). Evaluate (0005). Build the snapshot. Persist the decision
+record. Return.
+
+### `conn.hop_trail` — the server's only view of a chain
+
+`ConnMeta.hop_trail` has been in the contract since 0002; the proxy started
+sending it with its own phase 0008 (`Hoplock/proxy#6`, merged). **Read it.** It
+is the proxy ids the session has already travelled through, oldest first, and it
+is empty on the user's first hop.
+
+It is the *only* thing that tells this server it is being asked about the second
+leg of a chain rather than a fresh connection. Every hop of a chain calls this
+endpoint for itself, with the same identity and the same final target (proxy
+D2), so without the trail two calls that mean entirely different things are
+byte-identical apart from `conn.proxy_id`. Three consequences, and each is a
+thing to build rather than a thing to note:
+
+- **Route from where the caller actually is.** The path (0006) starts at
+  `conn.proxy_id` — the proxy *asking* — and not at the user's entry proxy,
+  which on a chained call is the first id in the trail and is somewhere else
+  entirely. Take it from the request; never assume the two are the same. The
+  same login and target legitimately answer `nexthop` at the edge and `direct`
+  at the proxy behind it; the proxy's mock models exactly this by matching its
+  routes on `proxy_id` too.
+- **Refuse a loop, and refuse it as an outage.** If `conn.proxy_id` or the
+  `next_proxy_id` you are about to answer with already appears in the trail, the
+  fleet graph has produced a cycle. That is a fault in the estate's routing, not
+  a decision about the user: `5xx` (M11), never `401`. The proxy enforces this
+  too, as a safety net — M6's "this server should not give a bad answer" applies
+  here, and 0006 already asks you to enforce the maximum path length on this
+  side for the same reason.
+- **Length is the hop count so far.** `len(hop_trail)` against the cap in force
+  is how this server keeps its own answers inside `max_hops` instead of relying
+  on the proxy to notice.
+
+**The trail carries no authority, and must never be given any.** Every entry in
+it can only cause a refusal, which is what makes it safe to accept from a
+caller: a forged trail restricts the forger. So it may narrow a decision and it
+may never widen one — never grant on the strength of a hop id in the trail, and
+never let a shorter trail unlock something a longer one would not. The authority
+on a chain leg is the previous hop's key, which 0007 authenticates.
+
+Put the trail in the decision record (M4) as an input. "Which hop asked, and
+what had it already been through" is the first question anyone debugging a
+chained session asks, and it is unrecoverable afterwards if it was not stored.
 
 ### Snapshot assembly
 Translate the engine's output into the contract's response, complete: route type
@@ -135,6 +183,15 @@ not only under a single hot subject.
 - The conformance suite's authorize assertions pass; `make conform` is green.
 - End-to-end tests through the real listener and a real database: `direct`,
   `nexthop` (both connection directions), and `401`.
+- **`conn.hop_trail` is read, not ignored:** one login and one target, asked
+  twice — an empty trail from the edge proxy answers `nexthop`, and a trail
+  naming that edge proxy, asked by the next proxy, answers `direct` for the same
+  user and target. A test that only exercises the empty-trail call cannot tell a
+  server that reads the trail from one that discards it.
+- A trail that already contains the asking proxy, or the `next_proxy_id` about
+  to be answered, returns a `5xx` outage — not a `401`, and not a route that
+  closes the loop.
+- A decision record for a chained call names the trail it was decided under.
 - A deny writes a decision record naming the deciding rule — test it.
 - **No path available** (an enclave relay down) returns a `5xx` outage, not a
   `401`. This is the M11 test that matters most in this phase, because "deny"
@@ -156,8 +213,9 @@ not only under a single hot subject.
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0008-southbound-authorize-and-route-learnings.md`. Summary block
-MUST give the input assembly order, the snapshot mapping (engine field → contract
-field), the cache-hint issuance rules, the decision-record shape and whether its
-write is synchronous, and the measured latency numbers. Phase 0014's simulation
+MUST give the input assembly order (including where `conn.hop_trail` enters it
+and how loops and the hop cap are refused), the snapshot mapping (engine field →
+contract field), the cache-hint issuance rules, the decision-record shape and
+whether its write is synchronous, and the measured latency numbers. Phase 0014's simulation
 and explain features read those records; phase 0016 asserts this end to end
 against a real proxy.
