@@ -28,7 +28,10 @@ and version it.
 **Inputs a rule may match on** (PLAN §5.1): subject id, IdP source, groups,
 claims, authentication method and whether MFA was used; device posture
 attributes (optional, may be absent); time and day; source network/CIDR and
-entry proxy; target hostname, labels, and zone; and live grants.
+the proxy asking (`conn.proxy_id`, which on a chained session is an inner hop
+rather than the user's entry proxy); target hostname, labels, and zone; and live
+grants. `conn.hop_trail` is **not** on this list and must not be added to it:
+PLAN §5.3 says why — it is a routing input that may only ever narrow an answer.
 
 **What a rule emits** (PLAN §5.2) — the snapshot, whose vocabulary is the
 proxy's enforcement surface:

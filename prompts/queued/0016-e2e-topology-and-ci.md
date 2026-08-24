@@ -46,7 +46,12 @@ Each scenario is a product claim, proven across both components:
   replayable record and a decision record that explains the allow.
 - **Multi-hop through the relay zone**: succeeds, with **no inbound rule** into
   the protected zone, and each hop's leg and direction visible in the audit
-  trail.
+  trail. Assert both halves of the chain contract this server owes (PLAN §4):
+  the inner proxy authenticated at `/v1/auth/cert` as a **chain leg** on its own
+  key and was answered with the *user's* identity (0007), and it called
+  `/v1/authorize` for itself carrying a `conn.hop_trail` naming the edge proxy
+  (0008). A scenario that only checks the session succeeded passes on a server
+  that hard-codes the inner route.
 - **Denied**: policy denies; the user sees the deliberately vague message; the
   operator resolves the session id through `explain` to the exact rule (M4).
   This pair — vague to the user, total to the auditor — is the disclosure story

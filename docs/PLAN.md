@@ -170,6 +170,15 @@ management; the proxy's decisions keep their `D` numbers.
   choose `relay` correctly, because only this server knows which downstream
   proxies currently have a live outbound registration — which is exactly why
   direction is a routing decision and not a proxy config flag.
+
+  **Each hop asks for itself, so each path is computed from the asking hop**
+  (proxy D2, and its phase 0008 now sends this). The entry proxy is where the
+  *user* arrived; the proxy asking on the second leg is one step further in, and
+  the path it needs starts where it stands. `conn.proxy_id` says where that is
+  and `conn.hop_trail` says how the session got there — so the same login and
+  target legitimately answer `nexthop` at the edge and `direct` behind it, and
+  answering the edge's route to the inner proxy would build a loop. §4 states
+  the obligation; 0006 computes the path and 0008 serves it.
 - **M7 — Identity is federated and short-lived.** OIDC and SAML are brokered
   here; the proxy never talks to an IdP (proxy D4 makes it identity-shaped
   precisely so that this can be added without touching it). IdP claims and
@@ -400,16 +409,16 @@ calls, and the conformance suite is the definition of "implements":
 
 | Path | What this server must do |
 | --- | --- |
-| `POST /v1/auth/cert` | Resolve an offered key/certificate to an identity with claims, or deny |
+| `POST /v1/auth/cert` | Resolve an offered key/certificate to an identity with claims, or deny — where the key may be a **user's** or one of the **fleet's own proxies'** (a chain leg, below) |
 | `POST /v1/auth/password` | Verify, then own the MFA conversation: return `authenticated` or `mfa_required` + a challenge |
 | `POST /v1/auth/mfa/poll` | Resolve an outstanding challenge; deny on expiry or unknown token |
-| `POST /v1/authorize` | Evaluate policy; return `401` or the whole-connection snapshot + `decision_id` (+ optional cache hint) |
+| `POST /v1/authorize` | Evaluate policy **for the asking hop** (`conn.proxy_id` + `conn.hop_trail`); return `401` or the whole-connection snapshot + `decision_id` (+ optional cache hint) |
 | `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
 | `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
 | `GET /v1/proxies/{id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` |
 
-Three obligations are easy to miss and are graded by the conformance suite:
+Four obligations are easy to miss and are graded by the conformance suite:
 
 - **The priority ack means durable.** The proxy acts on a critical security
   event knowing this server recorded it. Acking before the write lands turns
@@ -433,6 +442,29 @@ Three obligations are easy to miss and are graded by the conformance suite:
   stops hearing them reconnects and, past its staleness threshold, stops serving
   cached decisions entirely. A server that stalls its heartbeat writer degrades
   the whole fleet to uncached — correctly, but for the wrong reason.
+- **A chained hop is a caller, and this server is what makes chaining work.**
+  Proxy phase 0008 (`Hoplock/proxy#6`, merged) turned multi-hop on, and it added
+  no field to the contract: both halves are behaviour this server owes.
+
+  On `/v1/auth/cert`, a key belonging to one of the fleet's own proxies is a
+  **chain leg** (proxy D11, PLAN §6.1) — the hop in front offers its own key,
+  never the user's, alongside the user's `login`. The answer is that **user's**
+  identity, established here. The proxy asserts nothing about who is connecting;
+  it relays a key and a login exactly as it does for a user's own client, so a
+  compromised proxy can offer only its own key and this server decides what that
+  key may reach. **Without this a chained hop cannot authenticate at all.**
+
+  On `/v1/authorize`, `conn.hop_trail` — in the contract since phase 0002 —
+  carries the proxy ids the session has already traversed, oldest first, empty on
+  the user's first hop. Every hop asks for itself with the same identity and the
+  same final target (proxy D2), so the trail plus `conn.proxy_id` is **the only
+  thing that distinguishes the second leg of a chain from a fresh connection**,
+  and therefore the only view of a chain this server has. It may narrow a
+  decision — a loop or the hop cap is a refusal — and it may never widen one:
+  every entry in it can only cause a refusal, which is exactly why it is safe to
+  accept from a caller. The authority on a leg is the previous hop's key, above.
+
+  Phases: 0007 and 0008 respectively; 0016 proves the pair against a real proxy.
 
 ---
 
@@ -444,7 +476,7 @@ Three obligations are easy to miss and are graded by the conformance suite:
 | --- | --- |
 | Subject | subject id, IdP source, groups, claims, authentication method, MFA |
 | Device | posture attributes when an endpoint supplies them (optional) |
-| Context | time of day, day of week, source network/geo, entry proxy |
+| Context | time of day, day of week, source network/geo, the proxy asking (`conn.proxy_id` — the entry proxy on a user's first hop, an inner hop on a chained one) |
 | Target | hostname, labels (`env=prod`, `kind=appliance`, `owner=payments`), zone |
 | Session | requested channel type, in-channel request, forwarding destination, global request, command |
 | Grants | live JIT grants for this subject and scope (M10), including windows confirmed from external context (M16) |
@@ -494,6 +526,14 @@ wildcard — and the compiler says so rather than silently opening the estate).
 
 Every evaluation emits a decision record (M4) naming the matched rule, the
 inputs that made it match, and the obligations emitted.
+
+`conn.hop_trail` is deliberately **not** in the 5.1 table: it is a routing input,
+not a policy-matching axis. It selects where the path starts and it refuses
+loops and over-long chains (§4), and it may only ever narrow an answer — a rule
+that *granted* on the strength of a hop id would turn a field any caller can
+write into authority, which is the one thing the trail must never become. The
+decision record stores it as an input all the same, because "which hop asked,
+and what had it already been through" is unrecoverable afterwards.
 
 ### 5.4 Cache hints are a policy decision, not an optimisation
 
