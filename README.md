@@ -86,9 +86,10 @@ through `contract-sync`. Never the other way around.
 
 **Read [`docs/PROTOCOL.md`](docs/PROTOCOL.md) in full before doing any work.**
 It defines how a session picks up a prompt, branches, what "done" means, and how
-work is handed off to the next session. `docs/KICKOFF.md` has the exact prompt to
-start a session with. If your change touches a surface another Hoplock
-repository consumes, `docs/CROSS-REPO-PROTOCOL.md` covers that too.
+work is handed off to the next session. `docs/KICKOFF.md` has the exact prompts
+to start a session with, including the downstream sync a cross-repo change owes
+this repository. If your change touches a surface another Hoplock repository
+consumes, `docs/CROSS-REPO-PROTOCOL.md` covers that too.
 
 Four rules are worth knowing before you read anything else:
 

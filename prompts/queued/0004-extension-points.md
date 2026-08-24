@@ -100,6 +100,21 @@ interfaces, which is the idiom this codebase should use.
 - A worked example in `ext/README.md` compiles (an example test), showing an
   out-of-tree implementation registering itself.
 
+## Cross-repo impact
+
+`ext/` is a shared surface (`docs/CROSS-REPO-PROTOCOL.md` §1) and this phase
+creates it, so `hoplock/enterprise` is a consumer from the moment this merges.
+State the impact per repository under a `## Cross-repo impact` heading in your
+PR, spelled exactly that way (§4) — and because Enterprise has obligations,
+**end its part of that section with a ready-to-run sync kickoff, already filled
+in**: the "Downstream sync" block in `docs/KICKOFF.md`, verbatim except for its
+blanks (this PR's URL, a `<short-description>` branch suffix, and the
+obligations just stated). Repeat that kickoff in your reply to the user, saying
+it needs a **fresh session with `hoplock/enterprise` checked out** (§4, "Hand
+over a runnable sync kickoff"). You do not do that sync here: this PR merges
+first and the sync runs afterwards, in its own session, downstream (§2). Every
+later phase that adds or changes an `ext` interface owes the same.
+
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0004-extension-points-learnings.md`. Summary block MUST list
