@@ -10,7 +10,9 @@ every session in the same durable artifacts. It mirrors Hoplock Proxy's
 protocol on purpose: the two repositories are worked the same way, so a session
 that has done one already knows how to do the other.
 
-To start a session, see `docs/KICKOFF.md` for the exact kickoff prompt to paste.
+To start a session, see `docs/KICKOFF.md` for the exact kickoff prompts to
+paste — including the downstream sync a merged cross-repo change owes this
+repository, which is not a phase and has no prompt number.
 
 ---
 
@@ -77,7 +79,9 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
   the middle of the chain: it consumes the proxy's contract (M1) and owns `ext/`,
   which Hoplock Enterprise imports (M15). Both directions create work that has no
   prompt number, so nothing in *this* file covers it. That one does: the ordering
-  (upstream merges first), the downstream-impact check your PR owes, and the
+  (upstream merges first), the downstream-impact check your PR owes — including
+  the ready-to-run sync kickoff it must hand the user for Hoplock Enterprise
+  (§4), taken from `docs/KICKOFF.md`'s "Downstream sync" block — and the
   conventions for a sync PR. It lists the shared surfaces in its Section 1; if
   your change touches none of them, you do not need to read it.
 - **Never edit `contract/` (M1).** That directory is vendored from the proxy

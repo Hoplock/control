@@ -164,6 +164,16 @@ Per `CROSS-REPO-PROTOCOL.md` §4, state per repository. Expect at least:
 Qualys and BMC Helix integrations are written against this interface — so its
 prompt for them must not be opened before this merges (§2).
 
+Naming that obligation is not enough on its own. Because `hoplock/enterprise`
+has obligations here, this PR's impact section MUST **end with a ready-to-run
+sync kickoff for it, already filled in** — the "Downstream sync" block in
+`docs/KICKOFF.md`, verbatim except for its blanks: this PR's URL, a
+`<short-description>` branch suffix, and the obligations just stated. Repeat
+that kickoff in your reply to the user, saying it needs a **fresh session with
+`hoplock/enterprise` checked out** (`CROSS-REPO-PROTOCOL.md` §4, "Hand over a
+runnable sync kickoff"). The kickoff does not make the sync yours to do: this PR
+merges first and the sync runs afterwards, in its own session, downstream (§2).
+
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0013-external-access-context-learnings.md`. The summary block
