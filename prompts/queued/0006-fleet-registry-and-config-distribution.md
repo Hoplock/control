@@ -92,13 +92,28 @@ first during an incident.
 ### Declared capabilities (M17)
 
 Enrollment and heartbeat carry more than reachability. A route may name a
-credential method, a device platform, an expiry posture, or an enforcement rung
-(proxy D13, D14, and the enforcement-point contract revision), and a proxy can
-serve those only if it has the driver and the local material. So a proxy
-declares what it can provide, this registry stores it, and 0008 treats it as a
-**constraint on what a decision may say** — not as advice.
+credential method, a device platform, an expiry posture, an enforcement rung, or
+— since contract v3.1 — one or more **additional device fields**
+(`device_field.<name>`, proxy D13, D14, phase 0016, and the enforcement-point
+contract revision), and a proxy can serve those only if it has the driver and the
+local material. So a proxy declares what it can provide, this registry stores it,
+and 0008 treats it as a **constraint on what a decision may say** — not as advice.
 
-Two consequences worth building for rather than discovering:
+Device fields make the declared set two levels deep and it must be stored that
+way: a driver declares the field **names** it accepts, per platform, and the set
+is open — the contract enumerates no names, so this registry must store whatever
+a proxy declares rather than validating against a list of its own. `vdom` on
+`fortigate` is the one documented today; it is an example, not the schema.
+
+The consequence of a mismatch is specific, and worth building for: a rung naming
+a field the enforcing proxy's driver does not declare is a **skipped rung** on
+the proxy, not a dropped field (proxy D14 — an unknown parameter may be a
+constraint, so a proxy that cannot honour one must not connect). It is therefore
+invisible in the response: the ladder just gets shorter, and on a one-rung ladder
+the session is denied. Nothing downstream can reconstruct why, which is what
+makes storing the declared names here load-bearing rather than informational.
+
+Two further consequences worth building for rather than discovering:
 
 - **Capabilities are versioned and can go stale.** A proxy that has been
   upgraded advertises more; one that has been downgraded advertises less. A
@@ -109,7 +124,10 @@ Two consequences worth building for rather than discovering:
 - **An operator must see the mismatch before publishing, not after.** The
   north-bound API (0014) needs to answer "which proxies can actually satisfy
   this policy", which is a query over this data. Build the query here; 0014
-  exposes it.
+  exposes it. Device fields belong in that answer for the reason above — a
+  policy naming `device_field.vdom` where the enforcing proxy's FortiGate driver
+  does not declare `vdom` is a ladder that quietly loses a rung in production and
+  says nothing at publish time unless this query says it.
 
 ## Out of scope
 - Serving `/v1/authorize` (0008 calls into this package).

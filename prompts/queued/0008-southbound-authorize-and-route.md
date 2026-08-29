@@ -103,6 +103,27 @@ That cuts both ways and both halves need building:
 Hoplock Proxy's `cmd/mock-control` implements this and is the reference: read
 its authorize handler if the intended behaviour is unclear.
 
+**Contract v3.1 does not fit this mechanism, and forcing it in is the bug.** It
+adds the `device_field.<name>` namespace and keeps `policy_version` at `3`, on
+the grounds that the number names the vocabulary a proxy can *read* and reading
+a route did not change — an older proxy parses a v3.1 response exactly as it
+always did. So there is no version to gate a device field on. Version-aware
+assembly must leave the namespace alone: do not invent a `3.1` to compare
+against, and do not withhold a field from a proxy declaring `3`.
+
+What replaces the version check is the **capability** check (M17, 0006). A driver
+declares the field names it accepts, and a rung naming one it does not declare is
+a **skipped rung** on the proxy, not a dropped field — which is exactly why the
+addition is safe, and also why it is not free: the ladder gets shorter with no
+error anywhere, and a one-rung ladder becomes a denial the operator never
+authored. Emitting a device field the enforcing proxy cannot honour is therefore
+the same class of mistake as naming a platform it has no driver for, and takes
+the same answer: it is a decision that cannot be served, so catch it on the issue
+path against the declared capabilities rather than shipping a rung that will be
+skipped. Note the asymmetry against the rule above — an unreadable *field* is an
+outage (`5xx`), an unhonourable *rung* is a shorter ladder — and keep the two
+paths distinct in the code, because they are answered from different data.
+
 ### Cache hints (PLAN §5.4)
 - Authored per rule, never global, never invented.
 - The key selects the sharing scope and **must never be shared across
@@ -145,6 +166,16 @@ exist when this prompt was first written, and each has a rule attached:
   D13), constrained by the target's own attributes and by the proxy's declared
   capabilities (M17, 0006). Naming a platform the enforcing proxy has no driver
   for is a decision that cannot be served.
+- **Additional device fields** on those same routes — the open
+  `device_field.<name>` namespace of contract v3.1 (proxy phase 0016), carried
+  through from the engine's snapshot as data this server does not interpret.
+  `device_field.vdom` on a FortiGate scopes the provisioned administrator to one
+  virtual domain; **absent, the administrator is global**, which is the strongest
+  account the device has and is therefore never something to emit by accident or
+  to drop on the way through. Emit the shape the contract states — name of
+  lowercase letters, digits, hyphens and underscores and ≤64 characters, value
+  non-empty and ≤256 characters, ≤16 per entry — and emit no name of your own
+  invention: a field this server made up is one no driver declares.
 - **A per-route algorithm profile** where the target speaks something the
   proxy's SSH stack does not enable by default. This deliberately weakens a leg,
   so it is a policy choice with an audit consequence, never a default.
