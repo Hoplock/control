@@ -71,6 +71,17 @@ queryable in its own right rather than buried in a session blob:
   says who the account belonged to. It arrives on the priority path, and losing
   it loses the ability to answer who did something on a router. Treat it as a
   first-class record with its own index, not as session metadata.
+
+  Since contract v3.1 this record also carries the **device fields** the account
+  was provisioned with (`device_field.<name>`, proxy phase 0016) — store them,
+  index them, and keep them opaque. On a device that is one unit partitioned into
+  many, the target string alone does not say which partition the administrator
+  was created in: `device_field.vdom` is the difference between an account
+  confined to one virtual domain and a **global** administrator on the same host,
+  and both records name the same host. Store the fields as an open map rather
+  than a column per name — the contract enumerates none of them and customer
+  drivers add their own (proxy D13) — and never treat one as credential material.
+
 - **The device configuration-change event** (proxy §5.3). Every provisioning
   and teardown is a configuration change on the device, and a customer's drift
   detection will see it. Making these queryable and exportable is what lets a

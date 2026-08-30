@@ -153,7 +153,8 @@ management; the proxy's decisions keep their `D` numbers.
   checking of that estate runs over SSH on a one-minute interval, the decision
   path sees ~5,800 authorize calls per second **sustained**, plus the
   authenticate call the proxy may never cache (proxy §6.4). That figure is
-  arithmetic rather than measurement — proxy phase 0017 exists to replace it,
+  arithmetic rather than measurement — the proxy's scale-harness phase
+  (0020, "replace the arithmetic with measurement") exists to replace it,
   and the SSH-versus-SNMP assumption underneath it may well collapse it by two
   orders of magnitude — but it is the right order of magnitude to design the
   decision path against, and it is the reason M5 is a decision rather than an
@@ -326,9 +327,10 @@ management; the proxy's decisions keep their `D` numbers.
   M6, new).** M6 has proxies declare their zone, reachability, and connection
   directions, because only this server can compute a path. The same argument
   now applies one level down: a route may name a **credential method**, a
-  **device platform**, an **expiry posture**, and an **enforcement rung** (proxy
-  D13, D14, and the enforcement-point revision), and a proxy can satisfy those
-  only if it has the driver, the local material, and a target that supports
+  **device platform**, an **expiry posture**, an **enforcement rung**, and — since
+  contract v3.1 — a set of **additional device fields** (proxy D13, D14, the
+  enforcement-point revision, and proxy phase 0016), and a proxy can satisfy
+  those only if it has the driver, the local material, and a target that supports
   them.
 
   A decision naming something the enforcing proxy cannot provide is not a
@@ -338,6 +340,18 @@ management; the proxy's decisions keep their `D` numbers.
   them as a constraint on what it may answer, and the north-bound API shows an
   operator why a policy cannot be satisfied on a given proxy **before** they
   publish it rather than after a user complains.
+
+  Device fields sharpen that point rather than adding a new kind of problem. Each
+  driver **declares the field names it accepts**, so what is carried is
+  per-platform field names as well as methods — and the set is open, because the
+  contract enumerates no names (proxy D13 makes customer-written drivers
+  first-class). A rung naming a field its driver does not declare is a **skipped
+  rung** on the proxy, not a dropped field: an unknown parameter may be a
+  constraint, and a proxy that cannot honour one must not connect (proxy D14).
+  That is what makes the addition safe, and it is also why the mismatch is worth
+  catching here — a skipped rung is invisible in the response, so the ladder just
+  gets shorter, and on a one-rung ladder the session is denied and no one
+  authored the denial.
 
   This also makes proxy D14's ladder authorable with intent: knowing which
   methods a proxy actually has is what separates "prefer the strong method, fall
@@ -438,6 +452,19 @@ Four obligations are easy to miss and are graded by the conformance suite:
   cannot express within the declared version says so (`5xx`, M11) instead of
   sending fields that will be refused — the proxy's mock does exactly this and
   is the reference behaviour.
+
+  **Contract v3.1 is the case `policy_version` alone does not cover.** It adds
+  the `device_field.<name>` namespace (§5.2) and deliberately leaves
+  `policy_version` at `3`: the number names the vocabulary a proxy can *read*,
+  and nothing about reading a response changed — an older proxy parses a v3.1
+  route exactly as it always did. So version-aware assembly cannot gate a device
+  field, because there is no version to gate it on, and it must not try. What
+  makes the addition safe is the layer below: the proxy skips a rung whose fields
+  its driver does not declare, so a field an enforcing proxy cannot honour costs
+  the rung rather than widening the session. Which proxy can honour which field
+  is a **capability** question (M17), answered from the fleet registry, not from
+  `policy_version` — and on a one-rung ladder the cost of getting it wrong is a
+  denial, so the check belongs on the issue path.
 - **Heartbeats are liveness, and their absence is a signal.** A proxy that
   stops hearing them reconnects and, past its staleness threshold, stops serving
   cached decisions entirely. A server that stalls its heartbeat writer degrades
@@ -501,6 +528,22 @@ the connection's lifetime (proxy D2):
 - **device platform and expiry posture** on `ephemeral-account` routes (proxy
   D13), and a **per-route algorithm profile** where the target speaks something
   `x/crypto` does not enable by default;
+- **additional device fields** on those same routes — the open
+  `device_field.<name>` namespace contract v3.1 adds beside the five
+  `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
+  target: a FortiGate running virtual domains is one unit partitioned into many,
+  and `device_field.vdom` names the virtual domain a VDOM-scoped administrator is
+  created in — absent, the administrator is **global**. The endpoint cannot carry
+  this, because `host`/`port` is what DNS resolves, what the host key is pinned
+  to, and what the audit record names.
+
+  The contract does not enumerate the fields and never will (proxy D13 makes
+  customer-written drivers first-class), so the set is as open as the set of
+  platforms and this snapshot carries it as **data, opaque to the contract**.
+  What is checked is the **shape**: `<name>` is lowercase letters, digits,
+  hyphens and underscores, at most 64 characters; the value is non-empty and at
+  most 256 characters; at most 16 fields ride on one ladder entry. They are
+  policy metadata, never credential material, and they are audit facts (§7);
 - **enforcement rung** per axis, where the route stands somewhere other than
   proxy-side enforcement;
 - **session deadline** — an absolute instant the proxy enforces locally, so it
@@ -584,6 +627,14 @@ connection is re-decided. Two invariants this server must never violate:
   type. "Show me every blocked command on `env=prod` last week, and who
   approved the access that made it possible" is one query joining audit to
   grants, and it is the demo that sells the product.
+- **Device fields are audit facts.** The ephemeral-account mapping record carries
+  the `device_field.<name>` values the session was provisioned with (§5.2,
+  contract v3.1), because on a device that is one unit partitioned into many the
+  target string alone does not say which partition the administrator was created
+  in: `device_field.vdom` is the difference between an account scoped to one
+  virtual domain and a **global** administrator on the same host. Storing them as
+  opaque data is right; dropping them because the contract does not enumerate
+  them is not.
 - **Export** — Splunk / Sentinel / Elastic sinks behind one interface, with
   backpressure and retry. Downstream consumer only (M8).
 - **Redaction** — the initial-auth password never reaches this server and must

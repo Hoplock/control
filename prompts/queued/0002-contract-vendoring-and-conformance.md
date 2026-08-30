@@ -14,6 +14,13 @@
   field in a response is a pass or a failure. Read individual schemas as you
   need them. Do not read the proxy's Go code.
 
+  Read **"The v3→v3.1 revision"** too, and the **"Additional device fields
+  (`device_field.<name>`)"** subsection under "Ephemeral accounts on devices".
+  That revision is the one that breaks a naive reading of the version rules: it
+  adds vocabulary and leaves `policy_version` at `3`, so the document's version
+  and the negotiated version are two different numbers, and nothing here may
+  assume they move together.
+
 ## Objective
 Bring the contract into this repo as a **vendored, verifiable artifact**, and
 build the **black-box conformance suite** that decides whether an implementation
@@ -68,6 +75,15 @@ It must cover, at minimum:
   and neither is a `401`. This is the assertion that stops a server from
   breaking every older proxy in a fleet mid-upgrade, and no other assertion here
   catches it: a response tested only at the current version looks perfect.
+- **Additional device fields** (`device_field.<name>`, contract v3.1): an
+  `ephemeral-account` rung carrying device fields round-trips with the names and
+  values intact and **unenumerated** — the suite asserts the shape the contract
+  states (name lowercase letters, digits, hyphens and underscores and ≤64
+  characters; value non-empty and ≤256 characters; ≤16 fields per entry) and
+  asserts nothing about which names are meaningful, because the contract does not
+  say and a suite that hard-codes `vdom` will fail the first customer driver.
+  Assert too that `policy_version` is still `3` on such a response: a suite that
+  expects a bump here is asserting a rule the contract does not have.
 - **Host keys**: first sighting and a known key.
 - **Logs**: batch ingest returns `202` and counts accepted records; **the same
   batch replayed does not double-count** (idempotency on `record_id` — a proxy
@@ -99,12 +115,23 @@ change in the *other* repo), and a suite bug is yours to fix.
 ### A note on contract versions
 
 The vendored contract is a moving target and this phase builds the machinery,
-not a snapshot. Upstream has queued two further revisions beyond v2 — device
-provisioning and the credential ladder, then enforcement points and session
-bounds — so the drift check and the conformance suite must treat a version bump
-as routine. If `make contract-sync` is painful to run twice in a week, it is
-wrong. Nothing here waits for those revisions; they are named so the design is
-not accidentally shaped around v2 being the last one.
+not a snapshot. Device provisioning and the credential ladder have landed
+upstream (v3), the `device_field.` namespace after them (v3.1, upstream
+`Hoplock/proxy#21`, merged), and enforcement points and session bounds are
+queued behind those (v4) — so the drift check and the conformance suite must
+treat a version bump as routine. If `make contract-sync` is painful to run twice
+in a week, it is wrong. Nothing here waits for the next revision; they are named
+so the design is not accidentally shaped around whichever one you happen to
+vendor.
+
+Two of those numbers are not the same number, and v3.1 is what proves it. The
+**document** version (`info.version`, `3.1.0` as vendored) and the **negotiated
+policy vocabulary** (`policy_version`, `3`) move independently: v3.1 added
+vocabulary and left `policy_version` alone, because that field numbers what a
+proxy can *read* and reading did not change. So do not derive one from the
+other, do not assert a relationship between them, and do not let the drift check
+key off `policy_version` — the checksum in `contract/UPSTREAM` is what catches a
+changed document.
 
 ## Out of scope
 - Implementing any endpoint here (0007 onwards). The suite is written before the

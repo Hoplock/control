@@ -42,7 +42,14 @@ proxy's enforcement surface:
 - permitted **global requests**;
 - **filter policy**: an ordered rule list **or** a restricted-exec allow-list,
   never both (proxy D12);
-- **target credential method** + parameters (proxy D6a);
+- **target credential method** + parameters (proxy D6a), and on an
+  `ephemeral-account` method the open `device_field.<name>` namespace contract
+  v3.1 adds beside the five named parameters (PLAN §5.2). Model it as what it is:
+  an **open map of string to string**, opaque to this engine. Do not enumerate
+  the names in the closed vocabulary and do not give `vdom` a field of its own —
+  the contract refuses to enumerate them because customer-written drivers are
+  first-class (proxy D13), and a closed list here would make an estate's own
+  driver unauthorable without a release of this server;
 - **cache hint** (§5.4) — authored per rule, not global;
 - **obligations**: record, require approval, require step-up.
 
@@ -57,7 +64,23 @@ errors instead of production surprises. It MUST reject:
   mistake, not a wildcard — the compiler says so rather than quietly opening the
   estate;
 - a filter policy setting both a rule list and restricted exec;
-- a cache hint with no key, or a key that could be shared across identities.
+- a cache hint with no key, or a key that could be shared across identities;
+- a `device_field.<name>` that is the wrong **shape** — a name outside lowercase
+  letters, digits, hyphens and underscores or longer than 64 characters, an empty
+  value or one longer than 256 characters, or more than 16 fields on one ladder
+  entry. The contract validates exactly this and nothing more, and so does the
+  compiler: shape is checkable here, meaning is the driver's. Reject the shape at
+  authoring time rather than letting a route that can never be served reach a
+  proxy — and do not reject an unrecognised *name*, which is a capability
+  question the compiler cannot answer (M17, 0006) and, on the proxy, a skipped
+  rung rather than an error;
+- a device field on a rung whose method is not `ephemeral-account`. The namespace
+  is scoped to that method; anywhere else it is a typo that would be silently
+  carried.
+
+Device fields are **policy metadata, never credential material** — nothing here
+may treat one as a secret to broker, and nothing may read one back out as an
+authorisation input.
 
 Every rejection names the rule, the line, and what to do instead. This error
 text is a product surface: it is what a policy author sees.
