@@ -711,6 +711,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4) |
 | 0015 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory |
 | 0016 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
+| 0017 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other, no thinning path |
 
 > **Renumbering note (privileged-access revision).** Phase 0013 is new: external
 > access context (M16) has to exist before the north-bound API is built, because
@@ -734,6 +735,15 @@ decision records to have been produced by something.
 
 Prompts may add or re-order later phases; any prompt that introduces new queued
 prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
+
+> **On 0017 running last.** It is an audit, and an audit wants everything that
+> could hold a version number to exist first. The position is not an invitation
+> to build multi-version machinery in the meantime: this product ships its proxy
+> and its server together and has no installed base, so every phase before it
+> should already carry one version in one place, and 0017 should find little.
+> What it does own is the decision that a mismatch is a **loud refusal** rather
+> than a thinned answer, and the documents that still describe a mid-upgrade
+> fleet (§4 above among them).
 
 ---
 
