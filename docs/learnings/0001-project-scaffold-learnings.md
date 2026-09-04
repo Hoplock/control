@@ -21,15 +21,19 @@
 - **Makefile targets:** `build test vet lint fmt license-check tidy clean run
   check help`, plus `contract-check contract-sync conform`, which exit 1 with
   "implemented in phase 0002".
-- **Linters:** `errcheck govet ineffassign staticcheck unused`; formatters
-  `gofmt` + `goimports` with `github.com/hoplock/control` as the local prefix.
+- **Linters:** `errcheck govet ineffassign staticcheck unused` **+ `exhaustive`**
+  (not in the proxy's set — see below); formatters `gofmt` + `goimports` with
+  `github.com/hoplock/control` as the local prefix.
   golangci-lint is pinned to **v2.13.2** in CI, and the pin is coupled to the Go
   floor — see the gotcha below.
 - **Database tables/migrations added:** none. `migrations/` exists with a README;
   phase 0003 puts the first SQL in it.
 - **Decisions made/affected:** M2 (two listener fields from day one), M11, M12
-  (`tenant` present but unexposed), M13, M14 (Apache-2.0 chosen and applied),
-  M15 (`ext/` created as the only public package).
+  (`tenant` present but unexposed), M14 (Apache-2.0 chosen and applied), M15
+  (`ext/` created as the only public package). **M13 was amended in this PR** —
+  it now records why Go is forced (M15 + M1) and what that costs
+  `internal/policy`, and it makes the `exhaustive` linter, the closed `Kind`
+  enums and the purity of `internal/policy` requirements rather than taste.
 - **Gotchas:** (1) golangci-lint type-checks with the `go/types` of the Go it was
   *built* with, so a linter older than the toolchain it lints fails every file
   with "could not import errors". Bump the `version:` in the lint job in the same
@@ -37,6 +41,10 @@
   here — 0002 vendors it and `contract-check` compares it against upstream, so a
   placeholder file in it would be drift. The licence checker and `make fmt` both
   exclude it already.
+- **What 0005 must know:** M13 and the prompt now require every closed axis to
+  be a named `Kind` enum, not an open interface or a bare string — the
+  `exhaustive` linter only sees named enums, and it is the only guard Go gives
+  M3's closed vocabulary.
 - **What the NEXT session must know:** add your phase's config under a new
   top-level key, document it in `config.example.yaml`, and extend the loader's
   tests — strict decoding means an undocumented key is a startup error. Replace
@@ -145,6 +153,36 @@ of calling `os.Exit`, which is what makes the startup path testable without a
 process. Keep that shape when you add listeners: `run` should take a context and
 return, and `main` stays four lines.
 
+### The `exhaustive` linter, and why this repo's set differs from the proxy's
+
+The linter set is the proxy's, plus `exhaustive`. That addition is deliberate
+and it is the one place the two repositories should not match.
+
+M3 promises a closed policy vocabulary: an unreachable or contradictory rule is
+a compile error, and simulation is total. Those are sum-type promises, and Go
+has neither sum types nor exhaustive matching — add an obligation kind and no
+build anywhere tells you which type switch you forgot. `exhaustive` is the
+closest thing available to the missing check, and it is configured strictly:
+
+    default-signifies-exhaustive: false
+    check: [switch, map]
+
+`default` therefore does **not** excuse an unhandled member, because defaulting
+is exactly how a new case silently inherits the old behaviour — which, in this
+product, is a policy output nobody authored. Genuinely open-ended switches take
+`//exhaustive:ignore` with a reason on the line above.
+
+**It was verified to actually fire, not merely to be listed.** A throwaway type
+with three members and a two-case switch (plus a `default`) was compiled and
+linted; `exhaustive` rejected it —
+`missing cases in switch of type policy.probeKind: policy.probeStepUp` — and the
+file was then deleted. A linter that is enabled but silent is worse than none,
+and this one is load-bearing for M3, so 0005's acceptance criteria now require
+the same demonstration against its real enums.
+
+Today the linter finds nothing: there are no enums yet. `LogConfig.SlogLevel`
+switches on a bare `string`, which `exhaustive` does not and should not check.
+
 ### Licence headers
 
 `docs/LICENSE-HEADER.md` is the specification; `scripts/license-check.sh` is the
@@ -162,3 +200,23 @@ if it finds no files at all — a checker that passes vacuously is worse than no
   large enough for it to catch something.
 - No Dockerfile. `deploy/` (phase 0016) needs one; it is that phase's to shape,
   since the topology decides what the image must contain.
+
+### Changes made outside 0001's stated scope
+
+Two, both from a language-choice review the user asked for after the scaffold
+was green, and both recorded here because a future session will otherwise read
+them as unexplained drift:
+
+- **`docs/PLAN.md` M13** gained two paragraphs (why Go is forced by M15 and M1,
+  and what it costs `internal/policy`) and §3's `internal/policy` bullet gained a
+  clause about closed `Kind` enums. PROTOCOL §3 requires a plan change to land in
+  the same PR as the change it describes, which is the `exhaustive` addition.
+- **`prompts/queued/0005-policy-model-and-engine.md`** gained a "How the
+  vocabulary is represented" section, one acceptance criterion, and a line in its
+  hand-off. Editing a *queued* prompt is allowed (only `implemented/` names are
+  frozen, PROTOCOL §6) and it is where the requirement will actually be read.
+  Its number, filename and objective are unchanged, so the numbering invariants
+  hold.
+
+No new prompt was created: the requirement constrains work 0005 already does
+rather than adding a phase.

@@ -13,6 +13,28 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    # Not in the proxy's set, and here for a reason specific to this side of
+    # the product. M3 promises that the policy vocabulary is *closed* — that a
+    # contradictory or unreachable rule is a compile error and that simulation
+    # is total. Go has no sum types and no exhaustive matching, so nothing in
+    # the language holds that promise: add an obligation kind or an output axis
+    # and the compiler will not tell you which type switch you forgot. This is
+    # the closest thing available to the check the language is missing, and it
+    # is the difference between the guarantee resting on tests and resting on
+    # the build. See PLAN M13.
+    - exhaustive
+  settings:
+    exhaustive:
+      # A `default` clause does NOT excuse an unlisted enum member. Defaulting
+      # is exactly how a newly added case silently acquires the old behaviour,
+      # which on this codebase means a policy output nobody authored. Where a
+      # switch is genuinely open-ended, say so at the switch with
+      # `//exhaustive:ignore` and a reason, rather than weakening this globally.
+      default-signifies-exhaustive: false
+      # Lookup tables keyed by an enum are the same promise written as a map.
+      check:
+        - switch
+        - map
   exclusions:
     generated: lax
     paths:

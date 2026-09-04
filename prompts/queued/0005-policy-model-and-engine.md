@@ -3,7 +3,8 @@
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
 - `docs/PLAN.md` — especially **§2 (M3, M4, M5)** and **§5 (inputs, outputs,
-  evaluation, cache hints)**.
+  evaluation, cache hints)**. Read **M13's second and third paragraphs** too:
+  they say why this package is represented the way the next section requires.
 - `docs/learnings/` — read summaries; open `0002` (the contract's output shapes
   — the snapshot this engine produces must be expressible in them) and `0003`
   (the bundle table).
@@ -69,6 +70,34 @@ proxy's enforcement surface:
   decision here or downstream;
 - **cache hint** (§5.4) — authored per rule, not global;
 - **obligations**: record, require approval, require step-up.
+
+### How the vocabulary is represented (read before writing any of it)
+
+M3's closed vocabulary is a promise the Go type system cannot hold on its own,
+and PLAN M13 says so plainly: no sum types, no exhaustive matching, so adding an
+obligation kind or an output axis will not fail any build that forgot to handle
+it. This package is where that gap does the most damage, so the representation
+is a requirement, not a preference:
+
+- **Every variant axis is a named `Kind` enum** — a defined type over `int` or
+  `string` with its members declared as constants in one block, next to the type.
+  Channel type, request type, credential method, obligation kind, enforcement
+  rung, decision outcome, filter mode: each gets one. **Not** an open interface,
+  and **not** a bare `string` passed around, wherever the set is closed. The
+  `exhaustive` linter is enabled in `.golangci.yml` precisely so that a switch or
+  a lookup map over one of these fails the build when a member is unhandled, and
+  it only sees named enums — an open interface is invisible to it.
+- **`default` does not excuse a missing case.** The linter is configured that
+  way deliberately (defaulting is how a new case silently inherits old
+  behaviour, which here means a policy output nobody authored). Where a switch
+  is genuinely open-ended, mark it `//exhaustive:ignore` **with a reason on the
+  line above**; a bare ignore is a review comment.
+- **Prove the guard works.** Add a test or a documented check that a switch
+  missing a member is actually rejected — a linter that is enabled but silent is
+  worse than none, and this one is load-bearing for M3.
+- **Keep the package pure** (no HTTP, no database, no `time.Now()`), so that
+  M3's "the compiler is a boundary" stays a real escape hatch: if the evaluator
+  ever has to stop being Go, that boundary is where it is replaced.
 
 ### The compiler (`internal/policy/compile`)
 Bundle → decision program. Compilation is where authoring mistakes become
@@ -159,6 +188,9 @@ text is a product surface: it is what a policy author sees.
   explanation is a product bug, not a logging bug.
 - Determinism: the same inputs produce byte-identical snapshots and
   explanations. Property-test this if practical.
+- Every closed axis is a named `Kind` enum, `golangci-lint run` passes with
+  `exhaustive` enabled, and a switch with an unhandled member is demonstrably
+  rejected. Any `//exhaustive:ignore` carries a reason.
 - A benchmark shows evaluation within the stated budget for a realistically
   large bundle (state the size you chose and why).
 
@@ -166,6 +198,6 @@ text is a product surface: it is what a policy author sees.
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0005-policy-model-and-engine-learnings.md`. Summary block MUST
 give the bundle's top-level schema, every input and output field name, the
-compiler's rejection list, the evaluator's signature, the explanation type, and
-the measured evaluation budget. Phases 0008, 0014 and 0012 all build directly on
+`Kind` enums and their members, the compiler's rejection list, the evaluator's
+signature, the explanation type, and the measured evaluation budget. Phases 0008, 0014 and 0012 all build directly on
 this and will read nothing else about it.
