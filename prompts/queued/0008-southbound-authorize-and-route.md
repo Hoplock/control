@@ -7,7 +7,10 @@
   output vocabulary), `0006` (`Path` and the no-path outcome), `0007` (the
   listener and the `Deny`-vs-`error` mechanism), `0003` (decision table).
 - `contract/control.yaml` — `/v1/authorize` and every schema it references,
-  including `ConnMeta.hop_trail`.
+  including `ConnMeta.hop_trail`, `EnforcementPolicy`, `Attestation`,
+  `GrantContext` and `ConcurrencyLimits`. In the **Hoplock Proxy repository**,
+  `api/README.md` "Policy vocabulary v4" is the same material as prose, including
+  the table of which rung is applied and which attested.
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` §6.1 ("Hop trail, loops,
   and the cap") — what the proxy does with the trail on its side, and why every
   entry in it can only cause a refusal.
@@ -103,13 +106,20 @@ That cuts both ways and both halves need building:
 Hoplock Proxy's `cmd/mock-control` implements this and is the reference: read
 its authorize handler if the intended behaviour is unclear.
 
+The current vocabulary is **`4`** (`Hoplock/proxy#25`, merged): the two
+enforcement axes and the four session bounds, below. Every v4 field is additive
+with an absent-value default that is exactly what a v3 server produced, so this
+mechanism is unchanged in kind — there is simply more to get right inside it.
+
 **Contract v3.1 does not fit this mechanism, and forcing it in is the bug.** It
 adds the `device_field.<name>` namespace and keeps `policy_version` at `3`, on
 the grounds that the number names the vocabulary a proxy can *read* and reading
 a route did not change — an older proxy parses a v3.1 response exactly as it
 always did. So there is no version to gate a device field on. Version-aware
 assembly must leave the namespace alone: do not invent a `3.1` to compare
-against, and do not withhold a field from a proxy declaring `3`.
+against, and do not withhold a field from a proxy declaring `3`. That v4 *did*
+move the number changes nothing here: the document version and the negotiated
+vocabulary are two independent numbers, and neither is derived from the other.
 
 What replaces the version check is the **capability** check (M17, 0006). A driver
 declares the field names it accepts, and a rung naming one it does not declare is
@@ -152,7 +162,7 @@ it is the path that matters most and the easiest one to forget.
   in your learnings.
 - A benchmark, and a documented p99 target under a realistic bundle and fleet.
 
-### Snapshot fields added by the privileged-access revision
+### Snapshot fields added by the privileged-access revision and contract v4
 
 `docs/PLAN.md` §5.2 lists the full snapshot; these are the ones that did not
 exist when this prompt was first written, and each has a rule attached:
@@ -179,18 +189,86 @@ exist when this prompt was first written, and each has a rule attached:
 - **A per-route algorithm profile** where the target speaks something the
   proxy's SSH stack does not enable by default. This deliberately weakens a leg,
   so it is a policy choice with an audit consequence, never a default.
-- **A session deadline**, as an absolute instant. Prefer the instant over a
-  duration: a duration re-anchors at each hop of a chained route and silently
-  multiplies the window.
-- **Concurrency caps** per subject and/or target. This server cannot count live
-  sessions — only the proxy can — so it states the ceiling and the proxy
-  enforces it.
-- **Grant context**: the system, the reference, and the window that justified
-  this access, copied from the grant that supplied it (M10, M16). The proxy
-  carries it opaquely into its records; this is what makes an audit trail able
-  to answer "why was this allowed" without a human joining two systems by hand.
-- **Required session recording** as an obligation the proxy refuses to serve
-  without, on unbounded-privilege routes (proxy D16).
+- **A session deadline** (`session_deadline`), as an **absolute instant** —
+  RFC 3339, not a duration. A duration re-anchors at each hop of a chained route
+  and silently multiplies the window. The proxy enforces it locally, so it holds
+  when the revocation stream is down, which is exactly when an immortal root
+  session is least acceptable. Nothing else expresses it: a cache TTL bounds
+  decision *reuse* and `ephemeral-user`'s lifetime bounds the *credential*, while
+  an already-open session outlives both.
+- **Concurrency caps** (`concurrency`) per subject and/or target
+  (`max_sessions_per_subject`, `max_sessions_per_target`). This server cannot
+  count live sessions — only the proxy holds the session registry — so it states
+  the ceiling and the proxy enforces it. Absent or `0` is uncapped, and exceeding
+  a cap is a **policy denial**, never an outage: the estate is healthy and the
+  answer is "no".
+- **Grant context** (`grant_context`): the system, the reference, and the window
+  that justified this access, copied from the grant that supplied it (M10, M16),
+  plus `additional_context` — which admits a JSON **string or a JSON object**,
+  and nothing else. A number, a list or a boolean there is a contract violation,
+  so emit one of the two shapes rather than coercing. The proxy carries all of it
+  opaquely into its records and never parses it; this is what makes an audit trail
+  able to answer "why was this allowed" without a human joining two systems by
+  hand. `window_start`/`window_end` are **recorded, not enforced** — they look
+  like a deadline and are not one, and the bound that is enforced is
+  `session_deadline`, which this server sets having already weighed the window.
+- **Required session capture** (`require_session_capture`) as an obligation the
+  proxy refuses to serve without, on unbounded-privilege routes (proxy D16). The
+  proxy checks it **before the target leg is dialled**, and buffering to local
+  disk counts as recording, so the refusal is outage-class and fires only when the
+  proxy has no recording path at all.
+
+### The enforcement rung (`enforcement`, contract v4)
+
+New with `Hoplock/proxy#25` (merged) and the largest addition this phase has to
+assemble. It says **where** a policy claim is enforced, on **two axes** — what
+the session may execute, and what it may reach — which are separate questions
+with separate mechanisms, so a route may stand on a different rung of each. The
+vocabulary and its per-rung guarantees are in `contract/control.yaml`
+(`EnforcementPolicy`) and PLAN §5.2; do not restate them from memory.
+
+Five things to build, not to note:
+
+- **Absent means proxy-side enforcement only** on both axes — `proxy-inspected`
+  and `proxy-channel-policy`, exactly what a v3 server produced. Emit the object
+  only where the route genuinely stands somewhere else. An emitted default is
+  noise in a record whose entire purpose is to say which rung was in force.
+- **An applied rung must never be chosen for a brokered-key route.** An *applied*
+  rung is one the proxy configures per session and tears down, which needs it to
+  administer the account — only `ephemeral-user` and `ephemeral-account` do that.
+  So a response naming an applied rung where **no** entry in the route's
+  `target_auth_ladder` provisions the target is a contract violation the proxy
+  refuses outright, and refusing it here is the point: a policy that can only fail
+  at connect time fails in front of a user. An **attested** rung
+  (`platform-attested`, either axis) on that same route is fine and is the whole
+  reason the kind exists — it is how the appliance estate carries a real
+  enforcement claim instead of "none available". An attested rung requires
+  `attestation.asserted_by` and `attestation.reference`, both non-empty: the
+  system verifies none of it, so what the contract asks for instead is
+  attributability, and "trust us" and an empty string are the same answer.
+- **The rung is a property of the route, not of a ladder entry.** An entry that
+  cannot carry it is a *skipped rung* on the proxy (D14) and the proxy walks on;
+  it never runs the session without the rung its record would claim. Do not emit
+  a per-entry rung and do not synthesise a weaker one as a fallback — a silent
+  downgrade is the failure this vocabulary exists to prevent.
+- **The claim must agree with the rest of the snapshot**, and the proxy refuses a
+  response that disagrees with itself, so check it here:
+  `no-interactive-shell` needs `permitted_requests` present and denying both
+  `shell` and `pty-req`; `account-restricted` and `account-confined` need
+  `filter_policy.exec_mode: restricted`; `platform-authorized` needs
+  `platform_role`; `account-egress-restricted` needs a non-empty
+  `permitted_destinations`; `attestation` rides an attested rung and no other.
+  Note that `permitted_destinations` reuses `ForwardDestination`'s *shape* and
+  shares none of its meaning — `permitted_forwards` is a rule about SSH channels
+  the proxy sees, this is a rule about sockets the target's kernel sees — so one
+  must never be assembled from the other, and neither ever widens the other.
+- **Constrain the choice by capability, on the issue path** (M17, 0006), from
+  both sources: the proxy build's `AuthorizeRequest.capabilities` and the
+  target's own reported capabilities. A record that is stale, undated or absent is
+  **one case** and provides nothing that has to be *applied*, while leaving the
+  two proxy-side defaults and an attested rung available — which is how an
+  unprobeable appliance still gets a real claim. This is the same issue-path check
+  the device-field paragraph above describes, against the same data.
 
 ### The latency budget is not a formality
 
@@ -238,6 +316,27 @@ not only under a single hot subject.
   response with none of the newer fields invented; and a request declaring `1`
   against a policy that **requires** a newer field gets a `5xx` naming the
   mismatch — never a thinned snapshot, and never a `401`.
+- **The enforcement rung, four assertions.** A route that names neither axis
+  emits no `enforcement` object at all (not one carrying the defaults). A policy
+  naming an **applied** rung on a route whose every ladder entry is `brokered-key`
+  is refused before a response is written — assert the refusal, not a thinned
+  response. The same route with `platform-attested` is served, and carries
+  `attestation.asserted_by` and `attestation.reference`. And a rung whose
+  co-requisite is missing — `no-interactive-shell` beside a `permitted_requests`
+  that still allows `shell` — is refused rather than emitted for the proxy to
+  reject.
+- **Capability constraint, both sources and the fail-safe direction.** A rung the
+  proxy build does not declare is never emitted; a rung the *target* has not been
+  reported able to take is never emitted; and a target whose capability record is
+  **stale, undated, or absent** still gets the two proxy-side defaults and an
+  attested rung. Test the three record states together — they are one case, and a
+  suite that only covers "absent" will not notice an implementation that treats
+  undated as fresh.
+- **The session bounds are emitted as the contract shapes them:**
+  `session_deadline` as an absolute RFC 3339 instant (assert it is not a
+  duration, and that a chained call does not re-anchor it), `concurrency`
+  omitted rather than `0` when uncapped, and `grant_context.additional_context`
+  round-tripping as both a string and an object.
 - A benchmark reports p50/p99 against the stated budget, with the bundle and
   fleet size documented.
 

@@ -3,8 +3,9 @@
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 ("never edit
   `contract/`") and §9.
-- `docs/PLAN.md` — especially **§4** (the vocabulary-negotiation obligation and
-  the contract v3.1 case beneath it), **M1** (the contract is vendored,
+- `docs/PLAN.md` — especially **§4** (the vocabulary-negotiation obligation, the
+  current-vocabulary note and the contract v3.1 case beneath it), **M1** (the
+  contract is vendored,
   read-only), **M11** (`401` is a decision; everything else is `5xx`), and
   **M17** (declared capabilities).
 - `docs/learnings/` — read summaries; open `0002` (the vendored contract, the
@@ -55,9 +56,11 @@ this phase installs is **loud** rather than lenient.
   loudly and a human decides what to do — which is the point at which supporting
   a second version would become a deliberate decision rather than an accident.
 - Note that these are two different numbers and both are single-valued here: the
-  document version (`3.1.0` as vendored) and the negotiated vocabulary
-  (`policy_version`, `3`) move independently upstream, and this phase does not
-  couple them.
+  document version (`4.0.0` as vendored) and the negotiated vocabulary
+  (`policy_version`, `4`) move independently upstream — v3.1 moved the first
+  without the second, v4 moved both — and this phase does not couple them. Read
+  each out of `contract/control.yaml` rather than from this line, which is only
+  as current as the last sync.
 - No other literal version anywhere in the tree — code, fixtures, deployment
   manifests, or seed data. Add a check that keeps it that way and name it in your
   learnings.
@@ -112,9 +115,9 @@ fleet.
 
 ### The documents stop describing a fleet that does not exist
 
-PLAN §4's negotiation obligation, the contract-v3.1 passage beneath it, 0002's
-note on contract versions and 0006's note on the enrolled version are all written
-for a multi-version fleet. Rewrite them to state the single-version position and
+PLAN §4's negotiation obligation, the current-vocabulary note and contract-v3.1
+passage beneath it, 0002's note on contract versions and 0006's note on the
+enrolled version are all written for a multi-version fleet. Rewrite them to state the single-version position and
 its deployment consequence: **proxy and server versions move together**, and a
 mid-upgrade fleet is a rollout-ordering problem rather than a code path.
 

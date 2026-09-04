@@ -13,7 +13,26 @@
   spends from), M15 (why the default here must be a real product, not a stub),
   M11 (deny versus outage — a probe failure is not a `401`).
 - `contract/` — the vendored proxy contract. The **grant context** fields the
-  proxy carries are defined there, not here; this phase populates them.
+  proxy carries are defined there (`GrantContext`, contract v4), not here; this
+  phase populates them. Three properties of that shape constrain this phase and
+  are worth reading before designing the provider interface:
+
+  - `additional_context` admits a JSON **string or a JSON object** — and nothing
+    else, so a number, a list or a boolean is a contract violation rather than
+    something to coerce. The two shapes exist because the systems on the other end
+    differ more than a fixed schema can absorb: one has a sentence, another has a
+    bag of fields. A provider mapping that can only produce one of the two will
+    make somebody's integration lossy.
+  - `window_start`/`window_end` are **recorded, not enforced**. The bound that is
+    actually enforced is `session_deadline`, set by this server having already
+    weighed the window — so a provider's asserted window and the deadline the
+    engine emits are two different things, and the server-side ceiling below
+    applies to the one that bites.
+  - The proxy treats all of it as **opaque**: copied to every log record, never
+    parsed, never matched against, never the basis of a proxy-side decision, and
+    never shown to a user on denial. Everything this phase asserts has to be
+    decided here, before the response is written; nothing downstream will
+    re-derive it.
 - `docs/learnings/` — read summaries; open `0004` (the `ext` registry, its
   registration rules, and the default-implementation requirement), `0005` (how
   an input reaches the engine and what a decision record must be able to

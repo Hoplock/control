@@ -8,7 +8,7 @@
 - `docs/learnings/` — read summaries; open `0002` (contract types + the
   conformance assertions you must now pass), `0003` (identity tables).
 - `contract/control.yaml` — `/v1/auth/cert`, `/v1/auth/password`,
-  `/v1/auth/mfa/poll`, `/v1/hostkeys/report`.
+  `/v1/auth/mfa/poll`, `/v1/hostkeys/report`, `/v1/capabilities/report`.
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` §6.1 ("Chain trust model")
   and `api/README.md` ("What a chained hop sends this API") — why a chained hop
   authenticates against this endpoint with the previous hop's key, and what it
@@ -17,7 +17,8 @@
 ## Objective
 Serve the south-bound authentication endpoints for real: resolve a certificate
 or a password to an identity with claims, own the MFA conversation end to end,
-and record reported target host keys. This is the first phase where the
+and record what the proxy reports back about a target — its host key, and (since
+contract v4) the enforcement rungs it can take. This is the first phase where the
 conformance suite from 0002 grades a real implementation.
 
 ## In scope
@@ -102,14 +103,39 @@ change. Store first-seen keys and detect a **changed** key for a known target �
 that is a security event worth an audit record (its ingest lands in 0010; emit
 through whatever logging exists now with a stable shape).
 
+### Capability reporting (`POST /v1/capabilities/report`, contract v4)
+
+Added by `Hoplock/proxy#25` (merged) and served here because it is the sibling of
+host-key reporting: the same shape, the same south-bound listener, the same
+"the proxy tells this server what it found" pattern. It arrives after the proxy
+has logged into a target and probed it, and it carries the **enforcement rungs
+that target can take** — which `/v1/authorize` cannot ask for, because authorize
+happens before the proxy has ever touched the target, so a first-ever connection
+has nothing to put on the request.
+
+- Persist through the capability store **0006 defines**; this phase serves the
+  endpoint and does not invent a second home for the data. Key by target, and by
+  the reported `platform` where one is given.
+- Answer `accepted` truthfully. A report the server did not record is one the
+  proxy must not believe it made, so `accepted: true` on a write that did not land
+  is a contract violation — the same "the ack means it is stored" discipline as
+  the priority log path (PLAN §4).
+- Answer `report_after_seconds` from the freshness rule 0006 sets. The server owns
+  the interval; a proxy may re-observe sooner, never later.
+- **Record it as an observation, never as a grant.** Nothing here may widen a
+  decision. The authority for a rung is the authorize response, and the proxy
+  re-checks it against the live target at provisioning time — which is what makes
+  a stale record cost at worst a refused session rather than a session running
+  below the rung its audit record claims.
+
 ## Out of scope
 - `/v1/authorize` (0008), the event stream (0009), log ingest (0010).
 - Real IdP federation (0011): identities come from the store (0003) for now, and
   the interface must be shaped so an IdP broker slots in behind it.
 
 ## Acceptance criteria
-- The conformance suite's auth and host-key assertions pass against this server
-  (`make conform`), and CI runs it.
+- The conformance suite's auth, host-key and capability-report assertions pass
+  against this server (`make conform`), and CI runs it.
 - A test proves no north-bound route is reachable on the south-bound listener.
 - A test proves a database failure on the auth path returns `5xx`, not `401`
   (inject the failure; this is M11's regression test and it is easy to lose).
@@ -118,6 +144,11 @@ through whatever logging exists now with a stable shape).
 - The password appears in no log line, error, or stored row — asserted against
   captured output.
 - A changed host key for a known target is detected and surfaced.
+- **Capability report**: a report is stored and readable through 0006's store,
+  and `accepted` is `true` only when the write landed — inject a store failure and
+  assert the response is not a cheerful `accepted: true`. A second report for the
+  same target replaces the first rather than accumulating duplicates, and a
+  report carrying no `observed_at` is stored in a way that reads back as stale.
 - **Chain leg**: a cert-auth call offering an enrolled proxy's key with a valid
   `login` returns that **user's** identity, carrying the authenticating proxy's
   id; the same call with a `login` that resolves to no identity is still a

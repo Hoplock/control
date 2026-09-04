@@ -2,11 +2,12 @@
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
-- `docs/PLAN.md` — especially **§2 (M2, M3, M4)**, §5 (the bundle and the
-  explanation), §7 (audit query).
+- `docs/PLAN.md` — especially **§2 (M2, M3, M4, M17)**, §5 (the bundle and the
+  explanation, including §5.2's enforcement rungs), §7 (audit query).
 - `docs/learnings/` — read summaries; open `0005` (bundle, compiler errors,
-  explanation type), `0008` (decision records), `0010` (audit query layer),
-  `0009` (publishing an operator event), `0007` (listener conventions).
+  explanation type), `0006` (the capability query this surface exposes), `0008`
+  (decision records), `0010` (audit query layer), `0009` (publishing an operator
+  event), `0007` (listener conventions).
 
 ## Objective
 Give humans and CI a surface. This is the phase where the product becomes
@@ -40,6 +41,46 @@ actions that were internal until now.
     so this works (0005). If it is not total, say why.
 - **GitOps**: a bundle can be applied from CI with an API token, and the
   response is machine-readable enough to gate a pull request.
+
+### Can this policy actually be satisfied? (M17)
+
+Validation that compiles is not validation that can be served. 0006 builds the
+query; **this phase is where an operator sees the answer, before publishing
+rather than after a user complains**. It spans both capability sources: the
+proxies that would enforce the policy, and — since contract v4 — the targets it
+would be enforced on.
+
+- **A rung no proxy in the path can provide, or no target can take, is a policy
+  that denies at connect time.** Show it at publish time: which rule, which
+  route, which proxies or targets fall short, and what they do provide. The
+  failure it prevents is specific and silent — a rung the enforcing proxy cannot
+  honour is a *skipped rung*, so the ladder just gets shorter with no error
+  anywhere, and on a one-rung ladder the session is denied and nobody authored the
+  denial.
+- **Warn, do not refuse, where the shortfall is capability rather than
+  correctness.** A capability record that is stale, undated or absent is not proof
+  a target cannot take a rung — it is the absence of proof, and it fails safe by
+  providing nothing that must be *applied*. Blocking publication on it would make
+  an unprobeable appliance unauthorable, which is the opposite of what attested
+  rungs exist for. Internal contradictions are a different matter: those are
+  compiler errors (0005) and reach this surface as errors.
+- **An allow-list containing an interpreter is not an allow-list, and catching
+  that is this server's job.** `find`, `awk`, `less`, `vi`, `tar`, `python` and
+  most editors hand back a shell (GTFOBins), so a `restricted_exec` list naming
+  one does not deliver the boundary an `account-restricted` or `account-confined`
+  rung claims — its real guarantee drops to `no-interactive-shell` at best. The
+  contract states this as **a documented rule enforced by Control at authoring
+  time**, and deliberately *not* as a proxy-side refusal: a shipped deny-list of
+  interpreter names in the data plane would be a blacklist masquerading as a
+  boundary, incomplete the day it shipped and liable to refuse a route over a name
+  collision.
+
+  So this is a **warning the author must see and may override**, never a silent
+  pass and never a hard refusal. Ship a starting list, make it configurable, say
+  in the text *why* the named executable weakens the claim, and record that the
+  author accepted it — the rung is a claim about a mechanism, bounded by the list
+  it renders, and the policy author owns that trade-off. A check that cannot be
+  overridden will be worked around; one that is never shown is not a check.
 
 ### Explain a decision (M4)
 Given a `decision_id` or a session id, return the whole story: the inputs, the
@@ -89,6 +130,18 @@ it becomes a second implementation of the rules.
   names the rule and the line) → activate → rollback, end to end.
 - Simulation replay over seeded decision records reports the exact set of flipped
   decisions for a candidate bundle — assert the set, not just the count.
+- **Satisfiability, both directions.** A bundle naming an enforcement rung no
+  enrolled proxy provides is reported at publish time, naming the rule and the
+  proxies; a bundle naming a rung the target's capability record says it cannot
+  take is reported the same way; and a bundle whose targets have **stale, undated
+  or absent** records publishes with a warning rather than a refusal. Assert the
+  last case explicitly — refusing it is the plausible-looking bug that makes every
+  unprobeable appliance unauthorable.
+- **The interpreter warning fires and is overridable.** A `restricted_exec`
+  allow-list containing an interpreter, under an `account-restricted` or
+  `account-confined` rung, produces a warning naming the executable and the rung's
+  real guarantee; publication succeeds when the author accepts it, and the
+  acceptance is audited like any other mutating action.
 - `explain` returns a complete story for an allow, for a deny, and for a
   decision made under a mapping version that has since changed.
 - Every mutating action appears in the audit store with the actor.

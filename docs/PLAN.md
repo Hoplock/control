@@ -328,10 +328,9 @@ management; the proxy's decisions keep their `D` numbers.
   directions, because only this server can compute a path. The same argument
   now applies one level down: a route may name a **credential method**, a
   **device platform**, an **expiry posture**, an **enforcement rung**, and — since
-  contract v3.1 — a set of **additional device fields** (proxy D13, D14, the
-  enforcement-point revision, and proxy phase 0016), and a proxy can satisfy
-  those only if it has the driver, the local material, and a target that supports
-  them.
+  contract v3.1 — a set of **additional device fields** (proxy D13, D14, contract
+  v4, and proxy phase 0016), and a proxy can satisfy those only if it has the
+  driver, the local material, and a target that supports them.
 
   A decision naming something the enforcing proxy cannot provide is not a
   near-miss — it is a session that is denied as an outage, or worse, one whose
@@ -356,6 +355,30 @@ management; the proxy's decisions keep their `D` numbers.
   This also makes proxy D14's ladder authorable with intent: knowing which
   methods a proxy actually has is what separates "prefer the strong method, fall
   back to the weaker one" from "write a ladder and hope".
+
+  **Contract v4 makes the capability question two-sourced, and the second source
+  is the target.** An enforcement rung depends far more on the target than on the
+  proxy — whether it runs systemd, whether cgroup v2 is mounted, whether SELinux
+  is enforcing, whether netfilter is reachable, whether it is a Linux host at all
+  — and none of that is knowable from a policy database. So capability facts now
+  arrive on two paths and this registry holds both:
+
+  - **Per proxy** — `AuthorizeRequest.capabilities`, the rungs a *build*
+    implements, declared beside `policy_version` on the same pattern as the
+    enrolled credential methods. Absent declares nothing.
+  - **Per target** — `POST /v1/capabilities/report` (§4), the rungs one *target*
+    can take, discovered by probing it after login. Authorize happens before the
+    proxy has ever touched the target, so a first-ever connection has nothing to
+    put on the request; the report is how that fact arrives at all. The server
+    owns the freshness of its own record and says so with
+    `report_after_seconds` — a proxy may re-observe sooner, never later.
+
+  The two are ANDed, and the fail-safe direction is the one that matters: a
+  capability record that is stale, undated, or absent provides nothing that has to
+  be **applied**, while leaving every rung that needs nothing of the target — the
+  two proxy-side defaults, and an attested rung, which nobody applies — available.
+  That is precisely how an appliance nobody can probe still carries a real
+  enforcement claim rather than dropping to "none available".
 
 ---
 
@@ -428,11 +451,12 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/auth/mfa/poll` | Resolve an outstanding challenge; deny on expiry or unknown token |
 | `POST /v1/authorize` | Evaluate policy **for the asking hop** (`conn.proxy_id` + `conn.hop_trail`); return `401` or the whole-connection snapshot + `decision_id` (+ optional cache hint) |
 | `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision |
+| `POST /v1/capabilities/report` | Record the enforcement rungs one **target** can take, as the proxy found them by probing it (contract v4); answer `accepted` and, optionally, when to report next |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
 | `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
 | `GET /v1/proxies/{id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` |
 
-Four obligations are easy to miss and are graded by the conformance suite:
+Five obligations are easy to miss and are graded by the conformance suite:
 
 - **The priority ack means durable.** The proxy acts on a critical security
   event knowing this server recorded it. Acking before the write lands turns
@@ -453,18 +477,49 @@ Four obligations are easy to miss and are graded by the conformance suite:
   sending fields that will be refused — the proxy's mock does exactly this and
   is the reference behaviour.
 
-  **Contract v3.1 is the case `policy_version` alone does not cover.** It adds
-  the `device_field.<name>` namespace (§5.2) and deliberately leaves
-  `policy_version` at `3`: the number names the vocabulary a proxy can *read*,
-  and nothing about reading a response changed — an older proxy parses a v3.1
-  route exactly as it always did. So version-aware assembly cannot gate a device
-  field, because there is no version to gate it on, and it must not try. What
-  makes the addition safe is the layer below: the proxy skips a rung whose fields
-  its driver does not declare, so a field an enforcing proxy cannot honour costs
-  the rung rather than widening the session. Which proxy can honour which field
-  is a **capability** question (M17), answered from the fleet registry, not from
-  `policy_version` — and on a one-rung ladder the cost of getting it wrong is a
-  denial, so the check belongs on the issue path.
+  **The current vocabulary is `4`** (`Hoplock/proxy#25`, merged): the two
+  enforcement axes and the session bounds (§5.2). Every v4 field is additive with
+  an absent-value default that is exactly what a v3 server produced — proxy-side
+  enforcement only, no deadline, no required capture, no grant context, no
+  concurrency cap — so the rule above is unchanged in kind and only larger in
+  scope. The vendored document is `4.0.0`.
+
+  **Contract v3.1 is the case `policy_version` alone does not cover**, and it is
+  worth keeping straight even though v4 moved the number. v3.1 adds the
+  `device_field.<name>` namespace (§5.2) and deliberately leaves `policy_version`
+  at `3`: the number names the vocabulary a proxy can *read*, and nothing about
+  reading a response changed — an older proxy parses a v3.1 route exactly as it
+  always did. So version-aware assembly cannot gate a device field, because there
+  is no version to gate it on, and it must not try. The document version and the
+  negotiated vocabulary are two numbers that move independently, which is why
+  neither is derived from the other (0002, 0017).
+
+  What makes that addition safe is the layer below: the proxy skips a rung whose
+  fields its driver does not declare, so a field an enforcing proxy cannot honour
+  costs the rung rather than widening the session. Which proxy can honour which
+  field is a **capability** question (M17), answered from the fleet registry, not
+  from `policy_version` — and on a one-rung ladder the cost of getting it wrong is
+  a denial, so the check belongs on the issue path. Contract v4 widens that
+  question rather than changing it: an enforcement rung depends on the **target**
+  far more than on the proxy, which is what the capability report below exists to
+  answer.
+- **A capability report is an observation, and it constrains rather than
+  grants.** Since contract v4 the proxy probes a target it has just logged into
+  and reports, on `POST /v1/capabilities/report`, which enforcement rungs that
+  target can actually take. This server accumulates those reports (0006, M17) and
+  uses them — together with the proxy build's own `AuthorizeRequest.capabilities`
+  — to constrain what a policy author may choose per route.
+
+  It is the authorize response, never the report, that authorises a rung. That is
+  what makes a **stale, undated, or entirely absent** record safe, and those three
+  are deliberately **one case**: they provide nothing that has to be *applied*,
+  they leave untouched every rung that needs nothing of the target (the two
+  proxy-side defaults and an attested rung), and the proxy re-checks the rung
+  against the live target when it provisions. So the worst a stale record can
+  cause is a refused session — never a session running below the rung its own
+  audit record claims. A record with no `observed_at` is treated as stale, because
+  a capability with no date has no shelf life.
+
 - **Heartbeats are liveness, and their absence is a signal.** A proxy that
   stops hearing them reconnects and, past its staleness threshold, stops serving
   cached decisions entirely. A server that stalls its heartbeat writer degrades
@@ -544,14 +599,79 @@ the connection's lifetime (proxy D2):
   hyphens and underscores, at most 64 characters; the value is non-empty and at
   most 256 characters; at most 16 fields ride on one ladder entry. They are
   policy metadata, never credential material, and they are audit facts (§7);
-- **enforcement rung** per axis, where the route stands somewhere other than
-  proxy-side enforcement;
-- **session deadline** — an absolute instant the proxy enforces locally, so it
-  survives this server being unreachable (proxy D16);
-- **concurrency caps** per subject and/or target, which only the proxy can
-  count;
-- **grant context** — the external system, its reference, and the window —
-  carried opaquely by the proxy into every log record for the session;
+- **enforcement rung** per axis (`enforcement`, contract v4), where the route
+  stands somewhere other than proxy-side enforcement. There are **two axes**,
+  because what a session may *execute* and what it may *reach* are separate
+  questions with separate mechanisms, and a route may stand on a different rung
+  of each:
+
+  | `enforcement.execution` | `enforcement.reach` |
+  | --- | --- |
+  | `proxy-inspected` *(absent-value default)* | `proxy-channel-policy` *(absent-value default)* |
+  | `no-interactive-shell` | `account-egress-restricted` |
+  | `account-restricted` | `account-network-isolated` |
+  | `account-confined` | `platform-attested` |
+  | `platform-authorized` | |
+  | `platform-attested` | |
+
+  Four rules bind what this server may answer, and each is ours to enforce
+  before the response is written rather than the proxy's to discover:
+
+  - **Absent means proxy-side enforcement only** on both axes — exactly what a v3
+    server produced. Emit the field only where the route genuinely stands
+    somewhere else; an emitted default is noise in an audit record.
+  - **Applied and attested are different kinds.** An *applied* rung is one the
+    proxy configures per session and tears down, and it needs the proxy to
+    administer the account — which only `ephemeral-user` and `ephemeral-account`
+    do. An *attested* rung (`platform-attested`, either axis) is one the target
+    enforces already, configured by somebody who is not this product; the proxy
+    applies nothing and records who says so. So **an applied rung must never be
+    chosen for a route whose every ladder entry is `brokered-key` or
+    `static-key`** — the proxy refuses that response outright, and a policy that
+    can only fail at connect time fails in front of a user. An **attested** rung
+    on such a route is fine, and it is the enforcement claim the appliance estate
+    actually carries: "none available" is the answer this vocabulary exists to
+    stop giving.
+  - **The rung is a property of the route, not of a ladder entry.** A ladder entry
+    that cannot carry it is a *skipped rung* on the proxy (proxy D14) and the
+    proxy walks on; it never runs the session without the rung its record would
+    claim. One policy stating two different guarantees would leave the audit
+    record unable to say which was in force.
+  - **The claim must agree with the rest of the snapshot.** `no-interactive-shell`
+    requires `permitted_requests` to be present and to deny both `shell` and
+    `pty-req`; `account-restricted` and `account-confined` require
+    `filter_policy.exec_mode: restricted`; `platform-authorized` requires
+    `platform_role`; `account-egress-restricted` requires a non-empty
+    `permitted_destinations`; an attested rung requires `attestation`
+    (`asserted_by` and `reference`, both required) and no other rung may carry
+    one. The proxy refuses a response that disagrees with itself, so the
+    agreement is checked here.
+
+  What a rung may be chosen at all is a **capability** question on two levels:
+  the proxy build's (`AuthorizeRequest.capabilities`) and the target's (the
+  reports of §4), and M17 is where both live;
+- **session deadline** (`session_deadline`) — an **absolute instant**, not a
+  duration, which the proxy enforces locally so it survives this server being
+  unreachable (proxy D16). A duration would re-anchor on every hop of a chained
+  route and silently multiply the window. Reaching it is neither a denial nor an
+  outage: the session is closed and the close is explained;
+- **required session capture** (`require_session_capture`) — the route runs only
+  if the session is recorded, checked before the target leg is dialled. It is the
+  compensating control that makes an unbounded-privilege grant defensible: root
+  on a target can disable that target's auditing and scrub its traces, and cannot
+  touch a session captured in the proxy;
+- **concurrency caps** (`concurrency`) per subject and/or target, which only the
+  proxy can count — it holds the session registry. Absent or `0` is uncapped, and
+  exceeding a cap is a **policy denial**, never an outage: the estate is healthy
+  and the answer is "no";
+- **grant context** (`grant_context`) — the external system, its reference, and
+  the window it asserted, plus `additional_context`, which admits a JSON **string
+  or a JSON object** and nothing else. The proxy carries all of it opaquely into
+  every log record for the session and **never parses it, never matches on it,
+  and never makes a decision from it** — that decision was made here, before the
+  response was written. `window_start`/`window_end` are recorded, not enforced;
+  the bound the proxy enforces is `session_deadline`, which this server sets
+  having already weighed the window;
 - **cache hint**, issued deliberately (5.4);
 - **obligations**: record the session, require approval, require step-up auth.
   Session recording stops being advisory on unbounded-privilege routes: proxy
@@ -635,6 +755,20 @@ connection is re-decided. Two invariants this server must never violate:
   virtual domain and a **global** administrator on the same host. Storing them as
   opaque data is right; dropping them because the contract does not enumerate
   them is not.
+- **The enforcement rung is an audit fact, and it is the rung that was in
+  force** — never the one policy requested. Contract v4 puts four fields on the
+  record: `enforcement_execution`, `enforcement_reach`, `enforcement_verified`
+  (`false` on an attested rung, because nothing here verified it), and
+  `enforcement_attested_by`. Whether the record says `account-restricted` or
+  `proxy-inspected` is the whole point of the vocabulary, so a session that ran on
+  a different rung than the policy asked for must say so: a ladder degrades and a
+  rung can be unavailable, and a record repeating the request would be a record
+  that lies. The same holds for the credential method (proxy D14).
+- **Grant context rides every record for a session** (`grant_context`, contract
+  v4), copied through by the proxy as opaque data. Store it as it arrives —
+  including `additional_context`, which is a string **or** an object — and never
+  parse it into policy: it is what lets an auditor answer "why was this allowed"
+  without joining two systems by hand, and M16 is what puts it there.
 - **Export** — Splunk / Sentinel / Elastic sinks behind one interface, with
   backpressure and retry. Downstream consumer only (M8).
 - **Redaction** — the initial-auth password never reaches this server and must
@@ -700,8 +834,8 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0003 | Storage layer & migrations | Postgres repositories, forward-only migrations, tenancy columns (M12) |
 | 0004 | **Extension points** | public `ext/` package, registration, import-graph guard (M15) |
 | 0005 | Policy model & decision engine | bundle parse/validate/compile/evaluate + decision records (M3, M4) |
-| 0006 | Fleet registry, health & config distribution | enrollment, heartbeat, zone graph, pathfinding, hop direction, versioned config rollout (M6) |
-| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting |
+| 0006 | Fleet registry, health & config distribution | enrollment, heartbeat, zone graph, pathfinding, hop direction, versioned config rollout (M6), the capability store both sources write to (M17) |
+| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting, `/v1/capabilities/report` |
 | 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
 | 0009 | Revocation & event fan-out | `/v1/proxies/{id}/events`, event bus, replay, resync, kill switch (M9) |
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |
