@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Enforce the floor rather than assert it.
+  #
+  # Without this, a job whose toolchain is older than the `go` directive in
+  # go.mod silently downloads a newer one and passes — so the "floor" leg of
+  # the matrix below would test the same toolchain as the "latest" leg and the
+  # floor would drift upward without anyone deciding it should. GOTOOLCHAIN=local
+  # makes that a build failure instead, which is the only way the floor stays
+  # real. The Hoplock Proxy repository learned this the hard way; this comment is
+  # what keeps it.
+  GOTOOLCHAIN: local
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two legs on purpose (PLAN §8):
+        #
+        #   floor  — the `go` directive in go.mod, the oldest toolchain we
+        #            promise to build on. It moves only when a dependency
+        #            forces it, and this leg is what proves it still works.
+        #   stable — the latest released Go, which is what contributors and
+        #            distributions actually have. This leg catches a new vet
+        #            check or a changed stdlib behaviour early rather than at
+        #            the next floor bump.
+        #
+        # Keep the floor entry equal to the `go` directive in go.mod.
+        go: ["1.27.0", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `make build` stamps the version from `git describe`.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+
+      # Printed so a reader of the log can see which toolchain actually ran —
+      # the floor leg must say the floor, not a downloaded newer version.
+      - name: Report toolchain
+        run: go version
+
+      - name: Build
+        run: make build
+
+      - name: Vet
+        run: make vet
+
+      - name: Test
+        run: make test
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          # Pinned, and the pin is not free-floating: golangci-lint type-checks
+          # with the go/types of the Go it was *built* with, so a linter built
+          # against an older Go cannot read the export data of a newer stdlib
+          # and fails every file with "could not import errors". Keep this at a
+          # release built with a Go at least as new as the `stable` leg above
+          # — v2.13.2 is built with go1.27.0 — and bump it in the same commit
+          # that moves the floor.
+          version: v2.13.2
+
+  license:
+    name: license headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check per-file SPDX headers
+        run: make license-check

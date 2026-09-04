@@ -14,9 +14,11 @@ The architecture — the two API surfaces, decisions M1–M15, package layout, a
 the phased delivery plan — lives in **[`docs/PLAN.md`](docs/PLAN.md)**. Read it
 before reading the code.
 
-> Status: specification only. No code yet. `prompts/queued/0001` is the scaffold
-> phase; `docs/PROTOCOL.md` explains how a session picks up a prompt and
-> delivers it.
+> Status: early. The scaffold (`prompts/implemented/0001`) is in — module,
+> package layout, licence headers, config loader, Makefile and CI — and no
+> product behaviour ships yet: the server loads its configuration, says who it
+> is, and starts nothing. `prompts/queued/` holds the phases still to come and
+> `docs/PROTOCOL.md` explains how a session picks one up and delivers it.
 
 ## Where this fits
 
@@ -81,6 +83,44 @@ through `contract-sync`. Never the other way around.
 | `deploy/` | docker-compose topology: this server + Postgres + a real proxy |
 | `docs/` | plan, session protocol, and per-phase learnings |
 | `prompts/` | queued and implemented phase prompts |
+
+## Building and running
+
+Go is the only build dependency. `make lint` additionally needs
+`golangci-lint` v2, built with a Go release at least as new as the `go`
+directive — it type-checks with the `go/types` of the Go it was compiled
+with, so an older linter cannot read a newer stdlib. CI pins the version
+that satisfies this.
+
+```sh
+make build                 # -> bin/hoplock-control, version stamped from git
+bin/hoplock-control --version
+
+cp config.example.yaml config.yaml
+make run                   # or: bin/hoplock-control --config config.yaml
+```
+
+`config.example.yaml` documents every key. Decoding is **strict**: a key the
+schema does not define is a startup error, because a typo in a
+security-relevant setting that boots happily is worse than one that refuses to.
+Your own `config.yaml` is gitignored — it carries a database DSN.
+
+Useful targets (`make help` lists them all):
+
+| Target | What it does |
+| --- | --- |
+| `make build` | compile into `bin/` with the git version stamped in |
+| `make test` | unit tests with the race detector |
+| `make vet` / `make lint` | `go vet`, then `golangci-lint` |
+| `make license-check` | verify the per-file SPDX header on every Go file |
+| `make fmt` / `make tidy` | format sources; reconcile `go.mod`/`go.sum` |
+| `make check` | everything CI runs, in CI's order |
+| `make contract-check` / `contract-sync` / `conform` | the contract workflow above (phase 0002) |
+
+The `go` directive in `go.mod` is a **floor**, not a preference: CI builds on
+both it and the latest stable release with `GOTOOLCHAIN=local`, so the floor is
+enforced rather than quietly satisfied by a toolchain download. It moves only
+when a dependency moves it.
 
 ## Contributing
 

@@ -1,0 +1,44 @@
+# Hoplock Control — example configuration.
+#
+# Copy this file, edit it, and start the server with:
+#
+#     hoplock-control --config /etc/hoplock/control.yaml
+#
+# Decoding is strict: a key this file does not document is a startup error, not
+# a silently ignored setting. Every field below is either required or has the
+# default shown in its comment.
+
+# The tenant this deployment operates as.
+#
+# The prototype is single-tenant and nothing in the API exposes tenancy, but
+# every table carries the tenant column and every query filters on it (PLAN
+# M12) — retrofitting that into a populated audit store later is a migration
+# nobody wants to run. Optional; defaults to "default".
+tenant: default
+
+# The two listeners.
+#
+# South-bound (proxies) and north-bound (humans, CI, GitOps) never share a
+# port, a middleware chain, or a credential type (PLAN M2). They are two
+# fields from the first release because one field that later becomes two is a
+# breaking config change. Both are required, and they must differ.
+listeners:
+  # Proxy-facing address, host:port. Speaks the vendored contract.
+  south: 0.0.0.0:8443
+  # Operator-facing address, host:port. Never route this from the south-bound
+  # port: a proxy token that reaches a policy-authoring endpoint is privilege
+  # escalation.
+  north: 127.0.0.1:9443
+
+# Postgres (PLAN M13). Required.
+#
+# The DSN normally carries a password, so keep this file out of version control
+# (the repository's .gitignore already ignores config.yaml) and off any host
+# where it need not be. The server never logs the DSN.
+database:
+  dsn: postgres://hoplock@localhost:5432/hoplock?sslmode=verify-full
+
+# Structured logging. Optional.
+log:
+  # One of: debug, info, warn, error. Defaults to "info".
+  level: info

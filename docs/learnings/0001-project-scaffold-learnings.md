@@ -1,0 +1,222 @@
+# 0001 — project scaffold — Learnings
+
+## Summary
+- **What shipped:** the empty-but-real repository — Go module, package skeleton,
+  Apache-2.0 per-file headers and their checker, Makefile, golangci-lint v2 config,
+  two-leg CI, a strict YAML config loader, and a daemon that loads config, says
+  who it is, and starts nothing. No product behaviour.
+- **Key packages/files:** `go.mod`, `Makefile`, `.golangci.yml`,
+  `.github/workflows/ci.yml`, `scripts/license-check.sh`, `config.example.yaml`,
+  `internal/config/`, `cmd/hoplock-control/`, `ext/doc.go`, a `doc.go` in every
+  `internal/` package.
+- **Module path:** `github.com/hoplock/control`. **Go floor:** `go 1.27.0`
+  (the `go` directive, = the current stable minor). **CI legs:** `1.27.0` and
+  `stable`, both with `GOTOOLCHAIN: local`.
+- **Key interfaces/types added:** `config.Config{Tenant, Listeners{South,North},
+  Database{DSN}, Log{Level}}`, `config.FieldError{Field,Msg}`, `config.Load`,
+  `config.Parse`, `(*Config).Validate`, `LogConfig.SlogLevel`,
+  `config.DefaultTenant` = `"default"`, `config.DefaultLogLevel` = `"info"`.
+- **Config keys (all of them):** `tenant`, `listeners.south`, `listeners.north`,
+  `database.dsn`, `log.level`. Required: the two listeners and the DSN.
+- **Makefile targets:** `build test vet lint fmt license-check tidy clean run
+  check help`, plus `contract-check contract-sync conform`, which exit 1 with
+  "implemented in phase 0002".
+- **Linters:** `errcheck govet ineffassign staticcheck unused` **+ `exhaustive`**
+  (not in the proxy's set — see below); formatters `gofmt` + `goimports` with
+  `github.com/hoplock/control` as the local prefix.
+  golangci-lint is pinned to **v2.13.2** in CI, and the pin is coupled to the Go
+  floor — see the gotcha below.
+- **Database tables/migrations added:** none. `migrations/` exists with a README;
+  phase 0003 puts the first SQL in it.
+- **Decisions made/affected:** M2 (two listener fields from day one), M11, M12
+  (`tenant` present but unexposed), M14 (Apache-2.0 chosen and applied), M15
+  (`ext/` created as the only public package). **M13 was amended in this PR** —
+  it now records why Go is forced (M15 + M1) and what that costs
+  `internal/policy`, and it makes the `exhaustive` linter, the closed `Kind`
+  enums and the purity of `internal/policy` requirements rather than taste.
+- **Gotchas:** (1) golangci-lint type-checks with the `go/types` of the Go it was
+  *built* with, so a linter older than the toolchain it lints fails every file
+  with "could not import errors". Bump the `version:` in the lint job in the same
+  commit that moves the floor. (2) `contract/` is deliberately **not** created
+  here — 0002 vendors it and `contract-check` compares it against upstream, so a
+  placeholder file in it would be drift. The licence checker and `make fmt` both
+  exclude it already.
+- **What 0005 must know:** M13 and the prompt now require every closed axis to
+  be a named `Kind` enum, not an open interface or a bare string — the
+  `exhaustive` linter only sees named enums, and it is the only guard Go gives
+  M3's closed vocabulary.
+- **What the NEXT session must know:** add your phase's config under a new
+  top-level key, document it in `config.example.yaml`, and extend the loader's
+  tests — strict decoding means an undocumented key is a startup error. Replace
+  the `contract-check`/`contract-sync`/`conform` placeholders rather than adding
+  new targets beside them.
+- **Cross-repo dependencies:** none. Nothing here touches a shared surface
+  (`docs/CROSS-REPO-PROTOCOL.md` §1), so this PR owes no downstream sync.
+
+## Details
+
+### Go floor and the two-leg matrix
+
+`go.mod` says `go 1.27.0` — the current stable minor at scaffold time, per the
+prompt — and CI runs the tests twice: once pinned to exactly `1.27.0`, once on
+`stable` (`1.27.1` today, so the legs differ by patch now and by minor as soon
+as 1.28 ships). The floor leg is only meaningful because the
+workflow sets `GOTOOLCHAIN: local` at the top level — without it a runner whose
+toolchain is older than the `go` directive silently downloads a newer one, both
+legs end up testing the same toolchain, and the floor drifts upward without
+anyone deciding it should. Each job prints `go version` so a reader of the log
+can confirm the floor leg really ran on the floor.
+
+The floor moves **only when a dependency forces it** (PLAN §8). When it does,
+change three things in the same commit: the `go` directive, the `"1.27.0"` entry
+in the matrix, and the `version:` on `golangci-lint-action`. The third is not
+optional and is worth stating plainly, because it cost this phase a red CI run:
+
+> golangci-lint type-checks using the `go/types` of the Go release it was
+> **built with**, not the one on the runner. A linter built with go1.25 cannot
+> read the export data of a go1.27 stdlib, and every file fails with
+> `could not import errors ... export data version 4 is greater than maximum
+> supported version 2`. Once the `go` directive names a version above the
+> linter's own, golangci-lint says so outright:
+> `the Go language version (go1.25) used to build golangci-lint is lower than
+> the targeted Go version (1.27.0)`.
+
+So the rule is: the pinned golangci-lint must be built with a Go **at least as
+new** as the `stable` leg. `golangci-lint --version` prints what it was built
+with; check it rather than assuming the newest tag is new enough.
+
+### The package skeleton
+
+Every directory in PLAN §3 exists. The `internal/` packages each carry a
+`doc.go` whose comment states what belongs there and cites the decision it
+serves — that is the whole content of the package today, and it is deliberate:
+an empty directory does not survive git, and a package with no stated purpose
+gets a different purpose invented for it by the next session.
+
+Two directories are intentionally missing their placeholder:
+
+- `contract/` — vendored and drift-checked (M1). Anything committed there now
+  would fail `make contract-check` in 0002. `.golangci.yml`, `make fmt`, and
+  `scripts/license-check.sh` already exclude the path, so 0002 only has to
+  populate it.
+- The repository root has no `config.yaml`; it is gitignored, and a test in
+  `cmd/hoplock-control` fails if one is ever committed (it would carry a DSN).
+
+`ui/`, `deploy/`, `migrations/`, `cmd/pdpconform`, and `cmd/policyctl` hold a
+short README naming the phase that fills them in.
+
+### `ext/` is public on purpose, and it is the only thing that is
+
+`ext` is the sole non-`internal` package in the module (M15). Its doc comment
+carries the two invariants — Control never imports Enterprise, and every seam
+ships a real default here — because the package is where someone will read them
+at the moment they matter. Phase 0004 adds the interfaces and the import-graph
+guard; until then the package is a doc comment and nothing else, which is the
+right amount of surface to promise.
+
+### Config: strict, minimal, and validated by naming the field
+
+`config.Parse` decodes with `yaml.Decoder.KnownFields(true)`, so an unknown key
+— top-level or nested — is an error that names the key. Validation returns a
+`*config.FieldError` carrying the dotted YAML path, so a caller can
+`errors.As` it and a human reads `config: listeners.south: is required`.
+
+Three choices worth keeping:
+
+- **`listeners.south` and `listeners.north` are two fields from the first
+  release** (M2), and validation rejects them being equal. One field that later
+  becomes two is a breaking config change, and the two surfaces sharing a port
+  is the escalation M2 exists to prevent.
+- **`tenant` is present, defaulted, and unexposed** (M12). Nothing reads it yet.
+- **`DatabaseConfig` implements `fmt.Stringer` and prints
+  `database{dsn:[redacted]}`.** The DSN carries a password in any real
+  deployment, and `%v` on a `Config` is exactly how one ends up in a log line.
+  A test asserts a password does not survive formatting. If a later phase adds
+  another secret-bearing struct, give it the same treatment.
+
+`TestExampleConfigLoads` loads `config.example.yaml` through the real loader, so
+the documentation cannot rot into something that does not parse. Keep that test
+passing when you add keys.
+
+### Versioning
+
+`make build` stamps `main.version`, `main.commit`, and `main.date` from
+`git describe --tags --always --dirty`, `git rev-parse --short HEAD`, and the
+build time. A plain `go build ./...` leaves them empty and `versionString()`
+falls back to the VCS stamps the toolchain embeds in `debug.BuildInfo`, so the
+binary reports something true either way; a build with neither calls itself
+`dev` rather than inventing a number. CI checks out with `fetch-depth: 0` so
+`git describe` has tags to find.
+
+`main.run` takes its args and writers as parameters and returns an error instead
+of calling `os.Exit`, which is what makes the startup path testable without a
+process. Keep that shape when you add listeners: `run` should take a context and
+return, and `main` stays four lines.
+
+### The `exhaustive` linter, and why this repo's set differs from the proxy's
+
+The linter set is the proxy's, plus `exhaustive`. That addition is deliberate
+and it is the one place the two repositories should not match.
+
+M3 promises a closed policy vocabulary: an unreachable or contradictory rule is
+a compile error, and simulation is total. Those are sum-type promises, and Go
+has neither sum types nor exhaustive matching — add an obligation kind and no
+build anywhere tells you which type switch you forgot. `exhaustive` is the
+closest thing available to the missing check, and it is configured strictly:
+
+    default-signifies-exhaustive: false
+    check: [switch, map]
+
+`default` therefore does **not** excuse an unhandled member, because defaulting
+is exactly how a new case silently inherits the old behaviour — which, in this
+product, is a policy output nobody authored. Genuinely open-ended switches take
+`//exhaustive:ignore` with a reason on the line above.
+
+**It was verified to actually fire, not merely to be listed.** A throwaway type
+with three members and a two-case switch (plus a `default`) was compiled and
+linted; `exhaustive` rejected it —
+`missing cases in switch of type policy.probeKind: policy.probeStepUp` — and the
+file was then deleted. A linter that is enabled but silent is worse than none,
+and this one is load-bearing for M3, so 0005's acceptance criteria now require
+the same demonstration against its real enums.
+
+Today the linter finds nothing: there are no enums yet. `LogConfig.SlogLevel`
+switches on a bare `string`, which `exhaustive` does not and should not check.
+
+### Licence headers
+
+`docs/LICENSE-HEADER.md` is the specification; `scripts/license-check.sh` is the
+enforcement. It checks the copyright line by regex (any year), the SPDX line
+verbatim, and that line 3 is blank so the header is not absorbed into a package
+doc comment. It walks every `.go` file except `contract/` and `.git/`, and fails
+if it finds no files at all — a checker that passes vacuously is worse than none.
+
+### Follow-ups deliberately not done here
+
+- No `govulncheck` job yet; PLAN §8 lists it under CI and phase 0016 owns
+  hardening. Adding it now would fail on a module with one dependency for
+  reasons no one here can fix.
+- No `go mod tidy` drift check in CI. Worth adding when the dependency list is
+  large enough for it to catch something.
+- No Dockerfile. `deploy/` (phase 0016) needs one; it is that phase's to shape,
+  since the topology decides what the image must contain.
+
+### Changes made outside 0001's stated scope
+
+Two, both from a language-choice review the user asked for after the scaffold
+was green, and both recorded here because a future session will otherwise read
+them as unexplained drift:
+
+- **`docs/PLAN.md` M13** gained two paragraphs (why Go is forced by M15 and M1,
+  and what it costs `internal/policy`) and §3's `internal/policy` bullet gained a
+  clause about closed `Kind` enums. PROTOCOL §3 requires a plan change to land in
+  the same PR as the change it describes, which is the `exhaustive` addition.
+- **`prompts/queued/0005-policy-model-and-engine.md`** gained a "How the
+  vocabulary is represented" section, one acceptance criterion, and a line in its
+  hand-off. Editing a *queued* prompt is allowed (only `implemented/` names are
+  frozen, PROTOCOL §6) and it is where the requirement will actually be read.
+  Its number, filename and objective are unchanged, so the numbering invariants
+  hold.
+
+No new prompt was created: the requirement constrains work 0005 already does
+rather than adding a phase.

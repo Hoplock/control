@@ -237,6 +237,50 @@ management; the proxy's decisions keep their `D` numbers.
   when a dependency moves it). Postgres via `pgx`, with forward-only versioned
   migrations. YAML config. JSON over HTTPS. Structured logging. No ORM: the
   decision path's queries are few, hot, and worth reading.
+
+  **Go is not chosen on its own merits; it is forced, and by decisions already
+  taken here.** M15 has Enterprise import this module and implement `ext/`
+  *in process* — a cross-repository plugin seam, which requires one language and
+  one runtime on both sides. M1 makes it three repositories rather than two: the
+  proxy is Go, `contract/` is vendored from it, and `cmd/pdpconform` must drive
+  this server **and** the proxy's `cmd/mock-control`, so a non-Go control plane
+  means the suite that keeps the two honest can share neither types nor
+  fixtures with one of them. The SSH CA (proxy D6a) sharpens that: certificates
+  must match the proxy byte for byte, and `x/crypto/ssh` is already on the far
+  end. Add the deployment shape this category of software ships in — one static
+  binary with the console embedded, no runtime for an operator to install — and
+  a decision path that is I/O-bound fan-out rather than computation, with M9's
+  long-lived per-proxy subscriptions being precisely what goroutines are for.
+
+  **The cost is real and it lands on one package.** M3 promises a closed input
+  and output vocabulary, an unreachable or contradictory rule caught at
+  authoring time, and simulation that is guaranteed total. Those are sum-type
+  promises, and Go has neither sum types nor exhaustive matching: add an
+  obligation kind or an output axis and nothing in the language names the type
+  switch you did not update. So `internal/policy`'s correctness rests on tests
+  and lint rather than on the type system, and saying so is more useful than
+  pretending otherwise. Three things follow, and they are requirements rather
+  than suggestions:
+
+  1. `exhaustive` is in the linter set (`.golangci.yml`) for this reason alone,
+     configured so that a `default` clause does **not** excuse an unhandled
+     member — defaulting is exactly how a newly added case silently inherits
+     the old behaviour, which here means a policy output nobody authored.
+  2. The compiled decision program is a **closed tagged representation**: each
+     variant axis carries one named `Kind` enum with its members declared as
+     constants, so the linter has something to check. Open interfaces where an
+     enum would do defeat the only guard available (0005).
+  3. `internal/policy` stays pure — no HTTP, no database, no ambient clock — so
+     that M3's "the compiler is a boundary" remains a real escape hatch and not
+     a slogan. If the evaluator ever has to be something other than Go, that
+     boundary is where it gets replaced.
+
+  Rust and Elixir were the two alternatives with an honest case — Rust for the
+  compiler and for tail latency under M5, Elixir for M9's fan-out and
+  supervision — and both lose on the same thing: they fork the estate away from
+  a Go proxy and break M15's in-process seam. GC tail latency against M5's
+  budget is a measurement question for the proxy's scale harness (its phase
+  0020), not an argument to have here.
 - **M14 — Licensing.** This repository is the **open-source** control plane;
   its licence is chosen at scaffold time (phase 0001) and applied per file via
   `docs/LICENSE-HEADER.md`. Hoplock Enterprise is separately licensed and
@@ -426,7 +470,9 @@ control/
 - **`internal/policy`** — pure. Parse → validate → compile → evaluate, no HTTP,
   no database, no clock of its own (time is an input). This is the package that
   must be exhaustively tested, because it is where the product's promises are
-  kept.
+  kept — and, per M13, the package the language helps least, so its variants are
+  closed `Kind` enums that the `exhaustive` linter can check rather than open
+  interfaces that it cannot.
 - **`internal/decision`** — the composition root for an authorize call: gather
   identity, target labels, grants, fleet path, and connection metadata; evaluate;
   build the snapshot; write the decision record; decide whether to issue a cache
