@@ -86,7 +86,11 @@ through `contract-sync`. Never the other way around.
 
 ## Building and running
 
-Go is the only build dependency; `golangci-lint` (v2) is needed for `make lint`.
+Go is the only build dependency. `make lint` additionally needs
+`golangci-lint` v2, built with a Go release at least as new as the `go`
+directive — it type-checks with the `go/types` of the Go it was compiled
+with, so an older linter cannot read a newer stdlib. CI pins the version
+that satisfies this.
 
 ```sh
 make build                 # -> bin/hoplock-control, version stamped from git

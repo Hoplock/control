@@ -9,9 +9,9 @@
   `.github/workflows/ci.yml`, `scripts/license-check.sh`, `config.example.yaml`,
   `internal/config/`, `cmd/hoplock-control/`, `ext/doc.go`, a `doc.go` in every
   `internal/` package.
-- **Module path:** `github.com/hoplock/control`. **Go floor:** `go 1.24.0`
-  (the `go` directive). **CI legs:** `1.24.0` and `stable`, both with
-  `GOTOOLCHAIN: local`.
+- **Module path:** `github.com/hoplock/control`. **Go floor:** `go 1.27.0`
+  (the `go` directive, = the current stable minor). **CI legs:** `1.27.0` and
+  `stable`, both with `GOTOOLCHAIN: local`.
 - **Key interfaces/types added:** `config.Config{Tenant, Listeners{South,North},
   Database{DSN}, Log{Level}}`, `config.FieldError{Field,Msg}`, `config.Load`,
   `config.Parse`, `(*Config).Validate`, `LogConfig.SlogLevel`,
@@ -23,14 +23,20 @@
   "implemented in phase 0002".
 - **Linters:** `errcheck govet ineffassign staticcheck unused`; formatters
   `gofmt` + `goimports` with `github.com/hoplock/control` as the local prefix.
+  golangci-lint is pinned to **v2.13.2** in CI, and the pin is coupled to the Go
+  floor — see the gotcha below.
 - **Database tables/migrations added:** none. `migrations/` exists with a README;
   phase 0003 puts the first SQL in it.
 - **Decisions made/affected:** M2 (two listener fields from day one), M11, M12
   (`tenant` present but unexposed), M13, M14 (Apache-2.0 chosen and applied),
   M15 (`ext/` created as the only public package).
-- **Gotchas:** `contract/` is deliberately **not** created here — 0002 vendors it
-  and `contract-check` compares it against upstream, so a placeholder file in it
-  would be drift. The licence checker and `make fmt` both exclude it already.
+- **Gotchas:** (1) golangci-lint type-checks with the `go/types` of the Go it was
+  *built* with, so a linter older than the toolchain it lints fails every file
+  with "could not import errors". Bump the `version:` in the lint job in the same
+  commit that moves the floor. (2) `contract/` is deliberately **not** created
+  here — 0002 vendors it and `contract-check` compares it against upstream, so a
+  placeholder file in it would be drift. The licence checker and `make fmt` both
+  exclude it already.
 - **What the NEXT session must know:** add your phase's config under a new
   top-level key, document it in `config.example.yaml`, and extend the loader's
   tests — strict decoding means an undocumented key is a startup error. Replace
@@ -43,8 +49,10 @@
 
 ### Go floor and the two-leg matrix
 
-`go.mod` says `go 1.24.0` and CI runs the tests twice: once pinned to exactly
-`1.24.0`, once on `stable`. The floor leg is only meaningful because the
+`go.mod` says `go 1.27.0` — the current stable minor at scaffold time, per the
+prompt — and CI runs the tests twice: once pinned to exactly `1.27.0`, once on
+`stable` (`1.27.1` today, so the legs differ by patch now and by minor as soon
+as 1.28 ships). The floor leg is only meaningful because the
 workflow sets `GOTOOLCHAIN: local` at the top level — without it a runner whose
 toolchain is older than the `go` directive silently downloads a newer one, both
 legs end up testing the same toolchain, and the floor drifts upward without
@@ -52,8 +60,22 @@ anyone deciding it should. Each job prints `go version` so a reader of the log
 can confirm the floor leg really ran on the floor.
 
 The floor moves **only when a dependency forces it** (PLAN §8). When it does,
-change the `go` directive and the `"1.24.0"` entry in the matrix together; the
-workflow comment says so.
+change three things in the same commit: the `go` directive, the `"1.27.0"` entry
+in the matrix, and the `version:` on `golangci-lint-action`. The third is not
+optional and is worth stating plainly, because it cost this phase a red CI run:
+
+> golangci-lint type-checks using the `go/types` of the Go release it was
+> **built with**, not the one on the runner. A linter built with go1.25 cannot
+> read the export data of a go1.27 stdlib, and every file fails with
+> `could not import errors ... export data version 4 is greater than maximum
+> supported version 2`. Once the `go` directive names a version above the
+> linter's own, golangci-lint says so outright:
+> `the Go language version (go1.25) used to build golangci-lint is lower than
+> the targeted Go version (1.27.0)`.
+
+So the rule is: the pinned golangci-lint must be built with a Go **at least as
+new** as the `stable` leg. `golangci-lint --version` prints what it was built
+with; check it rather than assuming the newest tag is new enough.
 
 ### The package skeleton
 

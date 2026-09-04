@@ -38,7 +38,7 @@ jobs:
         #            the next floor bump.
         #
         # Keep the floor entry equal to the `go` directive in go.mod.
-        go: ["1.24.0", "stable"]
+        go: ["1.27.0", "stable"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,9 +76,14 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v8
         with:
-          # Pinned: a linter that updates itself turns an unrelated pull
-          # request red for a reason its author did not introduce.
-          version: v2.5.0
+          # Pinned, and the pin is not free-floating: golangci-lint type-checks
+          # with the go/types of the Go it was *built* with, so a linter built
+          # against an older Go cannot read the export data of a newer stdlib
+          # and fails every file with "could not import errors". Keep this at a
+          # release built with a Go at least as new as the `stable` leg above
+          # — v2.13.2 is built with go1.27.0 — and bump it in the same commit
+          # that moves the floor.
+          version: v2.13.2
 
   license:
     name: license headers
