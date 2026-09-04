@@ -89,9 +89,35 @@ queryable in its own right rather than buried in a session blob:
   `hl-*` account that Hoplock never reported become a detection. Enterprise's
   SIEM export consumes this; the schema decision is made here.
 - **The credential method and enforcement rung actually in force** (proxy D14
-  and the enforcement-point revision). Both are per session and both differ from
-  what the policy requested when a ladder degraded or a rung was unavailable.
-  The record must carry what happened, not what was asked for.
+  and contract v4). Both are per session and both differ from what the policy
+  requested when a ladder degraded or a rung was unavailable. The record must
+  carry what happened, not what was asked for — a record repeating the request is
+  a record that lies, and this is the field the whole enforcement vocabulary
+  exists to make true.
+
+  Contract v4 gives the rung four fields, and they need storing and indexing as
+  four rather than being flattened into one string: `enforcement_execution` and
+  `enforcement_reach` (the two axes are separate questions and are queried
+  separately — "what could this session run" and "what could it reach" have
+  different answers and different audiences), `enforcement_verified`, and
+  `enforcement_attested_by`.
+
+  **`enforcement_verified` is the one that must not be lost.** It is `false` on an
+  attested rung, where the target enforces something already and this system
+  verified none of it. An attested rung that reads identically to an applied one
+  turns an unverified claim into an apparent guarantee — which is exactly the
+  liability the contract's attribution rule exists to avoid — so make the
+  distinction queryable, and keep `enforcement_attested_by` beside it so a reader
+  can go and ask that team.
+
+- **Grant context on every record for a session** (`grant_context`, contract v4,
+  M16). The proxy copies it verbatim into each record and never parses it; store
+  it the same way. `additional_context` is a JSON **string or object**, so the
+  column has to admit both rather than coercing one into the other — the proxy
+  stores it verbatim for an auditor and this store must not put words in an
+  integration's mouth either. Index the `system` and `reference`: "show me every
+  session that ran under this scan" is the query it exists for, and it is the
+  other half of the showcase join below.
 
 ## Out of scope
 - SIEM export (0014) — this store is the source, the export is a consumer.
@@ -109,6 +135,14 @@ queryable in its own right rather than buried in a session blob:
   when a row is altered or deleted directly in the database — test both.
 - The showcase query returns correct results over seeded data, joined to
   decisions.
+- **The rung in force, not the rung requested.** Seed a session whose policy asked
+  for one rung and whose record reports another, and assert the store returns what
+  happened. Assert an attested rung reads back with `enforcement_verified: false`
+  and its `enforcement_attested_by` intact — a schema that drops either is one
+  that silently upgrades an unverified claim.
+- A `grant_context` round-trips with `additional_context` as a string **and** as
+  an object, and a query by `system` + `reference` returns the sessions that ran
+  under it.
 - A record containing a password-shaped field is stored redacted, or rejected —
   whichever you chose — and never written in the clear. Test against what is
   actually on disk.

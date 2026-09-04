@@ -50,6 +50,23 @@ proxy's enforcement surface:
   the contract refuses to enumerate them because customer-written drivers are
   first-class (proxy D13), and a closed list here would make an estate's own
   driver unauthorable without a release of this server;
+- **enforcement rung** per axis (`execution` and `reach`, contract v4) — where
+  the route's claim is actually enforced. Two independent axes, each with a small
+  **closed** enum, and both are properly closed here: unlike `device_field`, the
+  contract enumerates every rung, so model them as enums and let an unknown value
+  be a compile error. The rung is a property of the **route**, never of a ladder
+  entry, so it has one slot in the snapshot and not one per entry. The engine
+  must never synthesise a weaker rung as a fallback — a silent downgrade is what
+  the vocabulary exists to prevent — and the absent value on both axes is
+  proxy-side enforcement only, which is exactly what a rule that says nothing
+  about enforcement should emit;
+- **session bounds** (contract v4): a `session_deadline` as an **absolute
+  instant** — the engine already takes time as an input, so an instant is
+  computable and total, and a duration would re-anchor on each hop of a chain;
+  `require_session_capture`; `concurrency` caps per subject and/or target; and a
+  `grant_context` carried from the grant that supplied it (M10, M16), whose
+  `additional_context` is a string **or** an object and is never read for a
+  decision here or downstream;
 - **cache hint** (§5.4) — authored per rule, not global;
 - **obligations**: record, require approval, require step-up.
 
@@ -76,7 +93,30 @@ errors instead of production surprises. It MUST reject:
   rung rather than an error;
 - a device field on a rung whose method is not `ephemeral-account`. The namespace
   is scoped to that method; anywhere else it is a typo that would be silently
-  carried.
+  carried;
+- an **enforcement rung that contradicts the rest of the rule** (contract v4).
+  These are internal-consistency checks the compiler can make with no knowledge of
+  the fleet, and every one of them is a route that could otherwise only fail at
+  connect time, in front of a user: `no-interactive-shell` beside a
+  `permitted_requests` that still allows `shell` or `pty-req`;
+  `account-restricted` or `account-confined` without
+  `filter_policy.exec_mode: restricted`; `platform-authorized` without a
+  `platform_role`; `account-egress-restricted` without a non-empty
+  `permitted_destinations`; an `attestation` on a rung that is not
+  `platform-attested`, or a `platform-attested` rung without one carrying both
+  `asserted_by` and `reference`;
+- an **applied** enforcement rung on a route whose every credential-ladder entry
+  is `brokered-key` or `static-key`. An applied rung needs the proxy to administer
+  the account, which only `ephemeral-user` and `ephemeral-account` do, so such a
+  response is one the proxy refuses outright. An **attested** rung on that same
+  route is valid and must not be rejected — it is how an appliance carries a real
+  enforcement claim, and a compiler that refuses it makes the appliance estate
+  unauthorable.
+
+  What the compiler must **not** try to decide is whether a given proxy or target
+  can *provide* a rung it has correctly authored. That is a capability question
+  answered from the fleet registry (M17, 0006), on the issue path in 0008 and at
+  publish time in 0014 — the same split as an unrecognised device-field name.
 
 Device fields are **policy metadata, never credential material** — nothing here
 may treat one as a secret to broker, and nothing may read one back out as an

@@ -94,10 +94,10 @@ first during an incident.
 Enrollment and heartbeat carry more than reachability. A route may name a
 credential method, a device platform, an expiry posture, an enforcement rung, or
 — since contract v3.1 — one or more **additional device fields**
-(`device_field.<name>`, proxy D13, D14, phase 0016, and the enforcement-point
-contract revision), and a proxy can serve those only if it has the driver and the
-local material. So a proxy declares what it can provide, this registry stores it,
-and 0008 treats it as a **constraint on what a decision may say** — not as advice.
+(`device_field.<name>`, proxy D13, D14, phase 0016, and contract v4), and a proxy
+can serve those only if it has the driver and the local material. So a proxy
+declares what it can provide, this registry stores it, and 0008 treats it as a
+**constraint on what a decision may say** — not as advice.
 
 Device fields make the declared set two levels deep and it must be stored that
 way: a driver declares the field **names** it accepts, per platform, and the set
@@ -112,6 +112,52 @@ constraint, so a proxy that cannot honour one must not connect). It is therefore
 invisible in the response: the ladder just gets shorter, and on a one-rung ladder
 the session is denied. Nothing downstream can reconstruct why, which is what
 makes storing the declared names here load-bearing rather than informational.
+
+### Capabilities have two sources since contract v4, and the second is the target
+
+`Hoplock/proxy#25` (merged) adds the enforcement rung, and it breaks an
+assumption the paragraphs above quietly make: that a capability is a property of
+the *proxy*. An enforcement rung depends far more on the **target** — whether it
+runs systemd, whether cgroup v2 is mounted, whether SELinux is enforcing,
+whether netfilter is reachable, whether it is a Linux host at all — and none of
+that is in a policy database or in an enrollment payload. So build the store to
+hold both from the start; retrofitting a second key onto a proxy-keyed table is
+the expensive version of this.
+
+- **Per proxy** — `AuthorizeRequest.capabilities`, the rungs a *build* implements,
+  declared per call beside `policy_version`. Absent declares nothing. This is the
+  same "operational data, not authority" distinction as the enrolled contract
+  version above: the request field is the one that cannot be stale.
+- **Per target** — `POST /v1/capabilities/report`, the rungs one *target* can take,
+  probed after the proxy has logged in. `/v1/authorize` happens **before** the
+  proxy has ever touched the target, so a first-ever connection has nothing to put
+  on the request; the report is the only path by which this fact arrives at all.
+  **0007 serves the endpoint** (it is the sibling of `/v1/hostkeys/report` and
+  takes that shape); define the store and its interface here, as this phase
+  already does for the liveness interface 0009 implements. Key it by target — and
+  by `platform` where one is reported, since an `ephemeral-account` device is
+  observed through a driver.
+
+Three rules to build rather than infer:
+
+- **Stale, undated and absent are one case, and it fails safe.** A record older
+  than its TTL, a record whose `observed_at` is missing, and no record at all are
+  treated identically: they provide **nothing that has to be applied**. A record
+  with no observation time is stale by definition — a capability with no date has
+  no shelf life. What they must *not* affect is a rung needing nothing of the
+  target: the two proxy-side defaults and an attested rung, which nobody applies.
+  That is precisely how an appliance nobody can probe still carries a real
+  enforcement claim rather than dropping to "none available", and it is the
+  assertion most likely to be got wrong by an implementation that treats "no
+  capabilities known" as "deny everything".
+- **The server owns the freshness of its own record.** Answer
+  `report_after_seconds` and decide the interval here; a proxy may re-observe
+  sooner, never later. It is the same reasoning as a cache TTL.
+- **A report is an observation and grants nothing.** The authority for a rung is
+  the authorize response, and the proxy re-checks the rung against the live target
+  when it provisions. So the worst a stale record can cause is a **refused
+  session** — never a session running below the rung its own audit record claims.
+  Do not build a path where a report can widen anything.
 
 Two further consequences worth building for rather than discovering:
 
@@ -148,6 +194,15 @@ Two further consequences worth building for rather than discovering:
   and an over-long path is refused.
 - Enrollment: a proxy cannot claim a zone it was not granted; test the
   rejection.
+- **Capability records: the three fail-safe states are one.** A target with a
+  fresh record, one with an expired record, one whose record has no
+  `observed_at`, and one with no record at all — the last three yield the same
+  answer, and all four still allow the two proxy-side default rungs and an
+  attested rung. Assert the undated case explicitly; it is the one an
+  implementation is most likely to treat as fresh.
+- The pre-publish query (for 0014) answers, for a given policy, which proxies can
+  satisfy it **and** which targets can take its enforcement rung — over both
+  capability sources, not just the proxy-declared one.
 - Determinism: equal-cost paths resolve deterministically (say how — a stable
   tiebreak — so that two nodes answering the same request agree).
 

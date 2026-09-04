@@ -21,6 +21,13 @@
   and the negotiated version are two different numbers, and nothing here may
   assume they move together.
 
+  Then read **"The v3.1→v4 revision"** and **"Policy vocabulary v4"**, which are
+  what the document currently carries: the two enforcement axes, the four session
+  bounds, and the capability advertisement in two halves. v4 is where the
+  absent-value discipline earns its keep — every one of its fields defaults to
+  exactly what a v3 server produced — so it is the revision your absent-value
+  assertions should be written against.
+
 ## Objective
 Bring the contract into this repo as a **vendored, verifiable artifact**, and
 build the **black-box conformance suite** that decides whether an implementation
@@ -82,8 +89,12 @@ It must cover, at minimum:
   characters; value non-empty and ≤256 characters; ≤16 fields per entry) and
   asserts nothing about which names are meaningful, because the contract does not
   say and a suite that hard-codes `vdom` will fail the first customer driver.
-  Assert too that `policy_version` is still `3` on such a response: a suite that
-  expects a bump here is asserting a rule the contract does not have.
+  Assert too that a device field demands **no higher `policy_version` than the
+  route carrying it otherwise would** — v3.1 added the namespace without moving
+  the number, so a proxy declaring `3` must still be served a route bearing device
+  fields. Write that assertion against the rule, not against a literal: pinning it
+  to `3` made it stale the moment v4 landed, and a suite that expects a bump here
+  is asserting a rule the contract does not have.
 - **Host keys**: first sighting and a known key.
 - **Logs**: batch ingest returns `202` and counts accepted records; **the same
   batch replayed does not double-count** (idempotency on `record_id` — a proxy
@@ -115,23 +126,24 @@ change in the *other* repo), and a suite bug is yours to fix.
 ### A note on contract versions
 
 The vendored contract is a moving target and this phase builds the machinery,
-not a snapshot. Device provisioning and the credential ladder have landed
-upstream (v3), the `device_field.` namespace after them (v3.1, upstream
-`Hoplock/proxy#21`, merged), and enforcement points and session bounds are
-queued behind those (v4) — so the drift check and the conformance suite must
-treat a version bump as routine. If `make contract-sync` is painful to run twice
-in a week, it is wrong. Nothing here waits for the next revision; they are named
-so the design is not accidentally shaped around whichever one you happen to
-vendor.
+not a snapshot. Device provisioning and the credential ladder landed upstream
+(v3), the `device_field.` namespace after them (v3.1, upstream
+`Hoplock/proxy#21`, merged), and enforcement points and session bounds after
+those (v4, upstream `Hoplock/proxy#25`, merged) — three revisions in the time it
+took to queue this phase, which is the actual argument: the drift check and the
+conformance suite must treat a version bump as routine. If `make contract-sync`
+is painful to run twice in a week, it is wrong. Vendor whatever is current when
+you run; nothing here waits for the next revision.
 
 Two of those numbers are not the same number, and v3.1 is what proves it. The
-**document** version (`info.version`, `3.1.0` as vendored) and the **negotiated
-policy vocabulary** (`policy_version`, `3`) move independently: v3.1 added
-vocabulary and left `policy_version` alone, because that field numbers what a
-proxy can *read* and reading did not change. So do not derive one from the
-other, do not assert a relationship between them, and do not let the drift check
-key off `policy_version` — the checksum in `contract/UPSTREAM` is what catches a
-changed document.
+**document** version (`info.version`, `4.0.0` as vendored) and the **negotiated
+policy vocabulary** (`policy_version`, `4`) move independently: v3.1 added
+vocabulary and left `policy_version` at `3`, because that field numbers what a
+proxy can *read* and reading did not change, while v4 moved both. So do not
+derive one from the other, do not assert a relationship between them, and do not
+let the drift check key off `policy_version` — the checksum in `contract/UPSTREAM`
+is what catches a changed document. Both numbers above are what upstream carries
+today and neither is a target to pin: read them out of the document you vendor.
 
 ## Out of scope
 - Implementing any endpoint here (0007 onwards). The suite is written before the
@@ -143,6 +155,16 @@ changed document.
 ## Acceptance criteria
 - `make contract-check` passes on a clean tree and **fails** if a byte of
   `contract/control.yaml` is changed (test this, don't assume it).
+- **The v4 surface is graded, not just parsed.** The suite asserts
+  `POST /v1/capabilities/report` (a recorded report answers `accepted: true`, and
+  `report_after_seconds` bounds how long a proxy may wait before re-observing —
+  sooner is always allowed, later is not) and the absent-value default of every
+  v4 policy field — an authorize
+  response naming no `enforcement` object means proxy-side enforcement on both
+  axes, no `session_deadline` means no deadline, absent
+  `require_session_capture` means `false`, and absent `concurrency` means
+  uncapped. An absent-value assertion that passes vacuously is the failure mode
+  here: assert the *default*, not merely that the field may be missing.
 - `internal/contract` compiles, and the enum test passes against the document.
 - `make conform BASE_URL=... ` runs the suite and reports per-assertion results
   with a non-zero exit on any failure.
