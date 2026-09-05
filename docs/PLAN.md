@@ -493,9 +493,27 @@ management; the proxy's decisions keep their `D` numbers.
 
   Three things land here, and the third is the one with a real design in it:
 
-  1. **Instance identity** — a stable id, a display name, the software version,
-     the contract version it vendors, and its tenant set. Reported north-bound
-     and rendered in the console.
+  1. **Instance identity, and health at every level it has.** A stable id, a
+     display name, the software version, the contract version it vendors, and
+     its tenant set — reported north-bound and rendered in the console.
+
+     Identity and observability are **different questions and must not be
+     collapsed into one answer.** The identity is the logical deployment's, and
+     a node never appears in it: a supervisor that treats nodes as identities
+     counts three customers where there is one. But health is reported at every
+     level the deployment actually has — the deployment, each **node** in it, and
+     the **proxy fleet** it serves — because "is this deployment healthy" is a
+     question nobody can answer at the top level alone. A three-node cluster with
+     one node down is *degraded*, and a summary that says only `healthy` or only
+     `unreachable` has thrown away the fact that matters.
+
+     So the north-bound surface reports, beneath one identity: node membership,
+     each node's version (a rolling upgrade is legitimately mixed-version and
+     must read as **in progress** rather than as a fault), which node holds each
+     leader-elected job and the supervisory registration, event-bus and
+     replication health, and the fleet summary M6 and 0006 already compute.
+     Anyone operating this deployment — its own operator, or a supervisor they
+     have consented to — is answering an incident with it.
   2. **The north-bound API is a compatibility promise.** Until now it has been
      an internal surface: operators, CI and the console, all shipping in lockstep
      with the server. A supervisor consuming many deployments meets **version

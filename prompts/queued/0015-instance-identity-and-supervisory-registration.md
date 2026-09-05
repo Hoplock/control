@@ -32,14 +32,49 @@ A deployment knows what it is and says so north-bound:
 - an operator-set display name;
 - the software version (already stamped by 0001), the **contract version** it
   vendors, and the **north-bound API version** it serves;
-- its tenant set (M18) and, per tenant, whether it is active;
-- health that is honest about degradation: database reachable, migrations at the
-  expected version, policy compiled, fleet subscriber count.
+- its tenant set (M18) and, per tenant, whether it is active.
 
 A **clustered deployment reports one identity, not one per node.** The id
-belongs to the logical deployment and lives in the database; a node reports
-which node answered as metadata beneath it, never as the identity itself. Get
-this wrong and a supervisor counts nodes as customers.
+belongs to the logical deployment and lives in the database; a node never
+carries an identity of its own. Get this wrong and a supervisor counts nodes as
+customers.
+
+### Health, at every level the deployment has (M19)
+Identity is one question and health is another, and this phase must not answer
+the second with the shape of the first. A deployment's health is not a single
+word — a three-node cluster with one node down is **degraded**, and a summary
+that can only say `healthy` or `unreachable` has discarded the fact an operator
+needs. So report health at three levels, beneath one identity:
+
+- **Deployment** — database reachable, migrations at the expected version,
+  policy compiled and its version, north-bound and south-bound listeners
+  serving, and the roll-up of the two levels below. The roll-up states *why* it
+  is degraded, never just that it is.
+- **Node** — membership, each node's software version, uptime, last-seen, which
+  node holds each leader-elected job and which holds the supervisory
+  registration, event-bus health (M9) and any replication or subscription lag. A
+  node's version differing from its peers during a **rolling upgrade is expected
+  and must read as in-progress, not as a fault** — a monitoring surface that
+  cries wolf on every deploy is one an operator learns to ignore, which is worse
+  than not having it.
+- **Proxy fleet** — the summary 0006 already computes: proxies enrolled, live,
+  stale, and unreachable; config-version drift; contract-version spread; live
+  relay registrations; recent error counts. Serve it as a **summary with a
+  drill-down**, not as a full dump of every proxy on every poll: at telco scale
+  (PLAN M5) a fleet view that returns every proxy is a fleet view nobody can
+  call often enough to be useful.
+
+Three rules keep this honest:
+- **Absent is not healthy.** A check that did not run, a node that has not
+  reported, and a fleet summary that could not be computed are each their own
+  state and are never rendered as green. This is M11's distinction applied to
+  observability — the failure to know is not a finding of health.
+- **Every health value is timestamped** with when it was observed, not when it
+  was served. A stale value presented as current is the specific way a
+  monitoring surface causes an outage to be missed.
+- **Health is read-only and off the decision path.** Computing it may not take a
+  lock, a connection, or a budget the authorize path needs (M5). A health poll
+  that degrades the thing it measures is worse than no health poll.
 
 ### The north-bound API becomes a compatibility promise
 Until now the north-bound surface shipped in lockstep with its only clients.
@@ -81,8 +116,13 @@ An opt-in outbound registration to a supervisor, off by default:
   a real election from Enterprise (its E9) **with no second code path**. Losing
   leadership drops the registration; gaining it re-registers with the last event
   id. Test both.
-- **What flows out**: identity, version set, health, and a coarse event feed
-  (fleet health changed, licence-relevant counts, policy version published).
+- **What flows out**: identity, version set, health at all three levels above,
+  and a coarse event feed (a node joined or left, a leader-elected job moved, a
+  rolling upgrade started or finished, fleet health changed, licence-relevant
+  counts, policy version published). Push health changes rather than making a
+  supervisor poll for them: a supervisor watching forty deployments cannot poll
+  each often enough to be the first to know, and being the first to know is what
+  the supervision is for.
   Not audit records, not decision records, not session content. A supervisor
   that wants those asks the north-bound API for them, authenticated and scoped
   as any other client, so that the request is a request an operator can see and
@@ -114,8 +154,20 @@ An opt-in outbound registration to a supervisor, off by default:
 
 ## Acceptance criteria
 - Instance identity is stable across restarts and across a config change to the
-  display name; a three-node deployment reports **one** id, with node detail
+  display name; a three-node deployment reports **one** id, with per-node health
   beneath it.
+- **Degradation is legible, not binary.** A three-node deployment with one node
+  stopped reports `degraded` **and names the node and the reason**; with the
+  database unreachable it reports degraded for a different, distinguishable
+  reason. A test asserts the two are not collapsed into one state.
+- A rolling upgrade across mixed node versions reports **in progress**, not a
+  fault, and returns to healthy when it completes.
+- A check that has not run, a node that has not reported, and an uncomputable
+  fleet summary each report their own state and never report healthy.
+- Health values carry their observation time, and a value older than its
+  freshness bound is marked stale rather than served as current.
+- Computing health takes nothing the authorize path needs: assert the decision
+  path's latency is unaffected while health is polled at its maximum rate.
 - North-bound version negotiation: a client declaring an older version never
   receives a field introduced after it; a server holding something it cannot
   express within the declared version answers `5xx` with a correlation id, never
@@ -140,7 +192,9 @@ An opt-in outbound registration to a supervisor, off by default:
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0015-instance-identity-and-supervision-learnings.md`. Summary
-block MUST give: the identity shape and where it is persisted; the north-bound
+block MUST give: the identity shape and where it is persisted; the health model
+at all three levels, its states, its freshness bounds, and how "absent" is
+distinguished from "healthy"; the north-bound
 version number, what moves it, and what "additive" means on that surface; the
 registration protocol, its event kinds and its replay semantics; how the
 singleton is acquired and what happens on leadership change; the config section;
