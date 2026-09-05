@@ -166,6 +166,16 @@ text is a product surface: it is what a policy author sees.
 - **Bounded**: evaluation is linear in rule count with no unbounded constructs.
   Add a benchmark and state the budget it must fit in (M5).
 
+### Tenancy selects the program (M18)
+A tenant is not a rule and must not become a predicate the evaluator checks per
+request — M5's budget has no room for it and M3's explanations would start
+naming a tenant term instead of a rule. Tenancy selects **which compiled program
+is served**, at compile time: one bundle, one program, one tenant.
+
+The package stays pure (M13). The tenant is part of the lookup key the caller
+uses to obtain a program, not an input the evaluator reasons about, and nothing
+in `internal/policy` reads a tenant from ambient state.
+
 ## Out of scope
 - Storing bundles or decisions (0003 has the tables; 0008 writes decisions).
 - HTTP, IdP, grants' lifecycle (0012 — but the engine reads a grant as an input
@@ -193,6 +203,10 @@ text is a product surface: it is what a policy author sees.
   rejected. Any `//exhaustive:ignore` carries a reason.
 - A benchmark shows evaluation within the stated budget for a realistically
   large bundle (state the size you chose and why).
+- Two tenants' bundles compile to two programs, and evaluating one can never
+  match a rule from the other — asserted over a fixture where both tenants use
+  the same rule names and the same labels, which is the case a filter would
+  silently get right and a shared program would silently get wrong.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add

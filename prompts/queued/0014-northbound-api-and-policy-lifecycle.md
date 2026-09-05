@@ -115,6 +115,21 @@ The same operations from a terminal: `validate`, `diff`, `simulate`, `apply`,
 `explain`. It talks to the north-bound API — never to the database directly, or
 it becomes a second implementation of the rules.
 
+### Tenancy on the surface (M18)
+Every north-bound route resolves exactly one tenant from the caller's scope
+(0011) before it does anything else. Three rules keep that honest:
+
+- **A tenant is a selector, never a widening.** The middleware refuses a tenant
+  outside the principal's set before a handler runs.
+- **Single-tenant deployments look untouched.** With one tenant, no route gains
+  a required parameter and no response gains a field an operator must care
+  about. Tenancy that is visible to someone who does not use it is a tax on the
+  common case.
+- **Cross-tenant reads do not exist on this surface.** A caller with scope in
+  three tenants makes three requests. Aggregating them is a governance feature
+  and it is Enterprise's (its E11); an aggregate route here would be the one
+  place where a missing filter leaks everything at once.
+
 ## Out of scope
 - A web UI (a consumer of this API, and a separate project).
 - JIT requests and approvals (0012), though `explain` must be ready to name a
@@ -146,6 +161,11 @@ it becomes a second implementation of the rules.
   decision made under a mapping version that has since changed.
 - Every mutating action appears in the audit store with the actor.
 - `policyctl` covers each operation and its output is stable enough to script.
+- Every route is exercised by a table test asserting tenant isolation, and the
+  test enumerates routes from the router rather than from a hand-written list —
+  a route added later without isolation must fail this test.
+- With a single tenant configured, the API's shape and responses are identical
+  to those a pre-M18 client expects.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
@@ -153,4 +173,4 @@ Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 block MUST give the route table with required roles, the bundle lifecycle states,
 the simulation API and its purity requirements, the `explain` response shape, and
 the `policyctl` command set. Phase 0012 adds routes to this surface and phase
-0016 drives it end to end.
+0017 drives it end to end.

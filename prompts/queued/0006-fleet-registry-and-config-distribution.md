@@ -86,7 +86,7 @@ configures a fleet rather than N files.
 ### Health & status
 Per proxy: last heartbeat, contract version, running config version, live relay
 registrations, current session count, and the last error it reported. This is
-what the console's fleet screen (0015) renders and what an operator looks at
+what the console's fleet screen (0016) renders and what an operator looks at
 first during an incident.
 
 ### Declared capabilities (M17)
@@ -175,6 +175,23 @@ Two further consequences worth building for rather than discovering:
   does not declare `vdom` is a ladder that quietly loses a rung in production and
   says nothing at publish time unless this query says it.
 
+### The graph is per tenant (M18)
+Pathfinding must never cross a tenant boundary. This is not an information leak
+to be filtered out of a response — a cross-tenant hop is one customer's session
+traversing another customer's infrastructure, and it is the single worst thing
+this graph can do.
+
+- A proxy belongs to a tenant **at enrollment**, resolved from its enrollment
+  credential. The contract carries no tenant field and must not grow one: a
+  proxy asserting its own tenancy is a caller asserting its own authority
+  (M18), and the enrolment credential is what the server already trusts.
+- `Path` is computed within one tenant's subgraph. An edge to another tenant's
+  zone does not exist rather than being pruned late — a viable-looking path that
+  is filtered at the end is a path some later refactor will forget to filter.
+- Zones are per tenant, so two tenants may both name a zone `prod` and mean
+  different things. Do not make zone names globally unique to dodge this; that
+  is a customer-visible constraint invented to simplify an internal lookup.
+
 ## Out of scope
 - Serving `/v1/authorize` (0008 calls into this package).
 - The revocation stream itself (0009), though liveness reads its subscription
@@ -205,6 +222,12 @@ Two further consequences worth building for rather than discovering:
   capability sources, not just the proxy-declared one.
 - Determinism: equal-cost paths resolve deterministically (say how — a stable
   tiebreak — so that two nodes answering the same request agree).
+- **No path crosses a tenant.** Build a graph where the *only* route from
+  tenant A's entry proxy to a reachable zone passes through tenant B's proxy,
+  and assert the result is the explicit no-path outcome (an outage, M11) — never
+  a path, and never a deny.
+- Two tenants using identical zone names, proxy zones and target labels resolve
+  independently; neither can observe the other's proxies in the fleet view.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add

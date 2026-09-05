@@ -232,6 +232,10 @@ management; the proxy's decisions keep their `D` numbers.
   carries the tenant column and every query still filters on it. It is nearly
   free now, and retrofitting it into a populated audit store later is a
   migration nobody wants to run.
+
+  **Amended by M18**, which makes tenancy a dimension a caller selects rather
+  than a constant the process is configured with. M12 bought the column; M18
+  pays for the plumbing.
 - **M13 — Tech choices.** Go (same floor policy as the proxy: the `go`
   directive is the minimum, CI tracks the latest stable, and the floor moves only
   when a dependency moves it). Postgres via `pgx`, with forward-only versioned
@@ -424,6 +428,140 @@ management; the proxy's decisions keep their `D` numbers.
   That is precisely how an appliance nobody can probe still carries a real
   enforcement claim rather than dropping to "none available".
 
+- **M18 — Tenancy is a request dimension, not a process constant (amends M12,
+  new).** M12 put the tenant column on every table and a filter on every query,
+  and it was right about the cheap half. The expensive half is that
+  `config.example.yaml` binds a whole *process* to one tenant — "the tenant this
+  deployment operates as" — so the column is currently a constant the server
+  writes, never a dimension a caller selects. That is the retrofit M12 set out to
+  avoid, just one layer up: a schema ready for tenancy under a server that cannot
+  express it.
+
+  So tenancy becomes a dimension **resolved from the caller, never asserted by
+  it**, and the resolution differs by surface because the threat models do (M2):
+
+  - **North-bound** — from the authenticated principal's scope. A token or an
+    OIDC session names the tenants it may act in; a tenant in a path or a body is
+    a selector *within* that set, never a widening of it. A caller that can name
+    a tenant it was not granted is the whole vulnerability class this decision
+    exists to close.
+  - **South-bound** — from the proxy's enrolled identity. A proxy belongs to a
+    tenant at enrollment and **the contract carries no tenant field**: a proxy
+    asserting its own tenancy would be a caller asserting its own authority, and
+    the answer to that is the same one §4 gives for `conn.hop_trail` — it may
+    narrow, never widen. This is why multi-tenancy needs **no change to
+    `hoplock/proxy`**, which is the strongest evidence the seam is in the right
+    place.
+
+  Four consequences are load-bearing, and each is a place where "filter on the
+  column" is not enough:
+
+  1. **The fleet graph is per tenant (M6).** Pathfinding must never route a
+     session through another tenant's proxy. A cross-tenant hop is not an
+     information leak, it is one customer's traffic traversing another
+     customer's infrastructure.
+  2. **The compiled decision program is per tenant (M3, M5).** Tenancy selects
+     which program is served, at compile time; it is not a predicate evaluated
+     per request. M5's budget does not have room for a tenant filter on the hot
+     path, and a filter is the wrong shape anyway — a tenant is not a rule.
+  3. **The audit chain is per tenant (M8).** Each tenant's stream is
+     independently verifiable and independently exportable, because a customer
+     leaving must be able to take a chain that still verifies. A single chain
+     spanning tenants makes departure either a broken chain or a disclosure.
+  4. **The SSH CA is per tenant (M7, proxy D6a).** One tenant's targets must not
+     trust another tenant's CA. Key material is per tenant from the first
+     issuance, for the same reason the audit chain is.
+
+  Single-tenant operation stays the default and stays invisible: the config key
+  remains, one tenant is resolved for every caller, and an operator who never
+  wants tenancy never sees it. Cross-tenant isolation is a **test class**, not a
+  review item — every repository, the graph, the compiler, and the audit chain
+  each carry a two-tenant test that asserts one cannot reach the other.
+
+  Governance on top of this — delegated administration, per-tenant entitlements,
+  cross-tenant reporting — is Enterprise's (its E11). The mechanism is here
+  because the queries are here, and a seam that hands another module the job of
+  filtering correctly is a seam that will eventually be used incorrectly.
+
+- **M19 — A deployment has an identity, and it can be supervised (new).** A
+  Control deployment currently has no name for itself. That is fine while it is
+  the only one an operator runs, and it is the blocker for everything above it:
+  a managed-service provider running forty deployments, a customer with one per
+  region, or an operator with a staging and a production instance all need to
+  ask "which deployment am I looking at, what version does it speak, and is it
+  healthy" before they can ask anything else.
+
+  Three things land here, and the third is the one with a real design in it:
+
+  1. **Instance identity, and health at every level it has.** A stable id, a
+     display name, the software version, the contract version it vendors, and
+     its tenant set — reported north-bound and rendered in the console.
+
+     Identity and observability are **different questions and must not be
+     collapsed into one answer.** The identity is the logical deployment's, and
+     a node never appears in it: a supervisor that treats nodes as identities
+     counts three customers where there is one. But health is reported at every
+     level the deployment actually has — the deployment, each **node** in it, and
+     the **proxy fleet** it serves — because "is this deployment healthy" is a
+     question nobody can answer at the top level alone. A three-node cluster with
+     one node down is *degraded*, and a summary that says only `healthy` or only
+     `unreachable` has thrown away the fact that matters.
+
+     So the north-bound surface reports, beneath one identity: node membership,
+     each node's version (a rolling upgrade is legitimately mixed-version and
+     must read as **in progress** rather than as a fault), which node holds each
+     leader-elected job and the supervisory registration, event-bus and
+     replication health, and the fleet summary M6 and 0006 already compute.
+     Anyone operating this deployment — its own operator, or a supervisor they
+     have consented to — is answering an incident with it.
+  2. **The north-bound API is a compatibility promise.** Until now it has been
+     an internal surface: operators, CI and the console, all shipping in lockstep
+     with the server. A supervisor consuming many deployments meets **version
+     skew** — one customer on 1.4, another on 1.7 — so the north-bound surface
+     gets an explicit version, negotiated on the same principle as
+     `policy_version` does south-bound (§4): the client names what it can read,
+     and the server never answers outside it. **This retires an assumption
+     phase 0018 currently rests on** — "this product ships its proxy and its
+     server together and has no installed base" stops being true the moment
+     anyone operates a fleet of deployments, and 0018 must say so.
+  3. **Outbound supervisory registration.** A supervised deployment sits behind
+     NAT and the supervisor cannot dial in. Rather than invent a mechanism, use
+     the one the fleet already proved one level down: proxy D11 has a downstream
+     proxy **register outbound** and become reachable as a `relay`, and M9 has
+     it hold one long-lived stream with replay and `resync`. A deployment
+     registering outbound to a supervisor is the same shape, one level up, and
+     it should be recognisably the same shape in the code.
+
+  Four rules make it safe, and they are the framework's rather than each
+  supervisor's, on M16's reasoning:
+
+  - **Registration is opt-in, configured locally, and revocable locally.** A
+    deployment is supervised because its operator configured it to be, and they
+    can stop it without the supervisor's cooperation. Anything else is a
+    back door with a business model.
+  - **The supervisor's credential is scoped and its use is visible.** It is a
+    north-bound token like any other (M2) — subject to M18's tenant scoping and
+    the scope grammar — and every action taken through it is in *this*
+    deployment's audit trail, attributed to the supervisor. The operator being
+    supervised must be able to read what was done to them.
+  - **A supervisor is never on the decision path.** It may not be an M16 probe
+     source, it may not hold a lock the authorize path takes, and a supervisor
+     that is unreachable, slow, or hostile must change nothing about whether a
+     user reaches a machine. M11's distinction applies with no exceptions: a
+     supervisory failure is an outage in a management view, never a deny.
+  - **Registration is a cluster singleton.** Exactly one node per logical
+     deployment holds it, or one deployment appears as N. It acquires the
+     singleton through `ext.ClusterCoordinator` (0004) — whose default
+     implementation already answers "I am the leader, there is one node" — so a
+     single-node deployment needs no clustering and a clustered one gets a real
+     election from Enterprise (its E9) with no second code path.
+
+  Per M15 this ships a **real default**: the registration client and the
+  identity endpoints are here, and they are how any operator points a deployment
+  at their own dashboard. The supervisory plane that consumes many of them is
+  Enterprise's (its E14). The line is the same one M16 draws — the seam and its
+  honest default here, the packaged product on top of it there.
+
 ---
 
 ## 3. Architecture & repository layout
@@ -450,6 +588,7 @@ control/
 │   ├── audit/              # ingest, hash chain, query, retention (M8)
 │   ├── export/             # SIEM sinks (Splunk/Sentinel/Elastic)
 │   ├── access/             # JIT requests, approvals, grants, notifiers (M10)
+│   ├── instance/           # deployment identity, supervisory registration (M19)
 │   └── httpapi/
 │       ├── south/          # proxy-facing handlers (the contract)
 │       └── north/          # admin/operator/CI handlers
@@ -482,6 +621,11 @@ control/
 - **`internal/audit`** — append-only writer, chain verifier, and query API.
   Nothing else writes audit rows.
 - **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
+- **`internal/instance`** — this deployment's own identity and version, and the
+  outbound registration client that makes it supervisable (M19). It is a
+  *client* of something above it, which makes it the only package here that
+  dials outward on the management plane; it may never be reachable from the
+  decision path.
 
 ---
 
@@ -538,7 +682,7 @@ Five obligations are easy to miss and are graded by the conformance suite:
   always did. So version-aware assembly cannot gate a device field, because there
   is no version to gate it on, and it must not try. The document version and the
   negotiated vocabulary are two numbers that move independently, which is why
-  neither is derived from the other (0002, 0017).
+  neither is derived from the other (0002, 0018).
 
   What makes that addition safe is the layer below: the proxy skips a rung whose
   fields its driver does not declare, so a field an enforcing proxy cannot honour
@@ -592,7 +736,7 @@ Five obligations are easy to miss and are graded by the conformance suite:
   every entry in it can only cause a refusal, which is exactly why it is safe to
   accept from a caller. The authority on a leg is the previous hop's key, above.
 
-  Phases: 0007 and 0008 respectively; 0016 proves the pair against a real proxy.
+  Phases: 0007 and 0008 respectively; 0017 proves the pair against a real proxy.
 
 ---
 
@@ -889,9 +1033,31 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
 | 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4) |
-| 0015 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory |
-| 0016 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
-| 0017 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other, no thinning path |
+| 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
+| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory |
+| 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
+| 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other, no thinning path |
+
+> **Renumbering note (multi-instance revision).** Phase 0015 is new: a
+> deployment that can be *supervised* needs its own identity, a north-bound
+> surface it can promise across versions, and a way to register outbound to
+> something above it (M19). It sits after the north-bound API because it is that
+> API's compatibility story, and before the console because the console renders
+> a deployment's identity. Under `docs/PROTOCOL.md` §6 the queued prompts below
+> it were renumbered — **0015→0016, 0016→0017, 0017→0018** — and nothing is
+> implemented yet, so no frozen name moved. Anything written before this
+> revision that hands work to "0015" means the console, now **0016**; to "0016"
+> means the E2E topology, now **0017**.
+>
+> Tenancy (M18) added no phase. It is woven into 0003, 0005, 0006, 0010, 0011
+> and 0014 instead, for exactly M12's reason: a dimension retrofitted into a
+> populated store is a migration nobody wants to run, and one retrofitted into a
+> compiled policy program is worse.
+>
+> This revision is **downstream-driven**: `hoplock/enterprise` needs both seams
+> to build a multi-instance supervisory plane (its E14). Per
+> `docs/CROSS-REPO-PROTOCOL.md` §2 it merges here first, and Enterprise
+> describes it only afterwards.
 
 > **Renumbering note (privileged-access revision).** Phase 0013 is new: external
 > access context (M16) has to exist before the north-bound API is built, because
@@ -916,11 +1082,11 @@ decision records to have been produced by something.
 Prompts may add or re-order later phases; any prompt that introduces new queued
 prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 
-> **On 0017 running last.** It is an audit, and an audit wants everything that
+> **On 0018 running last.** It is an audit, and an audit wants everything that
 > could hold a version number to exist first. The position is not an invitation
 > to build multi-version machinery in the meantime: this product ships its proxy
 > and its server together and has no installed base, so every phase before it
-> should already carry one version in one place, and 0017 should find little.
+> should already carry one version in one place, and 0018 should find little.
 > What it does own is the decision that a mismatch is a **loud refusal** rather
 > than a thinned answer, and the documents that still describe a mid-upgrade
 > fleet (§4 above among them).
@@ -941,7 +1107,14 @@ crippled placeholder here.
 Genuinely out of scope for now:
 
 - Editing the contract here (M1 — it is upstream, always).
-- Multi-tenant operation (schema is ready, M12; the API and UI are not).
+- Multi-tenant **governance** — delegated administration, per-tenant
+  entitlements, cross-tenant reporting. The *mechanism* is here (M18: tenancy
+  resolved from the caller, per-tenant graph, program, chain and CA); the
+  governance on top of it is Enterprise's (its E11).
+- The **supervisory plane** itself — the thing that manages many deployments.
+  This repository makes a deployment identifiable and supervisable (M19) and
+  ships the registration client as its real default; aggregating a fleet of
+  deployments is Enterprise's (its E14).
 - HA/multi-region deployment. The decision path is designed to scale out (M5)
   and the event bus is behind `ext.ClusterCoordinator` (M9, 0004), but this
   repository runs one node; clustering is Enterprise.

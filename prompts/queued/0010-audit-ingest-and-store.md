@@ -119,6 +119,21 @@ queryable in its own right rather than buried in a session blob:
   session that ran under this scan" is the query it exists for, and it is the
   other half of the showcase join below.
 
+### One chain per tenant (M18)
+The hash chain is per tenant per stream, not one chain spanning the deployment.
+The reason is a customer leaving: they must be able to take a chain that still
+verifies, and a shared chain makes departure either a broken chain or a
+disclosure of everybody else's record count and timing.
+
+- The tenant of an ingested record comes from the **proxy's enrolled identity**
+  (M18), never from the record body. A record whose body claims a tenant its
+  proxy does not belong to is rejected as malformed — quietly accepting it and
+  filing it under the enrolled tenant hides a misconfiguration that matters.
+- `record_id` idempotency (0003) is scoped per tenant.
+- The verifier verifies one tenant's chain independently, and reports which
+  tenant it verified. A verifier that can only check the whole store is not
+  usable by a customer who is entitled to see only their part of it.
+
 ## Out of scope
 - SIEM export (0014) — this store is the source, the export is a consumer.
 - The north-bound query API (0014) — build the query layer, not the HTTP surface.
@@ -147,6 +162,11 @@ queryable in its own right rather than buried in a session blob:
   whichever you chose — and never written in the clear. Test against what is
   actually on disk.
 - Ingest throughput is measured and reported, with the batch size used.
+- Two tenants ingesting concurrently produce two chains that each verify alone;
+  deleting a record from one breaks that tenant's chain and leaves the other
+  verifying.
+- A record whose body names a tenant other than its proxy's enrolled one is
+  rejected, and the rejection is distinguishable from an ingest failure.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add

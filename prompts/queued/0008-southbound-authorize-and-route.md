@@ -347,5 +347,5 @@ MUST give the input assembly order (including where `conn.hop_trail` enters it
 and how loops and the hop cap are refused), the snapshot mapping (engine field →
 contract field), the cache-hint issuance rules, the decision-record shape and
 whether its write is synchronous, and the measured latency numbers. Phase 0014's simulation
-and explain features read those records; phase 0016 asserts this end to end
+and explain features read those records; phase 0017 asserts this end to end
 against a real proxy.

@@ -171,7 +171,7 @@ today and neither is a target to pin: read them out of the document you vendor.
 - **CI runs the suite against Hoplock Proxy's mock server and it passes** —
   or, if it does not, the PR documents exactly which assertion the mock fails and
   why the suite is right.
-- The suite's expectation file is documented well enough that phase 0016 can
+- The suite's expectation file is documented well enough that phase 0017 can
   point it at the real server with no code changes.
 
 ## Definition of Done & hand-off
