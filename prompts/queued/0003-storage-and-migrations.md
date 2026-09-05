@@ -63,6 +63,27 @@ Everything else may be slower.
 - A seeding helper later phases use to build fixtures without hand-writing
   inserts.
 
+### Tenancy is a dimension, not a constant (M18)
+M12 gave every table the column and every query the filter, and this phase
+already delivers both. M18 adds the half that is not free: the tenant a row is
+written under comes from the **caller**, not from `config.yaml`. So the
+repository interfaces take the tenant as an explicit argument rather than
+reading it from a server-wide value — a signature that cannot express a
+cross-tenant read is worth far more than a convention that a reviewer has to
+notice.
+
+Two schema consequences land here rather than later, for exactly M12's reason:
+- **audit chain fields are keyed per tenant** — one chain per tenant per stream,
+  so a tenant's history verifies on its own and can be exported without the rest
+  (M8, M18);
+- **CA key material is per tenant** (M7, proxy D6a) — the table 0011 fills in
+  carries the tenant from the first row, because one tenant's targets must never
+  trust another tenant's CA.
+
+Single-tenant operation stays the default: the config key remains and resolves
+one tenant for every caller, so an operator who does not want tenancy never
+meets it.
+
 ## Out of scope
 - Policy semantics (0005), fleet semantics (0006), audit chaining (0010), grant
   workflow (0012, and its Enterprise extension). This phase provides tables and
@@ -79,6 +100,11 @@ Everything else may be slower.
 - The audit table's `record_id` uniqueness is enforced **by the database**, and a
   test proves a duplicate insert is rejected rather than deduplicated in Go —
   0010 depends on this being a database guarantee across concurrent writers.
+- **Tenancy is unforgeable at the repository boundary.** Seed two tenants and
+  assert every repository method reaches only its own; assert additionally that
+  no method has a signature able to express a cross-tenant read without one.
+- The audit chain columns are per tenant: two tenants' records interleaved by
+  arrival time still produce two chains that each verify alone.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add

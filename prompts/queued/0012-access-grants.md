@@ -66,7 +66,7 @@ migration, and M12 already establishes that this repository does not enjoy those
 
 ## Out of scope
 - Requests, approvals, notifiers, approver policy — Hoplock Enterprise.
-- A UI beyond the API (0015 builds the console).
+- A UI beyond the API (0016 builds the console).
 
 ## Acceptance criteria
 - Full lifecycle: create a grant → the **next authorize allows what it

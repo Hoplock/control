@@ -1,9 +1,10 @@
-# 0017 — One contract version, end to end
+# 0018 — One contract version, end to end
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 ("never edit
   `contract/`") and §9.
-- `docs/PLAN.md` — especially **§4** (the vocabulary-negotiation obligation, the
+- `docs/PLAN.md` — especially **M19** (the north-bound surface is versioned
+  separately and is **out of scope here**), **§4** (the vocabulary-negotiation obligation, the
   current-vocabulary note and the contract v3.1 case beneath it), **M1** (the
   contract is vendored,
   read-only), **M11** (`401` is a decision; everything else is `5xx`), and
@@ -32,9 +33,20 @@ The contract's negotiation rules exist for a fleet **mid-upgrade across contract
 revisions**: proxies of several builds, a server that must answer each within the
 vocabulary it can read, and a hard rule that dropping a restriction is a breach
 rather than a degradation. That is a real problem, and it is not yet this
-product's problem. Hoplock Control has no installed base: the first proxy and the
-first server ship together, and every deployment that exists moves them as a
-pair.
+product's problem **south-bound**. Hoplock Control has no installed base there:
+the first proxy and the first server ship together, and every deployment that
+exists moves them as a pair.
+
+> **The north-bound API is exempt, and the exemption is load-bearing (M19).**
+> The paragraph above stopped being true one surface over the moment a
+> deployment could be supervised: a supervisory plane consumes many deployments
+> at many versions, so the north-bound surface has *exactly* the mid-upgrade
+> problem this phase is narrowing away south-bound, and it has it permanently.
+> Phase 0015 gives that surface its own version and its own negotiation. This
+> phase must not touch it, must not fold its number into the contract's, and
+> must state the split in its learnings — the two numbers move independently and
+> for different reasons, which is the same lesson §4 already records about
+> `policy_version` and the document version.
 
 Version-thinning machinery carried before it is needed is the worst kind of
 code — it is never exercised, so it is wrong exactly when it is finally used, and
@@ -150,6 +162,9 @@ version support back needs the argument, not just the conclusion.
 - **It may not delete the negotiation tests**, only re-aim them (above).
 
 ## Out of scope
+- The **north-bound API version** and its negotiation (M19, phase 0015). It is a
+  separate number with a separate lifecycle and a real installed base; leave it
+  alone and say in the learnings that you did.
 - Vendoring a new contract version. That is a downstream sync, not a phase
   (`docs/CROSS-REPO-PROTOCOL.md` §3.1) — and note that when upstream does bump
   the version, this phase's single constant plus its failing test is exactly what
@@ -180,7 +195,7 @@ version support back needs the argument, not just the conclusion.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0017-single-contract-version-learnings.md`. The summary block
+`docs/learnings/0018-single-contract-version-learnings.md`. The summary block
 MUST give: where the supported version and the document version are defined and
 how they are tied to the vendored file, the exact refusal behaviour and status
 code, which conformance assertions are contract-level and which are this

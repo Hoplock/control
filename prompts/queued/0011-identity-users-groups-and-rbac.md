@@ -28,7 +28,7 @@ disks.
 - Local users and groups as first-class records, so a deployment works before
   any IdP is connected — and so break-glass access exists when the IdP is down.
 - **Roles** with a fixed, documented permission set, and RBAC enforced in one
-  place that both the API (0014) and the console (0015) go through. At minimum:
+  place that both the API (0014) and the console (0016) go through. At minimum:
   auditor (read-only), policy author, grant admin, fleet admin, admin.
 - Group membership from either source (local or mapped IdP claims) feeds policy
   attributes identically — a rule must not care where a group came from.
@@ -66,6 +66,27 @@ disks.
   - write the required upstream change into your learnings as a named,
     precise cross-repo dependency, and tell the user.
 
+### Tenant resolution and per-tenant identity (M18)
+This phase owns the north-bound half of M18: **a caller never asserts its own
+tenant.**
+
+- A principal — an OIDC session or an API token — carries the set of tenants it
+  may act in. A tenant named in a path, a query or a body is a **selector within
+  that set**, and a selector naming a tenant outside it is refused. This is the
+  vulnerability class M18 exists to close, so it belongs in the middleware every
+  north-bound handler goes through, never in the handlers.
+- IdP configuration is per tenant: two tenants federate with different IdPs, map
+  different claims, and their subjects never collide. A subject id is unique
+  within a tenant, not globally.
+- Roles and role bindings are per tenant. A role granted in tenant A confers
+  nothing in tenant B, including to an administrator.
+- The **SSH CA is per tenant** (M7, proxy D6a): separate key material, separate
+  rotation, separate revocation. One tenant's targets must not trust another
+  tenant's CA, and this is where that becomes true rather than intended.
+- A principal may hold scope in several tenants — that is what makes delegated
+  administration possible upstream of Enterprise's E11 — but every *request*
+  resolves to exactly one, so an audit record never has to say "some of them".
+
 ## Out of scope
 - Editing the contract (M1).
 - Device posture collection — the policy model has a slot; nothing collects it.
@@ -73,7 +94,7 @@ disks.
   (multi-IdP federation, complex claim-transformation rules, IdP-driven
   de-provisioning): Hoplock Enterprise, behind `ext.IdentitySync`. Define that
   interface's needs here if this phase learns something it must carry.
-- A UI for mapping authoring (0014 exposes the API; 0015 builds the console).
+- A UI for mapping authoring (0014 exposes the API; 0016 builds the console).
 
 ## Acceptance criteria
 - OIDC and SAML flows are tested against a local test IdP, producing an identity
@@ -90,6 +111,13 @@ disks.
 - No IdP client secret, private key, or token appears in any log, error, or
   stored row.
 - 0007's conformance assertions still pass with the real providers wired in.
+- A token scoped to tenant A cannot read, write, or enumerate tenant B through
+  any north-bound route — driven as a table test over **every** registered
+  route, not a sample, since the failure mode is one handler that forgot.
+- A role granted in tenant A confers nothing in tenant B, asserted for an
+  administrator role as well as a restricted one.
+- Two tenants with the same subject id from different IdPs never resolve to each
+  other, and each tenant's CA signs only for its own targets.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add

@@ -1,4 +1,4 @@
-# 0015 — Management console (web UI)
+# 0016 — Management console (web UI)
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -46,6 +46,18 @@ explanation of why access was allowed or denied**.
 - Accessibility and no-colour-only signalling for status; keyboard navigation on
   the audit and explain views, which are the ones people live in.
 
+### Deployment identity and tenant context (M18, M19)
+- The console always says **which deployment** this is: name, instance id,
+  version set, and health (0015). An operator with a staging and a production
+  instance open in two tabs must never have to guess which is which, and the
+  distinction has to survive a screenshot.
+- Where more than one tenant is in scope, the current tenant is visible in the
+  chrome and switching is explicit. With a single tenant, none of this appears —
+  tenancy is invisible to a deployment that does not use it (M18).
+- If the deployment is supervised, say so, name the supervisor, and link to the
+  audit view filtered to that supervisor's actions. An operator must be able to
+  see what was done to their deployment from above, in their own console.
+
 ## Out of scope
 - Enterprise screens (approval inboxes, compliance reports). Enterprise adds its
   own, served through the same shell — define how in learnings so it can.
@@ -64,6 +76,6 @@ explanation of why access was allowed or denied**.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0015-management-console-learnings.md`. Summary block MUST give
+`docs/learnings/0016-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it.

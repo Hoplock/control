@@ -165,5 +165,5 @@ M11 honest, the identity-resolution interface 0011 will implement, the MFA
 provider interface and its deterministic test implementation, the host-key
 storage shape, and **how a chain leg is recognised** — which registry answers
 "is this key one of ours" and how the authenticating proxy's id is carried on
-the identity, since 0008 pairs it with `conn.hop_trail` and 0016 proves the pair
+the identity, since 0008 pairs it with `conn.hop_trail` and 0017 proves the pair
 end to end.
