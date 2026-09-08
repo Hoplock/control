@@ -13,13 +13,18 @@
   and `api/README.md` ("What a chained hop sends this API") — why a chained hop
   authenticates against this endpoint with the previous hop's key, and what it
   expects back.
+- In the **Hoplock Proxy repository**, `api/README.md` §"Reusing a host-key
+  decision (`cache` on `HostKeyReportResponse`)" and §"The v4→v4.1 revision" —
+  what the proxy does with a hint on this endpoint's response, which is the only
+  thing that makes the rules below rules rather than preferences.
 
 ## Objective
 Serve the south-bound authentication endpoints for real: resolve a certificate
 or a password to an identity with claims, own the MFA conversation end to end,
 and record what the proxy reports back about a target — its host key, and (since
-contract v4) the enforcement rungs it can take. This is the first phase where the
-conformance suite from 0002 grades a real implementation.
+contract v4) the enforcement rungs it can take. Decide, per host key and since
+contract 4.1, whether the proxy may stop re-reporting it. This is the first phase
+where the conformance suite from 0002 grades a real implementation.
 
 ## In scope
 
@@ -103,6 +108,49 @@ change. Store first-seen keys and detect a **changed** key for a known target �
 that is a security event worth an audit record (its ingest lands in 0010; emit
 through whatever logging exists now with a stable shape).
 
+#### The response may carry a `cache` hint (contract 4.1)
+
+Added by `Hoplock/proxy#35` (merged). `HostKeyReportResponse` may now carry the
+same `CacheHint` object `/v1/authorize` already answers with, and a proxy that
+receives one stops reporting that key on every connection: upstream measured
+this endpoint at **46% of the Control calls that survive an authorize cache
+hit**, because a proxy reconnecting to a target it has seen ten thousand times
+reported the same key ten thousand times. `policy_version` stays `4` — the field
+is on this endpoint, not on authorize, and it grants rather than restricts.
+
+**Absent means what every server does today**, so issuing no hint at all is a
+correct implementation of this phase and a fine place to start. What is not fine
+is issuing one without the four rules below, each of which is a property of the
+proxy's behaviour rather than a preference of ours:
+
+- **Issue it under 0008's discipline, not a looser one** (PLAN §5.4). The
+  lifetime is this server's to set, and **never issue a hint to a proxy whose
+  event stream is unhealthy** (M9) — a decision that cannot be withdrawn is a
+  grant with no revocation, and that rule was never authorize-only. This
+  endpoint is the second place it has to be enforced, which means the liveness
+  read from 0006/0009 is on this path too.
+- **What the proxy reuses is narrower than a hint looks.** It keys the reuse on
+  `target`, `target_port` **and `host_key.fingerprint`**, and on nothing wider.
+  So what is reused is the answer to "may this target, presenting *this* key, be
+  reached": a target presenting a different key is a different lookup, misses,
+  and arrives here on the first connection that sees it. That is what keeps the
+  changed-key detection above honest under reuse — the man-in-the-middle, the
+  rotated key and the rebuilt host are all still reported (proxy D7) — and it is
+  not a shape this server can widen by hinting more broadly.
+- **Never hint a `reject` or a `known: false`.** The proxy refuses to reuse
+  either one however it is hinted: a rejected host key is a security event it
+  must keep reporting, and reusing a first sighting would replay "trusted on
+  first use" into the audit log for every later connection. A hint on either is
+  therefore not a widening but dead weight, and issuing one says this server has
+  not read the rule. Hint only a key already ruled on and accepted.
+- **Store the key you issue, because subject-scoped invalidation cannot reach
+  this decision.** `cache_invalidate` with a `subject` does not match a host-key
+  entry — a host-key decision is not made for a person — so withdrawing one
+  means publishing that decision's own `key`, or `resync`. Keep the key on the
+  host-key record rather than generating and forgetting it; 0009 publishes it,
+  but a key nobody stored is a decision nobody can withdraw short of resyncing
+  the entire fleet's cache.
+
 ### Capability reporting (`POST /v1/capabilities/report`, contract v4)
 
 Added by `Hoplock/proxy#25` (merged) and served here because it is the sibling of
@@ -143,7 +191,16 @@ has nothing to put on the request.
   resolved challenge, and poll-rate enforcement each have a test.
 - The password appears in no log line, error, or stored row — asserted against
   captured output.
-- A changed host key for a known target is detected and surfaced.
+- A changed host key for a known target is detected and surfaced — including
+  when the previous key's decision was hinted as cacheable, since the proxy
+  keys reuse on the fingerprint and a new key misses.
+- **Host-key cache hint** (if this phase issues one at all): a hint is issued
+  only for an already-known, accepted key, and never on a `reject` or a
+  `known: false` response; no hint is issued to a proxy whose event stream is
+  unhealthy; and the issued key is stored on the host-key record, proven by
+  reading it back and withdrawing the decision by that key. If the phase issues
+  no hint, say so in the learnings and assert the response carries none —
+  "we did not get to it" and "we decided not to" read identically in a diff.
 - **Capability report**: a report is stored and readable through 0006's store,
   and `accepted` is `true` only when the write landed — inject a store failure and
   assert the response is not a cheerful `accepted: true`. A second report for the
@@ -163,7 +220,9 @@ Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 give the listener/middleware layout, the `Deny`-vs-`error` mechanism that keeps
 M11 honest, the identity-resolution interface 0011 will implement, the MFA
 provider interface and its deterministic test implementation, the host-key
-storage shape, and **how a chain leg is recognised** — which registry answers
-"is this key one of ours" and how the authenticating proxy's id is carried on
-the identity, since 0008 pairs it with `conn.hop_trail` and 0017 proves the pair
-end to end.
+storage shape **including whether a `cache` hint is issued and where its key is
+stored** (0009 needs that key to withdraw a host-key decision, and a
+subject-scoped invalidation will not do it), and **how a chain leg is
+recognised** — which registry answers "is this key one of ours" and how the
+authenticating proxy's id is carried on the identity, since 0008 pairs it with
+`conn.hop_trail` and 0017 proves the pair end to end.

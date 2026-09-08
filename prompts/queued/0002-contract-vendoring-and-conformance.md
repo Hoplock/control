@@ -28,6 +28,13 @@
   exactly what a v3 server produced — so it is the revision your absent-value
   assertions should be written against.
 
+  Finally read **"The v4→v4.1 revision"** and **"Reusing a host-key decision
+  (`cache` on `HostKeyReportResponse`)"**. 4.1 is v3.1's lesson repeated with a
+  different field: one optional `cache` hint on the host-key response, and
+  `policy_version` left at `4`, because the number governs what `/v1/authorize`
+  may answer with. Read it before writing any assertion that ties the document
+  version to the negotiated one.
+
 ## Objective
 Bring the contract into this repo as a **vendored, verifiable artifact**, and
 build the **black-box conformance suite** that decides whether an implementation
@@ -95,7 +102,12 @@ It must cover, at minimum:
   fields. Write that assertion against the rule, not against a literal: pinning it
   to `3` made it stale the moment v4 landed, and a suite that expects a bump here
   is asserting a rule the contract does not have.
-- **Host keys**: first sighting and a known key.
+- **Host keys**: first sighting and a known key; and, for contract 4.1, that a
+  `cache` hint on the response round-trips as the same `CacheHint` shape
+  `/v1/authorize` answers with, while a response **carrying none is equally a
+  pass** — absent means "report every connection", which is what every server
+  did before the field existed. Assert the envelope only: whether a given key
+  is worth hinting is the implementation's business (0007), not the contract's.
 - **Logs**: batch ingest returns `202` and counts accepted records; **the same
   batch replayed does not double-count** (idempotency on `record_id` — a proxy
   draining a disk buffer will resend); priority ingest returns `200`.
@@ -136,14 +148,18 @@ is painful to run twice in a week, it is wrong. Vendor whatever is current when
 you run; nothing here waits for the next revision.
 
 Two of those numbers are not the same number, and v3.1 is what proves it. The
-**document** version (`info.version`, `4.0.0` as vendored) and the **negotiated
+**document** version (`info.version`, `4.1.0` as vendored) and the **negotiated
 policy vocabulary** (`policy_version`, `4`) move independently: v3.1 added
 vocabulary and left `policy_version` at `3`, because that field numbers what a
-proxy can *read* and reading did not change, while v4 moved both. So do not
-derive one from the other, do not assert a relationship between them, and do not
-let the drift check key off `policy_version` — the checksum in `contract/UPSTREAM`
-is what catches a changed document. Both numbers above are what upstream carries
-today and neither is a target to pin: read them out of the document you vendor.
+proxy can *read* and reading did not change, while v4 moved both. Contract 4.1
+(upstream `Hoplock/proxy#35`, merged) did it again — one optional `cache` field
+on `HostKeyReportResponse`, document to `4.1.0`, `policy_version` still `4` — so
+the pattern is not a one-off of v3.1's and an assertion built on "they move
+together" would now be wrong twice. So do not derive one from the other, do not
+assert a relationship between them, and do not let the drift check key off
+`policy_version` — the checksum in `contract/UPSTREAM` is what catches a changed
+document. Both numbers above are what upstream carries today and neither is a
+target to pin: read them out of the document you vendor.
 
 ## Out of scope
 - Implementing any endpoint here (0007 onwards). The suite is written before the
