@@ -640,7 +640,7 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/auth/password` | Verify, then own the MFA conversation: return `authenticated` or `mfa_required` + a challenge |
 | `POST /v1/auth/mfa/poll` | Resolve an outstanding challenge; deny on expiry or unknown token |
 | `POST /v1/authorize` | Evaluate policy **for the asking hop** (`conn.proxy_id` + `conn.hop_trail`); return `401` or the whole-connection snapshot + `decision_id` (+ optional cache hint) |
-| `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision |
+| `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision, plus — since contract 4.1 — an optional cache hint (§5.4) that lets the proxy stop re-reporting that exact key |
 | `POST /v1/capabilities/report` | Record the enforcement rungs one **target** can take, as the proxy found them by probing it (contract v4); answer `accepted` and, optionally, when to report next |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
 | `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
@@ -672,7 +672,19 @@ Five obligations are easy to miss and are graded by the conformance suite:
   an absent-value default that is exactly what a v3 server produced — proxy-side
   enforcement only, no deadline, no required capture, no grant context, no
   concurrency cap — so the rule above is unchanged in kind and only larger in
-  scope. The vendored document is `4.0.0`.
+  scope. The vendored document is `4.1.0`.
+
+  **Contract 4.1 moved the document without moving the vocabulary**
+  (`Hoplock/proxy#35`, merged). `HostKeyReportResponse` gained an optional
+  `cache` hint (§5.4) and `policy_version` stayed at `4`, on the same reasoning
+  v3.1 used below: the number governs what `/v1/authorize` may answer with,
+  because that is the response the proxy decodes strictly and where an unknown
+  field could be a restriction it would have to fail closed on. This field is on
+  another endpoint, it grants rather than restricts, and its absent value is
+  precisely what every server does today — the proxy reports every connection.
+  So this is the second time the two numbers have moved apart, and it is another
+  reason the drift check keys off the vendored document's checksum rather than
+  off `policy_version` (0002, 0018).
 
   **Contract v3.1 is the case `policy_version` alone does not cover**, and it is
   worth keeping straight even though v4 moved the number. v3.1 adds the
@@ -890,16 +902,42 @@ and what had it already been through" is unrecoverable afterwards.
 
 ### 5.4 Cache hints are a policy decision, not an optimisation
 
-The proxy may reuse an authorize decision only when this server attaches a
-hint (proxy §6.4), and the lifetime is this server's to set. So the hint is
-part of policy, authored per rule: omit it for anything sensitive and every
-connection is re-decided. Two invariants this server must never violate:
+The proxy may reuse a decision only when this server attaches a hint (proxy
+§6.4), and the lifetime is this server's to set. So the hint is part of policy,
+authored per rule: omit it for anything sensitive and every connection is
+re-decided. Two invariants this server must never violate:
 
 - **A key is never shared across identities.** The key selects the sharing
   scope; one shared across subjects serves one user another user's policy.
 - **Never issue a hint the revocation stream cannot withdraw** (M9). If the
   event path for a proxy is unhealthy, stop issuing hints to it — a cached
   allow with no way to revoke it is just a slower revocation.
+
+**Since contract 4.1 the same hint rides on two responses** (`Hoplock/proxy#35`,
+merged): `/v1/authorize` as it always did (0008), and `POST /v1/hostkeys/report`
+(0007). It is the same object under the same rules — one opaque server key, a
+server-owned lifetime, one revocation stream, and both invariants above, the M9
+one included. What is specific to the host-key response is the shape the proxy
+reuses it on, and three consequences this server owns:
+
+- **The proxy keys host-key reuse on `target`, `target_port` and
+  `host_key.fingerprint`, and on nothing wider.** What it reuses is therefore
+  the answer to "may this target, presenting *this* key, be reached" — a target
+  presenting a different key is a different lookup, misses, and is reported, so
+  a man-in-the-middle, a rotated key and a rebuilt host all still reach this
+  server on the first connection that sees the new key (proxy D7). Hinting here
+  authorises exactly that and nothing more: the lookup shape belongs to the
+  proxy, and only the permission to reuse it belongs to this server.
+- **A `reject` and a `known: false` are never reused, however they are hinted.**
+  A rejected host key is a security event this server must keep seeing, and
+  reusing a first sighting would replay "trusted on first use" into the audit
+  log for every later connection. So a hint on either is not a widening — it is
+  dead weight, and this server does not issue one.
+- **A subject-scoped `cache_invalidate` does not drop a host-key decision.** A
+  host-key decision is not made for a subject, so `subject` cannot match one.
+  Withdrawing a host-key decision means publishing that decision's own `key`, or
+  `resync` — which is why the key this server issued has to be stored with the
+  host-key record (0007) and reachable from the operator surface (0009).
 
 ---
 
@@ -1025,7 +1063,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0004 | **Extension points** | public `ext/` package, registration, import-graph guard (M15) |
 | 0005 | Policy model & decision engine | bundle parse/validate/compile/evaluate + decision records (M3, M4) |
 | 0006 | Fleet registry, health & config distribution | enrollment, heartbeat, zone graph, pathfinding, hop direction, versioned config rollout (M6), the capability store both sources write to (M17) |
-| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting, `/v1/capabilities/report` |
+| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting and its 4.1 cache hint, `/v1/capabilities/report` |
 | 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
 | 0009 | Revocation & event fan-out | `/v1/proxies/{id}/events`, event bus, replay, resync, kill switch (M9) |
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |

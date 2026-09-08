@@ -141,6 +141,13 @@ paths distinct in the code, because they are answered from different data.
 - **Never issue a hint to a proxy whose event stream is unhealthy** (M9): a
   cached allow that cannot be withdrawn is a grant with no revocation. This
   needs a liveness read from 0006/0009 on the issue path.
+- **These rules are not authorize-only.** Since contract 4.1
+  (`Hoplock/proxy#35`, merged) the same `CacheHint` also rides on
+  `HostKeyReportResponse`, which 0007 serves — so if this phase lands the
+  issue-path machinery (the liveness read, the key derivation, the TTL clamp),
+  build it where 0007 can call it rather than inside the authorize handler.
+  Two copies of "may I hint this proxy right now" is two places to get M9
+  wrong.
 
 ### Decision records (M4)
 Every evaluation — allow and deny alike — writes a record: inputs, matched rule,

@@ -15,7 +15,8 @@
 ## Objective
 Serve the long-lived NDJSON revocation stream: the **only** route this server has
 to a running proxy, the kill switch for a session already in flight, and the
-thing that bounds the damage of every cache hint issued in 0008.
+thing that bounds the damage of every cache hint issued in 0008 — and, since
+contract 4.1, in 0007.
 
 ## In scope
 
@@ -25,6 +26,15 @@ thing that bounds the damage of every cache hint issued in 0008.
   kill switch into a delayed one.
 - Event types per the contract: `session_kill`, `cache_invalidate`,
   `heartbeat`, `resync`.
+- **A subject-scoped `cache_invalidate` does not reach a host-key decision.**
+  Since contract 4.1 (`Hoplock/proxy#35`, merged) 0007 may hint the host-key
+  report as cacheable, and the proxy keys those entries on target, port and key
+  fingerprint — not on a person — so `subject` cannot match one. Withdrawing a
+  host-key decision means publishing that decision's own `key`, or `resync`.
+  This is an asymmetry in the operator surface below, not a detail of the wire
+  format: an operator who publishes "invalidate everything for Alice" and
+  believes a target's host key was withdrawn by it has been misled by this
+  server, and a revocation that silently misses is worse than one that refuses.
 - **Heartbeats within the advertised interval** (PLAN §4). A proxy that stops
   hearing them reconnects and, past its staleness threshold, stops serving
   cached decisions entirely — so a stalled heartbeat writer silently degrades
@@ -54,6 +64,11 @@ before their connection closes, so it must be safe to disclose; validate that it
 is present and reject an empty one. A revoked session that looks like a crash is
 the failure this field exists to prevent.
 
+Make withdrawing a **host-key** decision expressible here too — by the key 0007
+stored on the host-key record, or by `resync` — and do not offer `subject` as
+though it covered everything the cache holds. Whatever 0014 puts in front of
+this inherits the shape you choose.
+
 ### Liveness
 Implement 0006's liveness interface from subscription state, and expose the
 health signal 0008 reads before issuing a cache hint.
@@ -70,6 +85,9 @@ health signal 0008 reads before issuing a cache hint.
 - Kill by session id, by subject, and by "all" each reach exactly the intended
   subscribers — assert with three concurrent subscribers.
 - `cache_invalidate` by key, by subject, and by all, likewise.
+- A host-key decision hinted by 0007 is withdrawn by publishing its stored
+  `key`, end to end; the same withdrawal addressed by `subject` is not silently
+  reported as having covered it.
 - A slow subscriber does not stall other subscribers or grow memory without
   bound; its documented fate is tested.
 - Restarting the server drains subscriptions cleanly and they reconnect.
