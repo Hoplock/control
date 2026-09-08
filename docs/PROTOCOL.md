@@ -59,9 +59,22 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
 
 - Branch off the **latest default branch** (`main`):
   `git fetch origin main && git checkout -B <branch> origin/main`.
-- Branch name: `claude/NNNN-short-description` matching the prompt (e.g.
-  `claude/0005-policy-engine`).
-- **Never push to `main`.** Never push to another prompt's branch.
+- **Use the branch the session was given.** These sessions are normally started
+  with one already assigned — `claude/queued-prompt-implementation-<suffix>` or
+  similar — and it is not yours to rename. **That is not a deviation and must
+  not be written up as one.** A rule nobody can follow is not a rule, it is a
+  recurring apology: sessions that recorded it as a deviation spent a reviewer's
+  attention on a fact about the harness rather than about the change.
+- **When the name *is* yours to choose**, use `claude/NNNN-short-description`
+  matching the prompt (e.g. `claude/0005-policy-engine`), or
+  `claude/sync-<short-description>` for a cross-repo sync
+  (`docs/CROSS-REPO-PROTOCOL.md` §5).
+- **The PR carries what the name was meant to carry.** §8 already requires the
+  PR description to state which prompt it implements, and that is the link a
+  reviewer and a future session actually follow. A name that cannot be chosen
+  cannot be relied on to identify anything, so nothing relies on it.
+- **Never push to `main`.** Never push to another prompt's or another session's
+  branch.
 - If a prior PR for your branch name was already merged, start fresh from `main`
   (do not stack on merged history).
 

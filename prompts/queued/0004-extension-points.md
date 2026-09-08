@@ -108,8 +108,9 @@ State the impact per repository under a `## Cross-repo impact` heading in your
 PR, spelled exactly that way (§4) — and because Enterprise has obligations,
 **end its part of that section with a ready-to-run sync kickoff, already filled
 in**: the "Downstream sync" block in `docs/KICKOFF.md`, verbatim except for its
-blanks (this PR's URL, a `<short-description>` branch suffix, and the
-obligations just stated). Repeat that kickoff in your reply to the user, saying
+blanks (this PR's URL and the obligations just stated). There is no branch blank
+to fill — the sync session uses whatever branch it was given (§5), so do not
+invent a suffix for it. Repeat that kickoff in your reply to the user, saying
 it needs a **fresh session with `hoplock/enterprise` checked out** (§4, "Hand
 over a runnable sync kickoff"). You do not do that sync here: this PR merges
 first and the sync runs afterwards, in its own session, downstream (§2). Every

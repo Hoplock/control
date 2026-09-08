@@ -186,8 +186,9 @@ prompt for them must not be opened before this merges (§2).
 Naming that obligation is not enough on its own. Because `hoplock/enterprise`
 has obligations here, this PR's impact section MUST **end with a ready-to-run
 sync kickoff for it, already filled in** — the "Downstream sync" block in
-`docs/KICKOFF.md`, verbatim except for its blanks: this PR's URL, a
-`<short-description>` branch suffix, and the obligations just stated. Repeat
+`docs/KICKOFF.md`, verbatim except for its blanks: this PR's URL and the
+obligations just stated. There is no branch blank to fill — the sync session
+uses whatever branch it was given (§5), so do not invent a suffix for it. Repeat
 that kickoff in your reply to the user, saying it needs a **fresh session with
 `hoplock/enterprise` checked out** (`CROSS-REPO-PROTOCOL.md` §4, "Hand over a
 runnable sync kickoff"). The kickoff does not make the sync yours to do: this PR
