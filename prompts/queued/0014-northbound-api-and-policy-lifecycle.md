@@ -131,7 +131,10 @@ Every north-bound route resolves exactly one tenant from the caller's scope
   place where a missing filter leaks everything at once.
 
 ## Out of scope
-- A web UI (a consumer of this API, and a separate project).
+- The management console (0016). It is a **client** of this API and lives in
+  this repository under `ui/` (PLAN §3) — not a separate project, and not a
+  privileged path of its own. Every capability it has, this surface grants it,
+  which is why it cannot be built before this phase exists.
 - JIT requests and approvals (0012), though `explain` must be ready to name a
   grant.
 - SIEM export (0014).

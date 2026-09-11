@@ -562,6 +562,55 @@ management; the proxy's decisions keep their `D` numbers.
   Enterprise's (its E14). The line is the same one M16 draws — the seam and its
   honest default here, the packaged product on top of it there.
 
+- **M20 — The console is a product surface, and its design is specified rather
+  than improvised (new).** Phase 0016 builds an operator console, and every
+  acceptance criterion it carries is functional: does the screen work, does RBAC
+  hold, does `make build` run without Node. Nothing in this plan said what the
+  result should *look* like, and a phase whose criteria can all be met by
+  unstyled HTML will, under `docs/PROTOCOL.md` §3's scope discipline, be met by
+  unstyled HTML. That is the failure this decision closes, and it closes it the
+  only way this repository closes anything: by writing it down where a session
+  and a reviewer both have to read it.
+
+  **`ui/DESIGN.md` is that document** — the token set, the type scale, the
+  component inventory, the state matrix, and the enforcement — and it is durable
+  truth in the sense of §9: a session that finds it wrong changes it in the same
+  PR rather than diverging from it quietly.
+
+  Three things make this a decision rather than a preference:
+
+  1. **The console is where this product is judged.** A self-hoster evaluates
+     Hoplock by opening it. Everything above — the explanation record (M4), the
+     fleet graph (M6), simulation — is invisible until a screen renders it, and
+     an operator who does not trust the surface does not trust the decision
+     behind it. The "why was I denied" screen is the demo that sells the
+     product (§7); it is also the screen someone reads at 02:00.
+  2. **Some of the design is architecture wearing a different hat.** M11 says a
+     deny is a decision and everything else is an outage — so the console must
+     not paint them the same colour, or it re-creates in the UI the exact
+     confusion M11 exists to prevent. M19 says a rolling upgrade is *in progress*
+     and not a fault, so it must not render red. M18 says tenancy is invisible to
+     a deployment that does not use it, so the chrome shows it only in scope.
+     M17's "stale, undated or absent are one case" has a matching status that is
+     neither healthy nor failed. These are not taste; they are decisions that
+     have a visual consequence, and a console that gets them wrong is wrong.
+  3. **"Looks good" is not reviewable; a token file and a screenshot set are.**
+     So the design ships with the same kind of guard the rest of the repository
+     uses — a lint that forbids a colour outside the token file, a contrast test
+     over the tokens themselves in both themes, automated accessibility
+     assertions on every screen, and a committed screenshot baseline that a
+     deliberate change updates in the same PR. `exhaustive` is in the linter set
+     because M13 admits Go cannot check M3's promises; the same reasoning
+     applies here, and for the same reason it is a requirement rather than a
+     suggestion.
+
+  The constraint this must not break is the one M2 already sets: the console is
+  a north-bound API client with no privilege of its own, and no amount of design
+  earns it a private path to the database. Bundle budget, no runtime network
+  fetches (an air-gapped deployment must render identically, and a security
+  product must not report operator activity to a CDN), and the single-binary
+  embed are part of the design, not exceptions to it.
+
 ---
 
 ## 3. Architecture & repository layout
@@ -594,6 +643,7 @@ control/
 │       └── north/          # admin/operator/CI handlers
 ├── ext/                    # PUBLIC extension points — the seam Enterprise implements (M15)
 ├── ui/                     # management console, embedded into the binary
+│   └── DESIGN.md           # the console's design system — binding, not advisory (M20)
 ├── contract/               # VENDORED from the Hoplock Proxy repository — read-only (M1)
 ├── deploy/                 # docker-compose: this server + Postgres + a proxy
 ├── docs/                   # this plan, protocol, cross-repo protocol, learnings
@@ -626,6 +676,13 @@ control/
   *client* of something above it, which makes it the only package here that
   dials outward on the management plane; it may never be reachable from the
   decision path.
+- **`ui`** — the operator console, a north-bound API client with no privilege of
+  its own (M2) and no database access at all, built from embedded assets so a
+  deployment stays one binary. Its visual design is governed by `ui/DESIGN.md`
+  and is enforced rather than reviewed by eye (M20); where the design encodes a
+  decision from this plan — a deny and an outage are different things (M11), a
+  rolling upgrade is in progress and not a fault (M19) — the design document
+  says which decision and why.
 
 ---
 
@@ -1072,7 +1129,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
 | 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4) |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
-| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory |
+| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other, no thinning path |
 
