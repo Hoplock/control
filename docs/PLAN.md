@@ -611,6 +611,61 @@ management; the proxy's decisions keep their `D` numbers.
   product must not report operator activity to a CDN), and the single-binary
   embed are part of the design, not exceptions to it.
 
+- **M21 — The console is localisable from its first screen, and English is the
+  only locale that ships (new).** What ships multilingual is the *machinery*: a
+  string catalogue, ICU messages, `Intl` formatting, logical CSS properties, and
+  layouts that absorb a longer translation. Exactly one catalogue is written —
+  `en` — and no translation is commissioned here.
+
+  The argument for doing it now rather than later is the one **M12** and **M18**
+  already made for tenancy, and it is the same shape: a dimension retrofitted
+  into a built system is a migration nobody wants to run. For a console it means
+  revisiting every string, every control sized to its English label, every
+  hand-formatted date and every `margin-left` at once. It is nearly free before
+  the first screen exists and it is a rewrite afterwards.
+
+  **The rule that makes it work: localisation is a property of rendering, never
+  of storage or of the wire.** Four consequences, and each lands in a phase
+  before the console:
+
+  1. **Records store codes and data, never sentences (M8).** An audit record is
+     append-only and hash-chained; a translated string inside one means the chain
+     covers the translation, and a chain that verifies for an English reader and
+     not a German one is not a chain. It could not be otherwise in any case:
+     south-bound records arrive over a contract this repository does not own
+     (M1), so rendering is the only layer where localisation *can* live.
+  2. **The north-bound API answers with a stable code and typed parameters**, and
+     the console owns the sentence (0014). M11's correlation id is unchanged and
+     M19 makes this part of the compatibility promise — prose can be reworded
+     between versions, a code cannot, which is what a client across a version skew
+     needs.
+  3. **Compiler rejections are structured the same way (0005).** "Every rejection
+     names the rule, the line, and what to do instead" stays true and gains a
+     code and parameters beside the English text, because that text is a product
+     surface an author reads — in the console, in `policyctl`, and in CI.
+  4. **Operator-authored content is never translated.** Rule names, zone names,
+     target labels, grant reasons and policy source are data, not UI strings.
+     Translating a rule name would have "explain why" (M4) cite a rule that does
+     not exist in the bundle, which breaks the one promise that view makes.
+
+  **Server logs stay English**, deliberately. They are read by the operator and
+  by whoever supports them, and a log the vendor cannot read is worse than one in
+  a second language.
+
+  **"Ready for a second locale" is proved, not asserted.** The claim is about
+  locales nobody has written, so the only honest test is a **pseudolocale** — a
+  build that accents every catalogue string and pads it by 40%. An unaccented
+  string is a hardcoded one and a clipped layout is one that will not survive
+  German, and both fail in CI today, with one catalogue committed. A mirrored
+  pseudolocale does the same for RTL. This is the difference between a console
+  that is localisable and one that says it is.
+
+  One cost is stated rather than discovered: **M20 forbids runtime network
+  fetches**, so a locale in a script the bundled faces do not cover — CJK,
+  Arabic, Devanagari — requires bundling another face. That is a real size
+  decision for whoever adds it, not a `<link>`, and it is the honest price of an
+  air-gapped console.
+
 ---
 
 ## 3. Architecture & repository layout
@@ -682,7 +737,9 @@ control/
   and is enforced rather than reviewed by eye (M20); where the design encodes a
   decision from this plan — a deny and an outage are different things (M11), a
   rolling upgrade is in progress and not a fault (M19) — the design document
-  says which decision and why.
+  says which decision and why. It is also the **only** layer that localises
+  (M21): it holds the string catalogues, and everything beneath it stores and
+  transmits codes.
 
 ---
 
@@ -1127,9 +1184,9 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0011 | Identity, users, groups, roles & RBAC | local identity, roles, RBAC, OIDC/SAML federation, claim mapping, SSH CA (M7) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
-| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4) |
+| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21) |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
-| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20) |
+| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other, no thinning path |
 

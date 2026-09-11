@@ -7,8 +7,9 @@
 > and ugly — which, for the one screen an operator opens during an incident, is
 > its own kind of incorrect.
 >
-> Read with `docs/PLAN.md` §2 (M20, M2, M18, M19) and
-> `prompts/queued/0016-management-console.md`.
+> Read with `docs/PLAN.md` §2 (M20, M2, M18, M19, and **M21** — the console is
+> localisable from its first screen, and English is the only locale that ships)
+> and `prompts/queued/0016-management-console.md`.
 
 ---
 
@@ -69,14 +70,14 @@ labels, a modal for anything consequential, and default component-kit blue.
 
 All values live in **one** file (`ui/src/styles/tokens.css`, or the equivalent
 for the chosen framework) as CSS custom properties. Nothing else in `ui/` may
-contain a raw colour, a raw font size, or a raw radius — §9 makes that a check
+contain a raw colour, a raw font size, or a raw radius — §10 makes that a check
 rather than a hope.
 
 ### 3.1 Neutrals
 
 The structural ramp. Cool grey, so that the accent and the status hues stay warm
 against it. **Every value below is contrast-verified against the worst-case
-background it is used on** (§9.2) — the steps are not evenly spaced in lightness
+background it is used on** (§10.2) — the steps are not evenly spaced in lightness
 because the ones that carry text and control borders are pinned to their WCAG
 threshold, and a ramp that looks tidier but fails is worth nothing.
 
@@ -122,7 +123,7 @@ Two of those rows carry an argument rather than a value:
   the boundary you need in order to *identify a control*; a table rule is not
   one, and forcing every divider to 3:1 turns a dense table into a spreadsheet
   grid. `--border-default` is the one an input is recognised by, and it meets
-  the threshold. §9.2 tests each against the rule that actually applies to it.
+  the threshold. §10.2 tests each against the rule that actually applies to it.
 - **`--text-on-accent` is white in light mode and near-black in dark.** The dark
   accent is a light lavender, and white on it is 3.2:1 — it fails, and it also
   simply looks wrong. Flipping the foreground rather than darkening the accent
@@ -172,7 +173,12 @@ Two families, both **bundled as WOFF2 and self-hosted** (§2):
 
 Mono is not decorative: session ids, decision ids, fingerprints, labels,
 hostnames, policy source, and log bodies are monospace, because they are read
-character by character and compared by eye.
+character by character and compared by eye — and they stay LTR, unsubstituted
+Latin digits in every locale (§9).
+
+Inter covers Latin, Greek and Cyrillic. A locale needing another script needs
+another bundled face, which §9 treats as a deliberate size decision rather than
+a download.
 
 | Token | Size / line-height | Weight | Use |
 | --- | --- | --- | --- |
@@ -314,7 +320,7 @@ auto-dismiss; errors persist until dismissed.
 Not a separate pass; part of "done".
 
 - **WCAG 2.2 AA.** Text ≥ 4.5:1, large text and UI boundaries ≥ 3:1, in **both**
-  themes. §9 makes this a test rather than a claim.
+  themes. §10 makes this a test rather than a claim.
 - Focus visible on every interactive element: 2px `--a-500` ring, 2px offset,
   never `outline: none` without a replacement.
 - Full keyboard operation. Dialogs trap and restore focus. A skip-to-content
@@ -329,7 +335,68 @@ Not a separate pass; part of "done".
 
 ---
 
-## 9. How this is enforced
+## 9. Internationalisation
+
+**English is the only locale that ships** (PLAN **M21**). What ships multilingual
+is the machinery, and it is built from the first component — because retrofitting
+it means revisiting every string, every layout width and every date in the
+console at once, which is the same bargain M12 and M18 struck for tenancy and for
+the same reason.
+
+- **Every user-visible string comes from a catalogue**, keyed by a stable id. No
+  literal in a component, and nothing user-visible baked into an image or a
+  sprite — text in an SVG is text.
+- **No sentence is assembled by concatenation.** Messages are ICU
+  MessageFormat, so interpolation, plurals and ordinals belong to the message:
+  word order differs, and so does the number of plural forms — English has two,
+  Russian three, Arabic six. `count + " proxies"` is a string that cannot be
+  translated, not a shortcut.
+- **Layout absorbs +40% text expansion.** German and Finnish run long. No
+  fixed-width control sized to its English label, no single-line assumption for
+  catalogue text, no ellipsis as the primary defence on a label. Table columns
+  are content-driven with a minimum rather than pinned.
+- **Logical CSS properties from the first component** — `margin-inline-start`,
+  `padding-block`, `inset-inline`, never `left`/`right`. No RTL locale ships and
+  none is implemented; the point is that adding one must not be a restyle of
+  every component, and a stylesheet written in physical properties is exactly
+  that. `dir` comes from the locale; nothing hardcodes `ltr`.
+- **Dates, times, numbers and lists go through `Intl`**, never hand-formatted.
+  Timestamps render in the operator's zone with UTC on hover; the **copyable**
+  form is always ISO-8601 UTC, because an incident is discussed across time
+  zones and a pasted timestamp has to be unambiguous. Numbers in columns keep
+  tabular figures (§3.5) and take the locale's grouping and decimal separators.
+- **Identifiers are never localised.** Session and decision ids, fingerprints,
+  hostnames, labels, rule names, policy source and log bodies render LTR in mono
+  with an explicit `dir="ltr"` even inside an RTL page, and never take locale
+  digit substitution. An operator who reads a fingerprint in Eastern Arabic
+  numerals cannot compare it to the one in their terminal.
+- **Operator-authored content is never translated** (M21): a rule name, a zone
+  name, a target label, a grant reason. The console does not guess at the
+  language of data it did not author, and a translated rule name would make
+  "explain why" cite a rule that is not in the bundle.
+- **Locale resolution happens in the browser**: the operator's stored preference
+  → `navigator.languages` → the deployment default. It persists alongside the
+  theme choice and is reachable from the chrome, not buried. Note that this is
+  the client reading its *own* preference — the server never negotiates a
+  language, which is the same statement as the last bullet from the other side.
+- **Catalogues load on demand**, one locale at a time, with English inlined so
+  the first paint never waits on a fetch. The bundle budget in §11 is per active
+  locale.
+- **Script coverage is a bundle decision, not a download.** §2 forbids runtime
+  network fetches, so a locale whose script the bundled faces do not cover — CJK,
+  Arabic, Devanagari — means bundling another face, which is a real size decision
+  someone makes on purpose. Inter covers Latin, Greek and Cyrillic; the stack
+  falls back to system fonts beyond that. Pretending a new script is a free
+  `<link>` is how an air-gapped deployment ends up rendering tofu.
+- **The server does not localise.** North-bound errors arrive as a stable code
+  and typed parameters and the console owns the sentence (M21, 0014); compiler
+  rejections arrive the same way (0005). Server logs stay English — they are read
+  by operators and by support, and a log the vendor cannot read is worse than one
+  in a second language.
+
+---
+
+## 10. How this is enforced
 
 A design system nobody checks is a mood board. Each of these is a CI job or a
 test, and 0016's acceptance criteria name them:
@@ -349,14 +416,26 @@ test, and 0016's acceptance criteria name them:
    blocked and asserts it renders identically — the air-gap requirement of §2.
 6. **Reduced motion.** A test asserts no transition exceeds 0ms under
    `prefers-reduced-motion: reduce`.
+7. **Pseudolocale.** A build under `en-XA` accents every catalogue string and pads
+   it to +40%, then renders the screenshot set. Two things fail it: a string that
+   comes out unaccented is hardcoded English, and a layout that clips or overflows
+   is too tight for a real translation. This is the check that makes "ready for a
+   second locale" testable while only English exists — an assertion about locales
+   nobody has written yet is otherwise unfalsifiable, which is how consoles ship
+   "i18n-ready" and are not.
+8. **RTL smoke.** A mirrored pseudolocale (`en-XB`) renders the same set and
+   asserts nothing leaks a physical CSS property. No RTL locale ships; this is
+   what keeps adding one cheap.
+9. **String and format lint.** No literal user-visible string in a component, and
+   no `Date`/`Intl`/number formatting outside the locale helpers.
 
 ---
 
-## 10. Constraints on the implementation
+## 11. Constraints on the implementation
 
 - **Typed components with a real build.** TypeScript, Vite. The framework choice
   (React, Svelte, Vue) stays with the implementing session; the tokens, the
-  component inventory and §9 do not.
+  component inventory and §10 do not.
 - **Headless primitives are encouraged; visual kits are forbidden.** Radix, Ark,
   Headless UI, TanStack Table, cmdk — accessible behaviour with no imposed
   identity — are exactly right. Material, Bootstrap, Ant, Chakra and anything
@@ -364,10 +443,15 @@ test, and 0016's acceptance criteria name them:
   console has one identity, and it is this one.
 - **No CSS-in-JS runtime.** CSS modules, or a utility framework configured from
   these tokens. Styles are static so the first paint is not waiting on script.
+- **An ICU MessageFormat runtime** (`intl-messageformat` and the FormatJS
+  binding for the chosen framework, or equivalent). Catalogues are ICU JSON, one
+  file per locale under `ui/src/locales/`, keys stable and never reused for a
+  different sentence — a renamed key is a new key. `en.json` is the only one
+  committed in 0016.
 - **No chart library until there is a third chart.** The two §7 allows are
   hand-written SVG; a charting dependency for two charts is a bundle cost and a
   second visual identity at once.
-- **Bundle budget**: ≤ 350 KB gzipped JS on first load, fonts ≤ 120 KB. The
+- **Bundle budget**: ≤ 350 KB gzipped JS for the active locale on first load, fonts ≤ 120 KB. The
   binary is shipped to self-hosters who may serve it over a VPN from a small
   instance.
 - **Assets are built in CI and committed** under `ui/dist/`, so `make build`
@@ -376,7 +460,7 @@ test, and 0016's acceptance criteria name them:
 
 ---
 
-## 11. Changing this document
+## 12. Changing this document
 
 It is durable truth in the sense of `docs/PROTOCOL.md` §9: a session that finds
 it wrong updates it in the same PR, says so in the PR description and in its

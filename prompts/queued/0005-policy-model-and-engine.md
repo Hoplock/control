@@ -154,6 +154,14 @@ authorisation input.
 Every rejection names the rule, the line, and what to do instead. This error
 text is a product surface: it is what a policy author sees.
 
+It is therefore **structured, not only prose** (PLAN M21): a rejection carries a
+stable `code`, the typed parameters that filled it in (rule id, line, the label
+or group that does not exist), and the English message built from them.
+`policyctl` and CI print the message; the console (0016) renders the code in the
+operator's locale. Prose alone cannot be localised, and this package is pure —
+it has no locale and must not acquire one. Codes are stable identifiers: reword
+a message freely, never reuse a code for a different rejection.
+
 ### The evaluator (`internal/policy/eval`)
 - Ordered rules, **first match wins**, with an explicit **default-deny** that is
   always present and always recorded as the reason when it fires.

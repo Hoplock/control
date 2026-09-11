@@ -3,11 +3,13 @@
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
 - `docs/PLAN.md` — especially §2 (M2 — the console is a north-bound client and
-  authenticates like one; **M20** — the design is specified, not improvised),
-  §3 (`ui/`).
+  authenticates like one; **M20** — the design is specified, not improvised;
+  **M21** — the console is localisable from its first screen and English is the
+  only locale that ships), §3 (`ui/`).
 - **`ui/DESIGN.md` — in full, before writing any markup.** It is the design
   system this phase is built to: tokens, type scale, layout, status vocabulary,
-  component inventory, state matrix, and the checks that enforce all of it. It
+  component inventory, state matrix, internationalisation, and the checks that
+  enforce all of it. It
   is binding under M20, and it is not a style suggestion you may improve on
   mid-implementation — if it is wrong, change it in this PR and say so.
 - `docs/learnings/` — read summaries; open `0014` (**the API this consumes** —
@@ -53,11 +55,12 @@ is written so that half can fail a review rather than merely disappoint one.
 - **Auth**: OIDC for humans, the same session the API issues. No separate login.
 - Build: assets built and checked in, or built in CI with a reproducible step;
   `make build` must work on a machine with no Node installed. Say which you
-  chose and why in learnings. `ui/DESIGN.md` §10 constrains the toolchain
+  chose and why in learnings. `ui/DESIGN.md` §11 constrains the toolchain
   (TypeScript + Vite, headless primitives, no visual kit, no CSS-in-JS runtime,
-  a bundle budget) — the framework choice inside those constraints is yours.
-- **Design and accessibility per `ui/DESIGN.md`** — the section below says what
-  that obliges and how it is checked.
+  an ICU MessageFormat runtime, a bundle budget) — the framework choice inside
+  those constraints is yours.
+- **Design, accessibility and localisation per `ui/DESIGN.md`** — the two
+  sections below say what that obliges and how it is checked.
 
 ### Deployment identity and tenant context (M18, M19)
 - The console always says **which deployment** this is: name, instance id,
@@ -103,7 +106,7 @@ every line of it is checkable.
   session, revoking a grant confirm by typing the object's name. A failed
   mutation reports inline, never by a toast alone.
 
-**These are enforced, not reviewed by eye** (DESIGN.md §9), and each is a CI job
+**These are enforced, not reviewed by eye** (DESIGN.md §10), and each is a CI job
 this phase adds:
 
 1. a token lint that fails on a colour, font size or radius outside the token file;
@@ -120,6 +123,42 @@ this phase adds:
    renders identically;
 6. a test asserting no transition exceeds 0ms under reduced motion.
 
+### Multilingual support, English only (M21)
+Build the machinery; write one catalogue. `ui/DESIGN.md` §9 is the
+specification — this is the shape of what lands.
+
+- **Every user-visible string comes from `ui/src/locales/en.json`**, ICU
+  MessageFormat, keyed by a stable id. `en.json` is the **only** catalogue
+  committed in this phase. Do not add a second locale, do not machine-translate
+  one to "prove" it works, and do not ship a language picker with one entry —
+  the picker appears when there is something to pick.
+- **No sentence built by concatenation**, and no user-visible text baked into an
+  image or sprite. Plurals and interpolation belong to the message.
+- **Logical CSS properties throughout** (`margin-inline-start`, never
+  `margin-left`) and `dir` taken from the locale. No RTL locale ships; this is
+  what stops adding one from being a restyle of every component.
+- **Layout absorbs +40% expansion** — no control sized to its English label, no
+  single-line assumption for catalogue text.
+- **`Intl` for every date, time, number and list.** Timestamps render in the
+  operator's zone with UTC on hover; the copyable form is ISO-8601 UTC.
+- **Identifiers stay LTR, mono and unsubstituted** in every locale: session and
+  decision ids, fingerprints, hostnames, labels, rule names, policy source.
+- **Operator-authored content is never translated** — a rule name is data, and
+  "explain why" must cite the rule that is actually in the bundle.
+- **Errors come from the API as a code plus parameters** (0014) and from the
+  compiler the same way (0005); the console builds the sentence. If either
+  phase shipped prose only, say so and raise it rather than parsing English.
+- **The server is not asked to localise.** The locale is resolved in the browser
+  from the operator's stored preference and `navigator.languages`; the server
+  negotiates no language and returns no translated content.
+
+**Proved by pseudolocale, not asserted** (DESIGN.md §10, checks 7–9): an `en-XA`
+build accents and pads every string, and a mirrored `en-XB` checks direction.
+A string that renders unaccented is hardcoded; a layout that clips is one that
+will not survive German. That is how a claim about locales nobody has written
+becomes a test that runs today.
+
+
 ## Out of scope
 - Enterprise screens (approval inboxes, compliance reports). Enterprise adds its
   own, served through the same shell — define how in learnings so it can. They
@@ -130,6 +169,11 @@ this phase adds:
 - Re-opening the design. DESIGN.md's palette, scale and constraints are settled
   input to this phase. Correct it where it is wrong — in this PR, with the
   reason — but do not spend the session redesigning it.
+- **Any locale other than English.** Translations are a later phase and a
+  different skill; this phase ends when a second catalogue would be the only
+  thing left to add. Also out of scope: server-side localisation, a translation
+  management integration, and locale-aware content in the audit store (M21 keeps
+  records in codes and data, permanently).
 
 ## Acceptance criteria
 
@@ -164,16 +208,31 @@ this phase adds:
   as a fault (M19). A capability that is stale, undated or absent renders as
   `Not reported`, not as healthy (M17).
 
+**Localisation** — English is the only catalogue, and these still hold:
+- The pseudolocale run is clean: no screen renders an unaccented string, and no
+  screen clips or overflows at +40% expansion, in both themes.
+- The mirrored pseudolocale run reports no physical-property leak.
+- The string lint passes: no user-visible literal in a component, and no date or
+  number formatted outside the locale helpers.
+- `ui/src/locales/en.json` is the only catalogue in the tree, and a test asserts
+  every key it holds is referenced and every referenced key exists.
+- Every API and compiler error the console can surface is rendered from its code
+  and parameters — asserted with a fixture carrying a code the catalogue does
+  not know, which must render a useful fallback naming the code and the
+  correlation id rather than an empty string or a crash.
+
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0016-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it —
 which, per M20, includes how it inherits the tokens and the component set rather
-than bringing its own look.
+than bringing its own look — and, per M21, **how it adds its own catalogue keys
+without colliding with this one**, since Enterprise ships screens this
+repository never sees.
 
-Details MUST also record: the framework chosen and why, within DESIGN.md §10's
-constraints; where the token file lives and how the six checks are wired into
+Details MUST also record: the framework chosen and why, within DESIGN.md §11's
+constraints; where the token file and the catalogue live, and how the nine checks are wired into
 CI; and **any change made to `ui/DESIGN.md` in this PR**, with the reason — a
 design document that drifts silently from the console is worse than none, and
 the next session reads it expecting it to be true.
