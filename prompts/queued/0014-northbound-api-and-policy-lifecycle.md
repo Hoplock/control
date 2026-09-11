@@ -30,7 +30,9 @@ actions that were internal until now.
 - **Upload → validate → diff → activate**, with bundles immutable and versioned
   (0003). Activation names the version; rollback is activating an older one.
 - **Validation returns the compiler's errors verbatim** (0005): the rule, the
-  line, and what to do instead. This is a product surface, so test its text.
+  line, and what to do instead. This is a product surface, so test its text —
+  and its `code` and parameters, which 0005 carries beside the text for the
+  reason below.
 - **Simulation** — the feature that makes a policy change reviewable instead of
   a leap:
   - *dry-run*: evaluate a candidate bundle against synthetic inputs;
@@ -130,8 +132,30 @@ Every north-bound route resolves exactly one tenant from the caller's scope
   and it is Enterprise's (its E11); an aggregate route here would be the one
   place where a missing filter leaks everything at once.
 
+### Errors are machine-readable (M21)
+Every error this surface returns carries a **stable `code`**, typed
+**parameters**, an English **message**, and the correlation id M11 already
+requires. The console (0016) is the only layer that localises, and it can only
+do that if the sentence is assembled there — so an API that answers with prose
+alone makes a localisable console impossible, and that is decided here, two
+phases earlier, not discovered there.
+
+- A code is an identifier, not a summary: reword a message whenever it helps,
+  never reuse a code for a different condition. M19 makes this surface a
+  compatibility promise, and a code is the part of an error a client across a
+  version skew can actually depend on.
+- Parameters are typed and named (the target, the rule, the tenant, the limit),
+  so a client can build a sentence with them in its own word order.
+- The English message stays in the response. `policyctl`, CI logs and `curl` are
+  first-class consumers, and none of them has a catalogue.
+- This is **not** localisation on the server: there is no `Accept-Language`
+  handling here and no translated response, now or later (M21).
+
 ## Out of scope
-- A web UI (a consumer of this API, and a separate project).
+- The management console (0016). It is a **client** of this API and lives in
+  this repository under `ui/` (PLAN §3) — not a separate project, and not a
+  privileged path of its own. Every capability it has, this surface grants it,
+  which is why it cannot be built before this phase exists.
 - JIT requests and approvals (0012), though `explain` must be ready to name a
   grant.
 - SIEM export (0014).
@@ -161,6 +185,11 @@ Every north-bound route resolves exactly one tenant from the caller's scope
   decision made under a mapping version that has since changed.
 - Every mutating action appears in the audit store with the actor.
 - `policyctl` covers each operation and its output is stable enough to script.
+- **Every error response carries a code, parameters, an English message and the
+  correlation id** (M21), asserted across the error paths this phase produces —
+  validation, RBAC refusal, satisfiability, not-found and outage. A test
+  enumerates the codes so that adding one is deliberate and reusing one for a
+  different condition fails.
 - Every route is exercised by a table test asserting tenant isolation, and the
   test enumerates routes from the router rather than from a hand-written list —
   a route added later without isolation must fail this test.
