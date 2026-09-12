@@ -19,11 +19,14 @@ repository, which is not a phase and has no prompt number.
 ## 0. TL;DR of a session
 
 1. Read this protocol.
-2. Read `docs/PLAN.md` (the architecture source of truth).
-3. Read the **summary block** of each file in `docs/learnings/` (read a full
+2. Take the **lowest-numbered** prompt in `prompts/queued/` (unless the user
+   names a specific one). That prompt is your entire task, and its "Read first"
+   block names what to read next.
+3. Navigate `docs/PLAN.md` (the architecture source of truth): its section
+   headings and its decision register, then the sections and decisions your
+   prompt names (Section 1).
+4. Read the **summary block** of each file in `docs/learnings/` (read a full
    learnings file only if it's relevant to your prompt).
-4. Take the **lowest-numbered** prompt in `prompts/queued/` (unless the user
-   names a specific one). That prompt is your entire task.
 5. Create a fresh branch off the default branch.
 6. Implement the prompt. Keep it in scope. Meet the Definition of Done.
 7. Move the prompt file from `prompts/queued/` to `prompts/implemented/`
@@ -40,10 +43,31 @@ repository, which is not a phase and has no prompt number.
 Read in this order and **stop reading as soon as you have what you need**:
 
 1. `docs/PROTOCOL.md` — this file (always, in full).
-2. `docs/PLAN.md` — always. This is the architecture. Do not re-derive it.
-3. `docs/learnings/*` — read **only the summary block** at the top of each file
+2. Your target prompt in `prompts/queued/` — before the plan, not after it.
+   Its "Read first" block (Section 7) is what tells you which of the plan you
+   need.
+3. `docs/PLAN.md` — **navigated, not read front to back.** This is the
+   architecture; do not re-derive it. Read its section headings
+   (`grep -n '^#\+ ' docs/PLAN.md` — those headings are the index) and the
+   **decision register** at the head of §2, then read the sections and
+   decisions your prompt names in its "Read first" block (Section 7).
+
+   Two guards, and neither is optional:
+
+   - **Widen whenever you are about to make a decision the plan may already
+     have made.** The register tells you in one line whether some `M` settles
+     it; read that decision in full before you decide anything. The context
+     budget is never a reason to re-derive a decision the plan already made —
+     that mistake costs far more than reading the plan whole would have.
+   - **A prompt that names no sections is a defective prompt**, not a licence
+     to read everything. Fix the prompt (Section 7) or ask the user; do not
+     quietly absorb the whole plan and call it thorough.
+
+   The rule is written this way from the start on purpose. "Always, in full" is
+   affordable today and will stop being affordable without any single phase
+   being the one that made it so.
+4. `docs/learnings/*` — read **only the summary block** at the top of each file
    first. Open the full body **only** when its summary shows it's relevant.
-4. Your target prompt in `prompts/queued/`.
 5. `contract/control.yaml` — **only the endpoints your prompt touches.** It is
    a large document and reading it whole will cost you the context budget you
    need for the work.
@@ -87,8 +111,27 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
   discover work that belongs to a later phase, do **not** do it here — note it in
   your learnings file and/or add a new queued prompt (Section 6).
 - **Follow the plan.** Match `docs/PLAN.md`: package layout, interfaces, naming,
-  decisions (M1–M15). If reality forces a deviation, update `docs/PLAN.md` in the
-  **same PR** and call it out in the PR description and learnings.
+  and the decisions in its §2 (the register at the head of that section lists
+  them). If reality forces a deviation, update `docs/PLAN.md` in the **same PR**
+  and call it out in the PR description and learnings.
+- **The plan is written in the present tense.** When your phase changes what the
+  plan says, **revise the affected text** so the section states what is now
+  true. Never append a dated layer — "As built (phase 0014)", "As corrected
+  (phase 0015)" — beneath the text it supersedes. Eight such layers on one
+  section means the current behaviour is knowable only by reading all eight and
+  composing them, and every session after yours pays that cost forever. Where
+  the reasoning for the change is worth keeping — and it usually is — it goes in
+  **your learnings file** (Section 5), or in a clearly marked history note that
+  no session needs to read in order to know the current state. `git log` holds
+  the rest.
+- **A decision's current status is visible without reading the decision.**
+  `docs/PLAN.md` §2 opens with a **register**: one row per decision — what it
+  settles, its status (`live`, `amended by M<n>`, `withdrawn`), and where it is
+  rendered. If your phase adds a decision, amends one, or withdraws one, update
+  its row **in the same PR**, and say so in the decision's **first line** rather
+  than four hundred words in. A reader who learns about an amendment only by
+  reading the entry to the end has already spent the context the register exists
+  to save.
 - **Cross-repo changes follow `docs/CROSS-REPO-PROTOCOL.md`.** This repo sits in
   the middle of the chain: it consumes the proxy's contract (M1) and owns `ext/`,
   which Hoplock Enterprise imports (M15). Both directions create work that has no
@@ -136,11 +179,15 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
       matches its pinned upstream commit.
 - [ ] `make conform` passes, once phase 0002 has landed and once this server
       serves any endpoint the suite covers.
-- [ ] `docs/PLAN.md` updated if the architecture changed.
+- [ ] `docs/PLAN.md` updated if the architecture changed — **revised in place**,
+      not appended to, with any decision added/amended/withdrawn reflected in
+      the §2 register in this PR (Section 3).
 - [ ] The prompt file moved from `prompts/queued/` → `prompts/implemented/`
       (same filename) in this PR.
 - [ ] A learnings file added to `docs/learnings/` (Section 5).
-- [ ] Prompt-numbering invariants still hold (Section 6).
+- [ ] Prompt-numbering invariants still hold (Section 6), and any prompt this PR
+      adds or modifies has a "Read first" naming plan sections and decision ids
+      (Section 7).
 - [ ] CI is green on the PR.
 
 ---
@@ -175,6 +222,14 @@ change in the Hoplock Proxy repository**, say so explicitly and describe the exa
 that is a cross-repo dependency and the next session must not discover it by
 being blocked.
 
+**Why that length is a cap and not a suggestion.** Every session reads every
+summary block in this directory at startup, so what this directory costs is
+(number of phases × size of each block) — and neither factor ever shrinks. Ten
+lines you could have cut are ten lines paid by every session for the life of
+the repository. Details are free, because nobody opens them unless the summary
+says they need to, so when a summary runs long the fix is to move text down
+rather than to widen the block.
+
 ---
 
 ## 6. Prompt numbering invariants
@@ -186,8 +241,18 @@ prefix indicating implementation order.
 - **Implemented names are frozen:** never rename a file in `prompts/implemented/`.
 - **When you add new prompts:** if a new prompt must run before existing queued
   prompts, **renumber the queued prompts** (only queued ones) so order is correct
-  and numbers stay unique, and record the mapping in `docs/PLAN.md` §10 — older
-  learnings files will still refer to the old numbers.
+  and numbers stay unique, and record *why* in a renumbering note in
+  `docs/PLAN.md` §10 — older learnings files will still refer to the old
+  numbers, which is what the next bullet is for.
+- **When numbers move, regenerate the composed mapping in the same PR.** Each
+  renumber adds a **renumbering note** to `docs/PLAN.md` §10 saying *why* it
+  happened; keep those, they are the record. But no reader may be asked to
+  compose the notes by hand to resolve an old number. §10 also carries **one
+  table** — "what an old number resolves to" — already composed through every
+  later revision, and your PR regenerates it. Done from the first renumber this
+  costs a row. Left to accumulate it becomes a pile of notes over numbers that
+  are each simultaneously a live phase and a historical alias of a different
+  one, and resolving one by its digits is guesswork.
 - Each new prompt must be **self-contained** (Section 7).
 
 ---
@@ -197,8 +262,17 @@ prefix indicating implementation order.
 Any prompt must be runnable by a **fresh** session with no prior context. It must:
 
 - State its objective, in-scope and out-of-scope items.
-- Reference `docs/PROTOCOL.md`, `docs/PLAN.md`, and the relevant
-  `docs/learnings/` summaries at the top ("Read first").
+- Open with a **"Read first"** block that names — **by section number and by
+  decision id** — the `docs/PLAN.md` sections (`§5.2`) and decisions (`M3`,
+  `M16`) the phase needs, alongside `docs/PROTOCOL.md` and the relevant
+  `docs/learnings/` summaries. This is the precondition for Section 1: a session
+  can only read "the sections its prompt names" if the prompt names them, and a
+  prompt that names none is defective rather than an instruction to read
+  everything. Use **this repository's** decision ids — `M*` here, `E*` for
+  Enterprise, `D*` for the proxy — and cite them by id, never by a bare number
+  (`docs/CROSS-REPO-PROTOCOL.md` §1).
+- **This binds a prompt you modify as much as one you add.** If you touch a
+  prompt whose "Read first" names nothing, fix it while you are there.
 - Name the exact packages/files to create or change.
 - Specify interfaces/types precisely enough to implement without guessing.
 - Define acceptance criteria and required tests.
@@ -221,6 +295,32 @@ Any prompt must be runnable by a **fresh** session with no prior context. It mus
   prompt in the same session.
 - Do not create a PR for work the user hasn't asked to be turned into a PR; the
   normal implementation flow above does open one.
+
+### Say each thing once
+
+A phase produces three records, with three different readers:
+
+| Record | Reader | For how long |
+| --- | --- | --- |
+| the learnings file (Section 5) | the next session, and every one after it | forever |
+| the PR description | the reviewer | the life of the PR |
+| what the session says in chat | the user | once |
+
+Only the third is not a record, and it is the most expensive of the three: it is
+output the user pays for, and input every later turn of the session carries. So
+**each fact goes in exactly one of the first two**, and the session says only
+what neither can deliver:
+
+- **At PR open** — the link, plus what the description cannot carry: a question
+  you need answered, or a ready-to-run kickoff for the user to paste
+  (`docs/CROSS-REPO-PROTOCOL.md` §4).
+- **At green** — one line (below).
+- **At merge** — one line, and stop, unless the user has to *act* on something.
+
+Do not restate the learnings file in the PR description, the PR description in
+chat, or the diff in any of them. A summary of a document the reader can open
+is not a service to them. This rule is independent of how large the repository
+is; it applies from the first phase.
 
 ### Waiting for review is waiting, not polling
 
