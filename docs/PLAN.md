@@ -86,6 +86,38 @@ different listeners, different authentication, different threat models (M2).
 Each decision has an ID so prompts and learnings can reference it. `M` for
 management; the proxy's decisions keep their `D` numbers.
 
+**Register.** One row per decision: what it settles, its current status, and
+where it is rendered. The point is that a reader can see from here whether a
+decision still says what it appears to say, without reading it
+(`docs/PROTOCOL.md` §3). `Rendered in` lists the other sections of this plan
+that carry the decision — §10 is the phase table, so it also says which phase
+builds it. Update this table in the same PR that adds, amends, or withdraws a
+decision.
+
+| Decision | Settles | Status | Rendered in |
+| --- | --- | --- | --- |
+| **M1** | the contract is owned upstream and vendored read-only | live | §3, §4, §8, §11 |
+| **M2** | two surfaces, two listeners, two credential types | live | §3, §10 |
+| **M3** | policy is data compiled into a decision program | live | §3, §5, §10 |
+| **M4** | every decision is explainable, durable, addressable | live | §3, §5, §10 |
+| **M5** | the decision path is stateless, bounded, cheap | live | §3, §10, §11 |
+| **M6** | the fleet is a graph, not a list | amended by M17 | §3, §5, §10 |
+| **M7** | identity is federated and short-lived | live | §6, §10 |
+| **M8** | audit is append-only and tamper-evident | live | §3, §7, §10 |
+| **M9** | revocation is fan-out with replay, and the kill switch | live | §3, §5, §10, §11 |
+| **M10** | JIT grants are policy inputs, not a bolt-on | live | §3, §5, §10 |
+| **M11** | `401` means deny; everything else means outage | live | §3, §4, §8 |
+| **M12** | tenancy is in the schema from day one | amended by M18 | §10 |
+| **M13** | tech choices (Go, Postgres, closed enum kinds) | live | §3 |
+| **M14** | licensing: this repository is the open-source plane | live | §8 |
+| **M15** | Enterprise extends this repository; it never forks it | live | §3, §10, §11 |
+| **M16** | external access context is an input; its integrations are extensions | live | §5, §7, §10, §11 |
+| **M17** | the fleet graph carries capabilities, not just reachability | live | §4, §5, §10 |
+| **M18** | tenancy is a request dimension, not a process constant | live | §10, §11 |
+| **M19** | a deployment has an identity and can be supervised | live | §3, §10, §11 |
+| **M20** | the console is a product surface with a specified design | live | §3, §10 |
+| **M21** | the console is localisable; English is the only catalogue | live | §3, §10 |
+
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
   `github.com/hoplock/proxy`. This repo keeps a pinned copy under `contract/`,
@@ -1222,6 +1254,25 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 > This revision follows an upstream one in `hoplock/proxy` (decisions D13–D17
 > there). Per `docs/CROSS-REPO-PROTOCOL.md` §2 it must not merge before that one
 > does.
+
+**What an old number resolves to.** The notes above are the record of *why* each
+renumber happened. This table is the answer to "a document says 0014 — what is
+that now?", already composed so that nobody resolves an old number by composing
+notes by hand (`docs/PROTOCOL.md` §6). Rows are grouped by revision, **oldest
+first**, and each row's result is composed through every revision below it.
+Regenerate it in the PR that renumbers.
+
+| Revision | Written as | Is now | Phase |
+| --- | --- | --- | --- |
+| privileged-access | 0013 | 0014 | `0014-northbound-api-and-policy-lifecycle` |
+| privileged-access | 0014 | 0016 | `0016-management-console` |
+| privileged-access | 0015 | 0017 | `0017-e2e-topology-and-ci` |
+| multi-instance | 0015 | 0016 | `0016-management-console` |
+| multi-instance | 0016 | 0017 | `0017-e2e-topology-and-ci` |
+| multi-instance | 0017 | 0018 | `0018-single-contract-version` |
+
+Nothing is implemented yet, so no frozen name has ever moved: every row above
+renumbered a queued prompt only.
 
 Ordering rationale worth keeping: the conformance harness (0002) comes second so
 that every later phase has a red/green target it did not write itself; the
