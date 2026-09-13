@@ -1308,17 +1308,15 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other, no thinning path |
 
-> **One queued prompt is not in this table.**
-> `prompts/queued/AUDIT-cross-repo-impact.md` audits what `hoplock/proxy` has
+> **Audits are not in this table, and not in the queue.**
+> `prompts/audit/` holds prompts that run repeatedly against the whole
+> repository rather than once at a point in this sequence
+> (`docs/PROTOCOL.md` §6). There is one today:
+> `prompts/audit/cross-repo-impact.md`, which audits what `hoplock/proxy` has
 > made true and this repository has not caught up with — every merged upstream
 > PR that touched a shared surface, traced into these prompts, plus a check of
-> the contract document itself that trusts no PR body. It carries an `AUDIT-`
-> name instead of a number because it is **not a point in this sequence**: last
-> would schedule it after the phases it protects, and first would renumber every
-> live phase (`docs/PROTOCOL.md` §6, §0.2) to buy an ordering a kickoff states in
-> one line. It is run when the user names it — **before** building on text the
-> proxy may have moved underneath us — it is re-run rather than completed, and
-> it stays in `prompts/queued/` for good.
+> the contract document itself that trusts no PR body. It is run when the user
+> names it, **before** building on text the proxy may have moved underneath us.
 >
 > It exists because `docs/CROSS-REPO-PROTOCOL.md` §4 puts the downstream look on
 > the upstream author at merge time, and two of those looks have now described

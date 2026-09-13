@@ -142,7 +142,7 @@ var sectionOrDecision = regexp.MustCompile(`§\d|\bM\d+\b`)
 // is what makes §1's "read the sections your prompt names" possible at all.
 func TestEveryPromptReadFirstNamesTheSectionsItNeeds(t *testing.T) {
 	var prompts []string
-	for _, dir := range []string{"prompts/queued", "prompts/implemented"} {
+	for _, dir := range []string{"prompts/queued", "prompts/implemented", "prompts/audit"} {
 		matches, err := filepath.Glob(filepath.Join(dir, "*.md"))
 		if err != nil {
 			t.Fatalf("glob %s: %v", dir, err)
@@ -154,6 +154,9 @@ func TestEveryPromptReadFirstNamesTheSectionsItNeeds(t *testing.T) {
 	}
 
 	for _, path := range prompts {
+		if filepath.Base(path) == "README.md" {
+			continue // A directory's own note is not a prompt.
+		}
 		body := readFile(t, path)
 		start := strings.Index(body, "## Read first")
 		if start < 0 {
@@ -282,27 +285,41 @@ func TestRenumberMappingIsComposed(t *testing.T) {
 	}
 }
 
-var promptName = regexp.MustCompile(`^(\d{4}|AUDIT)-[a-z0-9-]+\.md$`)
+var (
+	phasePrompt = regexp.MustCompile(`^\d{4}-[a-z0-9-]+\.md$`)
+	auditPrompt = regexp.MustCompile(`^[a-z][a-z0-9-]*\.md$`)
+)
 
-// TestPromptNamesFollowTheTwoShapes enforces PROTOCOL §6: a prompt is either a
-// numbered phase or an `AUDIT-` prompt, and an audit is re-run rather than
-// completed — so it never lands in implemented/, where nobody would run it
-// again. Both halves are one rename away from being silently undone.
-func TestPromptNamesFollowTheTwoShapes(t *testing.T) {
-	for _, dir := range []string{"prompts/queued", "prompts/implemented"} {
+// TestPromptDirectoriesKeepTheirShapes enforces PROTOCOL §6: prompts/queued and
+// prompts/implemented are the numbered delivery sequence, and prompts/audit is
+// outside it — repeated work with no position in the build order. An audit is
+// re-run rather than completed, so it belongs in neither of the other two: in
+// implemented/ nobody would run it again, and in queued/ it is back in the
+// order it was taken out of. Both mistakes are one `git mv` away.
+func TestPromptDirectoriesKeepTheirShapes(t *testing.T) {
+	for _, dir := range []string{"prompts/queued", "prompts/implemented", "prompts/audit"} {
 		matches, err := filepath.Glob(filepath.Join(dir, "*.md"))
 		if err != nil {
 			t.Fatalf("glob %s: %v", dir, err)
 		}
+		if len(matches) == 0 {
+			t.Errorf("%s: no prompts — if the directory is gone, so is the rule it carries (PROTOCOL §6)", dir)
+		}
 		for _, path := range matches {
 			name := filepath.Base(path)
-			if !promptName.MatchString(name) {
-				t.Errorf("%s: prompt name is neither NNNN-short-description.md nor "+
-					"AUDIT-short-description.md (PROTOCOL §6)", path)
+			if name == "README.md" {
+				continue
 			}
-			if dir == "prompts/implemented" && strings.HasPrefix(name, "AUDIT-") {
-				t.Errorf("%s: an AUDIT- prompt is re-run, not completed — it stays in "+
-					"prompts/queued/ (PROTOCOL §6)", path)
+			if dir == "prompts/audit" {
+				if !auditPrompt.MatchString(name) {
+					t.Errorf("%s: an audit is named short-description.md, with no number — "+
+						"there is no position in the delivery order to encode (PROTOCOL §6)", path)
+				}
+				continue
+			}
+			if !phasePrompt.MatchString(name) {
+				t.Errorf("%s: a phase is named NNNN-short-description.md (PROTOCOL §6). "+
+					"Work that is re-run rather than built once belongs in prompts/audit/", path)
 			}
 		}
 	}

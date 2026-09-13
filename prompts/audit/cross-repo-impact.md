@@ -1,21 +1,22 @@
-# AUDIT — Cross-repo impact: what the proxy expects of Control
+# Audit — Cross-repo impact: what the proxy expects of Control
 
-> **This prompt carries no number, and that is the point.** It is not a phase in
-> `docs/PLAN.md` §10's delivery sequence: numbering it last would schedule the
-> audit *after* the phases it exists to protect, and numbering it first would
-> renumber every live phase (`docs/PROTOCOL.md` §6) to buy an ordering a kickoff
-> can state in one line. So it sits outside the sequence, under an `AUDIT-`
-> name, and three things follow:
+> **This is an audit, not a phase**, which is why it lives in `prompts/audit/`
+> and carries no number (`docs/PROTOCOL.md` §6). A number says where work sits
+> in the build order and this has no such place: numbered last it would run
+> *after* the phases it exists to protect, and numbered first it would renumber
+> every live phase to buy an ordering a kickoff states in one line. Three things
+> follow from where it lives:
 >
-> - **"The lowest-numbered queued prompt" never selects it** (`docs/PROTOCOL.md`
->   §0.2). A session runs it because the user named it.
+> - **Nothing in `prompts/audit/` is queued.** "The lowest-numbered queued
+>   prompt" (`docs/PROTOCOL.md` §0.2) never reaches this folder; a session runs
+>   this because the user named it.
 > - **Run it before building on text the proxy may have moved under us** —
 >   typically before starting the next phase after a batch of upstream merges,
 >   and after any stretch where syncs have lagged. An audit that runs after the
 >   phases have been built is a list of things that were already built wrong.
-> - **It is never moved to `prompts/implemented/`.** It is re-run, not
->   completed, so the file stays in `prompts/queued/` and each run appends to one
->   learnings file (below) instead of writing a new one.
+> - **The file never moves.** It is re-run rather than completed, so it stays
+>   here, and each run adds to one learnings file (below) instead of writing a
+>   new one.
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow; especially §3 (scope discipline, and
@@ -245,11 +246,12 @@ periodic check quietly becomes a one-off.
 Per `docs/PROTOCOL.md`, with two deliberate departures that follow from this
 prompt being a repeating audit rather than a phase:
 
-- **Leave this prompt in `prompts/queued/`.** Do not move it to
-  `prompts/implemented/` and do not rename it. The next audit needs it where it
-  is; a prompt filed under "implemented" is one nobody runs again.
+- **Leave this prompt in `prompts/audit/`.** Do not move it to
+  `prompts/implemented/`, do not copy it into `prompts/queued/`, and do not
+  rename it. The next audit needs it where it is; a prompt filed under
+  "implemented" is one nobody runs again.
 - **One learnings file, updated in place:**
-  `docs/learnings/AUDIT-cross-repo-impact-learnings.md`. Add a section for this
+  `docs/learnings/audit-cross-repo-impact-learnings.md`. Add a section for this
   run at the **top**, dated, and leave the previous runs beneath it — the
   history is what shows whether the same obligation keeps being missed. If the
   file does not exist yet, create it with the same summary-block shape every

@@ -21,8 +21,8 @@ repository, which is not a phase and has no prompt number.
 1. Read this protocol.
 2. Take the **lowest-numbered** prompt in `prompts/queued/` (unless the user
    names a specific one). That prompt is your entire task, and its "Read first"
-   block names what to read next. An `AUDIT-` prompt carries no number and is
-   never "the lowest" (§6) — it runs only when the user names it.
+   block names what to read next. `prompts/audit/` is **not** part of that queue
+   (§6) — a prompt there runs only when the user names it.
 3. Navigate `docs/PLAN.md` (the architecture source of truth): its section
    headings and its decision register, then the sections and decisions your
    prompt names (Section 1).
@@ -31,8 +31,8 @@ repository, which is not a phase and has no prompt number.
 5. Create a fresh branch off the default branch.
 6. Implement the prompt. Keep it in scope. Meet the Definition of Done.
 7. Move the prompt file from `prompts/queued/` to `prompts/implemented/`
-   (unchanged name) **in the same PR** — unless it is an `AUDIT-` prompt, which
-   stays in `queued/` because it is re-run rather than completed (§6).
+   (unchanged name) **in the same PR** — unless it came from `prompts/audit/`,
+   which is re-run rather than completed and never moves (§6).
 8. Write a learnings file to `docs/learnings/`.
 9. Open a PR. Iterate with the user until they are happy — and once it is green
    and mergeable, **go idle and wait** rather than polling it (§8).
@@ -257,7 +257,7 @@ prefix indicating implementation order.
   one, and resolving one by its digits is guesswork.
 - Each new prompt must be **self-contained** (Section 7).
 
-### Prompts that are not points in the sequence: `AUDIT-<short-description>.md`
+### Prompts that are not points in the sequence: `prompts/audit/`
 
 A number means "this is where the work happens in the delivery order". A
 recurring audit has no such place — it is run against whatever has been built so
@@ -266,22 +266,29 @@ directions: a high number schedules the audit *after* the phases it exists to
 protect, and a low one renumbers every live phase to buy an ordering the user
 can state when starting the session.
 
-So an audit is named `AUDIT-<short-description>.md`, and:
+So audits live in **`prompts/audit/`**, named `short-description.md` with no
+numeric prefix, and:
 
-- **It is never selected by "the lowest-numbered prompt"** (§0). A session runs
-  it because the user named it, and the user is the one who decides when the
-  estate needs checking.
-- **It is never moved to `prompts/implemented/`**, and it is never renumbered
-  into the sequence. It stays in `prompts/queued/` after every run: it is re-run,
-  not completed, and a file under "implemented" is one nobody runs again.
+- **That folder is not a queue.** `prompts/queued/` is the build order and §0
+  takes the lowest-numbered prompt from it; nothing in `prompts/audit/` is ever
+  "next" by that rule. A session runs one because the user named it, and the
+  user is the one who decides when the estate needs checking.
+- **An audit never moves.** Not to `prompts/implemented/` when a session
+  finishes with it — it is re-run, not completed, and a file under "implemented"
+  is one nobody runs again — and not into `prompts/queued/` to make it next,
+  which would put it back in the order it was taken out of.
 - **Its learnings file is one file, updated in place** —
-  `docs/learnings/AUDIT-<short-description>-learnings.md` — newest run at the
+  `docs/learnings/audit-<short-description>-learnings.md` — newest run at the
   top, earlier runs kept beneath. The history is the point: it is what shows
   whether the same gap keeps reappearing.
-- `docs/PLAN.md` §10 carries it as a **note**, not a table row, because the
-  table is the delivery sequence and an audit is not in it.
-- It is still **self-contained** (Section 7) and still subject to everything in
-  Section 3. An audit that quietly starts implementing is no longer an audit.
+- `docs/PLAN.md` §10 carries audits as a **note**, not as table rows, because
+  the table is the delivery sequence and an audit is not in it.
+- An audit is still **self-contained** (Section 7) and still subject to
+  everything in Section 3. One that starts implementing has found a phase:
+  queue it as a numbered prompt and keep the audit's PR to the audit.
+
+`prompts/audit/README.md` states these on the folder itself, and
+`protocol_test.go` enforces the shape of all three directories.
 
 This is a narrow exception with a narrow test: use it only for work that is
 genuinely repeated against the whole repository and has no position in the
