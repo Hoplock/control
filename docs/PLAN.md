@@ -1307,18 +1307,22 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other, no thinning path |
-| 0019 | Cross-repo impact audit | every merged proxy PR that touched a shared surface traced into this repository's prompts and plan, plus a check of the contract itself that trusts no PR body (M1) |
 
-> **Audit note (0019).** 0019 is not the nineteenth thing to build. It is a
-> cross-repo audit — text only, no behaviour — and it carries the highest number
-> for one reason: a number below 0002 would renumber every live phase
-> (`docs/PROTOCOL.md` §6) and invalidate every reference to them, which is a
-> large and lossy change to buy an ordering that a kickoff can state in one
-> line. Run it when the user names it, ahead of its number; §0.2 of the protocol
-> already allows exactly that. It exists because
-> `docs/CROSS-REPO-PROTOCOL.md` §4 puts the downstream look on the upstream
-> author at merge time, and two of those looks have now turned out to describe
-> text this repository did not contain — a check that runs once, from one side,
+> **One queued prompt is not in this table.**
+> `prompts/queued/AUDIT-cross-repo-impact.md` audits what `hoplock/proxy` has
+> made true and this repository has not caught up with — every merged upstream
+> PR that touched a shared surface, traced into these prompts, plus a check of
+> the contract document itself that trusts no PR body. It carries an `AUDIT-`
+> name instead of a number because it is **not a point in this sequence**: last
+> would schedule it after the phases it protects, and first would renumber every
+> live phase (`docs/PROTOCOL.md` §6, §0.2) to buy an ordering a kickoff states in
+> one line. It is run when the user names it — **before** building on text the
+> proxy may have moved underneath us — it is re-run rather than completed, and
+> it stays in `prompts/queued/` for good.
+>
+> It exists because `docs/CROSS-REPO-PROTOCOL.md` §4 puts the downstream look on
+> the upstream author at merge time, and two of those looks have now described
+> text this repository did not contain. A check that runs once, from one side,
 > needs a compensating pass from this one.
 
 > **Renumbering note (multi-instance revision).** Phase 0015 is new: a

@@ -282,6 +282,32 @@ func TestRenumberMappingIsComposed(t *testing.T) {
 	}
 }
 
+var promptName = regexp.MustCompile(`^(\d{4}|AUDIT)-[a-z0-9-]+\.md$`)
+
+// TestPromptNamesFollowTheTwoShapes enforces PROTOCOL §6: a prompt is either a
+// numbered phase or an `AUDIT-` prompt, and an audit is re-run rather than
+// completed — so it never lands in implemented/, where nobody would run it
+// again. Both halves are one rename away from being silently undone.
+func TestPromptNamesFollowTheTwoShapes(t *testing.T) {
+	for _, dir := range []string{"prompts/queued", "prompts/implemented"} {
+		matches, err := filepath.Glob(filepath.Join(dir, "*.md"))
+		if err != nil {
+			t.Fatalf("glob %s: %v", dir, err)
+		}
+		for _, path := range matches {
+			name := filepath.Base(path)
+			if !promptName.MatchString(name) {
+				t.Errorf("%s: prompt name is neither NNNN-short-description.md nor "+
+					"AUDIT-short-description.md (PROTOCOL §6)", path)
+			}
+			if dir == "prompts/implemented" && strings.HasPrefix(name, "AUDIT-") {
+				t.Errorf("%s: an AUDIT- prompt is re-run, not completed — it stays in "+
+					"prompts/queued/ (PROTOCOL §6)", path)
+			}
+		}
+	}
+}
+
 func promptExists(name string) bool {
 	for _, dir := range []string{"prompts/queued", "prompts/implemented"} {
 		if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("%s.md", name))); err == nil {
