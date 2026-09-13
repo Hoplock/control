@@ -8,7 +8,9 @@
 - `docs/learnings/` — read summaries; open `0002` (contract types + the
   conformance assertions you must now pass), `0003` (identity tables).
 - `contract/control.yaml` — `/v1/auth/cert`, `/v1/auth/password`,
-  `/v1/auth/mfa/poll`, `/v1/hostkeys/report`, `/v1/capabilities/report`.
+  `/v1/auth/mfa/poll`, `/v1/hostkeys/report`, `/v1/capabilities/report`,
+  `/v1/uids/lease`. Read the last one's **description in full**, not just its
+  schemas: the invariant is written there and it is the endpoint.
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` §6.1 ("Chain trust model")
   and `api/README.md` ("What a chained hop sends this API") — why a chained hop
   authenticates against this endpoint with the previous hop's key, and what it
@@ -17,14 +19,21 @@
   decision (`cache` on `HostKeyReportResponse`)" and §"The v4→v4.1 revision" —
   what the proxy does with a hint on this endpoint's response, which is the only
   thing that makes the rules below rules rather than preferences.
+- In the **Hoplock Proxy repository**, `api/README.md` §"Ephemeral uid blocks"
+  and §"The v4.2→v4.3 revision", and its `docs/PLAN.md` §5.1 — why the uid floor
+  moved off the target and onto this server, and what the proxy does when it
+  cannot get a block. Read these before writing the handler: the endpoint is
+  trivial and the invariant behind it is not.
 
 ## Objective
 Serve the south-bound authentication endpoints for real: resolve a certificate
 or a password to an identity with claims, own the MFA conversation end to end,
 and record what the proxy reports back about a target — its host key, and (since
 contract v4) the enforcement rungs it can take. Decide, per host key and since
-contract 4.1, whether the proxy may stop re-reporting it. This is the first phase
-where the conformance suite from 0002 grades a real implementation.
+contract 4.1, whether the proxy may stop re-reporting it. Since contract 4.3,
+also lease the proxy an exclusive block of ephemeral uids for a target, out of a
+cursor that only ever advances. This is the first phase where the conformance
+suite from 0002 grades a real implementation.
 
 ## In scope
 
@@ -176,14 +185,85 @@ has nothing to put on the request.
   a stale record cost at worst a refused session rather than a session running
   below the rung its audit record claims.
 
+### Ephemeral uid block leases (`POST /v1/uids/lease`, contract 4.3)
+
+Added by `Hoplock/proxy#51` (merged) and served here for the same reason the two
+report endpoints are: it is keyed by **target**, it is the proxy asking this
+server about a target rather than about a person, and it belongs on the same
+south-bound listener. It is not on the decision path — the proxy calls it **once
+per block**, not once per session — so it costs the latency budget (M5) nothing.
+
+What it grants is an **exclusive block of uids for one target**,
+`[uid_from, uid_to)` with a `term_seconds`, handed out of the per-target cursor
+0003 stores. The proxy then allocates inside its own block without asking again.
+
+**The one thing this server must guarantee is that the cursor only ever
+advances** (PLAN §4). A uid inside a granted block is never inside any other
+grant — for this proxy or any other, ever again — whether that block was used,
+abandoned, or left to expire. Everything else here is a detail; this is the
+endpoint.
+
+Four consequences, none of them optional:
+
+- **Never reclaim, and build nothing that could.** There is no release call in
+  the contract because there is nothing to give back. Do not add an expiry
+  sweeper, a free-list, or a "that proxy is gone, recycle its range" tidy-up —
+  each is a plausible-looking optimisation that reintroduces exactly the uid
+  reuse this mechanism exists to prevent, and none of them fails visibly. The
+  cost of never reclaiming is uids, which are 31 bits wide and cheap; the cost
+  of reclaiming once is a fresh session inheriting a torn-down one's files.
+- **`term_seconds` is not what makes uids non-reusable.** It bounds how long
+  *this* proxy keeps allocating from the block it holds. An expired block is one
+  the proxy stops using — never one this server may hand to somebody else. Set
+  it against how long your own outages last, and be aware of the trade the
+  contract states plainly: a block ends when it is exhausted or when its term
+  runs out, and **both fail closed while this server is unreachable**, so a
+  Control outage plus a busy target is a provisioning outage for that target.
+  `uid_count` is how many sessions a proxy rides out; `term_seconds` is how
+  long.
+- **`observed_floor` may only ever raise the cursor.** It is the target's own
+  high-water mark, relayed by the proxy — corroboration from an untrusted party,
+  the same relationship a capability report has to a rung. Use it to catch up
+  when this server's cursor sits below a mark an earlier deployment left, and
+  **never** to move the cursor down. Clamp it to the request's
+  `[range_min, range_max]`, and know what you are accepting: root on a target can
+  report a large floor and burn that target's range. That is loud, it is bounded,
+  it reaches no other target, and it is the right side of an invariant that
+  prefers refusing to reusing. Log it when it moves the cursor.
+- **Refuse rather than clamp a block outside the requested range, and answer
+  `409` when the range is spent.** `range_min`/`range_max` encode fleet facts
+  this server does not know (every distribution's `UID_MAX`, systemd's
+  dynamic-user range, SSSD's id-mapping range, and staying below 2^31). A block
+  granted outside them is refused by the proxy anyway, so granting one only
+  turns a clear `409` into a confusing outage. `uid_count` is a request, not a
+  requirement: grant what you choose, but a non-empty block or a `409`, never a
+  `200` carrying an empty or inverted one.
+
+Key the cursor by target exactly as `/v1/hostkeys/report` and
+`/v1/capabilities/report` key theirs, **with the same known imprecision**:
+several names resolving to one host are several cursors here. That is a
+target-identity question the contract does not answer and this phase must not
+answer twice — the cost of getting it wrong is spare uids, not a collision.
+
+Put the granted `lease_id` on whatever record an incident would read, so a uid
+can be traced back to the proxy whose block it came from without polling the
+fleet.
+
+**If this phase does not serve this endpoint, say so loudly in the learnings**,
+because the consequence is not a missing feature: the proxy fails **closed**
+rather than trusting a floor it cannot get, so **every `ephemeral-user` route in
+the fleet is refused**. `brokered-key` and `static-key` routes are unaffected.
+That is the one place contract 4.3 is not optional for us, and 0017's e2e
+suite is where a fleet-wide refusal would otherwise first be noticed.
+
 ## Out of scope
 - `/v1/authorize` (0008), the event stream (0009), log ingest (0010).
 - Real IdP federation (0011): identities come from the store (0003) for now, and
   the interface must be shaped so an IdP broker slots in behind it.
 
 ## Acceptance criteria
-- The conformance suite's auth, host-key and capability-report assertions pass
-  against this server (`make conform`), and CI runs it.
+- The conformance suite's auth, host-key, capability-report and uid-lease
+  assertions pass against this server (`make conform`), and CI runs it.
 - A test proves no north-bound route is reachable on the south-bound listener.
 - A test proves a database failure on the auth path returns `5xx`, not `401`
   (inject the failure; this is M11's regression test and it is easy to lose).
@@ -206,6 +286,18 @@ has nothing to put on the request.
   assert the response is not a cheerful `accepted: true`. A second report for the
   same target replaces the first rather than accumulating duplicates, and a
   report carrying no `observed_at` is stored in a way that reads back as stale.
+- **UID lease, and the assertions are about the sequence rather than the
+  response.** Blocks granted for one target never overlap across many leases,
+  including blocks the test abandons and blocks it lets expire past
+  `term_seconds`; two different `proxy_id`s leasing the same target get disjoint
+  blocks (a cursor keyed by proxy passes a single-proxy test and is wrong); a
+  lease carrying an `observed_floor` above the cursor raises it and one below it
+  does not lower it; a request whose range cannot be satisfied gets `409` with
+  the contract's error envelope; and a block is never granted outside the
+  requested `[range_min, range_max]`. Restart the server mid-sequence in one
+  test and assert the cursor survived — the in-process record is what phase
+  0035 upstream moved *away* from, and reproducing it here would defeat the
+  endpoint.
 - **Chain leg**: a cert-auth call offering an enrolled proxy's key with a valid
   `login` returns that **user's** identity, carrying the authenticating proxy's
   id; the same call with a `login` that resolves to no identity is still a
@@ -222,7 +314,10 @@ M11 honest, the identity-resolution interface 0011 will implement, the MFA
 provider interface and its deterministic test implementation, the host-key
 storage shape **including whether a `cache` hint is issued and where its key is
 stored** (0009 needs that key to withdraw a host-key decision, and a
-subject-scoped invalidation will not do it), and **how a chain leg is
+subject-scoped invalidation will not do it), **how a uid block is granted** —
+the cursor's storage shape, the lock that makes a concurrent advance safe, what
+`term_seconds` and block size this phase chose and against which outage length,
+and how `observed_floor` is clamped — and **how a chain leg is
 recognised** — which registry answers "is this key one of ours" and how the
 authenticating proxy's id is carried on the identity, since 0008 pairs it with
 `conn.hop_trail` and 0017 proves the pair end to end.

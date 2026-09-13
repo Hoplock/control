@@ -148,6 +148,25 @@ paths distinct in the code, because they are answered from different data.
   build it where 0007 can call it rather than inside the authorize handler.
   Two copies of "may I hint this proxy right now" is two places to get M9
   wrong.
+- **Never put a monotonic floor on a cacheable response** (PLAN §4, §5.4). This
+  is a rule about *what may ride on this response*, and contract 4.3
+  (`Hoplock/proxy#51`, merged) is the worked example: the non-reuse floor under
+  an `ephemeral-user` account's uid is served by its own endpoint,
+  `POST /v1/uids/lease` (0007), and is **deliberately not a field here**. The
+  reason is this section's whole subject — a cached decision is replayed from
+  whenever it was taken, and this server is unreachable exactly when it is most
+  needed, so a floor carried on an authorize response is served **stale**, and a
+  **stale floor is a lowered floor**. That is the uid reuse the mechanism
+  exists to prevent, reintroduced by the cache.
+
+  A lease is exempt only because it is **exclusive**: replaying it grants the
+  same block to the same proxy, so replay is harmless rather than merely
+  unlikely. Keep the general form of the test when the next such value appears,
+  because it will look like an obvious field to add to the snapshot: **if a
+  value is only correct when it is fresh, it cannot ride on anything this
+  section governs** — not the authorize response, and not the host-key one
+  either. Add an endpoint instead, and say so upstream rather than inventing one
+  here (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 
 ### Decision records (M4)
 Every evaluation — allow and deny alike — writes a record: inputs, matched rule,
@@ -290,6 +309,9 @@ not only under a single hot subject.
 
 ## Out of scope
 - The revocation stream (0009) — read its liveness, do not implement it.
+- Ephemeral uid leases (`POST /v1/uids/lease`, 0007). The floor is not this
+  response's to carry and the endpoint is not this phase's to serve; the rule
+  above is here only so nothing puts it on the snapshot.
 - The grant *approval workflow* (a Hoplock Enterprise extension via `ext`).
   Control ships manual, time-boxed grants (0012); read live grants as an input
   and do not care which of the two created them.

@@ -66,6 +66,21 @@ Each scenario is a product claim, proven across both components:
   audit record names which tier decided.
 - **Both credential methods**: `ephemeral-user` creates and removes the target
   user; `brokered-key` leaves the appliance-like target unmodified.
+- **The uid floor survives a restart of both sides** (contract 4.3, 0007). Run
+  an `ephemeral-user` session, note the uid, then restart **the proxy** and run
+  another: the second uid is strictly above the first. Restart **this server**
+  and repeat: still strictly above. This is the scenario the upstream phase was
+  written for — an in-process floor looks perfect until a process dies — and
+  neither component can prove it alone, which is exactly what this topology is
+  for. Assert it on the uid, not on the lease call: a proxy holding a block
+  legitimately makes no call at all.
+- **A Control without the endpoint refuses `ephemeral-user`, and says it is an
+  outage.** Disable `/v1/uids/lease` (or let a block's range run out) and assert
+  the `ephemeral-user` session is refused **outage-class** — the user is told it
+  is an outage and given a session id, never "access denied" (M11) — while a
+  `brokered-key` session over the same topology still succeeds. The proxy fails
+  closed here by design, and a suite that never exercises it would let us ship a
+  server that silently refuses every ephemeral route in a fleet.
 - **Revocation**: an operator kills a live session; the user is told why, and it
   ends. A cached decision is invalidated and the next connection is re-decided.
 - **Cache + revocation interaction**: with the event stream unhealthy, this
@@ -110,6 +125,9 @@ Each scenario is a product claim, proven across both components:
 - The outage scenario proves a stopped server is never reported as a denial.
 - No ephemeral users or keys leak after the suite; the appliance-like target is
   byte-identical afterwards.
+- **No uid is ever issued twice across the whole suite run**, restarts of either
+  component included — collect every `ephemeral-user` uid the run produces and
+  assert the set is strictly increasing per target, not merely distinct.
 - `govulncheck` gates every PR, passes on the tree, and has been seen to fail on
   a known-vulnerable input.
 - The pinned proxy revision is recorded, and the docs say how to move it.
