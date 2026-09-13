@@ -68,11 +68,18 @@ this phase installs is **loud** rather than lenient.
   loudly and a human decides what to do — which is the point at which supporting
   a second version would become a deliberate decision rather than an accident.
 - Note that these are two different numbers and both are single-valued here: the
-  document version (`4.1.0` as vendored) and the negotiated vocabulary
-  (`policy_version`, `4`) move independently upstream — v3.1 and 4.1 each moved
-  the first without the second, v4 moved both — and this phase does not couple
-  them. Read each out of `contract/control.yaml` rather than from this line,
-  which is only as current as the last sync.
+  document version (`4.3.0` as vendored) and the negotiated vocabulary
+  (`policy_version`, `4`) move independently upstream — v3.1, 4.1 and 4.3 each
+  moved the first without the second, v4 moved both — and this phase does not
+  couple them. Read each out of `contract/control.yaml` rather than from this
+  line, which is only as current as the last sync.
+
+  4.3 is the sharpest case and worth keeping in mind while auditing: it added a
+  whole endpoint (`POST /v1/uids/lease`) and still left `policy_version` at `4`,
+  because that number gates the vocabulary `/v1/authorize` answers in. So "the
+  document moved, therefore the vocabulary moved" is wrong three times out of
+  four, and a check that couples them would have failed this sync rather than
+  catching anything.
 - No other literal version anywhere in the tree — code, fixtures, deployment
   manifests, or seed data. Add a check that keeps it that way and name it in your
   learnings.

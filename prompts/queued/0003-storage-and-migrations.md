@@ -4,7 +4,9 @@
 - `docs/PROTOCOL.md` — session workflow, especially §3 (forward-only
   migrations, tenancy column).
 - `docs/PLAN.md` — especially §2 (**M5, M8, M12, M13**), §3 (`internal/store`),
-  §8 (migrations are applied by an explicit command).
+  §4 (the uid allocation cursor obligation — the one table here whose
+  correctness is a contract guarantee rather than a convenience), §8 (migrations
+  are applied by an explicit command).
 - `docs/learnings/` — read summaries; open `0001` (config keys, CI shape).
 
 ## Objective
@@ -40,6 +42,24 @@ filtering on it:
 - **grants** — JIT access grants (M10): subject, scope, expiry, approval
   reference. 0012 owns manual grants and Hoplock Enterprise extends them with
   approval workflows; the table lands here and serves both.
+- **uid allocation cursors** — one row per target (contract 4.3, PLAN §4): the
+  next uid to hand out. 0007 serves `POST /v1/uids/lease` over it; the table and
+  its advance operation land here, because the guarantee is a **storage**
+  guarantee and cannot be bolted on at the handler.
+
+  **The cursor may only ever advance, and the database is what enforces it.**
+  Advancing is a read-modify-write, so two concurrent leases for one target must
+  never both read the same value — take a row lock (`SELECT … FOR UPDATE`, or an
+  atomic `UPDATE … RETURNING` that computes the new value in SQL) and add a
+  `CHECK`/trigger so a write that would lower the cursor is rejected by Postgres
+  rather than by Go. A uid granted twice is a fresh session inheriting a
+  torn-down one's files, and it is invisible until it is an incident.
+
+  There is deliberately **no lease table, no expiry column, and no release
+  path**. A granted block is gone — used, abandoned or expired alike — so the
+  only durable state is the integer, and a schema that models leases as
+  reclaimable rows has already encoded the bug. Keep `lease_id` on whatever the
+  serving phase records for audit, not as a row this layer can hand back.
 
 Index deliberately and say why in a comment: the decision path (M5) is the only
 latency-critical reader, and its queries are "identity by subject",
@@ -105,6 +125,13 @@ meets it.
   no method has a signature able to express a cross-tenant read without one.
 - The audit chain columns are per tenant: two tenants' records interleaved by
   arrival time still produce two chains that each verify alone.
+- **The uid cursor never goes backwards, proven under concurrency and by the
+  database.** Run N concurrent advances for one target and assert the granted
+  blocks are disjoint and strictly increasing — a test that advances serially
+  passes on the lost-update bug this lock exists to prevent. Assert separately
+  that an attempt to write a **lower** cursor is rejected by Postgres, not by
+  the caller: delete the Go-side guard in the test and the write must still
+  fail.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add

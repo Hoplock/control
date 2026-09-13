@@ -3,8 +3,9 @@
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 ("never edit
   `contract/`") and §9.
-- `docs/PLAN.md` — especially **§2 (M1)**, §4 (the endpoint table and the two
-  obligations the suite must grade).
+- `docs/PLAN.md` — especially **§2 (M1)**, §4 (the endpoint table and the
+  obligations the suite must grade — including the uid allocation cursor, whose
+  monotonicity no single-request assertion can see).
 - `docs/learnings/` — read summaries; open `0001` (Makefile targets, CI shape).
 - In the **Hoplock Proxy repository**: `api/control.yaml` and `api/README.md`.
   Read the ground rules, the endpoint table, and — before writing any
@@ -28,12 +29,22 @@
   exactly what a v3 server produced — so it is the revision your absent-value
   assertions should be written against.
 
-  Finally read **"The v4→v4.1 revision"** and **"Reusing a host-key decision
+  Then read **"The v4→v4.1 revision"** and **"Reusing a host-key decision
   (`cache` on `HostKeyReportResponse`)"**. 4.1 is v3.1's lesson repeated with a
   different field: one optional `cache` hint on the host-key response, and
   `policy_version` left at `4`, because the number governs what `/v1/authorize`
   may answer with. Read it before writing any assertion that ties the document
   version to the negotiated one.
+
+  Finally read **"The v4.2→v4.3 revision"** and **"Ephemeral uid blocks"**, plus
+  the `/v1/uids/lease` path and the `UIDLeaseRequest`/`UIDLeaseResponse` schemas.
+  4.3 is the same lesson a third time and the sharpest case for it: it adds a
+  whole **endpoint** and still leaves `policy_version` at `4`, because that
+  number gates the vocabulary `/v1/authorize` answers in and an endpoint is not
+  in it. Anything here that infers "the document moved, so the negotiated number
+  moved" is wrong three times over. Read the endpoint description in full before
+  writing a single lease assertion — the monotonic-cursor invariant is the whole
+  endpoint, and it is the one thing the suite has to be built to catch.
 
 ## Objective
 Bring the contract into this repo as a **vendored, verifiable artifact**, and
@@ -108,6 +119,33 @@ It must cover, at minimum:
   pass** — absent means "report every connection", which is what every server
   did before the field existed. Assert the envelope only: whether a given key
   is worth hinting is the implementation's business (0007), not the contract's.
+- **UID leases** (`POST /v1/uids/lease`, contract 4.3): a lease returns a block
+  with `uid_to` strictly greater than `uid_from`, and a block requested inside
+  `[range_min, range_max]` comes back inside it — a server that ignores the
+  range is caught here rather than by a proxy refusing every block it is
+  granted.
+
+  The assertion that matters is **non-overlap, and it is the only one that
+  grades the invariant**: lease repeatedly for the same target and assert no
+  granted block ever intersects an earlier one — including blocks the suite
+  deliberately **abandons** (leases and never allocates from) and blocks it lets
+  **expire** past `term_seconds`. A server that reclaims either to save uids is
+  the exact failure this endpoint exists to prevent, and it passes every
+  assertion that only checks one lease at a time. Assert across **two distinct
+  `proxy_id`s** too: exclusivity is per target, not per proxy, and a server that
+  keyed its cursor by proxy would look perfect to a single-proxy suite.
+
+  Assert that `observed_floor` **may raise the cursor and may never lower it**:
+  a lease sent with an `observed_floor` above the last grant comes back at or
+  above it, and one sent with a floor *below* the last grant does not pull the
+  cursor back down. Assert `409` when the cursor has reached the top of the
+  range, with the contract's error envelope — not a `200` carrying an empty or
+  inverted block.
+
+  Grade the **shape** only, as everywhere else here: how large a block is, what
+  `term_seconds` a server chooses, and how it clamps a hostile `observed_floor`
+  are the implementation's business (0007). Whether a uid can ever be handed out
+  twice is the contract's.
 - **Logs**: batch ingest returns `202` and counts accepted records; **the same
   batch replayed does not double-count** (idempotency on `record_id` — a proxy
   draining a disk buffer will resend); priority ingest returns `200`.
@@ -140,22 +178,25 @@ change in the *other* repo), and a suite bug is yours to fix.
 The vendored contract is a moving target and this phase builds the machinery,
 not a snapshot. Device provisioning and the credential ladder landed upstream
 (v3), the `device_field.` namespace after them (v3.1, upstream
-`Hoplock/proxy#21`, merged), and enforcement points and session bounds after
-those (v4, upstream `Hoplock/proxy#25`, merged) — three revisions in the time it
+`Hoplock/proxy#21`, merged), enforcement points and session bounds after those
+(v4, upstream `Hoplock/proxy#25`, merged), and an entire new endpoint after
+those (4.3, upstream `Hoplock/proxy#51`, merged) — four revisions in the time it
 took to queue this phase, which is the actual argument: the drift check and the
 conformance suite must treat a version bump as routine. If `make contract-sync`
 is painful to run twice in a week, it is wrong. Vendor whatever is current when
 you run; nothing here waits for the next revision.
 
 Two of those numbers are not the same number, and v3.1 is what proves it. The
-**document** version (`info.version`, `4.1.0` as vendored) and the **negotiated
+**document** version (`info.version`, `4.3.0` as vendored) and the **negotiated
 policy vocabulary** (`policy_version`, `4`) move independently: v3.1 added
 vocabulary and left `policy_version` at `3`, because that field numbers what a
 proxy can *read* and reading did not change, while v4 moved both. Contract 4.1
 (upstream `Hoplock/proxy#35`, merged) did it again — one optional `cache` field
-on `HostKeyReportResponse`, document to `4.1.0`, `policy_version` still `4` — so
-the pattern is not a one-off of v3.1's and an assertion built on "they move
-together" would now be wrong twice. So do not derive one from the other, do not
+on `HostKeyReportResponse`, document to `4.1.0`, `policy_version` still `4` —
+and contract 4.3 (upstream `Hoplock/proxy#51`, merged) did it a third time with
+a whole endpoint, `POST /v1/uids/lease`, document to `4.3.0`, `policy_version`
+*still* `4`. So the pattern is not a one-off of v3.1's and an assertion built on
+"they move together" would now be wrong three times. So do not derive one from the other, do not
 assert a relationship between them, and do not let the drift check key off
 `policy_version` — the checksum in `contract/UPSTREAM` is what catches a changed
 document. Both numbers above are what upstream carries today and neither is a
@@ -181,6 +222,12 @@ target to pin: read them out of the document you vendor.
   `require_session_capture` means `false`, and absent `concurrency` means
   uncapped. An absent-value assertion that passes vacuously is the failure mode
   here: assert the *default*, not merely that the field may be missing.
+- **The uid-lease invariant is graded across leases, not within one.** The suite
+  proves that repeated leases for one target never overlap — with an abandoned
+  block and an expired block among them, and with two different `proxy_id`s —
+  and that `observed_floor` can raise the cursor but never lower it. A suite that
+  leases once and checks the block looks fine is exactly the suite that lets a
+  uid be granted twice.
 - `internal/contract` compiles, and the enum test passes against the document.
 - `make conform BASE_URL=... ` runs the suite and reports per-assertion results
   with a non-zero exit on any failure.
