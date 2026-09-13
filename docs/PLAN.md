@@ -1334,6 +1334,21 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other, no thinning path |
 
+> **Audits are not in this table, and not in the queue.**
+> `prompts/audit/` holds prompts that run repeatedly against the whole
+> repository rather than once at a point in this sequence
+> (`docs/PROTOCOL.md` §6). There is one today:
+> `prompts/audit/cross-repo-impact.md`, which audits what `hoplock/proxy` has
+> made true and this repository has not caught up with — every merged upstream
+> PR that touched a shared surface, traced into these prompts, plus a check of
+> the contract document itself that trusts no PR body. It is run when the user
+> names it, **before** building on text the proxy may have moved underneath us.
+>
+> It exists because `docs/CROSS-REPO-PROTOCOL.md` §4 puts the downstream look on
+> the upstream author at merge time, and two of those looks have now described
+> text this repository did not contain. A check that runs once, from one side,
+> needs a compensating pass from this one.
+
 > **Renumbering note (multi-instance revision).** Phase 0015 is new: a
 > deployment that can be *supervised* needs its own identity, a north-bound
 > surface it can promise across versions, and a way to register outbound to

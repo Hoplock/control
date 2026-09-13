@@ -3,6 +3,12 @@
 One file per implemented prompt, named `NNNN-short-description-learnings.md`
 matching the prompt it corresponds to (see `docs/PROTOCOL.md` §5).
 
+An audit (`prompts/audit/`) keeps **one** file instead, named
+`audit-<short-description>-learnings.md` and updated in place: newest run at the
+top, earlier runs kept beneath it. An audit is re-run rather than completed, so
+a file per run would bury the thing worth reading — whether the same gap keeps
+reappearing (`docs/PROTOCOL.md` §6).
+
 Each file **must** open with a `## Summary` block so future sessions can decide
 whether to read the full body. Sessions read every summary block here at startup
 and only open a full file when it's relevant to their prompt.
