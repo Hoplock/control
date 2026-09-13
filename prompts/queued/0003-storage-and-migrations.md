@@ -42,7 +42,7 @@ filtering on it:
 - **grants** — JIT access grants (M10): subject, scope, expiry, approval
   reference. 0012 owns manual grants and Hoplock Enterprise extends them with
   approval workflows; the table lands here and serves both.
-- **uid allocation cursors** — one row per target (contract 4.3, PLAN §4): the
+- **uid allocation cursors** — one row per target (PLAN §4): the
   next uid to hand out. 0007 serves `POST /v1/uids/lease` over it; the table and
   its advance operation land here, because the guarantee is a **storage**
   guarantee and cannot be bolted on at the handler.

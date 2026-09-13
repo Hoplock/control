@@ -9,10 +9,14 @@
 - `contract/control.yaml` — `/v1/authorize` and every schema it references,
   including `ConnMeta.hop_trail`, `EnforcementPolicy`, `Attestation`,
   `GrantContext` and `ConcurrencyLimits`. In the **Hoplock Proxy repository**,
-  `api/README.md` "Policy vocabulary v4" is the same material as prose, including
-  the table of which rung is applied and which attested. Read **"The v4.1→v4.2
-  revision"** there too: it is a one-field tightening with no version gate behind
-  it, and enforcing it is this phase's job (below).
+  `api/README.md` "The policy vocabulary" is the same material as prose,
+  including the table of which rung is applied and which attested. Read
+  **"Versioning: one live vocabulary, and a proxy that fails closed"** there too,
+  for the **tightening** rule: `params.username` is required on every credential
+  method, with no version gate behind it, and enforcing it is this phase's job
+  (below). Note that `api/README.md` carries **no revision history** — upstream
+  `Hoplock/proxy#53` (merged) removed it, so everything reads in the present
+  tense and there is no "v4.1→v4.2" section to look for.
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` §6.1 ("Hop trail, loops,
   and the cap") — what the proxy does with the trail on its side, and why every
   entry in it can only cause a refusal.
@@ -89,11 +93,22 @@ gap**: stop and report it (PROTOCOL §3). Do not approximate it, and do not edit
 
 ### Vocabulary negotiation (`policy_version`, PLAN §4)
 The request carries `policy_version`: the highest policy vocabulary the calling
-proxy implements (absent means `1`, the pre-v2 vocabulary — `permitted_channels`
-and a filter rule list only). **Answer within it.** The proxy decodes this
-response strictly and fails the session closed on a field it does not
-understand, so a field sent outside the declared version is not ignored — it
-takes the session down, as an outage rather than a deny.
+proxy implements. **It is REQUIRED and has no absent-value default** (upstream
+`Hoplock/proxy#53`, merged — it previously defaulted to `1`), so there are two
+distinct cases and they get two distinct answers:
+
+- **Declared.** Answer within it, per the rest of this section.
+- **Absent.** Refuse the request with `400 invalid_request`. Do **not** fall back
+  to `1`, or to any other number. A proxy that cannot say what it is able to read
+  is not one this contract knows how to answer safely, and guessing a version for
+  it is guessing which restrictions it would silently drop — which is exactly the
+  failure the rest of this section exists to prevent. Never `401`: a deny is a
+  decision about a user (M11) and this is a malformed request.
+
+For a declared version: **answer within it.** The proxy decodes this response
+strictly and fails the session closed on a field it does not understand, so a
+field sent outside the declared version is not ignored — it takes the session
+down, as an outage rather than a deny.
 
 That cuts both ways and both halves need building:
 - **Never emit a field the declared version does not include.** Assembly is
@@ -108,20 +123,29 @@ That cuts both ways and both halves need building:
 Hoplock Proxy's `cmd/mock-control` implements this and is the reference: read
 its authorize handler if the intended behaviour is unclear.
 
-The current vocabulary is **`4`** (`Hoplock/proxy#25`, merged): the two
-enforcement axes and the four session bounds, below. Every v4 field is additive
-with an absent-value default that is exactly what a v3 server produced, so this
-mechanism is unchanged in kind — there is simply more to get right inside it.
+The current vocabulary is **`4`**, exported upstream as `control.PolicyVersion`,
+and it is the **only** one the contract now describes: upstream
+`Hoplock/proxy#53` (merged) removed the superseded vocabularies and the whole
+revision history from `api/control.yaml` and `api/README.md`. Read the vocabulary
+out of the vendored document, in the present tense; there is no "since version N"
+annotation on any field to look up, and no older generation to assemble for.
 
-**Contract v3.1 does not fit this mechanism, and forcing it in is the bug.** It
-adds the `device_field.<name>` namespace and keeps `policy_version` at `3`, on
-the grounds that the number names the vocabulary a proxy can *read* and reading
-a route did not change — an older proxy parses a v3.1 response exactly as it
-always did. So there is no version to gate a device field on. Version-aware
-assembly must leave the namespace alone: do not invent a `3.1` to compare
-against, and do not withhold a field from a proxy declaring `3`. That v4 *did*
-move the number changes nothing here: the document version and the negotiated
-vocabulary are two independent numbers, and neither is derived from the other.
+**That removed the older versions, not the versioning.** The mechanism above is
+intact upstream and is intact here: `policy_version` is on the wire, it is read
+on every authorize request, and this server still never answers with policy
+fields introduced after the version the caller declared. Build it. A future
+session reading "one vocabulary" as "nothing to negotiate" would delete the only
+thing standing between a fleet mid-upgrade and a silently widened session.
+
+**The `device_field.<name>` namespace does not fit this mechanism, and forcing
+it in is the bug.** It is an open namespace, deliberately unenumerated: a name
+inside it is not a new policy field, so it demands no bump and there is no
+version to gate a device field on. An older proxy parses a route bearing device
+fields exactly as it parses one without them. Version-aware assembly must leave
+the namespace alone — do not invent a sub-version to compare against, and do not
+withhold a device field from a proxy declaring the current version. Whether a
+driver accepts a given name is a **capability** question (M17, 0006), not a
+version one.
 
 What replaces the version check is the **capability** check (M17, 0006). A driver
 declares the field names it accepts, and a rung naming one it does not declare is
@@ -143,16 +167,15 @@ paths distinct in the code, because they are answered from different data.
 - **Never issue a hint to a proxy whose event stream is unhealthy** (M9): a
   cached allow that cannot be withdrawn is a grant with no revocation. This
   needs a liveness read from 0006/0009 on the issue path.
-- **These rules are not authorize-only.** Since contract 4.1
-  (`Hoplock/proxy#35`, merged) the same `CacheHint` also rides on
+- **These rules are not authorize-only.** The same `CacheHint` also rides on
   `HostKeyReportResponse`, which 0007 serves — so if this phase lands the
   issue-path machinery (the liveness read, the key derivation, the TTL clamp),
   build it where 0007 can call it rather than inside the authorize handler.
   Two copies of "may I hint this proxy right now" is two places to get M9
   wrong.
 - **Never put a monotonic floor on a cacheable response** (PLAN §4, §5.4). This
-  is a rule about *what may ride on this response*, and contract 4.3
-  (`Hoplock/proxy#51`, merged) is the worked example: the non-reuse floor under
+  is a rule about *what may ride on this response*, and the uid lease is the
+  worked example: the non-reuse floor under
   an `ephemeral-user` account's uid is served by its own endpoint,
   `POST /v1/uids/lease` (0007), and is **deliberately not a field here**. The
   reason is this section's whole subject — a cached decision is replayed from
@@ -190,23 +213,35 @@ it is the path that matters most and the easiest one to forget.
   in your learnings.
 - A benchmark, and a documented p99 target under a realistic bundle and fleet.
 
-### Snapshot fields added by the privileged-access revision and contract v4
+### Snapshot fields added by the privileged-access and enforcement vocabulary
 
 `docs/PLAN.md` §5.2 lists the full snapshot; these are the ones that did not
 exist when this prompt was first written, and each has a rule attached:
 
-- **An ordered `target_auth` ladder** (proxy D14), not a single method. Authoring
+- **An ordered `target_auth_ladder`** (proxy D14), not a single method. Authoring
   a ladder is a policy decision with real consequences — it states both a
   preference and what the deployment will accept instead — so a one-entry ladder
   must be as easy to express as a multi-entry one, and the engine must never
   synthesise a fallback the policy did not write.
+
+  **`target_auth_ladder` is the only way to name a credential method.** The
+  singular `target_auth` field is **gone** from `AuthorizeResponse` (upstream
+  `Hoplock/proxy#53`, merged): there is no one-object shape beside the ladder any
+  more, and no normalisation between the two. A response this server emits
+  carrying `target_auth` is now an **unknown field**, which the proxy fails
+  closed on — an outage in front of a user, not a deny. So emit a one-entry
+  ladder where policy names exactly one method; never the bare object.
+
+  `TargetAuth` — the object itself — is unchanged and is still the ladder's
+  **entry type**, and it is still extensible (proxy D6a). Only the singular
+  *field* went away.
 - **Device platform and expiry posture** on `ephemeral-account` routes (proxy
   D13), constrained by the target's own attributes and by the proxy's declared
   capabilities (M17, 0006). Naming a platform the enforcing proxy has no driver
   for is a decision that cannot be served.
 - **Additional device fields** on those same routes — the open
-  `device_field.<name>` namespace of contract v3.1 (proxy phase 0016), carried
-  through from the engine's snapshot as data this server does not interpret.
+  `device_field.<name>` namespace (proxy phase 0016), carried through from the
+  engine's snapshot as data this server does not interpret.
   `device_field.vdom` on a FortiGate scopes the provisioned administrator to one
   virtual domain; **absent, the administrator is global**, which is the strongest
   account the device has and is therefore never something to emit by accident or
@@ -246,53 +281,53 @@ exist when this prompt was first written, and each has a rule attached:
   disk counts as recording, so the refusal is outage-class and fires only when the
   proxy has no recording path at all.
 
-### `username` on every ladder entry (contract v3, and v4.2 for `brokered-key`)
+### `username` on every ladder entry
 
 `TargetAuth.params.username` is **required on every method the contract
-defines**: `ephemeral-user`, `ephemeral-account` and `static-key` since contract
-v3, and `brokered-key` since **contract v4.2** (upstream `Hoplock/proxy#41`,
-merged). The proxy refuses a route that omits it as a contract violation at the
-**first authorize call**, in the single-object and the ladder shape alike — so a
-snapshot this server assembles without one is an outage in front of a user
-rather than a decision about them.
+defines** — `ephemeral-user`, `ephemeral-account`, `static-key` and
+`brokered-key` alike. The proxy refuses a route that omits it as a contract
+violation at the **first authorize call**, so a snapshot this server assembles
+without one is an outage in front of a user rather than a decision about them.
+
+This is the contract's one **tightening**, and the contract announces it as a
+break rather than gating it on a version — see the rule below.
 
 Both halves are written here for the first time. v3's requirement reached the
 contract and the proxy and was never mirrored into these prompts, so this is the
 whole rule rather than an extension of one; treat it that way when you build it.
 
-- **Name the account on `brokered-key` too.** v3 left this method out on the
-  reasoning that it logs into a **standing** account an operator already chose
-  rather than one the proxy provisions. That reasoning is sound and it had not
-  reached the proxy's code: the fallback to the identity's `login` was still
-  implemented, so a deployment that configured no account locally logged in as
-  whatever string the connecting user typed at their SSH client. v4.2 closes the
-  difference. What the proxy will accept is the route's `username` or the
-  operator's own local configuration, and a route offering neither is refused as
-  an outage rather than served on a guess.
+- **`brokered-key` is included, and the reasoning that once excluded it is
+  dead.** The argument was that it logs into a **standing** account an operator
+  already chose rather than one the proxy provisions, so the route need not name
+  one. That left the proxy falling back to the identity's `login`: a deployment
+  that configured no account locally logged in as whatever string the connecting
+  user typed at their SSH client. The contract closed the difference. What the
+  proxy will accept is the route's `username` or the operator's own local
+  configuration, and a route offering neither is refused as an outage rather
+  than served on a guess.
 - **Never derive it from the identity's `login`.** It is a client-typed string,
   and the rule that this server must not base an authorization decision on one
   does not weaken when the string is used to *name* an OS or device account
   instead of to match against. The account name is what the target's own audit
   trail, its file ownership and — on a password credential — half the credential
   pair are made of: this server names it or there is no route.
-- **There is no version to gate this on.** `policy_version` stays `4`. It
-  numbers the vocabulary a proxy can *read*; nothing is added and nothing
-  changes meaning, so an older proxy parses such a route exactly as it always
-  did and refuses a `username`-less one exactly as a current proxy does. Do not
-  build a "proxies declaring 4 may omit it" path — the tightening is announced
-  as a break in the contract's versioning section, and a break is not
-  expressible through the number. (0018 removes the multi-version question
-  outright; this assembly must not grow one before it lands.)
+- **There is no version to gate this on, and there cannot be.** A tightening
+  adds no field and changes no field's meaning, so it is not expressible through
+  `policy_version` at all: a proxy that was never told parses such a route
+  exactly as it always did, and refuses a `username`-less one exactly as a
+  current proxy does. The contract's "Versioning" section says so and announces
+  the tightening as a **break** instead. Do not build a "proxies declaring some
+  version may omit it" path. (0018 removes the multi-version question outright;
+  this assembly must not grow one before it lands.)
 - **Catch it before the response is written**, next to the applied-rung check
   below. A ladder entry with no `username` is a route that can only fail at
   connect time, and a policy that can only fail in front of a user has already
   failed. The compiler rejects it at authoring time (0005); this is the second
   net, for a snapshot assembled from anywhere else.
 
-### The enforcement rung (`enforcement`, contract v4)
+### The enforcement rung (`enforcement`)
 
-New with `Hoplock/proxy#25` (merged) and the largest addition this phase has to
-assemble. It says **where** a policy claim is enforced, on **two axes** — what
+The largest single thing this phase has to assemble. It says **where** a policy claim is enforced, on **two axes** — what
 the session may execute, and what it may reach — which are separate questions
 with separate mechanisms, so a route may stand on a different rung of each. The
 vocabulary and its per-rung guarantees are in `contract/control.yaml`
@@ -301,7 +336,8 @@ vocabulary and its per-rung guarantees are in `contract/control.yaml`
 Five things to build, not to note:
 
 - **Absent means proxy-side enforcement only** on both axes — `proxy-inspected`
-  and `proxy-channel-policy`, exactly what a v3 server produced. Emit the object
+  and `proxy-channel-policy`. That is the documented absent-value default, not a
+  fallback this server picks. Emit the object
   only where the route genuinely stands somewhere else. An emitted default is
   noise in a record whose entire purpose is to say which rung was in force.
 - **An applied rung must never be chosen for a brokered-key route.** An *applied*

@@ -9,7 +9,12 @@
   MFA provider interfaces you now implement), `0005` (how claims and groups
   become policy inputs), `0003` (identity tables).
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` **D4** (why the proxy is
-  identity-shaped) and **D6a** (`target_auth` and its extensibility).
+  identity-shaped) and **D6a** (the `TargetAuth` object and its extensibility).
+  Note the shape D6a now takes on the wire: the singular `target_auth` **field**
+  is gone from `AuthorizeResponse` (upstream `Hoplock/proxy#53`, merged), and
+  `target_auth_ladder` is the only way a response names a credential method.
+  `TargetAuth` itself is unchanged — it is the ladder's **entry type**, and it is
+  that type which is extensible.
 
 > Scope note: this phase carries the **open-source** identity story — local
 > users, groups, roles, RBAC, and OIDC/SAML federation good enough to run a
@@ -58,11 +63,18 @@ disks.
   outstanding certificates when a key rotates. Say it explicitly; "we rotate"
   without an answer for outstanding certificates is not a rotation story.
 - **This needs a contract change in the Hoplock Proxy repository** to reach a proxy:
-  `target_auth` is extensible for exactly this (proxy D6a), but the new method
-  and its parameters must be added there and synced here (M1). So:
+  the `TargetAuth` object is extensible for exactly this (proxy D6a), but the new
+  method and its parameters must be added there and synced here (M1). So:
   - build the CA and its API surface here, exercised by tests and by
     `policyctl`;
-  - **do not** invent a `target_auth` method locally;
+  - **do not** invent a credential method locally — not as a new `TargetAuth`
+    `method` value, and not as a field beside it. The proxy decodes the authorize
+    response **strictly** and fails the session closed on anything it does not
+    recognise, so an invented method reaches a user as an outage, not as a
+    graceful skip;
+  - remember that a new method is a **vocabulary** change and therefore bumps
+    `policy_version` upstream, which is the mechanism that lets a fleet upgrade
+    without an outage. That is upstream's to do, not this phase's;
   - write the required upstream change into your learnings as a named,
     precise cross-repo dependency, and tell the user.
 

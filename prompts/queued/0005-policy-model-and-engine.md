@@ -44,14 +44,14 @@ proxy's enforcement surface:
 - **filter policy**: an ordered rule list **or** a restricted-exec allow-list,
   never both (proxy D12);
 - **target credential method** + parameters (proxy D6a), and on an
-  `ephemeral-account` method the open `device_field.<name>` namespace contract
-  v3.1 adds beside the five named parameters (PLAN §5.2). Model it as what it is:
+  `ephemeral-account` method the open `device_field.<name>` namespace that sits
+  beside the five named parameters (PLAN §5.2). Model it as what it is:
   an **open map of string to string**, opaque to this engine. Do not enumerate
   the names in the closed vocabulary and do not give `vdom` a field of its own —
   the contract refuses to enumerate them because customer-written drivers are
   first-class (proxy D13), and a closed list here would make an estate's own
   driver unauthorable without a release of this server;
-- **enforcement rung** per axis (`execution` and `reach`, contract v4) — where
+- **enforcement rung** per axis (`execution` and `reach`) — where
   the route's claim is actually enforced. Two independent axes, each with a small
   **closed** enum, and both are properly closed here: unlike `device_field`, the
   contract enumerates every rung, so model them as enums and let an unknown value
@@ -61,7 +61,7 @@ proxy's enforcement surface:
   the vocabulary exists to prevent — and the absent value on both axes is
   proxy-side enforcement only, which is exactly what a rule that says nothing
   about enforcement should emit;
-- **session bounds** (contract v4): a `session_deadline` as an **absolute
+- **session bounds**: a `session_deadline` as an **absolute
   instant** — the engine already takes time as an input, so an instant is
   computable and total, and a duration would re-anchor on each hop of a chain;
   `require_session_capture`; `concurrency` caps per subject and/or target; and a
@@ -123,17 +123,18 @@ errors instead of production surprises. It MUST reject:
 - a device field on a rung whose method is not `ephemeral-account`. The namespace
   is scoped to that method; anywhere else it is a typo that would be silently
   carried;
-- a credential-ladder entry with **no `username`**. The contract requires one on
-  every method it defines — `ephemeral-user`, `ephemeral-account` and
-  `static-key` since v3, and `brokered-key` since **v4.2** (upstream
-  `Hoplock/proxy#41`, merged) — and the proxy refuses a route that omits it at
-  the first authorize call, in the single-object and the ladder shape alike.
-  Reject it here, where the author can still fix it, rather than at connect time
-  in front of a user; and never fill it in from the identity's `login`, which is
-  a client-typed string and is precisely the substitution v4.2 closed upstream.
-  There is no `policy_version` to gate this on: the number stayed at `4`, because
-  a tightening adds no vocabulary;
-- an **enforcement rung that contradicts the rest of the rule** (contract v4).
+- a `target_auth_ladder` entry with **no `username`**. The contract requires
+  `params.username` on **every** method it defines — `ephemeral-user`,
+  `ephemeral-account`, `static-key` and `brokered-key` alike — and the proxy
+  refuses a route that omits it at the first authorize call. Reject it here,
+  where the author can still fix it, rather than at connect time in front of a
+  user; and never fill it in from the identity's `login`, which is a
+  client-typed string and is precisely the substitution the contract closed.
+  There is no `policy_version` to gate this on and there cannot be: a
+  **tightening** adds no field and changes no field's meaning, so it is not
+  expressible through the version at all and the contract announces it as a
+  break instead;
+- an **enforcement rung that contradicts the rest of the rule**.
   These are internal-consistency checks the compiler can make with no knowledge of
   the fleet, and every one of them is a route that could otherwise only fail at
   connect time, in front of a user: `no-interactive-shell` beside a

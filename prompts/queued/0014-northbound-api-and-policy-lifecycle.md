@@ -49,7 +49,7 @@ actions that were internal until now.
 Validation that compiles is not validation that can be served. 0006 builds the
 query; **this phase is where an operator sees the answer, before publishing
 rather than after a user complains**. It spans both capability sources: the
-proxies that would enforce the policy, and — since contract v4 — the targets it
+proxies that would enforce the policy, and the targets it
 would be enforced on.
 
 - **A rung no proxy in the path can provide, or no target can take, is a policy

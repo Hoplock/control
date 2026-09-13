@@ -13,7 +13,7 @@
   spends from), M15 (why the default here must be a real product, not a stub),
   M11 (deny versus outage — a probe failure is not a `401`).
 - `contract/` — the vendored proxy contract. The **grant context** fields the
-  proxy carries are defined there (`GrantContext`, contract v4), not here; this
+  proxy carries are defined there (`GrantContext`), not here; this
   phase populates them. Three properties of that shape constrain this phase and
   are worth reading before designing the provider interface:
 

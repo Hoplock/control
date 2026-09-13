@@ -407,9 +407,9 @@ decision.
   M6, new).** M6 has proxies declare their zone, reachability, and connection
   directions, because only this server can compute a path. The same argument
   now applies one level down: a route may name a **credential method**, a
-  **device platform**, an **expiry posture**, an **enforcement rung**, and — since
-  contract v3.1 — a set of **additional device fields** (proxy D13, D14, contract
-  v4, and proxy phase 0016), and a proxy can satisfy those only if it has the
+  **device platform**, an **expiry posture**, an **enforcement rung**, and a set
+  of **additional device fields** (proxy D13, D14, and proxy phase 0016), and a
+  proxy can satisfy those only if it has the
   driver, the local material, and a target that supports them.
 
   A decision naming something the enforcing proxy cannot provide is not a
@@ -436,8 +436,8 @@ decision.
   methods a proxy actually has is what separates "prefer the strong method, fall
   back to the weaker one" from "write a ladder and hope".
 
-  **Contract v4 makes the capability question two-sourced, and the second source
-  is the target.** An enforcement rung depends far more on the target than on the
+  **The capability question is two-sourced, and the second source is the
+  target.** An enforcement rung depends far more on the target than on the
   proxy — whether it runs systemd, whether cgroup v2 is mounted, whether SELinux
   is enforcing, whether netfilter is reachable, whether it is a Linux host at all
   — and none of that is knowable from a policy database. So capability facts now
@@ -786,9 +786,9 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/auth/password` | Verify, then own the MFA conversation: return `authenticated` or `mfa_required` + a challenge |
 | `POST /v1/auth/mfa/poll` | Resolve an outstanding challenge; deny on expiry or unknown token |
 | `POST /v1/authorize` | Evaluate policy **for the asking hop** (`conn.proxy_id` + `conn.hop_trail`); return `401` or the whole-connection snapshot + `decision_id` (+ optional cache hint) |
-| `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision, plus — since contract 4.1 — an optional cache hint (§5.4) that lets the proxy stop re-reporting that exact key |
-| `POST /v1/capabilities/report` | Record the enforcement rungs one **target** can take, as the proxy found them by probing it (contract v4); answer `accepted` and, optionally, when to report next |
-| `POST /v1/uids/lease` | Grant a proxy an **exclusive block of ephemeral uids for one target** out of a per-target allocation cursor that **only ever advances** (contract 4.3); `409` when the cursor has reached the top of the range |
+| `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision, plus an optional cache hint (§5.4) that lets the proxy stop re-reporting that exact key |
+| `POST /v1/capabilities/report` | Record the enforcement rungs one **target** can take, as the proxy found them by probing it; answer `accepted` and, optionally, when to report next |
+| `POST /v1/uids/lease` | Grant a proxy an **exclusive block of ephemeral uids for one target** out of a per-target allocation cursor that **only ever advances**; `409` when the cursor has reached the top of the range |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
 | `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
 | `GET /v1/proxies/{id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` |
@@ -798,9 +798,9 @@ Six obligations are easy to miss and are graded by the conformance suite:
 - **The priority ack means durable.** The proxy acts on a critical security
   event knowing this server recorded it. Acking before the write lands turns
   that guarantee into a lie that only shows up after an incident.
-- **Answer within the vocabulary the proxy declared.** Contract v2 made every
-  policy field additive with a documented absent-value default, and in exchange
-  the proxy **fails a session closed on an authorize field it does not
+- **Answer within the vocabulary the proxy declared.** Every policy field is
+  additive within a vocabulary and carries a documented absent-value default, and
+  in exchange the proxy **fails a session closed on an authorize field it does not
   understand** rather than dropping it — an unknown field may be a restriction,
   and a dropped restriction is a silently widened session. The proxy therefore
   sends `policy_version` on the authorize request, naming the highest vocabulary
@@ -814,88 +814,81 @@ Six obligations are easy to miss and are graded by the conformance suite:
   sending fields that will be refused — the proxy's mock does exactly this and
   is the reference behaviour.
 
-  **The current vocabulary is `4`** (`Hoplock/proxy#25`, merged): the two
-  enforcement axes and the session bounds (§5.2). Every v4 field is additive with
-  an absent-value default that is exactly what a v3 server produced — proxy-side
-  enforcement only, no deadline, no required capture, no grant context, no
-  concurrency cap — so the rule above is unchanged in kind and only larger in
-  scope. The vendored document is `4.3.0`.
+  **The current vocabulary is `4`**, exported upstream as
+  `control.PolicyVersion`: the two enforcement axes and the session bounds
+  (§5.2). The vendored document is `4.0.0`.
 
-  **Contract 4.3 moved the document without moving the vocabulary, for the
-  fourth time** (`Hoplock/proxy#51`, merged). It adds one *endpoint* —
-  `POST /v1/uids/lease`, the obligation two bullets above — and changes nothing
-  that exists: no field moves, no field changes meaning, and a proxy that never
-  calls it parses every response exactly as before. `policy_version` stays `4`
-  because that number gates **the vocabulary `/v1/authorize` answers in**, and a
-  new endpoint is not in it. So the pattern below is now four-for-four, and
-  keying the drift check off `policy_version` would have missed this revision
-  entirely — the checksum in `contract/UPSTREAM` is what catches it (0002, 0018).
+  **`policy_version` is REQUIRED on the request, with no absent-value default.**
+  A request that omits it is refused — `400 invalid_request`, not a guessed
+  version and not a `401` (M11) — because a proxy that cannot say what it is
+  able to read is one this server would have to guess for, and the guess decides
+  which restrictions get silently dropped. That is a different answer from the
+  mismatch `5xx` above and must not be folded into it: a declared wrong version
+  is a rollout problem, an absent one is a malformed caller. 0008 builds both,
+  0002 grades both.
 
-  **Contract 4.2 tightens the document without moving the vocabulary either**
-  (`Hoplock/proxy#41`, merged). `TargetAuth.params.username` becomes required on
-  `brokered-key`, which makes it required on every method the contract defines
-  (§5.2); a route omitting it is refused at the first authorize call, in the
-  single-object and the ladder shape alike. `policy_version` stays `4` on the
-  same reasoning as the revisions around it — the number names the vocabulary a
-  proxy can *read*, and no field is added and none changes meaning — but the
-  **direction** is new and is what this server has to absorb: v3.1, 4.1 and 4.3
-  added things a server could decline to use, while this is a requirement a
-  server must now meet, announced as a break in the versioning section rather
-  than gated behind a number. There is therefore no version at which omitting it
-  is still correct, and nothing here may offer one (0005 rejects it at authoring
-  time, 0008 before the response is written, 0002 grades it). The 4.3 sync named
-  this revision as a gap it deliberately did not close, because closing it there
-  would have batched two unrelated upstream changes into one PR
-  (`docs/CROSS-REPO-PROTOCOL.md` §5); this is the sync that closes it.
+  **The document version and the negotiated vocabulary are two numbers, and
+  neither is derived from the other.** `policy_version` governs `/v1/authorize`
+  **and nothing else** — that is the response the proxy decodes strictly, and so
+  the only place an unknown field could be a dropped restriction. Three kinds of
+  contract change therefore move `info.version` without moving the vocabulary,
+  and this server must absorb all three:
 
-  **Contract 4.1 moved the document without moving the vocabulary**
-  (`Hoplock/proxy#35`, merged). `HostKeyReportResponse` gained an optional
-  `cache` hint (§5.4) and `policy_version` stayed at `4`, on the same reasoning
-  v3.1 used below: the number governs what `/v1/authorize` may answer with,
-  because that is the response the proxy decodes strictly and where an unknown
-  field could be a restriction it would have to fail closed on. This field is on
-  another endpoint, it grants rather than restricts, and its absent value is
-  precisely what every server does today — the proxy reports every connection.
-  So this is the second time the two numbers have moved apart, and it is another
-  reason the drift check keys off the vendored document's checksum rather than
-  off `policy_version` (0002, 0018).
+  - **A field on another endpoint.** `HostKeyReportResponse.cache` (§5.4) is the
+    contract's own worked example: a proxy that has never heard of it ignores it
+    and keeps reporting every connection, which is correct behaviour rather than
+    a thinned answer.
+  - **A whole new endpoint.** `POST /v1/uids/lease` is outside the number
+    entirely, because the number gates a vocabulary rather than a surface.
+  - **A tightening.** `TargetAuth.params.username` is required on every
+    credential method the contract defines (§5.2), and a route omitting it is
+    refused at the first authorize call. A tightening adds no field and changes
+    no field's meaning, so it is **not expressible through the version at all**:
+    a proxy that was never told parses the route exactly as it always did. The
+    contract announces it as a break instead. There is therefore no version at
+    which omitting it is correct and nothing here may offer one — 0005 rejects
+    it at authoring time, 0008 before the response is written, 0002 grades it.
 
-  **Contract 4.2 tightens the document without moving the vocabulary either**
-  (`Hoplock/proxy#41`, merged). `TargetAuth.params.username` becomes required on
-  `brokered-key`, which makes it required on every method the contract defines
-  (§5.2); a route omitting it is refused at the first authorize call, in the
-  single-object and the ladder shape alike. `policy_version` stays `4` on the
-  same reasoning as above — the number names the vocabulary a proxy can *read*,
-  and no field is added and none changes meaning — but the **direction** is new
-  and is what this server has to absorb: v3.1 and 4.1 added things a server could
-  decline to use, while this is a requirement a server must now meet, announced
-  as a break in the versioning section rather than gated behind a number. There
-  is therefore no version at which omitting it is still correct, and nothing here
-  may offer one (0005 rejects it at authoring time, 0008 before the response is
-  written, 0002 grades it).
+  So the drift check keys off the checksum in `contract/UPSTREAM` and never off
+  `policy_version` (0002, 0018). Nor may it assume the document version only
+  rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, while the
+  vocabulary stood still at `4`.
 
-  **Contract v3.1 is the case `policy_version` alone does not cover**, and it is
-  worth keeping straight even though v4 moved the number. v3.1 adds the
-  `device_field.<name>` namespace (§5.2) and deliberately leaves `policy_version`
-  at `3`: the number names the vocabulary a proxy can *read*, and nothing about
-  reading a response changed — an older proxy parses a v3.1 route exactly as it
-  always did. So version-aware assembly cannot gate a device field, because there
-  is no version to gate it on, and it must not try. The document version and the
-  negotiated vocabulary are two numbers that move independently, which is why
-  neither is derived from the other (0002, 0018).
+  **One live vocabulary, and removing versions is not removing versioning.**
+  Upstream `Hoplock/proxy#53` (merged) collapsed the contract: it deleted the
+  superseded vocabularies and the entire revision history from `api/control.yaml`
+  and `api/README.md`, so both documents now read in the present tense with no
+  "since version N" annotation on any field and no revision sections to cite.
+  Proxy and Control ship together and no older peer has ever been deployed, so a
+  shape kept alive for one was debt bought for nothing.
 
-  What makes that addition safe is the layer below: the proxy skips a rung whose
+  **What that did not touch is everything above.** `policy_version` is still on
+  the wire, still required, still honoured; the MUST-NOT-answer-above rule still
+  stands; the `5xx` for a proxy this server cannot serve still stands. The
+  mechanism is what carries the **next** vocabulary, and a revision now *replaces*
+  the current one rather than running beside it. A session that reads "one
+  vocabulary" as "there is nothing to negotiate" would delete the only thing
+  standing between a fleet mid-upgrade and a silently widened session; 0018
+  narrows what this server *supports* to one value and explicitly may not remove
+  the field.
+
+  **The `device_field.<name>` namespace is not a version axis** (§5.2). It is
+  deliberately open, so a name inside it is not a new policy field and demands no
+  bump: version-aware assembly cannot gate a device field, because there is no
+  version to gate it on, and it must not try.
+
+  What makes that openness safe is the layer below: the proxy skips a rung whose
   fields its driver does not declare, so a field an enforcing proxy cannot honour
   costs the rung rather than widening the session. Which proxy can honour which
   field is a **capability** question (M17), answered from the fleet registry, not
   from `policy_version` — and on a one-rung ladder the cost of getting it wrong is
-  a denial, so the check belongs on the issue path. Contract v4 widens that
-  question rather than changing it: an enforcement rung depends on the **target**
-  far more than on the proxy, which is what the capability report below exists to
-  answer.
+  a denial, so the check belongs on the issue path. The enforcement vocabulary
+  widens that question rather than changing it: an enforcement rung depends on the
+  **target** far more than on the proxy, which is what the capability report below
+  exists to answer.
 - **A capability report is an observation, and it constrains rather than
-  grants.** Since contract v4 the proxy probes a target it has just logged into
-  and reports, on `POST /v1/capabilities/report`, which enforcement rungs that
+  grants.** The proxy probes a target it has just logged into and reports, on
+  `POST /v1/capabilities/report`, which enforcement rungs that
   target can actually take. This server accumulates those reports (0006, M17) and
   uses them — together with the proxy build's own `AuthorizeRequest.capabilities`
   — to constrain what a policy author may choose per route.
@@ -911,8 +904,8 @@ Six obligations are easy to miss and are graded by the conformance suite:
   a capability with no date has no shelf life.
 
 - **The uid allocation cursor only ever advances, and nothing is ever
-  reclaimed.** Since contract 4.3 (`Hoplock/proxy#51`, merged) the non-reuse
-  floor under an `ephemeral-user` account's uid lives **here**, not on the
+  reclaimed.** The non-reuse floor under an `ephemeral-user` account's uid lives
+  **here**, not on the
   target: `POST /v1/uids/lease` grants a proxy an exclusive block
   `[uid_from, uid_to)` for one target, out of a per-target cursor this server
   advances **under a lock, on grant**. The whole storage requirement is one
@@ -1025,8 +1018,8 @@ the connection's lifetime (proxy D2):
   ladder** since proxy D14, so the PDP states its preference *and* what it will
   accept, with a one-entry ladder meaning "this method or nothing". Every entry
   names the account it will log in as: `username` is **required on every method
-  the contract defines** — `ephemeral-user`, `ephemeral-account` and `static-key`
-  since contract v3, `brokered-key` since contract 4.2 (§4) — and it is never
+  the contract defines** — `ephemeral-user`, `ephemeral-account`, `static-key`
+  and `brokered-key` alike, the contract's one tightening (§4) — and it is never
   derived from the identity's `login`, which is a client-typed string. A route
   that omits it is refused by the proxy at the first authorize call rather than
   served, so the check belongs at authoring time (0005) and again before the
@@ -1035,7 +1028,7 @@ the connection's lifetime (proxy D2):
   D13), and a **per-route algorithm profile** where the target speaks something
   `x/crypto` does not enable by default;
 - **additional device fields** on those same routes — the open
-  `device_field.<name>` namespace contract v3.1 adds beside the five
+  `device_field.<name>` namespace that sits beside the five
   `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
   target: a FortiGate running virtual domains is one unit partitioned into many,
   and `device_field.vdom` names the virtual domain a VDOM-scoped administrator is
@@ -1050,7 +1043,7 @@ the connection's lifetime (proxy D2):
   hyphens and underscores, at most 64 characters; the value is non-empty and at
   most 256 characters; at most 16 fields ride on one ladder entry. They are
   policy metadata, never credential material, and they are audit facts (§7);
-- **enforcement rung** per axis (`enforcement`, contract v4), where the route
+- **enforcement rung** per axis (`enforcement`), where the route
   stands somewhere other than proxy-side enforcement. There are **two axes**,
   because what a session may *execute* and what it may *reach* are separate
   questions with separate mechanisms, and a route may stand on a different rung
@@ -1163,7 +1156,7 @@ re-decided. Two invariants this server must never violate:
   allow with no way to revoke it is just a slower revocation.
 
 **A cacheable response may never carry a monotonic floor**, which is the rule
-contract 4.3 turned into a second endpoint rather than a field (§4). A cached
+that put the uid floor on its own endpoint rather than on a field (§4). A cached
 decision is replayed from whenever it was taken, so any *high-water mark* riding
 on one is served stale — and a stale floor is a **lowered** floor. That
 disqualifies both responses this hint rides on, for the same reason and not
@@ -1171,9 +1164,8 @@ because of anything specific to authorize. The test is cacheability, not
 endpoint: if a value is only safe when it is fresh, it does not belong on
 anything this section governs.
 
-**Since contract 4.1 the same hint rides on two responses** (`Hoplock/proxy#35`,
-merged): `/v1/authorize` as it always did (0008), and `POST /v1/hostkeys/report`
-(0007). It is the same object under the same rules — one opaque server key, a
+**The same hint rides on two responses**: `/v1/authorize` (0008) and
+`POST /v1/hostkeys/report` (0007). It is the same object under the same rules — one opaque server key, a
 server-owned lifetime, one revocation stream, and both invariants above, the M9
 one included. What is specific to the host-key response is the shape the proxy
 reuses it on, and three consequences this server owns:
@@ -1215,9 +1207,10 @@ reuses it on, and three consequences this server owns:
   credentials themselves: an SSH CA issuing short-lived, narrowly-scoped target
   certificates per session beats a long-lived management certificate sitting on
   every proxy's disk. That is an **additive** contract change (the proxy's
-  `target_auth` object is extensible on purpose) and therefore starts in the
-  Hoplock Proxy repository, not here — this plan records the intent and phase 0011 builds
-  the CA behind it.
+  `TargetAuth` object — the entry type of `target_auth_ladder` — is extensible on
+  purpose) and therefore starts in the Hoplock Proxy repository, not here: a new
+  method is vocabulary, so it bumps `policy_version` upstream (§4). This plan
+  records the intent and phase 0011 builds the CA behind it.
 
 ---
 
@@ -1234,15 +1227,15 @@ reuses it on, and three consequences this server owns:
   approved the access that made it possible" is one query joining audit to
   grants, and it is the demo that sells the product.
 - **Device fields are audit facts.** The ephemeral-account mapping record carries
-  the `device_field.<name>` values the session was provisioned with (§5.2,
-  contract v3.1), because on a device that is one unit partitioned into many the
+  the `device_field.<name>` values the session was provisioned with (§5.2),
+  because on a device that is one unit partitioned into many the
   target string alone does not say which partition the administrator was created
   in: `device_field.vdom` is the difference between an account scoped to one
   virtual domain and a **global** administrator on the same host. Storing them as
   opaque data is right; dropping them because the contract does not enumerate
   them is not.
 - **The enforcement rung is an audit fact, and it is the rung that was in
-  force** — never the one policy requested. Contract v4 puts four fields on the
+  force** — never the one policy requested. The rung puts four fields on the
   record: `enforcement_execution`, `enforcement_reach`, `enforcement_verified`
   (`false` on an attested rung, because nothing here verified it), and
   `enforcement_attested_by`. Whether the record says `account-restricted` or
@@ -1317,11 +1310,11 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | --- | --- | --- |
 | 0001 | Project scaffold & conventions | module, layout, licence + headers, Makefile, CI skeleton, config loader |
 | 0002 | Contract vendoring & conformance harness | `contract/`, drift check, `cmd/pdpconform` proven against Hoplock Proxy's mock |
-| 0003 | Storage layer & migrations | Postgres repositories, forward-only migrations, tenancy columns (M12), the per-target uid allocation cursor (contract 4.3) |
+| 0003 | Storage layer & migrations | Postgres repositories, forward-only migrations, tenancy columns (M12), the per-target uid allocation cursor |
 | 0004 | **Extension points** | public `ext/` package, registration, import-graph guard (M15) |
 | 0005 | Policy model & decision engine | bundle parse/validate/compile/evaluate + decision records (M3, M4) |
 | 0006 | Fleet registry, health & config distribution | enrollment, heartbeat, zone graph, pathfinding, hop direction, versioned config rollout (M6), the capability store both sources write to (M17) |
-| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting and its 4.1 cache hint, `/v1/capabilities/report`, `/v1/uids/lease` and its monotonic cursor (4.3) |
+| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting and its cache hint, `/v1/capabilities/report`, `/v1/uids/lease` and its monotonic cursor |
 | 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
 | 0009 | Revocation & event fan-out | `/v1/proxies/{id}/events`, event bus, replay, resync, kill switch (M9) |
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |
@@ -1332,7 +1325,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
 | 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
-| 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other, no thinning path |
+| 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 
 > **Audits are not in this table, and not in the queue.**
 > `prompts/audit/` holds prompts that run repeatedly against the whole
