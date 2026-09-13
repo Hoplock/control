@@ -65,7 +65,12 @@ Each scenario is a product claim, proven across both components:
   through (the guardrail's honest limit) while restricted exec denies it. The
   audit record names which tier decided.
 - **Both credential methods**: `ephemeral-user` creates and removes the target
-  user; `brokered-key` leaves the appliance-like target unmodified.
+  user; `brokered-key` leaves the appliance-like target unmodified. The
+  `brokered-key` route in the fixture bundle **names the standing account** in
+  `username` — required on that method since contract v4.2 (upstream
+  `Hoplock/proxy#41`, merged) — because a route without it is refused by the
+  proxy at the first authorize call, and the scenario would then fail as an
+  outage instead of proving anything about the credential method.
 - **Revocation**: an operator kills a live session; the user is told why, and it
   ends. A cached decision is invalidated and the next connection is re-decided.
 - **Cache + revocation interaction**: with the event stream unhealthy, this

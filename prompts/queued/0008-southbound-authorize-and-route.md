@@ -10,7 +10,9 @@
   including `ConnMeta.hop_trail`, `EnforcementPolicy`, `Attestation`,
   `GrantContext` and `ConcurrencyLimits`. In the **Hoplock Proxy repository**,
   `api/README.md` "Policy vocabulary v4" is the same material as prose, including
-  the table of which rung is applied and which attested.
+  the table of which rung is applied and which attested. Read **"The v4.1→v4.2
+  revision"** there too: it is a one-field tightening with no version gate behind
+  it, and enforcing it is this phase's job (below).
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` §6.1 ("Hop trail, loops,
   and the cap") — what the proxy does with the trail on its side, and why every
   entry in it can only cause a refusal.
@@ -224,6 +226,49 @@ exist when this prompt was first written, and each has a rule attached:
   proxy checks it **before the target leg is dialled**, and buffering to local
   disk counts as recording, so the refusal is outage-class and fires only when the
   proxy has no recording path at all.
+
+### `username` on every ladder entry (contract v3, and v4.2 for `brokered-key`)
+
+`TargetAuth.params.username` is **required on every method the contract
+defines**: `ephemeral-user`, `ephemeral-account` and `static-key` since contract
+v3, and `brokered-key` since **contract v4.2** (upstream `Hoplock/proxy#41`,
+merged). The proxy refuses a route that omits it as a contract violation at the
+**first authorize call**, in the single-object and the ladder shape alike — so a
+snapshot this server assembles without one is an outage in front of a user
+rather than a decision about them.
+
+Both halves are written here for the first time. v3's requirement reached the
+contract and the proxy and was never mirrored into these prompts, so this is the
+whole rule rather than an extension of one; treat it that way when you build it.
+
+- **Name the account on `brokered-key` too.** v3 left this method out on the
+  reasoning that it logs into a **standing** account an operator already chose
+  rather than one the proxy provisions. That reasoning is sound and it had not
+  reached the proxy's code: the fallback to the identity's `login` was still
+  implemented, so a deployment that configured no account locally logged in as
+  whatever string the connecting user typed at their SSH client. v4.2 closes the
+  difference. What the proxy will accept is the route's `username` or the
+  operator's own local configuration, and a route offering neither is refused as
+  an outage rather than served on a guess.
+- **Never derive it from the identity's `login`.** It is a client-typed string,
+  and the rule that this server must not base an authorization decision on one
+  does not weaken when the string is used to *name* an OS or device account
+  instead of to match against. The account name is what the target's own audit
+  trail, its file ownership and — on a password credential — half the credential
+  pair are made of: this server names it or there is no route.
+- **There is no version to gate this on.** `policy_version` stays `4`. It
+  numbers the vocabulary a proxy can *read*; nothing is added and nothing
+  changes meaning, so an older proxy parses such a route exactly as it always
+  did and refuses a `username`-less one exactly as a current proxy does. Do not
+  build a "proxies declaring 4 may omit it" path — the tightening is announced
+  as a break in the contract's versioning section, and a break is not
+  expressible through the number. (0018 removes the multi-version question
+  outright; this assembly must not grow one before it lands.)
+- **Catch it before the response is written**, next to the applied-rung check
+  below. A ladder entry with no `username` is a route that can only fail at
+  connect time, and a policy that can only fail in front of a user has already
+  failed. The compiler rejects it at authoring time (0005); this is the second
+  net, for a snapshot assembled from anywhere else.
 
 ### The enforcement rung (`enforcement`, contract v4)
 

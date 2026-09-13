@@ -68,11 +68,15 @@ this phase installs is **loud** rather than lenient.
   loudly and a human decides what to do — which is the point at which supporting
   a second version would become a deliberate decision rather than an accident.
 - Note that these are two different numbers and both are single-valued here: the
-  document version (`4.1.0` as vendored) and the negotiated vocabulary
-  (`policy_version`, `4`) move independently upstream — v3.1 and 4.1 each moved
-  the first without the second, v4 moved both — and this phase does not couple
-  them. Read each out of `contract/control.yaml` rather than from this line,
-  which is only as current as the last sync.
+  document version (`4.2.0` as vendored) and the negotiated vocabulary
+  (`policy_version`, `4`) move independently upstream — v3.1, 4.1 and 4.2 each
+  moved the first without the second, v4 moved both — and this phase does not
+  couple them. 4.2 is the one to keep in mind here, because it moved the
+  document to *require* something (`username` on `brokered-key`, upstream
+  `Hoplock/proxy#41`, merged) while leaving the number alone: a single supported
+  `policy_version` is not a promise that the answerable shapes stand still. Read
+  each number out of `contract/control.yaml` rather than from this line, which is
+  only as current as the last sync.
 - No other literal version anywhere in the tree — code, fixtures, deployment
   manifests, or seed data. Add a check that keeps it that way and name it in your
   learnings.

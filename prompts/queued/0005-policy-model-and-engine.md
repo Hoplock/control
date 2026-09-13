@@ -123,6 +123,16 @@ errors instead of production surprises. It MUST reject:
 - a device field on a rung whose method is not `ephemeral-account`. The namespace
   is scoped to that method; anywhere else it is a typo that would be silently
   carried;
+- a credential-ladder entry with **no `username`**. The contract requires one on
+  every method it defines — `ephemeral-user`, `ephemeral-account` and
+  `static-key` since v3, and `brokered-key` since **v4.2** (upstream
+  `Hoplock/proxy#41`, merged) — and the proxy refuses a route that omits it at
+  the first authorize call, in the single-object and the ladder shape alike.
+  Reject it here, where the author can still fix it, rather than at connect time
+  in front of a user; and never fill it in from the identity's `login`, which is
+  a client-typed string and is precisely the substitution v4.2 closed upstream.
+  There is no `policy_version` to gate this on: the number stayed at `4`, because
+  a tightening adds no vocabulary;
 - an **enforcement rung that contradicts the rest of the rule** (contract v4).
   These are internal-consistency checks the compiler can make with no knowledge of
   the fleet, and every one of them is a route that could otherwise only fail at
