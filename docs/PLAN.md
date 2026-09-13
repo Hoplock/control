@@ -788,11 +788,12 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/authorize` | Evaluate policy **for the asking hop** (`conn.proxy_id` + `conn.hop_trail`); return `401` or the whole-connection snapshot + `decision_id` (+ optional cache hint) |
 | `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision, plus — since contract 4.1 — an optional cache hint (§5.4) that lets the proxy stop re-reporting that exact key |
 | `POST /v1/capabilities/report` | Record the enforcement rungs one **target** can take, as the proxy found them by probing it (contract v4); answer `accepted` and, optionally, when to report next |
+| `POST /v1/uids/lease` | Grant a proxy an **exclusive block of ephemeral uids for one target** out of a per-target allocation cursor that **only ever advances** (contract 4.3); `409` when the cursor has reached the top of the range |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
 | `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
 | `GET /v1/proxies/{id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` |
 
-Five obligations are easy to miss and are graded by the conformance suite:
+Six obligations are easy to miss and are graded by the conformance suite:
 
 - **The priority ack means durable.** The proxy acts on a critical security
   event knowing this server recorded it. Acking before the write lands turns
@@ -818,7 +819,34 @@ Five obligations are easy to miss and are graded by the conformance suite:
   an absent-value default that is exactly what a v3 server produced — proxy-side
   enforcement only, no deadline, no required capture, no grant context, no
   concurrency cap — so the rule above is unchanged in kind and only larger in
-  scope. The vendored document is `4.2.0`.
+  scope. The vendored document is `4.3.0`.
+
+  **Contract 4.3 moved the document without moving the vocabulary, for the
+  fourth time** (`Hoplock/proxy#51`, merged). It adds one *endpoint* —
+  `POST /v1/uids/lease`, the obligation two bullets above — and changes nothing
+  that exists: no field moves, no field changes meaning, and a proxy that never
+  calls it parses every response exactly as before. `policy_version` stays `4`
+  because that number gates **the vocabulary `/v1/authorize` answers in**, and a
+  new endpoint is not in it. So the pattern below is now four-for-four, and
+  keying the drift check off `policy_version` would have missed this revision
+  entirely — the checksum in `contract/UPSTREAM` is what catches it (0002, 0018).
+
+  **Contract 4.2 tightens the document without moving the vocabulary either**
+  (`Hoplock/proxy#41`, merged). `TargetAuth.params.username` becomes required on
+  `brokered-key`, which makes it required on every method the contract defines
+  (§5.2); a route omitting it is refused at the first authorize call, in the
+  single-object and the ladder shape alike. `policy_version` stays `4` on the
+  same reasoning as the revisions around it — the number names the vocabulary a
+  proxy can *read*, and no field is added and none changes meaning — but the
+  **direction** is new and is what this server has to absorb: v3.1, 4.1 and 4.3
+  added things a server could decline to use, while this is a requirement a
+  server must now meet, announced as a break in the versioning section rather
+  than gated behind a number. There is therefore no version at which omitting it
+  is still correct, and nothing here may offer one (0005 rejects it at authoring
+  time, 0008 before the response is written, 0002 grades it). The 4.3 sync named
+  this revision as a gap it deliberately did not close, because closing it there
+  would have batched two unrelated upstream changes into one PR
+  (`docs/CROSS-REPO-PROTOCOL.md` §5); this is the sync that closes it.
 
   **Contract 4.1 moved the document without moving the vocabulary**
   (`Hoplock/proxy#35`, merged). `HostKeyReportResponse` gained an optional
@@ -881,6 +909,60 @@ Five obligations are easy to miss and are graded by the conformance suite:
   cause is a refused session — never a session running below the rung its own
   audit record claims. A record with no `observed_at` is treated as stale, because
   a capability with no date has no shelf life.
+
+- **The uid allocation cursor only ever advances, and nothing is ever
+  reclaimed.** Since contract 4.3 (`Hoplock/proxy#51`, merged) the non-reuse
+  floor under an `ephemeral-user` account's uid lives **here**, not on the
+  target: `POST /v1/uids/lease` grants a proxy an exclusive block
+  `[uid_from, uid_to)` for one target, out of a per-target cursor this server
+  advances **under a lock, on grant**. The whole storage requirement is one
+  integer per target.
+
+  The invariant is the entire endpoint:
+
+  > A uid inside a granted block is never inside any other grant — for this
+  > proxy or any other, ever again — whether the block was **used, abandoned,
+  > or allowed to expire**.
+
+  It follows that there is **no release call and nothing to reclaim**: a server
+  that "recycled" an unused block to save uids would silently break the one
+  guarantee the endpoint exists for, that a fresh ephemeral account never
+  inherits ownership of the files a torn-down one left behind. `term_seconds`
+  bounds how long the proxy keeps *allocating* from a block; it is not what
+  makes the uids non-reusable, so an expired block is one this proxy stops
+  using, never one this server hands to somebody else.
+
+  Two consequences this server owns. **`observed_floor` may only ever raise the
+  cursor, never lower it** — it is a target's word relayed by the proxy, so it
+  is this server's to clamp or ignore, and the exposure is worth stating: root
+  on a target can report a large floor and burn that target's range. That is
+  the availability side of an invariant that already prefers refusing to
+  reusing, and it reaches no other target. And **a cursor that has reached the
+  top of its range answers `409`**, which the proxy treats exactly as an
+  exhausted block: outage-class, nothing provisioned, and the remedy is the
+  operator's.
+
+  **This is not on the decision path and does not dent M5.** The call is made
+  once per *block*, not once per session — there is no per-session write and no
+  read-modify-write where latency is measured.
+
+  **The floor is deliberately NOT a field on the authorize response**, and this
+  is the reasoning to keep rather than the conclusion. `/v1/authorize` is
+  **cacheable** (§5.4) and the proxy serves a cached decision while this server
+  is unreachable — so a floor carried on it is replayed from whenever it was
+  cached, and **a stale floor is a lowered floor**, which is precisely the uid
+  reuse the mechanism exists to prevent. The same disqualifies anything else
+  cacheable, including the `cache` hint on the host-key response: the property
+  that rules it out is cacheability itself, not which endpoint it rode on. A
+  lease is exempt for one reason only — it is **exclusive**, so replaying it
+  grants the same block to the same proxy, and replay is harmless rather than
+  merely unlikely.
+
+  The operational consequence of not implementing the endpoint is stated rather
+  than discovered: **a Control that does not serve it refuses every
+  `ephemeral-user` route in practice**, because the proxy fails **closed**
+  rather than falling back to a floor it cannot trust. It is the one place an
+  otherwise purely additive revision is not optional for us.
 
 - **Heartbeats are liveness, and their absence is a signal.** A proxy that
   stops hearing them reconnects and, past its staleness threshold, stops serving
@@ -1080,6 +1162,15 @@ re-decided. Two invariants this server must never violate:
   event path for a proxy is unhealthy, stop issuing hints to it — a cached
   allow with no way to revoke it is just a slower revocation.
 
+**A cacheable response may never carry a monotonic floor**, which is the rule
+contract 4.3 turned into a second endpoint rather than a field (§4). A cached
+decision is replayed from whenever it was taken, so any *high-water mark* riding
+on one is served stale — and a stale floor is a **lowered** floor. That
+disqualifies both responses this hint rides on, for the same reason and not
+because of anything specific to authorize. The test is cacheability, not
+endpoint: if a value is only safe when it is fresh, it does not belong on
+anything this section governs.
+
 **Since contract 4.1 the same hint rides on two responses** (`Hoplock/proxy#35`,
 merged): `/v1/authorize` as it always did (0008), and `POST /v1/hostkeys/report`
 (0007). It is the same object under the same rules — one opaque server key, a
@@ -1226,11 +1317,11 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | --- | --- | --- |
 | 0001 | Project scaffold & conventions | module, layout, licence + headers, Makefile, CI skeleton, config loader |
 | 0002 | Contract vendoring & conformance harness | `contract/`, drift check, `cmd/pdpconform` proven against Hoplock Proxy's mock |
-| 0003 | Storage layer & migrations | Postgres repositories, forward-only migrations, tenancy columns (M12) |
+| 0003 | Storage layer & migrations | Postgres repositories, forward-only migrations, tenancy columns (M12), the per-target uid allocation cursor (contract 4.3) |
 | 0004 | **Extension points** | public `ext/` package, registration, import-graph guard (M15) |
 | 0005 | Policy model & decision engine | bundle parse/validate/compile/evaluate + decision records (M3, M4) |
 | 0006 | Fleet registry, health & config distribution | enrollment, heartbeat, zone graph, pathfinding, hop direction, versioned config rollout (M6), the capability store both sources write to (M17) |
-| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting and its 4.1 cache hint, `/v1/capabilities/report` |
+| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting and its 4.1 cache hint, `/v1/capabilities/report`, `/v1/uids/lease` and its monotonic cursor (4.3) |
 | 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
 | 0009 | Revocation & event fan-out | `/v1/proxies/{id}/events`, event bus, replay, resync, kill switch (M9) |
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |

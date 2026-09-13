@@ -68,15 +68,25 @@ this phase installs is **loud** rather than lenient.
   loudly and a human decides what to do — which is the point at which supporting
   a second version would become a deliberate decision rather than an accident.
 - Note that these are two different numbers and both are single-valued here: the
-  document version (`4.2.0` as vendored) and the negotiated vocabulary
-  (`policy_version`, `4`) move independently upstream — v3.1, 4.1 and 4.2 each
-  moved the first without the second, v4 moved both — and this phase does not
-  couple them. 4.2 is the one to keep in mind here, because it moved the
-  document to *require* something (`username` on `brokered-key`, upstream
-  `Hoplock/proxy#41`, merged) while leaving the number alone: a single supported
-  `policy_version` is not a promise that the answerable shapes stand still. Read
-  each number out of `contract/control.yaml` rather than from this line, which is
-  only as current as the last sync.
+  document version (`4.3.0` as vendored) and the negotiated vocabulary
+  (`policy_version`, `4`) move independently upstream — v3.1, 4.1, 4.2 and 4.3
+  each moved the first without the second, v4 moved both — and this phase does
+  not couple them. Read each out of `contract/control.yaml` rather than from this
+  line, which is only as current as the last sync.
+
+  4.3 is the sharpest case and worth keeping in mind while auditing: it added a
+  whole endpoint (`POST /v1/uids/lease`) and still left `policy_version` at `4`,
+  because that number gates the vocabulary `/v1/authorize` answers in. So "the
+  document moved, therefore the vocabulary moved" is wrong four times out of
+  five, and a check that couples them would have failed this sync rather than
+  catching anything.
+
+  4.2 cuts the other way and matters here just as much: it moved the document to
+  **require** something (`username` on `brokered-key`, upstream
+  `Hoplock/proxy#41`, merged) while leaving the number alone. One supported
+  `policy_version` is not a promise that the answerable shapes stand still, so
+  the test this phase installs keys off the vendored document and never off the
+  number.
 - No other literal version anywhere in the tree — code, fixtures, deployment
   manifests, or seed data. Add a check that keeps it that way and name it in your
   learnings.
