@@ -36,13 +36,22 @@
   may answer with. Read it before writing any assertion that ties the document
   version to the negotiated one.
 
+  Then read **"The v4.1→v4.2 revision"** (upstream `Hoplock/proxy#41`, merged),
+  which is the one revision so far that **tightens**: `username` becomes required
+  on `brokered-key`, and therefore on every method the document defines.
+  `policy_version` stays `4` again — a third case of the two numbers moving
+  apart, and the only one where the document got *stricter* while the negotiated
+  number stood still. Read it before writing a fixture: every `brokered-key`
+  route in one now needs an account name, and a suite carrying a pre-v4.2 fixture
+  grades an implementation against a contract nobody serves.
+
   Finally read **"The v4.2→v4.3 revision"** and **"Ephemeral uid blocks"**, plus
   the `/v1/uids/lease` path and the `UIDLeaseRequest`/`UIDLeaseResponse` schemas.
-  4.3 is the same lesson a third time and the sharpest case for it: it adds a
+  4.3 is the same lesson a fourth time and the sharpest case for it: it adds a
   whole **endpoint** and still leaves `policy_version` at `4`, because that
   number gates the vocabulary `/v1/authorize` answers in and an endpoint is not
   in it. Anything here that infers "the document moved, so the negotiated number
-  moved" is wrong three times over. Read the endpoint description in full before
+  moved" is wrong four times over. Read the endpoint description in full before
   writing a single lease assertion — the monotonic-cursor invariant is the whole
   endpoint, and it is the one thing the suite has to be built to catch.
 
@@ -92,6 +101,19 @@ It must cover, at minimum:
 - **Authorize**: `direct`, `nexthop`, `401`, and a response carrying every field
   the document defines — assert **shape**, not policy content, because policy is
   the implementation's business and the contract's is the envelope.
+- **`username` on every credential method** (contract v3, and v4.2 for
+  `brokered-key`): every `brokered-key` route in a fixture — the single-object
+  shape and a ladder entry alike — names a `username`, and the suite asserts the
+  field is **present** rather than that some particular value round-trips. A
+  fixture or expectation asserting a `brokered-key` response shape *without* one
+  encodes the pre-v4.2 contract and is a bug to fix rather than a case to keep:
+  the proxy refuses such a route at the first authorize call, so an
+  implementation the suite passes on it would fail in front of a user. Write it
+  as a required-field assertion and **not** as an absent-value default — the
+  absent-value discipline covers fields whose omission *means* something, and
+  omission here means the route is refused. Do not tie it to `policy_version`
+  either, which v4.2 leaves at `4`: there is no version at which omitting it is
+  correct.
 - **Vocabulary negotiation**: the same authorize request sent with
   `policy_version` set to the current version and to `1`. Assert the low-version
   answer carries **no field introduced after version 1** — or is a `5xx` naming
@@ -179,11 +201,13 @@ The vendored contract is a moving target and this phase builds the machinery,
 not a snapshot. Device provisioning and the credential ladder landed upstream
 (v3), the `device_field.` namespace after them (v3.1, upstream
 `Hoplock/proxy#21`, merged), enforcement points and session bounds after those
-(v4, upstream `Hoplock/proxy#25`, merged), and an entire new endpoint after
-those (4.3, upstream `Hoplock/proxy#51`, merged) — four revisions in the time it
-took to queue this phase, which is the actual argument: the drift check and the
-conformance suite must treat a version bump as routine. If `make contract-sync`
-is painful to run twice in a week, it is wrong. Vendor whatever is current when
+(v4, upstream `Hoplock/proxy#25`, merged), a host-key cache hint after those
+(4.1, upstream `Hoplock/proxy#35`, merged), a **tightened** `username`
+requirement after that (4.2, upstream `Hoplock/proxy#41`, merged), and an entire
+new endpoint after that (4.3, upstream `Hoplock/proxy#51`, merged) — six
+revisions in the time it took to queue this phase, which is the actual argument:
+the drift check and the conformance suite must treat a version bump as routine.
+If `make contract-sync` is painful to run twice in a week, it is wrong. Vendor whatever is current when
 you run; nothing here waits for the next revision.
 
 Two of those numbers are not the same number, and v3.1 is what proves it. The
@@ -192,15 +216,23 @@ policy vocabulary** (`policy_version`, `4`) move independently: v3.1 added
 vocabulary and left `policy_version` at `3`, because that field numbers what a
 proxy can *read* and reading did not change, while v4 moved both. Contract 4.1
 (upstream `Hoplock/proxy#35`, merged) did it again — one optional `cache` field
-on `HostKeyReportResponse`, document to `4.1.0`, `policy_version` still `4` —
-and contract 4.3 (upstream `Hoplock/proxy#51`, merged) did it a third time with
-a whole endpoint, `POST /v1/uids/lease`, document to `4.3.0`, `policy_version`
-*still* `4`. So the pattern is not a one-off of v3.1's and an assertion built on
-"they move together" would now be wrong three times. So do not derive one from the other, do not
-assert a relationship between them, and do not let the drift check key off
-`policy_version` — the checksum in `contract/UPSTREAM` is what catches a changed
-document. Both numbers above are what upstream carries today and neither is a
-target to pin: read them out of the document you vendor.
+on `HostKeyReportResponse`, document to `4.1.0`, `policy_version` still `4`.
+Contract 4.2 (upstream `Hoplock/proxy#41`, merged) made it three, and in the
+other direction: it **removes** a permitted shape rather than adding one —
+`username` required on `brokered-key` — with the document at `4.2.0` and
+`policy_version` still `4`. Contract 4.3 (upstream `Hoplock/proxy#51`, merged)
+made it four with a whole endpoint, `POST /v1/uids/lease`, document to `4.3.0`,
+`policy_version` *still* `4`. So the pattern is not a one-off of v3.1's, an
+assertion built on "they move together" would now be wrong four times, and the
+relationship is not even "the document only ever grows what the number gates": a
+document bump can narrow what a conformant server may answer with, and only the
+vendored document says so.
+
+So do not derive one number from the other, do not assert a relationship between
+them, and do not let the drift check key off `policy_version` — the checksum in
+`contract/UPSTREAM` is what catches a changed document. Both numbers above are
+what upstream carries today and neither is a target to pin: read them out of the
+document you vendor.
 
 ## Out of scope
 - Implementing any endpoint here (0007 onwards). The suite is written before the

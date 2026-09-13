@@ -65,7 +65,12 @@ Each scenario is a product claim, proven across both components:
   through (the guardrail's honest limit) while restricted exec denies it. The
   audit record names which tier decided.
 - **Both credential methods**: `ephemeral-user` creates and removes the target
-  user; `brokered-key` leaves the appliance-like target unmodified.
+  user; `brokered-key` leaves the appliance-like target unmodified. The
+  `brokered-key` route in the fixture bundle **names the standing account** in
+  `username` — required on that method since contract v4.2 (upstream
+  `Hoplock/proxy#41`, merged) — because a route without it is refused by the
+  proxy at the first authorize call, and the scenario would then fail as an
+  outage instead of proving anything about the credential method.
 - **The uid floor survives a restart of both sides** (contract 4.3, 0007). Run
   an `ephemeral-user` session, note the uid, then restart **the proxy** and run
   another: the second uid is strictly above the first. Restart **this server**

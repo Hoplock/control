@@ -821,27 +821,32 @@ Six obligations are easy to miss and are graded by the conformance suite:
   concurrency cap — so the rule above is unchanged in kind and only larger in
   scope. The vendored document is `4.3.0`.
 
-  **Contract 4.3 moved the document without moving the vocabulary, for the third
-  time** (`Hoplock/proxy#51`, merged). It adds one *endpoint* —
+  **Contract 4.3 moved the document without moving the vocabulary, for the
+  fourth time** (`Hoplock/proxy#51`, merged). It adds one *endpoint* —
   `POST /v1/uids/lease`, the obligation two bullets above — and changes nothing
   that exists: no field moves, no field changes meaning, and a proxy that never
   calls it parses every response exactly as before. `policy_version` stays `4`
   because that number gates **the vocabulary `/v1/authorize` answers in**, and a
-  new endpoint is not in it. So the pattern below is now three-for-three, and
+  new endpoint is not in it. So the pattern below is now four-for-four, and
   keying the drift check off `policy_version` would have missed this revision
   entirely — the checksum in `contract/UPSTREAM` is what catches it (0002, 0018).
 
-  > **Contract 4.2 is a gap this sync did not close.** The document also passed
-  > through `4.2.0` (proxy phase 0028), which made `username` **required on
-  > `brokered-key`** and therefore required on every method the contract
-  > defines — a *break*, not an addition, and one this server owes because this
-  > server assembles the route. A `brokered-key` entry we emit without a
-  > `username` is refused by the proxy as a contract violation at the first
-  > authorize call, in the single-object and the ladder shape alike. No sync for
-  > it ever reached this repository, and closing it here would have batched two
-  > unrelated upstream changes into one PR
-  > (`docs/CROSS-REPO-PROTOCOL.md` §5). It is named here so the next session
-  > finds it by reading rather than by being refused, and it needs its own sync.
+  **Contract 4.2 tightens the document without moving the vocabulary either**
+  (`Hoplock/proxy#41`, merged). `TargetAuth.params.username` becomes required on
+  `brokered-key`, which makes it required on every method the contract defines
+  (§5.2); a route omitting it is refused at the first authorize call, in the
+  single-object and the ladder shape alike. `policy_version` stays `4` on the
+  same reasoning as the revisions around it — the number names the vocabulary a
+  proxy can *read*, and no field is added and none changes meaning — but the
+  **direction** is new and is what this server has to absorb: v3.1, 4.1 and 4.3
+  added things a server could decline to use, while this is a requirement a
+  server must now meet, announced as a break in the versioning section rather
+  than gated behind a number. There is therefore no version at which omitting it
+  is still correct, and nothing here may offer one (0005 rejects it at authoring
+  time, 0008 before the response is written, 0002 grades it). The 4.3 sync named
+  this revision as a gap it deliberately did not close, because closing it there
+  would have batched two unrelated upstream changes into one PR
+  (`docs/CROSS-REPO-PROTOCOL.md` §5); this is the sync that closes it.
 
   **Contract 4.1 moved the document without moving the vocabulary**
   (`Hoplock/proxy#35`, merged). `HostKeyReportResponse` gained an optional
@@ -854,6 +859,20 @@ Six obligations are easy to miss and are graded by the conformance suite:
   So this is the second time the two numbers have moved apart, and it is another
   reason the drift check keys off the vendored document's checksum rather than
   off `policy_version` (0002, 0018).
+
+  **Contract 4.2 tightens the document without moving the vocabulary either**
+  (`Hoplock/proxy#41`, merged). `TargetAuth.params.username` becomes required on
+  `brokered-key`, which makes it required on every method the contract defines
+  (§5.2); a route omitting it is refused at the first authorize call, in the
+  single-object and the ladder shape alike. `policy_version` stays `4` on the
+  same reasoning as above — the number names the vocabulary a proxy can *read*,
+  and no field is added and none changes meaning — but the **direction** is new
+  and is what this server has to absorb: v3.1 and 4.1 added things a server could
+  decline to use, while this is a requirement a server must now meet, announced
+  as a break in the versioning section rather than gated behind a number. There
+  is therefore no version at which omitting it is still correct, and nothing here
+  may offer one (0005 rejects it at authoring time, 0008 before the response is
+  written, 0002 grades it).
 
   **Contract v3.1 is the case `policy_version` alone does not cover**, and it is
   worth keeping straight even though v4 moved the number. v3.1 adds the
@@ -1004,7 +1023,14 @@ the connection's lifetime (proxy D2):
   allow-list (boundary) — never both (proxy D12);
 - **target credential method** and its parameters (proxy D6a) — an **ordered
   ladder** since proxy D14, so the PDP states its preference *and* what it will
-  accept, with a one-entry ladder meaning "this method or nothing";
+  accept, with a one-entry ladder meaning "this method or nothing". Every entry
+  names the account it will log in as: `username` is **required on every method
+  the contract defines** — `ephemeral-user`, `ephemeral-account` and `static-key`
+  since contract v3, `brokered-key` since contract 4.2 (§4) — and it is never
+  derived from the identity's `login`, which is a client-typed string. A route
+  that omits it is refused by the proxy at the first authorize call rather than
+  served, so the check belongs at authoring time (0005) and again before the
+  response is written (0008);
 - **device platform and expiry posture** on `ephemeral-account` routes (proxy
   D13), and a **per-route algorithm profile** where the target speaks something
   `x/crypto` does not enable by default;
