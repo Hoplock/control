@@ -72,7 +72,7 @@ queryable in its own right rather than buried in a session blob:
   it loses the ability to answer who did something on a router. Treat it as a
   first-class record with its own index, not as session metadata.
 
-  Since contract v3.1 this record also carries the **device fields** the account
+  This record also carries the **device fields** the account
   was provisioned with (`device_field.<name>`, proxy phase 0016) — store them,
   index them, and keep them opaque. On a device that is one unit partitioned into
   many, the target string alone does not say which partition the administrator
@@ -88,14 +88,14 @@ queryable in its own right rather than buried in a session blob:
   SIEM auto-close the resulting drift alerts — and, more usefully, lets an
   `hl-*` account that Hoplock never reported become a detection. Enterprise's
   SIEM export consumes this; the schema decision is made here.
-- **The credential method and enforcement rung actually in force** (proxy D14
-  and contract v4). Both are per session and both differ from what the policy
+- **The credential method and enforcement rung actually in force** (proxy D14).
+  Both are per session and both differ from what the policy
   requested when a ladder degraded or a rung was unavailable. The record must
   carry what happened, not what was asked for — a record repeating the request is
   a record that lies, and this is the field the whole enforcement vocabulary
   exists to make true.
 
-  Contract v4 gives the rung four fields, and they need storing and indexing as
+  The rung has four fields, and they need storing and indexing as
   four rather than being flattened into one string: `enforcement_execution` and
   `enforcement_reach` (the two axes are separate questions and are queried
   separately — "what could this session run" and "what could it reach" have
@@ -110,8 +110,7 @@ queryable in its own right rather than buried in a session blob:
   distinction queryable, and keep `enforcement_attested_by` beside it so a reader
   can go and ask that team.
 
-- **Grant context on every record for a session** (`grant_context`, contract v4,
-  M16). The proxy copies it verbatim into each record and never parses it; store
+- **Grant context on every record for a session** (`grant_context`, M16). The proxy copies it verbatim into each record and never parses it; store
   it the same way. `additional_context` is a JSON **string or object**, so the
   column has to admit both rather than coercing one into the other — the proxy
   stores it verbatim for an auditor and this store must not put words in an

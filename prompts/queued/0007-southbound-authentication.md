@@ -16,23 +16,27 @@
   authenticates against this endpoint with the previous hop's key, and what it
   expects back.
 - In the **Hoplock Proxy repository**, `api/README.md` §"Reusing a host-key
-  decision (`cache` on `HostKeyReportResponse`)" and §"The v4→v4.1 revision" —
-  what the proxy does with a hint on this endpoint's response, which is the only
-  thing that makes the rules below rules rather than preferences.
+  decision (`cache` on `HostKeyReportResponse`)" — what the proxy does with a
+  hint on this endpoint's response, which is the only thing that makes the rules
+  below rules rather than preferences.
 - In the **Hoplock Proxy repository**, `api/README.md` §"Ephemeral uid blocks"
-  and §"The v4.2→v4.3 revision", and its `docs/PLAN.md` §5.1 — why the uid floor
-  moved off the target and onto this server, and what the proxy does when it
-  cannot get a block. Read these before writing the handler: the endpoint is
-  trivial and the invariant behind it is not.
+  and its `docs/PLAN.md` §5.1 — why the uid floor moved off the target and onto
+  this server, and what the proxy does when it cannot get a block. Read these
+  before writing the handler: the endpoint is trivial and the invariant behind it
+  is not.
+- **`api/README.md` carries no revision history.** Upstream `Hoplock/proxy#53`
+  (merged) removed it from both contract documents, so there is no "v4→v4.1" or
+  "v4.2→v4.3" section to look for: every rule is stated in the present tense
+  beside the endpoint or field it governs, and the two sections named above are
+  where the material now lives.
 
 ## Objective
 Serve the south-bound authentication endpoints for real: resolve a certificate
 or a password to an identity with claims, own the MFA conversation end to end,
-and record what the proxy reports back about a target — its host key, and (since
-contract v4) the enforcement rungs it can take. Decide, per host key and since
-contract 4.1, whether the proxy may stop re-reporting it. Since contract 4.3,
-also lease the proxy an exclusive block of ephemeral uids for a target, out of a
-cursor that only ever advances. This is the first phase where the conformance
+and record what the proxy reports back about a target — its host key and the
+enforcement rungs it can take. Decide, per host key, whether the proxy may stop
+re-reporting it. Also lease the proxy an exclusive block of ephemeral uids for a
+target, out of a cursor that only ever advances. This is the first phase where the conformance
 suite from 0002 grades a real implementation.
 
 ## In scope
@@ -117,15 +121,21 @@ change. Store first-seen keys and detect a **changed** key for a known target �
 that is a security event worth an audit record (its ingest lands in 0010; emit
 through whatever logging exists now with a stable shape).
 
-#### The response may carry a `cache` hint (contract 4.1)
+#### The response may carry a `cache` hint
 
-Added by `Hoplock/proxy#35` (merged). `HostKeyReportResponse` may now carry the
-same `CacheHint` object `/v1/authorize` already answers with, and a proxy that
-receives one stops reporting that key on every connection: upstream measured
-this endpoint at **46% of the Control calls that survive an authorize cache
-hit**, because a proxy reconnecting to a target it has seen ten thousand times
-reported the same key ten thousand times. `policy_version` stays `4` — the field
-is on this endpoint, not on authorize, and it grants rather than restricts.
+`HostKeyReportResponse` may carry the same `CacheHint` object `/v1/authorize`
+answers with, and a proxy that receives one stops reporting that key on every
+connection: upstream measured this endpoint at **46% of the Control calls that
+survive an authorize cache hit**, because a proxy reconnecting to a target it
+has seen ten thousand times reported the same key ten thousand times.
+
+**This field is outside `policy_version` and the contract names it as the worked
+example of why.** The number governs `/v1/authorize` and nothing else — that is
+the response the proxy decodes strictly, so it is the only place an unknown
+field could be a dropped restriction. A proxy that has never heard of this hint
+ignores it and keeps reporting every connection, which is correct behaviour and
+not a thinned answer. So do not gate the hint on a version, and do not conclude
+from it that a server may put anything anywhere.
 
 **Absent means what every server does today**, so issuing no hint at all is a
 correct implementation of this phase and a fine place to start. What is not fine
@@ -160,7 +170,7 @@ proxy's behaviour rather than a preference of ours:
   but a key nobody stored is a decision nobody can withdraw short of resyncing
   the entire fleet's cache.
 
-### Capability reporting (`POST /v1/capabilities/report`, contract v4)
+### Capability reporting (`POST /v1/capabilities/report`)
 
 Added by `Hoplock/proxy#25` (merged) and served here because it is the sibling of
 host-key reporting: the same shape, the same south-bound listener, the same
@@ -185,7 +195,7 @@ has nothing to put on the request.
   a stale record cost at worst a refused session rather than a session running
   below the rung its audit record claims.
 
-### Ephemeral uid block leases (`POST /v1/uids/lease`, contract 4.3)
+### Ephemeral uid block leases (`POST /v1/uids/lease`)
 
 Added by `Hoplock/proxy#51` (merged) and served here for the same reason the two
 report endpoints are: it is keyed by **target**, it is the proxy asking this
@@ -253,7 +263,7 @@ fleet.
 because the consequence is not a missing feature: the proxy fails **closed**
 rather than trusting a floor it cannot get, so **every `ephemeral-user` route in
 the fleet is refused**. `brokered-key` and `static-key` routes are unaffected.
-That is the one place contract 4.3 is not optional for us, and 0017's e2e
+That is the one place the lease endpoint is not optional for us, and 0017's e2e
 suite is where a fleet-wide refusal would otherwise first be noticed.
 
 ## Out of scope

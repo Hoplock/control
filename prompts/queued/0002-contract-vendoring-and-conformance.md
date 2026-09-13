@@ -9,51 +9,39 @@
 - `docs/learnings/` — read summaries; open `0001` (Makefile targets, CI shape).
 - In the **Hoplock Proxy repository**: `api/control.yaml` and `api/README.md`.
   Read the ground rules, the endpoint table, and — before writing any
-  assertion — **"Versioning: additive fields, and a proxy that fails closed"**
-  and **"Policy vocabulary v2"**. The second carries the absent-value default of
-  every policy field in one table, which is what tells you whether a missing
-  field in a response is a pass or a failure. Read individual schemas as you
-  need them. Do not read the proxy's Go code.
+  assertion — **"Versioning: one live vocabulary, and a proxy that fails
+  closed"** and **"The policy vocabulary"**. The latter's **"Absent-value
+  defaults, in one table"** subsection carries the absent-value default of every
+  policy field in one place, which is what tells you whether a missing field in
+  a response is a pass or a failure. Read individual schemas as you need them.
+  Do not read the proxy's Go code.
 
-  Read **"The v3→v3.1 revision"** too, and the **"Additional device fields
-  (`device_field.<name>`)"** subsection under "Ephemeral accounts on devices".
-  That revision is the one that breaks a naive reading of the version rules: it
-  adds vocabulary and leaves `policy_version` at `3`, so the document's version
-  and the negotiated version are two different numbers, and nothing here may
-  assume they move together.
+  **Both documents state one live vocabulary, in the present tense, and carry no
+  revision history.** Upstream `Hoplock/proxy#53` (merged) deleted it: there is
+  no "v3→v3.1", "v3.1→v4", "v4→v4.1", "v4.1→v4.2" or "v4.2→v4.3" section to
+  read, no "Policy vocabulary v2"/"v4" section, and no "since version N"
+  annotation on any field. Do not go looking for them and do not cite one: every
+  rule they carried is now stated in the present tense beside the thing it
+  governs. A prompt or assertion that names a revision by number is describing a
+  section that does not exist.
 
-  Then read **"The v3.1→v4 revision"** and **"Policy vocabulary v4"**, which are
-  what the document currently carries: the two enforcement axes, the four session
-  bounds, and the capability advertisement in two halves. v4 is where the
-  absent-value discipline earns its keep — every one of its fields defaults to
-  exactly what a v3 server produced — so it is the revision your absent-value
-  assertions should be written against.
+  Read the **"Additional device fields (`device_field.<name>`)"** subsection
+  under "Ephemeral accounts on devices" — an open namespace the contract
+  deliberately does not enumerate. Then read **"Ephemeral uid blocks"**, the
+  `/v1/uids/lease` path, and the `UIDLeaseRequest`/`UIDLeaseResponse` schemas,
+  **in full**, before writing a single lease assertion: the monotonic-cursor
+  invariant is the whole endpoint, and it is the one thing the suite has to be
+  built to catch.
 
-  Then read **"The v4→v4.1 revision"** and **"Reusing a host-key decision
-  (`cache` on `HostKeyReportResponse`)"**. 4.1 is v3.1's lesson repeated with a
-  different field: one optional `cache` hint on the host-key response, and
-  `policy_version` left at `4`, because the number governs what `/v1/authorize`
-  may answer with. Read it before writing any assertion that ties the document
-  version to the negotiated one.
-
-  Then read **"The v4.1→v4.2 revision"** (upstream `Hoplock/proxy#41`, merged),
-  which is the one revision so far that **tightens**: `username` becomes required
-  on `brokered-key`, and therefore on every method the document defines.
-  `policy_version` stays `4` again — a third case of the two numbers moving
-  apart, and the only one where the document got *stricter* while the negotiated
-  number stood still. Read it before writing a fixture: every `brokered-key`
-  route in one now needs an account name, and a suite carrying a pre-v4.2 fixture
-  grades an implementation against a contract nobody serves.
-
-  Finally read **"The v4.2→v4.3 revision"** and **"Ephemeral uid blocks"**, plus
-  the `/v1/uids/lease` path and the `UIDLeaseRequest`/`UIDLeaseResponse` schemas.
-  4.3 is the same lesson a fourth time and the sharpest case for it: it adds a
-  whole **endpoint** and still leaves `policy_version` at `4`, because that
-  number gates the vocabulary `/v1/authorize` answers in and an endpoint is not
-  in it. Anything here that infers "the document moved, so the negotiated number
-  moved" is wrong four times over. Read the endpoint description in full before
-  writing a single lease assertion — the monotonic-cursor invariant is the whole
-  endpoint, and it is the one thing the suite has to be built to catch.
+  **The two numbers are still two numbers**, and "Versioning" is where the
+  document says so. The **document** version (`info.version`) and the
+  **negotiated policy vocabulary** (`policy_version`) are independent, because
+  the negotiated one "governs `/v1/authorize` and nothing else" — that is the
+  response decoded strictly, and so the only place an unknown field could be a
+  dropped restriction. The document names its own worked examples of what falls
+  outside it: `HostKeyReportResponse.cache`, a field on another endpoint, and
+  `POST /v1/uids/lease`, a whole endpoint. Read that section before writing any
+  assertion that ties one number to the other, and see "The two numbers" below.
 
 ## Objective
 Bring the contract into this repo as a **vendored, verifiable artifact**, and
@@ -101,18 +89,21 @@ It must cover, at minimum:
 - **Authorize**: `direct`, `nexthop`, `401`, and a response carrying every field
   the document defines — assert **shape**, not policy content, because policy is
   the implementation's business and the contract's is the envelope.
-- **`username` on every credential method** (contract v3, and v4.2 for
-  `brokered-key`): every `brokered-key` route in a fixture — the single-object
-  shape and a ladder entry alike — names a `username`, and the suite asserts the
+- **`username` on every credential method**: `params.username` is required on
+  every method the contract defines, so every `brokered-key` entry of a
+  `target_auth_ladder` in a fixture names a `username`, and the suite asserts the
   field is **present** rather than that some particular value round-trips. A
   fixture or expectation asserting a `brokered-key` response shape *without* one
-  encodes the pre-v4.2 contract and is a bug to fix rather than a case to keep:
-  the proxy refuses such a route at the first authorize call, so an
+  encodes a contract nobody serves and is a bug to fix rather than a case to
+  keep: the proxy refuses such a route at the first authorize call, so an
   implementation the suite passes on it would fail in front of a user. Write it
   as a required-field assertion and **not** as an absent-value default — the
   absent-value discipline covers fields whose omission *means* something, and
   omission here means the route is refused. Do not tie it to `policy_version`
-  either, which v4.2 leaves at `4`: there is no version at which omitting it is
+  either. This is the contract's one **tightening**, and the document's
+  "Versioning" section explains why a tightening is not expressible through the
+  version at all: it adds no field and changes no field's meaning, so it is
+  announced as a break instead. There is no version at which omitting it is
   correct.
 - **Vocabulary negotiation**: the same authorize request sent with
   `policy_version` set to the current version and to `1`. Assert the low-version
@@ -122,7 +113,19 @@ It must cover, at minimum:
   and neither is a `401`. This is the assertion that stops a server from
   breaking every older proxy in a fleet mid-upgrade, and no other assertion here
   catches it: a response tested only at the current version looks perfect.
-- **Additional device fields** (`device_field.<name>`, contract v3.1): an
+- **A request with no `policy_version` is refused.** The field is in
+  `AuthorizeRequest`'s `required` list and has **no absent-value default**
+  (upstream `Hoplock/proxy#53`, merged — it previously carried `default: 1`), so
+  send the same authorize request with the field omitted entirely and assert the
+  server answers `400 invalid_request`. Not `200` with a guessed version, and
+  not a `401`: a deny is a policy decision about a user and this is a malformed
+  request. **Write this as its own case, distinct from the `1` case above** —
+  they look similar and are not: `1` is a proxy that told the truth about being
+  old, and absent is a proxy that said nothing. Only the first can be answered
+  safely, because guessing a version for the second is guessing which
+  restrictions it would silently drop. A suite that only ever sends the field
+  cannot tell a server that requires it from one that defaults it.
+- **Additional device fields** (`device_field.<name>`): an
   `ephemeral-account` rung carrying device fields round-trips with the names and
   values intact and **unenumerated** — the suite asserts the shape the contract
   states (name lowercase letters, digits, hyphens and underscores and ≤64
@@ -130,18 +133,20 @@ It must cover, at minimum:
   asserts nothing about which names are meaningful, because the contract does not
   say and a suite that hard-codes `vdom` will fail the first customer driver.
   Assert too that a device field demands **no higher `policy_version` than the
-  route carrying it otherwise would** — v3.1 added the namespace without moving
-  the number, so a proxy declaring `3` must still be served a route bearing device
-  fields. Write that assertion against the rule, not against a literal: pinning it
-  to `3` made it stale the moment v4 landed, and a suite that expects a bump here
-  is asserting a rule the contract does not have.
-- **Host keys**: first sighting and a known key; and, for contract 4.1, that a
-  `cache` hint on the response round-trips as the same `CacheHint` shape
-  `/v1/authorize` answers with, while a response **carrying none is equally a
-  pass** — absent means "report every connection", which is what every server
-  did before the field existed. Assert the envelope only: whether a given key
+  route carrying it otherwise would** — the namespace is open, and a name inside
+  it is not a new policy field, so a proxy is served a route bearing device
+  fields at whatever version that route needs without them. Write that assertion
+  against the rule, not against a literal: pinning it to a number makes it stale
+  at the next revision, and a suite that expects a bump here is asserting a rule
+  the contract does not have.
+- **Host keys**: first sighting and a known key; and that a `cache` hint on the
+  response round-trips as the same `CacheHint` shape `/v1/authorize` answers
+  with, while a response **carrying none is equally a pass** — absent means
+  "report every connection". `HostKeyReportResponse.cache` is the contract's own
+  worked example of a field outside `policy_version`, so do not gate this case
+  on a version. Assert the envelope only: whether a given key
   is worth hinting is the implementation's business (0007), not the contract's.
-- **UID leases** (`POST /v1/uids/lease`, contract 4.3): a lease returns a block
+- **UID leases** (`POST /v1/uids/lease`): a lease returns a block
   with `uid_to` strictly greater than `uid_from`, and a block requested inside
   `[range_min, range_max]` comes back inside it — a server that ignores the
   range is caught here rather than by a proxy refusing every block it is
@@ -198,41 +203,49 @@ change in the *other* repo), and a suite bug is yours to fix.
 ### A note on contract versions
 
 The vendored contract is a moving target and this phase builds the machinery,
-not a snapshot. Device provisioning and the credential ladder landed upstream
-(v3), the `device_field.` namespace after them (v3.1, upstream
-`Hoplock/proxy#21`, merged), enforcement points and session bounds after those
-(v4, upstream `Hoplock/proxy#25`, merged), a host-key cache hint after those
-(4.1, upstream `Hoplock/proxy#35`, merged), a **tightened** `username`
-requirement after that (4.2, upstream `Hoplock/proxy#41`, merged), and an entire
-new endpoint after that (4.3, upstream `Hoplock/proxy#51`, merged) — six
-revisions in the time it took to queue this phase, which is the actual argument:
-the drift check and the conformance suite must treat a version bump as routine.
-If `make contract-sync` is painful to run twice in a week, it is wrong. Vendor whatever is current when
-you run; nothing here waits for the next revision.
+not a snapshot. Seven revisions landed upstream in the time it took to queue
+this phase — the most recent of them a **collapse** (upstream
+`Hoplock/proxy#53`, merged) that deleted every superseded vocabulary from the
+document and moved `info.version` **down**, from `4.3.0` to `4.0.0`. That is the
+actual argument: the drift check and the conformance suite must treat a version
+change as routine, and must not assume it only ever goes up. If
+`make contract-sync` is painful to run twice in a week, it is wrong. Vendor
+whatever is current when you run; nothing here waits for the next revision.
 
-Two of those numbers are not the same number, and v3.1 is what proves it. The
-**document** version (`info.version`, `4.3.0` as vendored) and the **negotiated
-policy vocabulary** (`policy_version`, `4`) move independently: v3.1 added
-vocabulary and left `policy_version` at `3`, because that field numbers what a
-proxy can *read* and reading did not change, while v4 moved both. Contract 4.1
-(upstream `Hoplock/proxy#35`, merged) did it again — one optional `cache` field
-on `HostKeyReportResponse`, document to `4.1.0`, `policy_version` still `4`.
-Contract 4.2 (upstream `Hoplock/proxy#41`, merged) made it three, and in the
-other direction: it **removes** a permitted shape rather than adding one —
-`username` required on `brokered-key` — with the document at `4.2.0` and
-`policy_version` still `4`. Contract 4.3 (upstream `Hoplock/proxy#51`, merged)
-made it four with a whole endpoint, `POST /v1/uids/lease`, document to `4.3.0`,
-`policy_version` *still* `4`. So the pattern is not a one-off of v3.1's, an
-assertion built on "they move together" would now be wrong four times, and the
-relationship is not even "the document only ever grows what the number gates": a
-document bump can narrow what a conformant server may answer with, and only the
-vendored document says so.
+### The two numbers
 
-So do not derive one number from the other, do not assert a relationship between
-them, and do not let the drift check key off `policy_version` — the checksum in
+They are not the same number and nothing here may treat them as one. The
+**document** version (`info.version`, `4.0.0` as vendored) and the **negotiated
+policy vocabulary** (`policy_version`, `4`) move independently, and the
+contract's "Versioning" section says why: `policy_version` **governs
+`/v1/authorize` and nothing else**, because that is the response the proxy
+decodes strictly and so the only place an unknown field could be a dropped
+restriction. Everything outside that response is outside the number. The
+document names two of its own worked examples — `HostKeyReportResponse.cache`,
+a field on a different endpoint, and `POST /v1/uids/lease`, a whole endpoint —
+and a **tightening** is a third kind of case: making an existing parameter
+required adds no field and changes no field's meaning, so it is not expressible
+through the version at all and is announced as a break instead
+(`params.username` is the one in force).
+
+So the relationship is not "the document only ever grows what the number gates".
+A document change can narrow what a conformant server may answer with, can add a
+whole endpoint the number says nothing about, and — as `#53` showed — can move
+`info.version` backwards while `policy_version` stands still at `4`. Do not
+derive one number from the other, do not assert a relationship between them, and
+do not let the drift check key off `policy_version`: the checksum in
 `contract/UPSTREAM` is what catches a changed document. Both numbers above are
-what upstream carries today and neither is a target to pin: read them out of the
-document you vendor.
+what upstream carries today and neither is a target to pin — read them out of
+the document you vendor.
+
+**Removing superseded versions is not removing versioning.** `#53` deleted the
+older *vocabularies*; the mechanism that carries the *next* one is intact and is
+this suite's business as much as it ever was. `policy_version` is still on the
+wire, still required, still honoured, and the MUST-NOT-answer-above rule still
+stands — which is exactly why the negotiation assertions above are not optional.
+A suite that reads the collapse as "there is only one version now, so there is
+nothing to negotiate" would delete the only assertion that catches a server
+breaking a fleet mid-upgrade.
 
 ## Out of scope
 - Implementing any endpoint here (0007 onwards). The suite is written before the

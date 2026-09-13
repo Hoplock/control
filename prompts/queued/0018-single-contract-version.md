@@ -4,11 +4,21 @@
 - `docs/PROTOCOL.md` — session workflow, especially §3 ("never edit
   `contract/`") and §9.
 - `docs/PLAN.md` — especially **M19** (the north-bound surface is versioned
-  separately and is **out of scope here**), **§4** (the vocabulary-negotiation obligation, the
-  current-vocabulary note and the contract v3.1 case beneath it), **M1** (the
-  contract is vendored,
-  read-only), **M11** (`401` is a decision; everything else is `5xx`), and
-  **M17** (declared capabilities).
+  separately and is **out of scope here**), **§4** (the vocabulary-negotiation
+  obligation, the current-vocabulary note, and the note beneath it on what falls
+  outside `policy_version`), **M1** (the contract is vendored, read-only),
+  **M11** (`401` is a decision; everything else is `5xx`), and **M17** (declared
+  capabilities).
+- **Read this first, before anything else here.** Upstream `Hoplock/proxy#53`
+  (merged) collapsed the contract to **one live vocabulary**: it deleted the
+  superseded vocabularies and the whole revision history from `api/control.yaml`
+  and `api/README.md`, and moved `info.version` from `4.3.0` down to `4.0.0`.
+  That is this phase's own argument made upstream, and it changes what this
+  phase finds — but it **did not remove versioning**, and neither does this
+  phase. `policy_version` is still on the wire, still required, still honoured,
+  and the MUST-NOT-answer-above rule still stands. See "What this phase may not
+  do" below; reading the collapse as "versioning is gone" is the single most
+  damaging way to get this phase wrong.
 - `docs/learnings/` — read summaries; open `0002` (the vendored contract, the
   generated constants, and the conformance suite's expectation format), `0006`
   (the enrolled contract version and the pre-publish capability query), and
@@ -68,25 +78,35 @@ this phase installs is **loud** rather than lenient.
   loudly and a human decides what to do — which is the point at which supporting
   a second version would become a deliberate decision rather than an accident.
 - Note that these are two different numbers and both are single-valued here: the
-  document version (`4.3.0` as vendored) and the negotiated vocabulary
-  (`policy_version`, `4`) move independently upstream — v3.1, 4.1, 4.2 and 4.3
-  each moved the first without the second, v4 moved both — and this phase does
-  not couple them. Read each out of `contract/control.yaml` rather than from this
+  document version (`4.0.0` as vendored) and the negotiated vocabulary
+  (`policy_version`, `4`) move independently upstream, and this phase does not
+  couple them. Read each out of `contract/control.yaml` rather than from this
   line, which is only as current as the last sync.
 
-  4.3 is the sharpest case and worth keeping in mind while auditing: it added a
-  whole endpoint (`POST /v1/uids/lease`) and still left `policy_version` at `4`,
-  because that number gates the vocabulary `/v1/authorize` answers in. So "the
-  document moved, therefore the vocabulary moved" is wrong four times out of
-  five, and a check that couples them would have failed this sync rather than
-  catching anything.
+  The contract's "Versioning" section is where the independence is stated:
+  `policy_version` **governs `/v1/authorize` and nothing else**, that being the
+  response a proxy decodes strictly. Three kinds of change therefore move the
+  document without moving the number, and each is worth keeping in mind while
+  auditing:
 
-  4.2 cuts the other way and matters here just as much: it moved the document to
-  **require** something (`username` on `brokered-key`, upstream
-  `Hoplock/proxy#41`, merged) while leaving the number alone. One supported
-  `policy_version` is not a promise that the answerable shapes stand still, so
-  the test this phase installs keys off the vendored document and never off the
-  number.
+  - **a field on another endpoint** — `HostKeyReportResponse.cache` is the
+    document's own worked example;
+  - **a whole new endpoint** — `POST /v1/uids/lease`, which is outside the
+    number entirely because the number gates a vocabulary, not a surface;
+  - **a tightening** — making an existing parameter required adds no field and
+    changes no field's meaning, so it is not expressible through the version at
+    all and is announced as a break instead (`params.username`, required on
+    every credential method, is the one in force).
+
+  The third cuts the opposite way from the first two and matters here just as
+  much: one supported `policy_version` is **not** a promise that the answerable
+  shapes stand still. So the test this phase installs keys off the vendored
+  document and never off the number.
+
+  And the document version does not only ever rise. `#53` moved it **down**,
+  `4.3.0` → `4.0.0`, while `policy_version` stood still at `4`. A check that
+  couples the two, or that assumes monotonicity, would have failed that sync
+  rather than catching anything.
 - No other literal version anywhere in the tree — code, fixtures, deployment
   manifests, or seed data. Add a check that keeps it that way and name it in your
   learnings.
@@ -98,6 +118,17 @@ this phase installs is **loud** rather than lenient.
   declared, the version this server serves, and the `proxy_id`. An operator
   reading that must conclude "this proxy is the wrong build", not "the server is
   broken".
+- **A request that declares no `policy_version` at all is a different answer,
+  and must not be folded into the one above.** The field is `required` on
+  `AuthorizeRequest` with **no absent-value default** (upstream
+  `Hoplock/proxy#53`, merged — it previously carried `default: 1`), so an
+  omitted field is a malformed request and the answer is `400 invalid_request`,
+  not the `5xx` mismatch. The distinction is worth the extra branch: a declared
+  wrong version is a **rollout** problem an operator fixes by shipping the right
+  proxy build, and an absent one is a **malformed caller** that never told this
+  server what it can read. Never default it to `1` and answer anyway — guessing
+  a version is guessing which restrictions the caller would silently drop, which
+  is the failure the next bullet but one exists to prevent.
 - Never `401`. A deny is a decision (M11), and a version mismatch is not a
   decision about access — answering `401` sends an operator to debug permissions
   during what is actually a rollout error.
@@ -141,10 +172,11 @@ fleet.
 
 ### The documents stop describing a fleet that does not exist
 
-PLAN §4's negotiation obligation, the current-vocabulary note and contract-v3.1
-passage beneath it, 0002's note on contract versions and 0006's note on the
-enrolled version are all written for a multi-version fleet. Rewrite them to state the single-version position and
-its deployment consequence: **proxy and server versions move together**, and a
+PLAN §4's negotiation obligation, the current-vocabulary note and the passage
+beneath it on what falls outside `policy_version`, 0002's note on contract
+versions and 0006's note on the enrolled version are all written for a
+multi-version fleet. Rewrite them to state the single-version position and its
+deployment consequence: **proxy and server versions move together**, and a
 mid-upgrade fleet is a rollout-ordering problem rather than a code path.
 
 Keep the *reasoning* in place while you do it. "A dropped restriction is a
@@ -158,17 +190,27 @@ version support back needs the argument, not just the conclusion.
   vocabulary outside what the caller declared. This narrows what Control
   *supports* to one value; it does not remove the field, and it does not edit
   `contract/` (M1, PROTOCOL §3).
+- **It may not remove the versioning mechanism, and upstream's collapse is not a
+  licence to.** `Hoplock/proxy#53` (merged) removed the superseded
+  *vocabularies* from the contract; it kept `policy_version`, the
+  MUST-NOT-answer-above rule, the strict-decoding justification, and the `500`
+  for a proxy the server cannot serve. Control's obligation is identical: drop
+  the older vocabularies, keep the mechanism that carries the next one. If this
+  phase's audit concludes the field can go, the audit is wrong — that conclusion
+  would take a contract change, which is §3.2 and not this phase's to make.
 - **The refusal is conformant, and stricter — never looser.** The contract itself
   sanctions `5xx` naming the mismatch when a server cannot express its policy
-  within the declared version (upstream `api/README.md`, "Versioning: additive
-  fields, and a proxy that fails closed"). This phase makes that the only answer.
+  within the declared version (upstream `api/README.md`, "Versioning: one live
+  vocabulary, and a proxy that fails closed"). This phase makes that the only
+  answer.
   If you find a case where the single-version rule would make Control answer
   something the contract forbids, stop — that is a finding for the user, not
   something to reconcile locally.
 - **It may not narrow the `device_field.` namespace.** One supported contract
   version does not mean one closed set of device fields. That namespace is
-  deliberately open and is **not** a version axis: contract v3.1 added it without
-  moving `policy_version`, the names a driver accepts are a capability question
+  deliberately open and is **not** a version axis: a name inside it is not a new
+  policy field and demands no bump, the names a driver accepts are a capability
+  question
   (M17, 0006), and a rung naming a field the driver does not declare is a skipped
   rung rather than an error. Collapsing "one version" into "one known set of
   fields" would break every customer-written driver (proxy D13) and is the most

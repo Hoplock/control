@@ -39,10 +39,21 @@
   capabilities).
 - `docs/learnings/` — every summary block; open a full file only where a summary
   names a cross-repo obligation.
-- In the **Hoplock Proxy repository**: `api/control.yaml` and `api/README.md`
-  (the revision sections are the spine of this audit), `docs/PLAN.md` §2's
-  decision register (`D*` ids this repository cites), `prompts/implemented/` and
-  `docs/learnings/` (what the proxy's phases assumed about this server).
+- In the **Hoplock Proxy repository**: `api/control.yaml` and `api/README.md`,
+  `docs/PLAN.md` §2's decision register (`D*` ids this repository cites),
+  `prompts/implemented/` and `docs/learnings/` (what the proxy's phases assumed
+  about this server).
+
+  **Neither contract document carries a revision history any more.** Upstream
+  `Hoplock/proxy#53` (merged) deleted it: both read in the present tense, with no
+  revision sections and no "since version N" annotation on any field. An earlier
+  version of this prompt called those sections "the spine of this audit" — they
+  were, and they are gone, so the spine is now **§2's merged-PR walk**: the
+  history lives in the PR bodies and in `git log`, and the documents tell you
+  only what is true now. That is a change in method, not in scope: comparing this
+  repository's text against a present-tense document is if anything sharper,
+  because a stale claim here no longer has a matching section upstream to hide
+  behind.
 
 ## Objective
 Find every obligation the proxy has placed on Hoplock Control, and every place
@@ -60,19 +71,19 @@ right place for it and it is the only place it happens — which means when it
 does not happen, or happens from memory, nothing catches it. Two cases, both
 real and both found by accident:
 
-- The sync for `Hoplock/proxy#41` (contract 4.2) was handed an impact section
+- The sync for `Hoplock/proxy#41` was handed an impact section
   saying this repository's *South-bound authorize & route* prompt "already
   carries the v3 `username` requirement" and that 4.2 merely extends it. It
   carried nothing: `grep -rni "username" . --exclude-dir=.git` returned zero
-  hits across the whole repository. v3's requirement had reached the contract
-  and the proxy and was never mirrored downstream at all — a gap roughly a year
-  of phases wide, invisible because nothing fails to compile. The same impact
+  hits across the whole repository. The requirement had reached the contract and
+  the proxy and was never mirrored downstream at all — a gap roughly a year of
+  phases wide, invisible because nothing fails to compile. The same impact
   section pointed at a conformance case in *Contract vendoring & conformance
   harness* that did not exist either.
-- Contract 4.2 then went unsynced long enough that the **4.3** sync arrived
-  first, noticed 4.2 had never landed, and named it in `docs/PLAN.md` §4 as a
-  gap it was deliberately not closing (§5: one upstream change, one sync PR).
-  That worked — but it worked because a session happened to look.
+- `#41` then went unsynced long enough that the **`#51`** sync arrived first,
+  noticed it had never landed, and named it in `docs/PLAN.md` §4 as a gap it was
+  deliberately not closing (§5: one upstream change, one sync PR). That worked —
+  but it worked because a session happened to look.
 
 Neither is a criticism of the sessions involved; both are the predicted failure
 of a check that runs once, from one side, under a deadline. This phase is the
@@ -145,12 +156,26 @@ document is what is true now. Check this repository's prompts against the
 
 - every method's required parameters, every enum value, every endpoint in
   `docs/PLAN.md` §4's table, against `api/control.yaml`;
-- every "since contract vN" or "since 4.N" claim in this repository — does the
-  document agree?
+- **every citation of a contract revision by number** — "since contract vN",
+  "since 4.N", a named "vN→vM revision" section. The documents no longer have
+  any, so **every such citation left in this repository is stale by
+  construction**: the rule it points at may well still be true, but the section
+  it cites is not there to check it against. Restate the rule in the present
+  tense beside what it governs, and delete the number. Grep for them, do not
+  read for them:
+  `grep -rniE "contract v[0-9]|contract [0-9]\.[0-9]|vocabulary v[0-9]|since v[0-9]" prompts/ docs/ README.md`.
 - the two version numbers: the document's `info.version` and `policy_version`.
   They move independently and this repository states both in several places
   (§4, 0002, 0018). Are they current, and is each stated where the phase that
-  owns it can see it?
+  owns it can see it? Note that `info.version` does **not** only ever rise —
+  `#53` moved it `4.3.0` → `4.0.0` — so a check that assumes monotonicity is
+  itself a finding.
+- **`policy_version` is required and has no absent-value default.** Does this
+  repository's text say so everywhere it describes the field, and does it keep
+  the mechanism? Removing superseded *vocabularies* is not removing
+  *versioning*, and a prompt that has drifted into the second reading is the
+  most damaging drift this audit can find: it would delete the negotiation the
+  fleet's mid-upgrade safety rests on.
 - every `D*` id this repository cites — does it still exist in the proxy's
   register, and does it still settle what we say it settles? Ids are cited and
   never restated (§1), so a `D*` that moved is a silent wrong reference.

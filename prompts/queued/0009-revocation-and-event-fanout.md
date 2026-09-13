@@ -15,8 +15,7 @@
 ## Objective
 Serve the long-lived NDJSON revocation stream: the **only** route this server has
 to a running proxy, the kill switch for a session already in flight, and the
-thing that bounds the damage of every cache hint issued in 0008 — and, since
-contract 4.1, in 0007.
+thing that bounds the damage of every cache hint issued in 0008 — and in 0007.
 
 ## In scope
 
@@ -27,8 +26,8 @@ contract 4.1, in 0007.
 - Event types per the contract: `session_kill`, `cache_invalidate`,
   `heartbeat`, `resync`.
 - **A subject-scoped `cache_invalidate` does not reach a host-key decision.**
-  Since contract 4.1 (`Hoplock/proxy#35`, merged) 0007 may hint the host-key
-  report as cacheable, and the proxy keys those entries on target, port and key
+  0007 may hint the host-key report as cacheable, and the proxy keys those
+  entries on target, port and key
   fingerprint — not on a person — so `subject` cannot match one. Withdrawing a
   host-key decision means publishing that decision's own `key`, or `resync`.
   This is an asymmetry in the operator surface below, not a detail of the wire

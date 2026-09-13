@@ -30,7 +30,8 @@ hold a live outbound relay registration.
 
   The enrolled contract version is **operational data, not the authority on
   what a given connection may be answered with**: the proxy declares that
-  per call in `policy_version` on the authorize request (contract v2), and
+  per call in `policy_version` on the authorize request — a **required** field
+  with no absent-value default (upstream `Hoplock/proxy#53`, merged) — and
   0008 answers within *that*. Treat the enrolled value as a fleet-readiness
   signal — "can this zone be routed through yet" — and never as a substitute
   for the request field, which is the only one that cannot be stale.
@@ -93,8 +94,8 @@ first during an incident.
 
 Enrollment and heartbeat carry more than reachability. A route may name a
 credential method, a device platform, an expiry posture, an enforcement rung, or
-— since contract v3.1 — one or more **additional device fields**
-(`device_field.<name>`, proxy D13, D14, phase 0016, and contract v4), and a proxy
+one or more **additional device fields** (`device_field.<name>`, proxy D13, D14,
+phase 0016), and a proxy
 can serve those only if it has the driver and the local material. So a proxy
 declares what it can provide, this registry stores it, and 0008 treats it as a
 **constraint on what a decision may say** — not as advice.
@@ -113,11 +114,10 @@ invisible in the response: the ladder just gets shorter, and on a one-rung ladde
 the session is denied. Nothing downstream can reconstruct why, which is what
 makes storing the declared names here load-bearing rather than informational.
 
-### Capabilities have two sources since contract v4, and the second is the target
+### Capabilities have two sources, and the second is the target
 
-`Hoplock/proxy#25` (merged) adds the enforcement rung, and it breaks an
-assumption the paragraphs above quietly make: that a capability is a property of
-the *proxy*. An enforcement rung depends far more on the **target** — whether it
+The enforcement rung breaks an assumption the paragraphs above quietly make:
+that a capability is a property of the *proxy*. An enforcement rung depends far more on the **target** — whether it
 runs systemd, whether cgroup v2 is mounted, whether SELinux is enforcing,
 whether netfilter is reachable, whether it is a Linux host at all — and none of
 that is in a policy database or in an enrollment payload. So build the store to
