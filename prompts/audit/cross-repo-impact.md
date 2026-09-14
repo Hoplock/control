@@ -115,8 +115,23 @@ the set that can possibly owe this repository something is the set that touched
 one of them:
 
 ```
-git -C <proxy clone> log --oneline --merges -- api/ docs/CROSS-REPO-PROTOCOL.md
+git -C <proxy clone> log --oneline --merges --full-history \
+    -- api/ docs/CROSS-REPO-PROTOCOL.md
 ```
+
+**`--full-history` is load-bearing — do not drop it.** Without it git applies
+its default history simplification, which discards a merge commit that is
+TREESAME to one of its parents; on a squash-free repository where every PR lands
+as a merge commit, that is *almost every merge in the set*. The 2026-09-14 run
+measured it: the bare command returned **1** merge, the `--full-history` form
+returned **18**. A run that trusts the short form examines one PR, finds nothing,
+and reports the estate clean — which is the worst outcome this audit has,
+because the next session trusts it instead of looking.
+
+Also make sure the clone is **deep enough to contain the whole history**. A
+session's clone is routinely shallow, and a shallow clone silently truncates the
+set rather than failing: check `git rev-parse --is-shallow-repository` and
+`git fetch --depth=<n> origin main` until it reports `false`.
 
 Each merge commit names its PR number; those numbers are your list. Fetch each
 one's body through the GitHub API. Record the command you actually used and the
@@ -124,9 +139,19 @@ number of PRs it produced — a reviewer cannot re-derive "I looked at all of
 them", and `docs/CROSS-REPO-PROTOCOL.md` §5 asks for the search, not the
 adjective.
 
-Two edges worth handling deliberately rather than discovering late: a PR that
-changed a shared surface and was **reverted** later, and a change that reached
-`api/` through a merge with no PR. Both are rare and both are findings.
+Three edges worth handling deliberately rather than discovering late. A PR that
+changed a shared surface and was **reverted** later; a change that reached
+`api/` through a merge with no PR; and — found on the 2026-09-14 run —
+
+- **a merge commit whose PR number belongs to a different repository.** The
+  proxy's history begins in a predecessor repo, so its early merges read
+  `Merge pull request #3 from mauroasilva/…` while `Hoplock/proxy#3` is an
+  entirely different, later PR. Resolving those numbers against the API returns
+  a **wrong body that looks right**. Check every number: the API's
+  `head.label` must match the branch in the merge commit's subject, and where it
+  does not, the body is not reachable and the change is evidenced from its diff.
+
+All are findings.
 
 ### 3. Classify every PR in that set
 
@@ -164,6 +189,26 @@ document is what is true now. Check this repository's prompts against the
   tense beside what it governs, and delete the number. Grep for them, do not
   read for them:
   `grep -rniE "contract v[0-9]|contract [0-9]\.[0-9]|vocabulary v[0-9]|since v[0-9]" prompts/ docs/ README.md`.
+
+  **Then search again across line breaks.** That grep is line-based and these
+  documents are hard-wrapped, so a citation that happens to wrap between
+  "contract" and "v4" is invisible to it. The 2026-09-14 run found exactly one
+  such hit — `docs/PLAN.md`'s `grant_context` bullet — and it had survived the
+  sync that removed every other one in the repository, which is what a
+  line-blind check buys you. A wrap-insensitive equivalent:
+
+  ```
+  python3 - <<'PY'
+  import re, pathlib
+  pat = re.compile(r'(contract|vocabulary)\s+v?[0-9]+(\.[0-9]+)?', re.I)
+  files = [*pathlib.Path('prompts').rglob('*.md'),
+           *pathlib.Path('docs').rglob('*.md'), pathlib.Path('README.md')]
+  for p in files:
+      t = p.read_text()
+      for m in pat.finditer(t):
+          print(f"{p}:{t[:m.start()].count(chr(10))+1}: {' '.join(m.group().split())}")
+  PY
+  ```
 - the two version numbers: the document's `info.version` and `policy_version`.
   They move independently and this repository states both in several places
   (§4, 0002, 0018). Are they current, and is each stated where the phase that
