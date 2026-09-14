@@ -11,8 +11,10 @@ protocol on purpose: the two repositories are worked the same way, so a session
 that has done one already knows how to do the other.
 
 To start a session, see `docs/KICKOFF.md` for the exact kickoff prompts to
-paste — including the downstream sync a merged cross-repo change owes this
-repository, which is not a phase and has no prompt number.
+paste — including the two that are not phases: an **audit** (§6), which is
+re-run rather than built and so is never picked up automatically, and the
+**downstream sync** a merged cross-repo change owes this repository, which has
+no prompt file at all.
 
 ---
 
@@ -287,7 +289,9 @@ numeric prefix, and:
   everything in Section 3. One that starts implementing has found a phase:
   queue it as a numbered prompt and keep the audit's PR to the audit.
 
-`prompts/audit/README.md` states these on the folder itself, and
+`prompts/audit/README.md` states these on the folder itself,
+`docs/KICKOFF.md` carries the kickoff to paste — an audit that nothing selects
+automatically is one that needs a written way to start it — and
 `protocol_test.go` enforces the shape of all three directories.
 
 This is a narrow exception with a narrow test: use it only for work that is
