@@ -9,7 +9,7 @@
 >
 > - **Nothing in `prompts/audit/` is queued.** "The lowest-numbered queued
 >   prompt" (`docs/PROTOCOL.md` §0.2) never reaches this folder; a session runs
->   this because the user named it.
+>   this because the user pasted the "Audit" kickoff from `docs/KICKOFF.md`.
 > - **Run it before building on text the proxy may have moved under us** —
 >   typically before starting the next phase after a batch of upstream merges,
 >   and after any stretch where syncs have lagged. An audit that runs after the

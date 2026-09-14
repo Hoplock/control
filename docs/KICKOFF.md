@@ -2,9 +2,12 @@
 
 Copy one of the prompts below into a **fresh** Claude Code session (the repo is
 cloned fresh per session). The prompts in `prompts/queued/` are self-contained;
-`docs/PROTOCOL.md` tells the session how to pick up and deliver the work. The
-last prompt is not a phase at all: it is the **downstream sync** a merged
-cross-repo change owes this repository, and `docs/CROSS-REPO-PROTOCOL.md` — not
+`docs/PROTOCOL.md` tells the session how to pick up and deliver the work.
+
+The last two are not phases. An **audit** (`prompts/audit/`) is re-run against
+the whole repository rather than built once, so it is never "next" in the queue
+and only ever starts because somebody pastes its kickoff. A **downstream sync**
+has no prompt file at all, and `docs/CROSS-REPO-PROTOCOL.md` — not
 `docs/PROTOCOL.md` — is what governs it.
 
 ## Default: implement the next queued prompt
@@ -20,6 +23,56 @@ in prompts/queued/. Do not start any other prompt in this session.
 Read docs/PROTOCOL.md and follow it. Implement prompts/queued/<NNNN-name>.md.
 Do not start any other prompt in this session.
 ```
+
+## Audit (not queued, and re-run)
+
+An **audit** lives in `prompts/audit/`, carries no number, and is run against
+whatever has been built so far — repeatedly (`docs/PROTOCOL.md` §6). Nothing
+selects it automatically: `prompts/queued/` is the build order and the default
+kickoff above takes the lowest-numbered prompt from it, so an audit runs when
+**you** paste this and not otherwise. That is the trade for keeping it out of
+the sequence, and it is why this section exists.
+
+There is one audit today: `prompts/audit/cross-repo-impact.md`, which checks
+what `hoplock/proxy` has made true that this repository has not caught up with.
+Run it **before** starting a phase that will build on text the proxy may have
+moved underneath us — after a batch of upstream merges, or after any stretch
+where syncs have lagged. Findings that arrive after the phase is built are a
+list of things already built wrong.
+
+```
+Read docs/PROTOCOL.md and follow it, then run the audit in
+prompts/audit/<name>.md. Do not implement any queued prompt in this session.
+
+This audit needs the Hoplock Proxy repository reachable through the GitHub
+API, not only as a clone: the PR descriptions are half the evidence and a
+clone does not carry them. Attach it read-only if it is not already in scope.
+If you cannot reach the API half, do the half you can and say plainly which
+half is missing — do not reconstruct PR descriptions from commit titles.
+
+An audit changes text, not behaviour: it implements and enforces nothing,
+hand-edits no vendored artifact, and renames or renumbers no prompt. Land each
+finding in the prompt that will implement it, not only in the plan. A finding
+that is a whole phase rather than a paragraph may be appended to the queue as
+a new numbered prompt — say so plainly — but never built here. If the work
+seems to need something the upstream repository does not have, that is
+docs/CROSS-REPO-PROTOCOL.md §3.2 — stop and tell me rather than approximating
+it.
+
+Leave the audit prompt where it is — it is re-run, not completed — and record
+this run at the top of its one learnings file, with the as-of markers.
+
+Work on the branch this session was given, whatever it is named — if the name
+is yours to choose, claude/audit-<short-description>. Open one PR whose body
+carries the findings table and says how you searched — the actual commands,
+not "I looked carefully".
+```
+
+Fill in `<name>` and leave the rest alone: each paragraph is a Definition-of-Done
+item from the audit prompt itself, and the two most droppable — the API access
+and "leave the prompt where it is" — are the two that quietly turn an audit into
+a worse version of itself. Dropped, you get an audit that read only what a clone
+carries, and one that files itself away so the next run never happens.
 
 ## Downstream sync (no prompt, no number)
 
@@ -87,6 +140,9 @@ upstream change.
   off `main`, so it only sees **merged** work — kick off the next prompt after
   the previous PR merges. Only run prompts in parallel when they genuinely don't
   depend on each other.
+- **An audit is not a phase either, and is not scheduled.** It has no number and
+  no place in the order, so it runs when you ask for it. Ask after upstream has
+  moved, not after the phase that assumed it hadn't.
 - **A sync is not a phase.** One upstream change means one sync PR per affected
   repository, each in its own fresh session against that repository. Never sync
   from a session that is implementing a prompt — the two are separately

@@ -13,7 +13,12 @@ protect, or a renumbering of every live phase to put it first.
 Files are named `short-description.md` — no `NNNN` prefix, because there is no
 position in the order to encode.
 
-Three rules, all enforced by `protocol_test.go`:
+**To run one, paste the "Audit" kickoff from `docs/KICKOFF.md`.** Nothing here
+starts on its own, which is the price of staying out of the sequence; the
+kickoff is what keeps that price to one paste.
+
+Three rules. `protocol_test.go` enforces the naming above and the first of
+these; the other two are yours to keep:
 
 - **An audit is never moved.** It is re-run, not completed, so it does not go to
   `prompts/implemented/` when a session finishes with it, and it is not copied
