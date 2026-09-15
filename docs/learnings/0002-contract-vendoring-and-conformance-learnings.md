@@ -9,6 +9,11 @@
 - **Vendored:** `hoplock/proxy@37359c5`, `api/control.yaml`. `info.version`
   **4.0.0**, `policy_version` **4** — two independent numbers; the drift check
   keys off the SHA-256 in `contract/UPSTREAM` and reads nothing inside the file.
+  **This is now one revision behind upstream:** `Hoplock/proxy#56` (merged,
+  `7c2a356`) took the document to **4.1.0** — `policy_version` unmoved at `4` —
+  and **phase 0009 re-vendors** at that commit. Nothing breaks meanwhile: CI
+  pins `cmd/mock-control` to the commit in `contract/UPSTREAM`, so the suite
+  grades this repository against the document it actually holds.
 - **Types are HAND-WRITTEN** (open `params`/`device_field.` namespaces, a
   `oneOf`, and a prose-only absent-value discipline all defeat a generator —
   Details). To change one: edit `internal/contract/types.go`, then
@@ -28,9 +33,13 @@
   `cmd/pdpconform/README.md`. **0017 needs a new expectation file and no Go.**
 - **Migrations added:** none. **Decisions:** none added/amended/withdrawn, so the
   §2 register is unchanged; PLAN §3 revised (contract types are hand-written).
-- **Contract ambiguities (findings):** the heartbeat interval is required but has
-  no field on the wire, and nothing in the contract publishes an event or reads a
-  record back — so two PLAN §4 obligations are gradeable only via suite inputs.
+- **Contract ambiguities (findings, both now ANSWERED upstream by
+  `Hoplock/proxy#56`, merged):** the heartbeat interval gained a field —
+  `RevocationEvent.heartbeat_interval_seconds` — and the missing publish/read-back
+  surfaces were confirmed as deliberate, since neither operation is proxy-facing.
+  The contract is still vendored at the older commit, so **phase 0009 re-vendors
+  and lands both consequences**; until then the suite grades the heartbeat bound
+  from its expectation file. Details below.
 - **Cross-repo:** none owed. This PR consumes `api/control.yaml` and leaves
   `ext/` untouched.
 - **NEXT session:** `contract/` is generated output — editing it fails CI by
@@ -167,24 +176,59 @@ now also requires at least one grant before the `409`.
 the last grant must raise the cursor, and a floor *below* it must not pull the
 cursor down — a lowered floor is uid reuse.
 
-### Contract ambiguities (cross-repo findings)
+### Contract ambiguities (cross-repo findings) — both answered upstream
 
-Neither is resolved here; both are recorded in `cmd/pdpconform/README.md` too.
+Raised here rather than resolved unilaterally (PROTOCOL §3, M1) and recorded in
+`cmd/pdpconform/README.md` too. **Upstream `Hoplock/proxy#56` (merged, `7c2a356`)
+answered both**, in opposite directions: the first became a field, the second
+became a stated boundary. This section records the answers; the work of adopting
+them is phase 0009's, because the contract here is still vendored at an older
+commit and a sync vendors nothing (`docs/CROSS-REPO-PROTOCOL.md` §3.1).
 
-1. **The heartbeat interval has no field.** `GET /v1/proxies/{id}/events` says
-   the server MUST emit heartbeats "at a steady interval (comfortably inside the
-   proxy's timeout, which defaults to 20s)", and PLAN §4 asks the suite to grade
-   that they "arrive within the interval the server advertises" — but nothing on
-   the stream advertises one. The suite takes it as an expectation-file input
-   (`events.heartbeat_interval_seconds`). If upstream wants this gradeable from
-   the wire, the shape would be a field on the first event or a response header.
-2. **Nothing in the contract publishes an event or reads a record back.** The
-   priority ack means *durable*, and gap recovery needs an event to arrive while
-   the subscriber is away; both are only gradeable against a surface outside the
-   contract. The suite takes `logs.read_url` and `events.publish_url` as inputs
-   and asserts nothing about their shape. This is probably correct — neither is
-   a proxy-facing operation — but it means two of PLAN §4's six obligations
-   cannot be graded against a server that serves only the contract.
+1. **The heartbeat interval had no field — it has one now.**
+   `RevocationEvent.heartbeat_interval_seconds` names the interval the server is
+   **currently keeping**: normally on `heartbeat` events, legal on any event, and
+   a later event carrying a different value re-states the interval rather than
+   contradicting an earlier claim. Three rules travel with it and matter more
+   than the field does — **absent means what every server did before it existed**
+   (the reader stays on its own timers, the same absent-value discipline as
+   `HostKeyReportResponse.cache`); **it may only ever tighten detection, never
+   loosen it** (sooner always, later never — the `cache.ttl_seconds` and
+   `report_after_seconds` rule, because otherwise a hostile server silences
+   itself by announcing that it intends to); and **the ceiling stands and the
+   field does not replace it**, at 10 seconds or less
+   (`control.MaxHeartbeatIntervalSeconds`), so two consecutive intervals fit
+   inside the proxy's 20s reconnect timeout.
+
+   So PLAN §4's "arrive within the interval the server advertises" is gradeable
+   from the wire, and it is **two** assertions: the server keeps the interval it
+   advertises, *and* that interval is inside the ceiling. A server advertising
+   600s and honestly keeping to it passes the first and breaks the fleet.
+   `events.heartbeat_interval_seconds` survives as the fallback for a server that
+   advertises nothing, which is still a conformant server.
+
+   The document version moved `4.0.0` → `4.1.0` for this while `policy_version`
+   stood still at `4` — the field is on the event stream, not on `/v1/authorize`,
+   and only the latter is governed by the number. It is a second worked example
+   of the independence 0018 audits.
+
+2. **Nothing publishes an event or reads a record back — and that is the answer.**
+   The suspicion recorded here ("this is probably correct — neither is a
+   proxy-facing operation") was right, and upstream now says so outright. A proxy
+   writes audit records and never queries them, and an event originates from an
+   operator action on a surface `/v1` does not describe; an endpoint for either
+   would oblige every Hoplock Control to implement an API no proxy calls. An
+   implementation that wants the durability and gap-recovery guarantees **graded**
+   therefore exposes paths of its own **outside `/v1`**, and a harness takes them
+   as inputs — which is exactly what `logs.read_url` and `events.publish_url`
+   already are. `cmd/mock-control`'s `GET /debug/logs` and `POST /debug/revoke`
+   are the reference shapes and stay mock-only.
+
+   Two of PLAN §4's six obligations still cannot be graded against a server that
+   serves only the contract. The difference is that this is now a documented
+   boundary with a reason rather than something the contract forgot — so the
+   obligation to expose those paths is **this repository's**, and it lands in the
+   phases that own them: 0009 for the publish path, 0010 for the read path.
 
 ### Running it, and what CI does
 

@@ -168,8 +168,12 @@ document is what is true now. Check this repository's prompts against the
   They move independently and this repository states both in several places
   (§4, 0002, 0018). Are they current, and is each stated where the phase that
   owns it can see it? Note that `info.version` does **not** only ever rise —
-  `#53` moved it `4.3.0` → `4.0.0` — so a check that assumes monotonicity is
-  itself a finding.
+  `#53` moved it `4.3.0` → `4.0.0` and `#56` then moved it to `4.1.0` — so a
+  check that assumes monotonicity is itself a finding. Note too that the
+  vendored copy may sit legitimately **behind** upstream: a sync vendors nothing
+  (§3.1), so it records the obligation and the phase that owns it runs
+  `make contract-sync`. A gap between `contract/UPSTREAM` and upstream `main` is
+  a finding only when no prompt names the re-vendor.
 - **`policy_version` is required and has no absent-value default.** Does this
   repository's text say so everywhere it describes the field, and does it keep
   the mechanism? Removing superseded *vocabularies* is not removing

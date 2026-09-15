@@ -242,13 +242,19 @@ type EventExpectations struct {
 	// ProxyID if the server scopes streams narrowly.
 	ProxyID string `yaml:"proxy_id"`
 	// HeartbeatIntervalSeconds is the interval the server advertises, and the
-	// ceiling the suite holds it to. The contract carries no field for it (see
-	// cmd/pdpconform/README.md), so it is an input: a proxy's staleness
-	// detection defaults to 20s, which is the outer bound of a sane value.
+	// ceiling the suite holds it to. It is an input here because the contract
+	// carried no field for it when this suite was written; upstream
+	// Hoplock/proxy#56 has since added
+	// RevocationEvent.heartbeat_interval_seconds, so the interval is a claim the
+	// server makes on the stream and this key becomes the fallback for a server
+	// that advertises nothing — which stays a conformant server. Reading the
+	// claim off the stream lands with phase 0009, which re-vendors the contract;
+	// see cmd/pdpconform/README.md.
 	HeartbeatIntervalSeconds int `yaml:"heartbeat_interval_seconds"`
-	// PublishURL is how the suite makes the server emit an event. There is no
-	// contract endpoint for this either — publishing is an operator action, and
-	// which surface offers it is the implementation's business.
+	// PublishURL is how the suite makes the server emit an event. The contract
+	// deliberately defines no endpoint for this — publishing is an operator
+	// action, not a proxy-facing one — so the implementation supplies the path
+	// and the suite asserts nothing about its shape.
 	PublishURL  string `yaml:"publish_url"`
 	PublishBody string `yaml:"publish_body"`
 }
