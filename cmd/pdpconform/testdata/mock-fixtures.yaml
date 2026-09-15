@@ -1,0 +1,350 @@
+# Fixtures for Hoplock Proxy's cmd/mock-control, shaped for this suite.
+#
+# The mock implements the contract already, which is what makes it the honest
+# thing to grade the suite against: a suite only ever run against the
+# implementation it was written beside tests agreement with itself (PLAN M1).
+# This file configures it to serve the routes cmd/pdpconform/testdata/
+# mock-expectations.yaml names, and nothing here is a statement about what THIS
+# server will serve — phase 0017 points the suite at that with its own
+# expectation file.
+#
+# The fixture format is documented in the Hoplock Proxy repository's
+# api/README.md. Everything below is test data. Never put a real secret in one.
+
+proxy_token: "pdpconform-dev-token"
+
+users:
+  # Certificate + password, with an MFA challenge that approves after one
+  # pending poll — which is what makes the mfa_required -> pending ->
+  # authenticated sequence deterministic rather than timing-dependent.
+  - login: alice
+    identity:
+      subject: alice@example.com
+      display_name: Alice Example
+      source: fixture
+      principals: [alice]
+      groups: [engineering]
+    key_fingerprints:
+      - "SHA256:AAAA1111alice1111AAAA1111alice1111AAAA111111"
+    password: "alice-dev-password"
+    mfa:
+      required: true
+      decision: approve
+      pending_polls: 1
+      poll_after_ms: 10
+      ttl_ms: 60000
+      prompt: "Approve the sign-in request."
+
+  # The MFA deny path.
+  - login: mallory
+    identity:
+      subject: mallory@example.com
+      source: fixture
+    password: "mallory-dev-password"
+    mfa:
+      required: true
+      decision: deny
+      pending_polls: 0
+
+  # A challenge that is never answered and expires: pending_polls is far more
+  # than the suite will spend, and ttl_ms is short enough to wait out.
+  - login: forgetful
+    identity:
+      subject: forgetful@example.com
+      source: fixture
+    password: "forgetful-dev-password"
+    mfa:
+      required: true
+      decision: approve
+      pending_polls: 10000
+      poll_after_ms: 10
+      ttl_ms: 1000
+
+  # Password with no second factor: the flow completes on the password alone.
+  - login: bob
+    identity:
+      subject: bob@example.com
+      source: fixture
+    password: "bob-dev-password"
+
+  # The service account every appliance and device route belongs to.
+  - login: svc-deploy
+    identity:
+      subject: svc-deploy@example.com
+      source: fixture
+      groups: [deployers]
+    key_fingerprints:
+      - "SHA256:BBBB2222svc2222BBBB2222svc2222BBBB22222222"
+
+proxies:
+  - id: proxy-1
+    key_fingerprints:
+      - "SHA256:CCCC3333proxy1CCCC3333proxy1CCCC3333proxy1"
+  - id: proxy-2
+    key_fingerprints:
+      - "SHA256:DDDD4444proxy2DDDD4444proxy2DDDD4444proxy2"
+
+routes:
+  # THE DEFAULT HALF of every absent-value-default pair: a route that names
+  # none of the v4 policy fields, so the suite can assert they are absent AND
+  # that absence resolves to the documented default.
+  - login: alice
+    target: host.company.com
+    route_type: direct
+    target_port: 22
+    permissions: readOnlyGroup
+    permitted_channels: [session]
+    permitted_requests:
+      types: [pty-req, shell, exec]
+    target_auth_ladder:
+      - method: ephemeral-user
+        params:
+          username: alice
+          key_type: ed25519
+          lifetime_seconds: "900"
+    filter_policy:
+      mode: blacklist
+      rules:
+        - match: "rm -rf /"
+          action: kill_session
+          message: "Destructive command."
+    cache:
+      ttl_seconds: 60
+
+  # The chain: the same login and target answered differently for the two
+  # proxies. The suite asks as proxy-1 and expects the nexthop half.
+  - login: alice
+    target: deep.internal.company.com
+    proxy_id: proxy-1
+    route_type: nexthop
+    next_hop: proxy-2.company.com
+    max_hops: 3
+    hop_connection: relay
+    next_proxy_id: proxy-2
+    permissions: readOnlyGroup
+    permitted_channels: [session]
+    filter_policy:
+      mode: blacklist
+
+  - login: alice
+    target: deep.internal.company.com
+    proxy_id: proxy-2
+    route_type: direct
+    permissions: readOnlyGroup
+    permitted_channels: [session]
+    filter_policy:
+      mode: blacklist
+
+  # THE RICHEST ROUTE, and the "set" half of the session_deadline and
+  # require_session_capture pairs. The more vocabulary it carries, the more a
+  # thinned low-version answer has to drop to be caught.
+  - login: alice
+    target: scan-target-01.company.com
+    route_type: direct
+    permissions: scannerGrant
+    permitted_channels: [session]
+    permitted_requests:
+      types: [pty-req, shell, exec]
+    permitted_global_requests:
+      types: []
+    target_auth_ladder:
+      - method: ephemeral-user
+        params:
+          username: svc-scan
+          key_type: ed25519
+          lifetime_seconds: "3600"
+    session_deadline_seconds: 3600
+    require_session_capture: true
+    grant_context:
+      system: qualys
+      reference: SCAN-2026-09-04-1183
+      window_start: "2026-09-04T09:00:00Z"
+      window_end: "2026-09-04T17:00:00Z"
+      additional_context_fields:
+        scan_profile: authenticated-linux
+    concurrency:
+      max_sessions_per_target: 1
+    filter_policy:
+      mode: blacklist
+
+  # The "set" half of the concurrency pair, and a route with no deadline and no
+  # capture requirement — so the pairs differ on one axis at a time.
+  - login: alice
+    target: automation-01.company.com
+    route_type: direct
+    permissions: automationGroup
+    permitted_channels: [session]
+    permitted_requests:
+      types: [exec]
+    target_auth_ladder:
+      - method: ephemeral-user
+        params:
+          username: svc-automation
+          key_type: ed25519
+          lifetime_seconds: "300"
+    concurrency:
+      max_sessions_per_subject: 4
+      max_sessions_per_target: 10
+    filter_policy:
+      mode: whitelist
+      rules:
+        - match: "deploy status"
+          action: allow_and_log
+
+  # The "set" half of the enforcement pair, and the route the vocabulary
+  # negotiation cases run against: both axes rendered onto the account the
+  # proxy creates.
+  - login: alice
+    target: build-01.company.com
+    route_type: direct
+    permissions: buildGroup
+    permitted_channels: [session]
+    permitted_requests:
+      types: [exec]
+    target_auth_ladder:
+      - method: ephemeral-user
+        params:
+          username: svc-build
+          key_type: ed25519
+          lifetime_seconds: "900"
+    enforcement:
+      execution: account-restricted
+      reach: account-egress-restricted
+      permitted_destinations:
+        - host: artifacts.company.com
+          port: 443
+        - host: 10.9.0.0/16
+          port_range:
+            from: 8080
+            to: 8090
+    filter_policy:
+      mode: whitelist
+      exec_mode: restricted
+      restricted_exec:
+        commands:
+          - executable: /usr/bin/make
+            form: positional
+            args:
+              - kind: oneof
+                values: [build, test]
+          - executable: /bin/uptime
+            form: exact
+            argv: []
+
+  # The BROKERED-KEY route. params.username is required on every method the
+  # contract defines, and this is where that tightening is graded — a fixture
+  # asserting a brokered-key shape without one would encode a contract nobody
+  # serves.
+  - login: svc-deploy
+    target: edge-fw-01.company.com
+    route_type: direct
+    permissions: applianceReadOnly
+    permitted_channels: [session]
+    permitted_requests:
+      types: [exec]
+    target_auth_ladder:
+      - method: brokered-key
+        params:
+          username: monitor
+          credential_ref: edge-fleet-2026
+    enforcement:
+      execution: platform-attested
+      reach: platform-attested
+      attestation:
+        asserted_by: network-engineering
+        reference: "NET-BASELINE-7.2 §4"
+        asserted_at: "2026-07-01T00:00:00Z"
+    filter_policy:
+      mode: whitelist
+      exec_mode: restricted
+      restricted_exec:
+        commands:
+          - executable: show
+            form: exact
+            argv: [version]
+
+  # WITH device fields: an ephemeral-account rung carrying the open
+  # device_field.<name> namespace.
+  - login: svc-deploy
+    target: core-fw-01.company.com
+    route_type: direct
+    permissions: applianceAdmin
+    permitted_channels: [session]
+    permitted_requests:
+      types: [exec]
+    algorithm_profile: legacy-device
+    target_auth_ladder:
+      - method: ephemeral-account
+        params:
+          username: hoplock
+          platform: fortios
+          credential_kind: publickey
+          expiry_posture: target-enforced
+          lifetime_seconds: "900"
+          device_field.vdom: customer-a
+    enforcement:
+      execution: platform-authorized
+      platform_role: prof_admin
+    filter_policy:
+      mode: whitelist
+      rules:
+        - match: "get system status"
+          action: allow_and_log
+
+  # WITHOUT device fields, and otherwise comparable: the baseline the suite
+  # finds the lowest served policy_version from. The assertion is that the
+  # route above is served at the same version — the namespace is open, so a
+  # name inside it is not a new policy field and demands no bump.
+  - login: svc-deploy
+    target: crown-fw-01.company.com
+    route_type: direct
+    permissions: applianceAdmin
+    permitted_channels: [session]
+    permitted_requests:
+      types: [exec]
+    algorithm_profile: legacy-device
+    target_auth_ladder:
+      - method: ephemeral-account
+        params:
+          username: hoplock
+          platform: fortios
+          credential_kind: publickey
+          expiry_posture: target-enforced
+          lifetime_seconds: "900"
+    enforcement:
+      execution: platform-authorized
+      platform_role: prof_admin
+    filter_policy:
+      mode: whitelist
+      rules:
+        - match: "get system status"
+          action: allow_and_log
+
+  # Nothing else is matched, so every other target is a 401 — which is what the
+  # deny case asks for. There is no catch-all here on purpose.
+
+events:
+  # Fast enough to grade two heartbeats without stretching the run, and far
+  # inside the 20s a proxy's staleness detection defaults to.
+  heartbeat_ms: 1000
+  replay_buffer: 128
+
+host_keys:
+  decision: accept
+  known:
+    - target: host.company.com
+      fingerprint: "SHA256:CCCC3333hostkey3333CCCC3333hostkey3333CCCC"
+  cache:
+    ttl_seconds: 300
+
+uid_leases:
+  uid_count: 4096
+  # A term short enough for the suite to wait out. It is NOT what makes the
+  # uids non-reusable — the monotonic cursor is — which is exactly the
+  # confusion the "expired block" case exists to catch.
+  term_seconds: 1
+  # 0 on either bound takes it from the proxy's own request, which is what lets
+  # the suite drive a narrow range at the exhaustion target and a wide one
+  # everywhere else.
+  range_min: 0
+  range_max: 0

@@ -18,6 +18,17 @@ LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DA
 # Config used by `make run`. Never committed; copy config.example.yaml.
 CONFIG ?= config.yaml
 
+# `make contract-sync` takes the ref to vendor, so a session can pin one.
+REF ?= main
+
+# `make conform` inputs. BASE_URL is the server under test; EXPECT is the
+# expectation file describing what that server is configured to serve
+# (cmd/pdpconform/README.md). TOKEN is the proxy bearer token.
+BASE_URL ?= http://127.0.0.1:8080
+TOKEN    ?=
+EXPECT   ?= cmd/pdpconform/testdata/mock-expectations.yaml
+CONFORM_FLAGS ?=
+
 GO             ?= go
 GOLANGCI_LINT  ?= golangci-lint
 
@@ -65,26 +76,23 @@ run:
 ## check: everything CI runs on a pull request, in CI's order.
 check: build vet test lint license-check
 
-# --- Placeholders ------------------------------------------------------------
-# These targets exist so that the Definition-of-Done checklist in
-# docs/PROTOCOL.md can name them before they do anything. A target that is
-# missing and a target that fails read very differently in a checklist: the
-# first looks like a typo, the second says "not yet".
+# --- The vendored contract (M1) and the conformance suite -------------------
 
-## contract-check: verify the vendored contract is unmodified (phase 0002).
+## contract-check: verify the vendored contract is unmodified (PLAN M1).
 contract-check:
-	@echo "contract-check: implemented in phase 0002" >&2
-	@exit 1
+	./scripts/contract-check.sh
 
-## contract-sync: pull the contract from the Hoplock Proxy repository (phase 0002).
+## contract-sync: pull the contract from the Hoplock Proxy repository. REF=<ref>
 contract-sync:
-	@echo "contract-sync: implemented in phase 0002" >&2
-	@exit 1
+	REF=$(REF) ./scripts/contract-sync.sh
 
-## conform: run the black-box contract conformance suite (phase 0002).
+## conform: run the black-box conformance suite. BASE_URL=, TOKEN=, EXPECT=
 conform:
-	@echo "conform: implemented in phase 0002" >&2
-	@exit 1
+	$(GO) run ./cmd/pdpconform \
+	    -base-url '$(BASE_URL)' \
+	    -token '$(TOKEN)' \
+	    -expectations '$(EXPECT)' \
+	    $(CONFORM_FLAGS)
 
 ## help: list the targets.
 help:

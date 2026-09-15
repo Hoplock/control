@@ -93,3 +93,77 @@ jobs:
 
       - name: Check per-file SPDX headers
         run: make license-check
+
+  contract:
+    name: vendored contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Its own job, so the failure names itself. A local edit of
+      # contract/control.yaml produces two green test suites and one broken
+      # product (PLAN M1); this is the discovery point, and it reads very
+      # differently as a job than as a line in the middle of a build log.
+      - name: Check the vendored contract against contract/UPSTREAM
+        run: make contract-check
+
+  conform:
+    name: conformance suite vs the proxy mock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The suite is run against an implementation it was NOT written beside.
+      # That is the whole point of running it here: a suite only ever pointed at
+      # the server it grew up with tests agreement with itself (PLAN M1). The
+      # mock already implements the contract, so a disagreement is a real
+      # finding on one side or the other, and the PR says which.
+      - name: Resolve the commit the contract was vendored from
+        id: upstream
+        run: |
+          commit="$(sed -n -E 's/^commit=(.*)$/\1/p' contract/UPSTREAM)"
+          test -n "$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "grading against hoplock/proxy@$commit"
+
+      # Pinned to that commit rather than to a branch: grading the suite against
+      # a mock built from a different revision of the contract would make an
+      # upstream change look like a conformance failure here.
+      - name: Check out the Hoplock Proxy repository (for cmd/mock-control)
+        uses: actions/checkout@v4
+        with:
+          repository: hoplock/proxy
+          ref: ${{ steps.upstream.outputs.commit }}
+          path: .proxy
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Build and start the mock control server
+        run: |
+          go -C .proxy build -o "$GITHUB_WORKSPACE/mock-control" ./cmd/mock-control
+          ./mock-control -listen 127.0.0.1:8080 \
+            -fixtures cmd/pdpconform/testdata/mock-fixtures.yaml &
+          up=0
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8080/debug/logs; then
+              up=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [ "$up" -ne 1 ]; then
+            echo "mock-control did not come up" >&2
+            exit 1
+          fi
+
+      # -v prints the details of PASSING assertions too, so a reader of the log
+      # can see a case graded something rather than passing vacuously.
+      - name: Run the conformance suite
+        run: |
+          make conform \
+            BASE_URL=http://127.0.0.1:8080 \
+            TOKEN=pdpconform-dev-token \
+            EXPECT=cmd/pdpconform/testdata/mock-expectations.yaml \
+            CONFORM_FLAGS=-v
