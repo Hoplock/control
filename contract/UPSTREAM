@@ -1,0 +1,17 @@
+# The provenance of everything in this directory.
+#
+# contract/ is VENDORED from the Hoplock Proxy repository and is generated, not
+# authored (PLAN M1). This file records exactly what was taken and from where,
+# and `make contract-check` recomputes the checksum below and fails if the
+# vendored copy has drifted from it. See contract/README.md.
+#
+# Rewritten by `make contract-sync REF=<ref>`; do not edit it by hand.
+
+repository=https://github.com/hoplock/proxy
+path=api/control.yaml
+ref=main
+commit=37359c54a6256136935fc48670d345d5fadfc6ac
+commit_date=2026-09-14T21:15:10+01:00
+synced_at=2026-09-15
+file=control.yaml
+sha256=a362cbd3df06d12b3163e9fc49a2883c2b74e98a1daff37f72a64f529408bfbd

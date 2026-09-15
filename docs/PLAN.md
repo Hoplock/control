@@ -710,7 +710,7 @@ control/
 │   └── policyctl/          # CLI: validate, simulate, explain, apply a bundle
 ├── internal/
 │   ├── config/             # YAML config loader
-│   ├── contract/           # generated Go types + handlers for the vendored contract
+│   ├── contract/           # hand-written Go types + handler interfaces for the vendored contract
 │   ├── store/              # Postgres repositories + migrations
 │   ├── policy/
 │   │   ├── model/          # the policy bundle: parse, validate, version
@@ -742,7 +742,16 @@ control/
 
 - **`internal/contract`** — the only package that knows the wire shapes of the
   south-bound API. Everything else speaks domain types, so a contract revision
-  in the Hoplock Proxy repository lands in one package here.
+  in the Hoplock Proxy repository lands in one package here. The types are
+  **hand-written and tested against the vendored document** rather than
+  generated from it: the contract's two open namespaces (`TargetAuth.params`
+  and the `device_field.` names inside it) and its one `oneOf`
+  (`grant_context.additional_context`, a string or an object and nothing else)
+  are shapes a generator renders as `map[string]any`, which would put the
+  absent-value discipline back in every caller's hands. What a generator would
+  have caught — an enum drifting, a field renamed, a path removed — is caught
+  instead by a test that reads `contract/control.yaml` and compares it with the
+  constants, in both directions.
 - **`internal/policy`** — pure. Parse → validate → compile → evaluate, no HTTP,
   no database, no clock of its own (time is an input). This is the package that
   must be exhaustively tested, because it is where the product's promises are

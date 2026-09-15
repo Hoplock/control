@@ -1,0 +1,144 @@
+# Expectations for Hoplock Proxy's cmd/mock-control, configured by
+# cmd/pdpconform/testdata/mock-fixtures.yaml.
+#
+# Everything the suite knows about a server lives in a file like this one. Phase
+# 0017 points the suite at the real server by writing its own, with no change to
+# any Go file — see cmd/pdpconform/README.md for what each key means.
+
+proxy_id: proxy-1
+second_proxy_id: proxy-2
+
+auth:
+  cert_accept:
+    login: alice
+    target: host.company.com
+    expect_subject: alice@example.com
+    key:
+      type: ssh-ed25519
+      fingerprint: "SHA256:AAAA1111alice1111AAAA1111alice1111AAAA111111"
+  cert_deny:
+    login: alice
+    key:
+      type: ssh-ed25519
+      fingerprint: "SHA256:ZZZZ9999nobodyhasthiskey9999ZZZZ9999nobody9"
+  password_no_mfa:
+    login: bob
+    password: "bob-dev-password"
+  password_mfa_approve:
+    login: alice
+    password: "alice-dev-password"
+    max_polls: 20
+  password_mfa_deny:
+    login: mallory
+    password: "mallory-dev-password"
+    max_polls: 20
+  password_mfa_expiry:
+    login: forgetful
+    password: "forgetful-dev-password"
+    wait_seconds: 2
+  unknown_challenge_token: "pdpconform-never-issued-this-token"
+
+authorize:
+  direct:
+    login: alice
+    subject: alice@example.com
+    target: host.company.com
+  nexthop:
+    login: alice
+    subject: alice@example.com
+    target: deep.internal.company.com
+    proxy_id: proxy-1
+  deny:
+    login: alice
+    subject: alice@example.com
+    target: nobody-may-reach-this.company.com
+  full:
+    login: alice
+    subject: alice@example.com
+    target: scan-target-01.company.com
+  ladder:
+    login: svc-deploy
+    subject: svc-deploy@example.com
+    target: edge-fw-01.company.com
+
+  defaults:
+    enforcement:
+      default: { login: alice, subject: alice@example.com, target: host.company.com }
+      set:     { login: alice, subject: alice@example.com, target: build-01.company.com }
+    session_deadline:
+      default: { login: alice, subject: alice@example.com, target: host.company.com }
+      set:     { login: alice, subject: alice@example.com, target: scan-target-01.company.com }
+    require_session_capture:
+      default: { login: alice, subject: alice@example.com, target: host.company.com }
+      set:     { login: alice, subject: alice@example.com, target: scan-target-01.company.com }
+    concurrency:
+      default: { login: alice, subject: alice@example.com, target: host.company.com }
+      set:     { login: alice, subject: alice@example.com, target: automation-01.company.com }
+
+  negotiation:
+    login: alice
+    subject: alice@example.com
+    target: build-01.company.com
+
+  device_fields:
+    with_fields:
+      login: svc-deploy
+      subject: svc-deploy@example.com
+      target: core-fw-01.company.com
+    without_fields:
+      login: svc-deploy
+      subject: svc-deploy@example.com
+      target: crown-fw-01.company.com
+
+hostkeys:
+  first_sighting:
+    target: fresh-host.company.com
+  known:
+    target: host.company.com
+    fingerprint: "SHA256:CCCC3333hostkey3333CCCC3333hostkey3333CCCC"
+
+capabilities:
+  target: host.company.com
+  # The mock states no re-observation interval, and absent or 0 leaves it to the
+  # proxy. -1 means "do not assert a value", which is not the same as asserting
+  # it is absent — see cmd/pdpconform/README.md.
+  expect_report_after_seconds: -1
+
+uids:
+  # Three separate targets, because the cursor only ever advances and these
+  # cases deliberately drive it in different directions.
+  target: uid-nonoverlap.company.com
+  range_min: 2000000
+  range_max: 2099999
+  uid_count: 4096
+  abandoned_leases: 2
+  expiry_wait_seconds: 2
+  floor:
+    target: uid-floor.company.com
+    range_min: 2500000
+    range_max: 2599999
+  exhaustion:
+    # Three blocks wide at the mock's configured block size, so the cursor
+    # reaches the top of the range quickly and the 409 is graded rather than
+    # timed out.
+    target: uid-exhaust.company.com
+    range_min: 3000000
+    range_max: 3012287
+
+logs:
+  # The mock's read path. There is no contract endpoint for reading a record
+  # back — the priority ack means durable, and the only black-box way to grade
+  # that is to ask the server for it straight afterwards.
+  read_url: "http://127.0.0.1:8080/debug/logs"
+  batch_size: 3
+
+events:
+  proxy_id: proxy-1
+  # The ceiling the suite holds the server to. The mock is configured for a
+  # heartbeat every second; a proxy's staleness detection defaults to 20s, which
+  # is the outer bound of a sane value.
+  heartbeat_interval_seconds: 5
+  # There is no contract endpoint for publishing either: it is an operator
+  # action, and which surface offers it is the implementation's business.
+  publish_url: "http://127.0.0.1:8080/debug/revoke"
+  publish_body: '{"type":"cache_invalidate","cache_invalidate":{"all":true}}'
