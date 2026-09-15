@@ -78,10 +78,12 @@ this phase installs is **loud** rather than lenient.
   loudly and a human decides what to do — which is the point at which supporting
   a second version would become a deliberate decision rather than an accident.
 - Note that these are two different numbers and both are single-valued here: the
-  document version (`4.0.0` as vendored) and the negotiated vocabulary
-  (`policy_version`, `4`) move independently upstream, and this phase does not
-  couple them. Read each out of `contract/control.yaml` rather than from this
-  line, which is only as current as the last sync.
+  document version and the negotiated vocabulary (`policy_version`, `4`) move
+  independently upstream, and this phase does not couple them. Read each out of
+  `contract/control.yaml` rather than from this line, which is only as current as
+  the last sync — and it is **already behind**: the copy on disk says `4.0.0`,
+  upstream `Hoplock/proxy#56` (merged) moved it to `4.1.0`, and phase 0009
+  re-vendors. Expect `4.1.0` by the time this phase runs, and read the file.
 
   The contract's "Versioning" section is where the independence is stated:
   `policy_version` **governs `/v1/authorize` and nothing else**, that being the
@@ -90,7 +92,11 @@ this phase installs is **loud** rather than lenient.
   auditing:
 
   - **a field on another endpoint** — `HostKeyReportResponse.cache` is the
-    document's own worked example;
+    document's own worked example, and `Hoplock/proxy#56` is the live one: it
+    added `RevocationEvent.heartbeat_interval_seconds` to the event stream and
+    moved the document `4.0.0` → `4.1.0` while `policy_version` stood still at
+    `4`, precisely because the number governs `/v1/authorize` and nothing else.
+    A check that had coupled the two would have failed that sync;
   - **a whole new endpoint** — `POST /v1/uids/lease`, which is outside the
     number entirely because the number gates a vocabulary, not a surface;
   - **a tightening** — making an existing parameter required adds no field and
@@ -104,9 +110,10 @@ this phase installs is **loud** rather than lenient.
   document and never off the number.
 
   And the document version does not only ever rise. `#53` moved it **down**,
-  `4.3.0` → `4.0.0`, while `policy_version` stood still at `4`. A check that
-  couples the two, or that assumes monotonicity, would have failed that sync
-  rather than catching anything.
+  `4.3.0` → `4.0.0`, and `#56` moved it back up to `4.1.0`; `policy_version`
+  stood still at `4` through both. A check that couples the two, or that assumes
+  monotonicity, would have failed each of those syncs rather than catching
+  anything.
 - No other literal version anywhere in the tree — code, fixtures, deployment
   manifests, or seed data. Add a check that keeps it that way and name it in your
   learnings.
@@ -221,10 +228,18 @@ version support back needs the argument, not just the conclusion.
 - The **north-bound API version** and its negotiation (M19, phase 0015). It is a
   separate number with a separate lifecycle and a real installed base; leave it
   alone and say in the learnings that you did.
-- Vendoring a new contract version. That is a downstream sync, not a phase
-  (`docs/CROSS-REPO-PROTOCOL.md` §3.1) — and note that when upstream does bump
-  the version, this phase's single constant plus its failing test is exactly what
-  makes that sync visible instead of silent.
+- Vendoring a new contract version. A downstream **sync** updates the text that
+  says what is now true and **vendors nothing** — "it implements, enforces, and
+  vendors nothing; those are that repository's own numbered phases"
+  (`docs/CROSS-REPO-PROTOCOL.md` §3.1) — so the `make contract-sync` run belongs
+  to the phase that first needs the new shape. For `#56` that is **0009**, where
+  the obligation is written down. This line previously read "that is a downstream
+  sync, not a phase", which is the opposite of what §3.1 says and would have left
+  the re-vendor owned by nobody.
+
+  Note that when upstream bumps the version, this phase's single constant plus
+  its failing test is exactly what makes that vendoring visible instead of
+  silent — which is the point of tying the constant to the document.
 - Any change to how a request declaring the **supported** version is answered.
 - Changing anything upstream. If the audit concludes the contract needs a change,
   that is `docs/CROSS-REPO-PROTOCOL.md` §3.2: stop and tell the user.

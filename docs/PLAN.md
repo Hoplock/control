@@ -807,6 +807,16 @@ Six obligations are easy to miss and are graded by the conformance suite:
 - **The priority ack means durable.** The proxy acts on a critical security
   event knowing this server recorded it. Acking before the write lands turns
   that guarantee into a lie that only shows up after an incident.
+
+  **Nothing on the contract reads a record back, and that is deliberate**
+  (upstream `Hoplock/proxy#56`, merged): a proxy writes logs and never queries
+  them, so an operator read API on `/v1` would be one every Hoplock Control
+  implements and no proxy calls. The same answer covers publishing an event,
+  which gap recovery needs in order to be gradeable at all. Both guarantees are
+  therefore observable only through paths **this server** exposes outside `/v1`,
+  and the conformance suite takes them as inputs — `logs.read_url` (phase 0010)
+  and `events.publish_url` (phase 0009). Neither is a licence to add the
+  endpoint to `/v1`.
 - **Answer within the vocabulary the proxy declared.** Every policy field is
   additive within a vocabulary and carries a documented absent-value default, and
   in exchange the proxy **fails a session closed on an authorize field it does not
@@ -825,7 +835,12 @@ Six obligations are easy to miss and are graded by the conformance suite:
 
   **The current vocabulary is `4`**, exported upstream as
   `control.PolicyVersion`: the two enforcement axes and the session bounds
-  (§5.2). The vendored document is `4.0.0`.
+  (§5.2). The vendored document is `4.0.0`; upstream is at `4.1.0`
+  (`Hoplock/proxy#56`, merged) and phase 0009 re-vendors. That the document moved
+  while the vocabulary did not is the normal case rather than an anomaly — the
+  number governs `/v1/authorize` and nothing else, and `#56` added a field to the
+  event stream. Read both numbers out of `contract/control.yaml`, never from this
+  line (0018).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -860,8 +875,10 @@ Six obligations are easy to miss and are graded by the conformance suite:
 
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
   `policy_version` (0002, 0018). Nor may it assume the document version only
-  rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, while the
-  vocabulary stood still at `4`.
+  rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
+  `Hoplock/proxy#56` then moved it up to `4.1.0` for a field on the event
+  stream — the vocabulary stood still at `4` through both, which is the whole
+  point.
 
   **One live vocabulary, and removing versions is not removing versioning.**
   Upstream `Hoplock/proxy#53` (merged) collapsed the contract: it deleted the
@@ -970,6 +987,27 @@ Six obligations are easy to miss and are graded by the conformance suite:
   stops hearing them reconnects and, past its staleness threshold, stops serving
   cached decisions entirely. A server that stalls its heartbeat writer degrades
   the whole fleet to uncached — correctly, but for the wrong reason.
+
+  **This is two obligations, not one** (upstream `Hoplock/proxy#56`, merged).
+  The stream now carries `RevocationEvent.heartbeat_interval_seconds` — the
+  interval the server says it is keeping **now** — so "within the interval the
+  server advertises" is a claim read off the wire rather than a number typed
+  into a conformance harness. This server must keep the interval it advertises,
+  **and** that interval must be within the ceiling of **10 seconds or less**, so
+  that two consecutive intervals fit inside the proxy's 20s reconnect timeout
+  and one lost heartbeat is not mistaken for a dead stream. Meeting either half
+  alone is a failure: a server advertising 600s and honestly keeping to it
+  passes its own claim and breaks every proxy in the fleet.
+
+  Absent stays legal and means what every server did before the field existed —
+  the reader falls back to its own timers — and the field **advertises rather
+  than configures**: a reader may use it to notice a dead stream *sooner* than
+  its own timeout and must never extend that timeout to accommodate a large
+  advertised interval. Sooner always, later never, the same rule as
+  `cache.ttl_seconds` and `report_after_seconds`; the inverse would let a broken
+  or hostile server silence itself indefinitely by announcing that it intends
+  to, which is §6.4's fail-closed rule turned upside down. Phase 0009 re-vendors
+  the contract and implements both halves.
 - **A chained hop is a caller, and this server is what makes chaining work.**
   Proxy phase 0008 (`Hoplock/proxy#6`, merged) turned multi-hop on, and it added
   no field to the contract: both halves are behaviour this server owes.

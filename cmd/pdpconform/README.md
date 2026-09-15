@@ -159,7 +159,7 @@ label appended.
 
 | Key | Meaning |
 | --- | --- |
-| `read_url` | How the suite reads back what it ingested. **The contract defines no read path**, and the priority ack means *durable*, so the only black-box way to grade that is to ask the server for the record straight after the ack. The assertion is that the record id appears in the response body, so any read path that names the record satisfies it. |
+| `read_url` | How the suite reads back what it ingested. **The contract deliberately defines no read path** — a proxy writes logs and never queries them, so an operator read API on `/v1` would be one every Hoplock Control implements and no proxy calls — and the priority ack means *durable*, so the only black-box way to grade that is to ask the server for the record straight after the ack. The implementation supplies the path; the assertion is that the record id appears in the response body, so any read path that names the record satisfies it. |
 | `batch_size` | How many records go in the batch that is then replayed. |
 
 ### `events`
@@ -167,8 +167,8 @@ label appended.
 | Key | Meaning |
 | --- | --- |
 | `proxy_id` | The stream subscribed to. |
-| `heartbeat_interval_seconds` | The interval the server advertises, and the ceiling the suite holds it to. **The contract carries no field for this** (see "Ambiguities" below), so it is an input; a proxy's staleness detection defaults to 20s, which is the outer bound of a sane value. |
-| `publish_url`, `publish_body` | How the suite makes the server emit an event. There is no contract endpoint for this either: publishing is an operator action and which surface offers it is the implementation's business. |
+| `heartbeat_interval_seconds` | The fallback bound, for a server that advertises no interval. **The contract carries `RevocationEvent.heartbeat_interval_seconds`** (upstream `Hoplock/proxy#56`), so the interval is a claim the server makes on the stream rather than a number configured here — but absent is a legal answer, meaning the reader stays on its own timers, and this key is what keeps such a server gradeable. **Today the suite still reads the bound from this key alone**; reading it off the stream lands with phase 0009, which re-vendors the contract. |
+| `publish_url`, `publish_body` | How the suite makes the server emit an event. The contract deliberately defines no endpoint for this — publishing is an operator action, not a proxy-facing one — so the implementation supplies the path and the suite takes it as an input, asserting nothing about its shape. |
 
 ## What the suite asserts, and what it deliberately does not
 
@@ -201,19 +201,48 @@ next contract revision:
   would make the case stale at the next revision, and a suite that expected a
   bump would be asserting a rule the contract does not have.
 
-## Ambiguities found in the contract
+## What the contract leaves to the implementation
 
-Recorded here and in `docs/learnings/0002-*` rather than resolved unilaterally
-(PROTOCOL §3, M1):
+0002 raised two ambiguities here rather than resolving them unilaterally
+(PROTOCOL §3, M1). Upstream `Hoplock/proxy#56` (merged) answered both, in
+opposite directions — one became a field, the other became a stated boundary —
+and what is left is recorded here and in `docs/learnings/0002-*`.
 
-- **The heartbeat interval is not on the wire.** The contract requires
-  heartbeats "at a steady interval (comfortably inside the proxy's timeout,
-  which defaults to 20s)" but gives the stream no field to state the interval
-  it chose. So "within the interval the server advertises" cannot be read off a
-  response, and this suite takes it as an input.
-- **There is no contract surface for publishing an event or reading a record
-  back**, which the durability and gap-recovery obligations both need in order
-  to be gradeable at all. Both are suite inputs for that reason. This is
-  arguably correct — neither is a proxy-facing operation — but it does mean two
-  of PLAN §4's obligations are only checkable against a server that exposes
-  something beyond the contract.
+**The heartbeat interval is on the wire.** It was not when this suite was
+written, which is why the bound is still an input above. The contract now
+carries `RevocationEvent.heartbeat_interval_seconds`: the interval the server is
+**currently keeping**, normally on `heartbeat` events but legal on any, and a
+later event carrying a different value re-states the interval rather than
+contradicting an earlier one. Three rules come with it —
+
+- **absent means what every server did before the field existed**, so a reader
+  falls back to its own timers and a silent server is still conformant;
+- **it may only ever tighten detection, never loosen it** — sooner is always
+  allowed, later never, the same rule as `cache.ttl_seconds` and
+  `report_after_seconds`;
+- **there is still a ceiling and the field does not replace it**: heartbeats at
+  **10 seconds or less**, so two consecutive intervals fit inside the proxy's
+  20s reconnect timeout.
+
+So "within the interval the server advertises" is now gradeable from the stream,
+and it is **two** assertions rather than one: the server keeps the interval it
+advertises, *and* that interval is inside the ceiling. A server advertising 600s
+and honestly keeping to it passes the first and breaks every proxy in the fleet.
+Phase 0009 re-vendors the contract and makes this case read the claim instead of
+the configuration.
+
+**Nothing publishes an event or reads a record back, and that is the answer, not
+a gap.** Both operations are operator-facing rather than proxy-facing: a proxy
+writes audit records and never queries them, and an event originates from a
+revocation or a policy change on a surface `/v1` does not describe. Putting
+either on `/v1` would oblige every Hoplock Control to implement an API no proxy
+calls, so the contract says plainly that it does not, and an implementation that
+wants the durability and gap-recovery guarantees **graded** exposes paths of its
+own outside `/v1`. That is why `logs.read_url` and `events.publish_url` are
+inputs, and why the suite asserts nothing about their shape.
+
+This still means two of PLAN §4's obligations cannot be graded against a server
+that serves only the contract — the difference is that this is now a documented
+boundary with a reason, rather than something the contract forgot. Hoplock
+Proxy's `cmd/mock-control` `GET /debug/logs` and `POST /debug/revoke` are the
+reference shapes, and both stay mock-only.
