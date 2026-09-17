@@ -81,9 +81,8 @@ through `contract-sync`. Never the other way around.
 | `cmd/policyctl` | CLI: validate, simulate, explain, apply a policy bundle |
 | `ext/` | **public** extension points — the seam Hoplock Enterprise implements |
 | `ui/` | management console, embedded into the binary |
-| `internal/` | implementation packages (see `docs/PLAN.md` §3) |
+| `internal/` | implementation packages (see `docs/PLAN.md` §3), including the forward-only SQL in `internal/store/migrations/` |
 | `contract/` | **vendored** contract from the proxy repo — never edited here |
-| `migrations/` | versioned, forward-only SQL |
 | `deploy/` | docker-compose topology: this server + Postgres + a real proxy |
 | `docs/` | plan, session protocol, and per-phase learnings |
 | `prompts/` | queued and implemented phase prompts |

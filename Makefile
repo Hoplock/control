@@ -21,6 +21,9 @@ CONFIG ?= config.yaml
 # `make contract-sync` takes the ref to vendor, so a session can pin one.
 REF ?= main
 
+# `make migrate` passes these through. DRY_RUN=1 is shorthand for --dry-run.
+MIGRATE_FLAGS ?= $(if $(DRY_RUN),--dry-run,)
+
 # `make conform` inputs. BASE_URL is the server under test; EXPECT is the
 # expectation file describing what that server is configured to serve
 # (cmd/pdpconform/README.md). TOKEN is the proxy bearer token.
@@ -32,7 +35,7 @@ CONFORM_FLAGS ?=
 GO             ?= go
 GOLANGCI_LINT  ?= golangci-lint
 
-.PHONY: all build test vet lint fmt license-check tidy clean run \
+.PHONY: all build test vet lint fmt license-check tidy clean run migrate \
         contract-check contract-sync conform check help
 
 all: build
@@ -72,6 +75,13 @@ clean:
 ## run: run the server against $(CONFIG) without installing it.
 run:
 	$(GO) run ./cmd/hoplock-control --config $(CONFIG)
+
+## migrate: apply pending migrations to $(CONFIG)'s database. DRY_RUN=1 to preview.
+#
+# Never run on boot (PLAN §8): two nodes starting together must not race to
+# build the schema, so applying migrations is a thing an operator does.
+migrate:
+	$(GO) run ./cmd/hoplock-control migrate --config $(CONFIG) $(MIGRATE_FLAGS)
 
 ## check: everything CI runs on a pull request, in CI's order.
 check: build vet test lint license-check
