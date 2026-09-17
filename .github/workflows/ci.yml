@@ -39,6 +39,31 @@ jobs:
         #
         # Keep the floor entry equal to the `go` directive in go.mod.
         go: ["1.27.0", "stable"]
+
+    # A real Postgres, because the repository layer IS the SQL (PLAN M13,
+    # §8): a fake tests the fake, and the two things in this schema that are
+    # correct only because Postgres enforces them — the uid cursor's row lock
+    # and the audit table's record_id uniqueness — are invisible to one.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # storetest reads this. Unset, the Postgres-backed tests skip — and in
+      # CI they FAIL instead, because a skipped test reads as a passing one in
+      # the log and this is the leg that is supposed to run them.
+      HOPLOCK_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+
     steps:
       - uses: actions/checkout@v4
         with:

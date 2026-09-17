@@ -711,7 +711,7 @@ control/
 ├── internal/
 │   ├── config/             # YAML config loader
 │   ├── contract/           # hand-written Go types + handler interfaces for the vendored contract
-│   ├── store/              # Postgres repositories + migrations
+│   ├── store/              # Postgres repositories, and migrations/ — the embedded SQL
 │   ├── policy/
 │   │   ├── model/          # the policy bundle: parse, validate, version
 │   │   ├── compile/        # bundle -> decision program
@@ -734,9 +734,15 @@ control/
 ├── contract/               # VENDORED from the Hoplock Proxy repository — read-only (M1)
 ├── deploy/                 # docker-compose: this server + Postgres + a proxy
 ├── docs/                   # this plan, protocol, cross-repo protocol, learnings
-├── prompts/                # queued and implemented phase prompts
-└── migrations/             # versioned SQL, forward-only
+└── prompts/                # queued and implemented phase prompts
 ```
+
+The forward-only SQL lives in `internal/store/migrations/` rather than in a
+top-level `migrations/`, and the reason is mechanical: `go:embed` cannot reach
+outside its own package directory, so a top-level directory would need a
+top-level *package* to embed it — and `ext/` is the only non-internal package
+this module has (M15). Reading the files off disk at runtime was the
+alternative, and it gives up the one-binary deployment for nothing.
 
 ### Component responsibilities
 
@@ -1319,9 +1325,13 @@ reuses it on, and three consequences this server owns:
 - **Errors/logging**: no secrets, no credentials, no tokens in errors or logs.
   Every response carries a correlation id; every `5xx` says outage, never deny
   (M11).
-- **Migrations**: forward-only, versioned, applied by an explicit command — never
-  automatically on boot in production, where two nodes starting at once must not
-  race.
+- **Migrations**: forward-only, versioned, applied by an explicit command —
+  `hoplock-control migrate` (`--dry-run` prints what would be applied and
+  changes nothing), also reachable as `make migrate`. Never automatically on
+  boot in production, where two nodes starting at once must not race; the
+  server has no code path that migrates. A migration's checksum is recorded
+  when it is applied, so editing a merged one is an error rather than a silent
+  divergence between two deployments.
 - **Testing**: unit tests per package; the policy engine tested exhaustively and
   in isolation; Postgres-backed tests against a real database in CI; the
   conformance suite (M1) run against this server **and** the proxy's mock.
