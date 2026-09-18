@@ -63,7 +63,9 @@
   linearity check. `internal/policy/eval/bench_test.go` states the reasoning.
 - **Migrations added:** none. `policy_bundles` (0003) already holds the source.
 - **Decisions:** none added, amended or withdrawn — the §2 register is
-  unchanged. M3, M4, M5, M13, M18, M21 rendered. **PLAN §5.1 revised in place**:
+  unchanged. **0014's prompt is amended** to own the one publish-time warning
+  this phase deliberately did not make (Details).
+  M3, M4, M5, M13, M18, M21 rendered. **PLAN §5.1 revised in place**:
   the "Session" input row is gone, because those axes are outputs (Details).
   §5.2 gained one clause on how the deadline is resolved. **Cross-repo:** none
   owed; `ext/` untouched, `contract/` untouched.
@@ -235,3 +237,51 @@ in-package test (`package model`) because the member lists are unexported.
 - **A `policyctl` CLI** (`cmd/policyctl/` in PLAN §3) has no prompt of its own
   yet; 0014 lists it. Everything it needs is exported: `Parse`, `Compile`, and
   `Rejection.Error()` is already the line it should print.
+- **A cache hint that outlives what gated it** — handed to 0014, whose prompt now
+  carries it as a section and an acceptance criterion. The reasoning is below,
+  because it is the kind of finding a later session will otherwise rediscover
+  from scratch.
+
+### The cache hint the compiler deliberately does not refuse
+
+`checkCache` refuses a key that is not identity-bound and stops there. It does
+**not** object to a hint on a rule that matches something the key cannot carry —
+`context.days`, `context.time_of_day`, `device` posture — even though such a
+decision is reused for up to `ttl_seconds` after the condition stopped holding.
+
+Three things bound that, and they matter because together they make the
+remaining exposure much smaller than it first looks:
+
+1. **The TTL cannot be widened.** The contract binds the proxy — it may hold a
+   decision for less than `ttl_seconds`, never longer (`control.yaml`, CacheHint).
+   What a stale entry buys is *admission*, not a longer reuse window.
+2. **Replay always grants less, never more.** Every time bound in a snapshot is
+   an absolute instant, computed once. A replayed `session_deadline` is therefore
+   always earlier, relative to the moment of replay, than a fresh evaluation
+   would produce. This is exactly why the contract insists on an instant rather
+   than a duration: with a duration, cache replay would re-anchor on every hit.
+3. **A matched grant always supplies a deadline.** In `eval.deadline()`, a
+   non-nil grant means `earlier(out, grant.ExpiresAt)` runs even when the route
+   authored no duration, so the zero value is replaced. Verified in
+   `hoplock/proxy`: `session.go` arms the timer *before anything is provisioned
+   or dialled*, and `deadline.go`'s `waitUntil` returns immediately on `d <= 0`,
+   so an already-passed deadline expires the session at once — a stale
+   grant-gated decision never reaches the target. (That path has no test
+   upstream; the behaviour is clear from the code, not from a case.)
+
+So the real hole is one shape: a rule matching `days`/`time_of_day`/`device`,
+carrying a hint, on a route with no `max_session_duration`. Nothing then bounds
+the session at all, and a connection admitted after the window closed runs until
+somebody closes it.
+
+It is **not** a compiler rejection, and that is the decision rather than an
+omission. "Office-hours access, sessions unbounded once started" is a policy an
+author may genuinely mean, so refusing it would be the compiler overruling a
+judgement — unlike the other 65 rejections, which all refuse something that is
+wrong. Expressing it properly needs a warning severity `model.Rejection` does not
+have, and adding one is an API change 0014 and 0016 both consume, which is not a
+thing to design as a drive-by. `ext.PolicyValidator` already has the vocabulary
+(`FindingAdvice`/`Warning`/`Blocking`), already runs on the authored document at
+publish time, and its doc comment already draws the line this sits on: the
+compiler decides whether a policy is valid, that surface decides whether it is
+advisable.
