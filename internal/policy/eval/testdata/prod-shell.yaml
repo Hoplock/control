@@ -1,0 +1,76 @@
+# The policy that makes this product distinct, written out in full: a shell on
+# production, no file copying, one tunnel, no listeners, and a named list of
+# argv shapes. It is a fixture, not a deployment — the hostnames are examples.
+schema_version: 1
+tenant: acme
+description: production shell access for the SRE on-call rota
+timezone: UTC
+
+labels:
+  env: [prod, staging, dev]
+  kind: [host, appliance]
+
+groups: [sre, dba, oncall]
+
+rules:
+  - id: prod-shell
+    description: |
+      May open a shell on env=prod, may not run sftp, may tunnel only to
+      postgres.prod:5432, may never open a listener, and may only run the
+      argv shapes on this list.
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+        mfa: true
+      target:
+        labels:
+          env: [prod]
+          kind: [host]
+    route:
+      intent: direct
+      channels: [session, direct-tcpip]
+      requests:
+        types: [pty-req, shell, exec]
+      forwards:
+        direct_tcpip:
+          - host: postgres.prod
+            port: 5432
+      global_requests:
+        types: []
+      filter:
+        mode: whitelist
+        exec_mode: restricted
+        restricted_exec:
+          commands:
+            - executable: /usr/bin/systemctl
+              form: positional
+              args:
+                - kind: oneof
+                  values: [status, restart]
+                - kind: prefix
+                  value: hoplock-
+            - executable: /usr/bin/journalctl
+              form: exact
+              argv: ["-u", "hoplock-control", "-n", "200"]
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject}
+          key_type: ed25519
+          lifetime_seconds: 900
+      max_session_duration: 8h
+      concurrency:
+        max_sessions_per_subject: 2
+    obligations:
+      - kind: record-session
+    cache:
+      key: [subject, target, rule]
+      ttl_seconds: 300
+
+  - id: default-deny-prod
+    effect: deny
+    reason: production access requires an SRE group membership and MFA
+    match:
+      target:
+        labels:
+          env: [prod]

@@ -110,6 +110,13 @@ jobs:
           # that moves the floor.
           version: v2.13.2
 
+      # Checks the check. `exhaustive` is what holds M3's closed vocabulary
+      # together (PLAN M13), so this writes a switch and a lookup map with a
+      # missing enum member and fails unless the linter names both. It lives in
+      # this job because it is the job with a linter in it.
+      - name: Prove the exhaustive linter rejects an unhandled member
+        run: make exhaustive-guard
+
   license:
     name: license headers
     runs-on: ubuntu-latest
