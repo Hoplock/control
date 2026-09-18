@@ -27,6 +27,16 @@ func nonNilStrings(v []string) []string {
 	return v
 }
 
+// nonNilBytes normalises a nil byte slice to an empty one, for the same reason:
+// a nil []byte encodes as SQL NULL, and a NOT NULL bytea column would refuse it
+// with a constraint violation rather than an argument error.
+func nonNilBytes(v []byte) []byte {
+	if v == nil {
+		return []byte{}
+	}
+	return v
+}
+
 // nonNilMap normalises a nil map to an empty one, for the same reason.
 func nonNilMap(v map[string]string) map[string]string {
 	if v == nil {

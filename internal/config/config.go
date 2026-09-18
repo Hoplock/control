@@ -11,6 +11,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,6 +23,33 @@ const DefaultTenant = "default"
 
 // DefaultLogLevel is the level used when the file does not name one.
 const DefaultLogLevel = "info"
+
+// The fleet registry's defaults (PLAN M6, M17).
+//
+// They are stated here rather than imported from internal/fleet because config
+// is the lowest layer in this module and a dependency the other way would make
+// loading a file depend on the package that consumes it. internal/fleet declares
+// the same numbers as its own defaults and a test asserts the two agree, so the
+// duplication cannot drift silently.
+const (
+	// DefaultHeartbeatTTL is how long a proxy may be silent and still be routed
+	// through.
+	DefaultHeartbeatTTL = 90 * time.Second
+	// DefaultRelayRegistrationTTL is how long a reported relay registration
+	// stays believable.
+	DefaultRelayRegistrationTTL = 60 * time.Second
+	// DefaultTargetCapabilityTTL is how long a target capability observation
+	// stays fresh.
+	DefaultTargetCapabilityTTL = 24 * time.Hour
+	// DefaultCapabilityReportAfter is the re-observation interval this server
+	// asks for.
+	DefaultCapabilityReportAfter = 6 * time.Hour
+	// DefaultMaxHops caps how many proxies one session may traverse. It matches
+	// the proxy's own routing.DefaultMaxHops, and the two must agree: the proxy
+	// enforces the cap as a safety net against a bad answer, and this server
+	// should not give one.
+	DefaultMaxHops = 4
+)
 
 // logLevels is the set LogConfig.Level accepts, ordered from most to least
 // verbose.
@@ -35,6 +63,46 @@ type Config struct {
 	Listeners ListenersConfig `yaml:"listeners"`
 	Database  DatabaseConfig  `yaml:"database"`
 	Log       LogConfig       `yaml:"log"`
+	Fleet     FleetConfig     `yaml:"fleet"`
+}
+
+// FleetConfig holds the fleet registry's staleness rule and its hop cap
+// (PLAN M6, M17).
+//
+// These are configurable because "stale" is a number an operator has to be able
+// to move: it depends on how often their proxies heartbeat and how much packet
+// loss their estate has, and a proxy dropped from routing for being briefly quiet
+// is an outage a user experiences as a hang.
+//
+// Every field has a default and a zero — whether written as `0s` or left out
+// entirely — takes it. YAML gives no way to tell those two apart without making
+// every field a pointer, and the honest reading of "0s" is not "disable the rule":
+// a zero TTL would make the whole fleet stale at once, so taking the default is
+// both the safe direction and the only one worth having. A NEGATIVE value is
+// something the default cannot rescue and is refused.
+type FleetConfig struct {
+	// HeartbeatTTL is how long a proxy may be silent and still be routed
+	// through.
+	HeartbeatTTL time.Duration `yaml:"heartbeat_ttl"`
+	// RelayRegistrationTTL is how long a reported relay registration stays
+	// believable. It is shorter than HeartbeatTTL by default: a registration is
+	// a live connection rather than a fact about a configuration, so it is the
+	// thing most likely to have gone away silently, and a relay hop to a dead
+	// registration hangs.
+	RelayRegistrationTTL time.Duration `yaml:"relay_registration_ttl"`
+	// TargetCapabilityTTL is how long a target capability observation stays
+	// fresh (M17). Past it, the record provides nothing that has to be applied
+	// — which is the same answer as an undated or absent record.
+	TargetCapabilityTTL time.Duration `yaml:"target_capability_ttl"`
+	// CapabilityReportAfter is the interval this server asks a proxy to
+	// re-observe on, answered in `report_after_seconds`. The server owns the
+	// freshness of its own record: a proxy may re-observe sooner, never later.
+	CapabilityReportAfter time.Duration `yaml:"capability_report_after"`
+	// MaxHops caps how many proxies one session may traverse. It must not
+	// exceed what the fleet's proxies enforce locally, or this server will
+	// answer routes they refuse — an outage in front of a user rather than a
+	// message to an operator.
+	MaxHops int `yaml:"max_hops"`
 }
 
 // ListenersConfig holds the two listener addresses. South-bound and
@@ -143,6 +211,21 @@ func (c *Config) applyDefaults() {
 	if c.Log.Level == "" {
 		c.Log.Level = DefaultLogLevel
 	}
+	if c.Fleet.HeartbeatTTL == 0 {
+		c.Fleet.HeartbeatTTL = DefaultHeartbeatTTL
+	}
+	if c.Fleet.RelayRegistrationTTL == 0 {
+		c.Fleet.RelayRegistrationTTL = DefaultRelayRegistrationTTL
+	}
+	if c.Fleet.TargetCapabilityTTL == 0 {
+		c.Fleet.TargetCapabilityTTL = DefaultTargetCapabilityTTL
+	}
+	if c.Fleet.CapabilityReportAfter == 0 {
+		c.Fleet.CapabilityReportAfter = DefaultCapabilityReportAfter
+	}
+	if c.Fleet.MaxHops == 0 {
+		c.Fleet.MaxHops = DefaultMaxHops
+	}
 }
 
 // Validate reports the first field that is missing or invalid.
@@ -166,6 +249,43 @@ func (c *Config) Validate() error {
 		return &FieldError{
 			Field: "log.level",
 			Msg:   fmt.Sprintf("%q is not one of %s", c.Log.Level, strings.Join(logLevels, ", ")),
+		}
+	}
+	return c.Fleet.validate()
+}
+
+// validate reports the first fleet field that cannot be acted on.
+//
+// It runs after the defaults, so a zero has already become its default and what
+// is left to catch is a value the default cannot rescue: a negative duration, a
+// non-positive hop cap, or a report interval that guarantees every record expires
+// between two reports.
+func (f FleetConfig) validate() error {
+	durations := []struct {
+		field string
+		value time.Duration
+	}{
+		{"fleet.heartbeat_ttl", f.HeartbeatTTL},
+		{"fleet.relay_registration_ttl", f.RelayRegistrationTTL},
+		{"fleet.target_capability_ttl", f.TargetCapabilityTTL},
+		{"fleet.capability_report_after", f.CapabilityReportAfter},
+	}
+	for _, d := range durations {
+		if d.value <= 0 {
+			return &FieldError{Field: d.field, Msg: "must not be negative"}
+		}
+	}
+	if f.MaxHops <= 0 {
+		return &FieldError{Field: "fleet.max_hops", Msg: "must be a positive number of proxies"}
+	}
+	if f.CapabilityReportAfter >= f.TargetCapabilityTTL {
+		// A report interval at or beyond the TTL means every record expires
+		// between two reports, so a healthy fleet would look permanently stale
+		// and the rule would fire constantly — which is how an operator learns
+		// to ignore it.
+		return &FieldError{
+			Field: "fleet.capability_report_after",
+			Msg:   "must be shorter than fleet.target_capability_ttl, or every record expires between reports",
 		}
 	}
 	return nil

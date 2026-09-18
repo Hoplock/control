@@ -785,6 +785,20 @@ alternative, and it gives up the one-binary deployment for nothing.
   hint. Latency budget (M5) is enforced here.
 - **`internal/fleet`** — the graph, its liveness, and pathfinding. Owns which
   hop direction is possible right now.
+
+  It also owns the two things that hang off the same rows, because both are
+  properties of a proxy rather than of a policy: the **capability store** both
+  sources write to (M17 — the proxy build's declared set, and the per-target
+  reports `/v1/capabilities/report` accumulates), and **configuration
+  distribution** — a versioned document per zone and per proxy, composed into one
+  effective document per proxy, with rollback and with drift between desired and
+  running visible rather than derived.
+
+  The package is split so that the part worth proving is provable without a
+  database: `Graph` and its `Path` are pure values over pure inputs, and
+  `Registry` is what loads those inputs out of `internal/store` and applies the
+  staleness rule. A path is a function of the nodes, the edges, the live relay
+  registrations and the clock, and nothing else.
 - **`internal/audit`** — append-only writer, chain verifier, and query API.
   Nothing else writes audit rows.
 - **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
@@ -1063,6 +1077,34 @@ Six obligations are easy to miss and are graded by the conformance suite:
   accept from a caller. The authority on a leg is the previous hop's key, above.
 
   Phases: 0007 and 0008 respectively; 0017 proves the pair against a real proxy.
+
+### Configuration distribution has no event type yet
+
+An operator configures a fleet rather than N files (M6, phase 0006): which zones
+a proxy serves, its relay registrations, its contract expectations, its log
+shipping cadence. Delivery **reuses the event stream** rather than inventing a
+second channel, because proxies already hold one outbound subscription and must
+not need a second inbound path — the same reasoning that made the revocation
+stream outbound in the first place (proxy §6.4).
+
+**The stream cannot carry it today.** `RevocationEvent.type` enumerates
+`session_kill`, `cache_invalidate`, `heartbeat` and `resync`, and none of them
+can say "your desired configuration moved". The contract is owned upstream and
+vendored read-only (M1), so the missing piece is a change in `hoplock/proxy`: an
+event type (or a field on the heartbeat event) naming the proxy's desired config
+version and hash, which the proxy answers by fetching and then reporting what it
+is running. That is normal work in the upstream repository with its own prompt
+and its own review, not a shape to approximate here
+(`docs/CROSS-REPO-PROTOCOL.md` §3.2).
+
+What is built here in the meantime is everything below the wire, and the gap is
+**visible rather than assumed**: the desired version is durable, the composed
+document is stored, the publisher seam (`fleet.ConfigPublisher`, which 0009
+implements) is a no-op until the event exists, and a proxy that has not caught up
+shows as drift in the fleet view and in the API rather than being taken for
+current. Inventing the event type locally is the failure M1 exists to prevent —
+it would make CI green here while the two components silently disagreed about
+what a config event is.
 
 ---
 
