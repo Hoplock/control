@@ -331,10 +331,24 @@ decision.
 
   1. **Control never imports Enterprise.** The dependency runs one way. An
      import-graph test fails the build if it ever does not.
-  2. **Every extension point ships a real default here.** A seam is not a hole
+  2. **Every extension point has a real answer here.** A seam is not a hole
      where core functionality used to be. Control alone must be a complete,
      self-hostable product: a deployment of Hoplock Proxy + Hoplock Control is
      a working infrastructure access system, not a demo waiting for a licence.
+
+     That answer takes one of exactly three forms, and `ext.PointInfo` records
+     which, so the claim is checkable rather than aspirational. **Core:**
+     Control's own code path continues and the seam is purely additive — the
+     local audit store, manual grants, its own software keys, the compiler's
+     checks — and the catalogue names the phase that builds it. **Default:**
+     everything above the seam goes through it, so Control's wiring registers an
+     implementation behind it (`internal/extdefault`), and the registry refuses
+     to seal if one was promised and is missing. **Disabled:** the point adds a
+     capability Control never claimed — a long-term archive, directory
+     provisioning, somebody else's automation pulling a lever an operator can
+     already pull — and says so out loud. A point that supplies nothing from
+     Control and is not the third case fails the build, which is what stops
+     "ships a real default" from decaying into a promise.
 
   The line is **governance and scale, not capability**. Control decides access,
   distributes policy, records what happened, and lets an operator explain any
@@ -724,6 +738,7 @@ control/
 │   ├── audit/              # ingest, hash chain, query, retention (M8)
 │   ├── export/             # SIEM sinks (Splunk/Sentinel/Elastic)
 │   ├── access/             # JIT requests, approvals, grants, notifiers (M10)
+│   ├── extdefault/         # Control's own implementations behind the ext/ seam (M15)
 │   ├── instance/           # deployment identity, supervisory registration (M19)
 │   └── httpapi/
 │       ├── south/          # proxy-facing handlers (the contract)
@@ -773,6 +788,17 @@ alternative, and it gives up the one-binary deployment for nothing.
 - **`internal/audit`** — append-only writer, chain verifier, and query API.
   Nothing else writes audit rows.
 - **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
+- **`internal/extdefault`** — Control's own side of the extension seam: what
+  this repository registers into an `ext.Registry` before the server starts, so
+  a deployment with no Hoplock Enterprise present is a complete product rather
+  than a set of holes (M15). It is a separate package from `ext` because `ext`
+  is what Enterprise imports and stays interface-only; a default belongs on this
+  side of that line. Most of Control's answers are *not* here and that is the
+  design: where Control's behaviour when nothing is registered is its own core
+  code path — the local audit store, manual grants, its own software keys, the
+  compiler's checks — the seam is additive and there is no default to register.
+  What lands here is the narrower set where everything above the seam goes
+  through it, which today is the single-node cluster coordinator.
 - **`internal/instance`** — this deployment's own identity and version, and the
   outbound registration client that makes it supervisable (M19). It is a
   *client* of something above it, which makes it the only package here that

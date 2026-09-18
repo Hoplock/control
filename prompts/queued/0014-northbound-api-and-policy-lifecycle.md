@@ -2,12 +2,13 @@
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
-- `docs/PLAN.md` — especially **§2 (M2, M3, M4, M17)**, §5 (the bundle and the
-  explanation, including §5.2's enforcement rungs), §7 (audit query).
+- `docs/PLAN.md` — especially **§2 (M2, M3, M4, M15, M17)**, §5 (the bundle and
+  the explanation, including §5.2's enforcement rungs), §7 (audit query).
 - `docs/learnings/` — read summaries; open `0005` (bundle, compiler errors,
   explanation type), `0006` (the capability query this surface exposes), `0008`
   (decision records), `0010` (audit query layer), `0009` (publishing an operator
-  event), `0007` (listener conventions).
+  event), `0007` (listener conventions), `0004` (the extension registry this
+  surface exposes).
 
 ## Objective
 Give humans and CI a surface. This is the phase where the product becomes
@@ -112,6 +113,22 @@ appears in simulation like any other change.
   cached decisions (publishing through 0009), and enroll/approve a proxy
   (0006). Each requires the right role and each is audited.
 
+### What is extending this deployment (M15)
+Expose the sealed extension registry read-only: one entry per `ext` point, with
+the providers registered against it and — for a point where nothing is — what
+Control does instead. `ext.Extensions.Status()` already produces exactly that,
+including the empty rows, so this is a rendering rather than a computation.
+
+It is not a nicety. An operator debugging why a grant needed an approval, or why
+audit records are reaching a SIEM, has to be able to see that an extension is in
+play; an invisible extension is indistinguishable from a bug in Control. The
+start-up log already prints the same listing (0004), and this is the copy
+somebody can reach without shell access to the host.
+
+Read-only, and no privilege to change it: registration happens before the
+server starts and is immutable afterwards (0004), so there is nothing here to
+mutate and an endpoint that appeared to offer it would be lying.
+
 ### `cmd/policyctl`
 The same operations from a terminal: `validate`, `diff`, `simulate`, `apply`,
 `explain`. It talks to the north-bound API — never to the database directly, or
@@ -185,6 +202,12 @@ phases earlier, not discovered there.
   decision made under a mapping version that has since changed.
 - Every mutating action appears in the audit store with the actor.
 - `policyctl` covers each operation and its output is stable enough to script.
+- **The extension listing covers every point, including the empty ones.** With a
+  fake extension registered at one point, the listing names its provider; with
+  nothing registered at another, the listing still carries that point and says
+  what Control does instead. A test asserts the listing has a row per
+  `ext.Points()` entry, so a seam added later cannot become invisible by being
+  forgotten here.
 - **Every error response carries a code, parameters, an English message and the
   correlation id** (M21), asserted across the error paths this phase produces —
   validation, RBAC refusal, satisfiability, not-found and outage. A test
