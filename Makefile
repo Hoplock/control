@@ -35,7 +35,7 @@ CONFORM_FLAGS ?=
 GO             ?= go
 GOLANGCI_LINT  ?= golangci-lint
 
-.PHONY: all build test vet lint fmt license-check tidy clean run migrate \
+.PHONY: all build test vet lint exhaustive-guard fmt license-check tidy clean run migrate \
         contract-check contract-sync conform check help
 
 all: build
@@ -55,6 +55,14 @@ vet:
 ## lint: run golangci-lint with the repository's linter set.
 lint:
 	$(GOLANGCI_LINT) run
+
+## exhaustive-guard: prove the `exhaustive` linter rejects an unhandled enum member.
+#
+# M3's closed vocabulary rests on that linter and on nothing else (PLAN M13), and
+# a linter that is enabled but silent is worse than none. This target is what
+# checks the check. It needs golangci-lint, so it runs in the lint job.
+exhaustive-guard:
+	GOLANGCI_LINT=$(GOLANGCI_LINT) ./scripts/exhaustive-guard.sh
 
 ## fmt: format every Go file in place.
 fmt:

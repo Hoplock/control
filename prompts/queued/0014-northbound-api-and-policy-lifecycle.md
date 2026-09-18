@@ -2,8 +2,9 @@
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
-- `docs/PLAN.md` — especially **§2 (M2, M3, M4, M15, M17)**, §5 (the bundle and
-  the explanation, including §5.2's enforcement rungs), §7 (audit query).
+- `docs/PLAN.md` — especially **§2 (M2, M3, M4, M9, M15, M17)**, §5 (the bundle
+  and the explanation, including §5.2's enforcement rungs and session deadline,
+  and §5.4's cache-hint invariants), §7 (audit query).
 - `docs/learnings/` — read summaries; open `0005` (bundle, compiler errors,
   explanation type), `0006` (the capability query this surface exposes), `0008`
   (decision records), `0010` (audit query layer), `0009` (publishing an operator
@@ -84,6 +85,50 @@ would be enforced on.
   author accepted it — the rung is a claim about a mechanism, bounded by the list
   it renders, and the policy author owns that trade-off. A check that cannot be
   overridden will be worked around; one that is never shown is not a check.
+
+### A cache hint that outlives what gated it (0005)
+
+The compiler refuses a cache key shared across identities and stops there on
+purpose. Everything else about a hint is a judgement, and `internal/policy` has
+no severity to express one in: a `model.Rejection` refuses, and refusing here
+would overrule an author on a call that is legitimately theirs.
+
+The judgement is this. A hint's key is built from a closed set of components —
+`subject`, `target`, `target-port`, `proxy`, `auth-method`, `rule` — and a rule
+may match on things none of them names: `context.days`, `context.time_of_day`,
+`device` posture. A decision gated on one of those is reused for up to
+`ttl_seconds` after the condition stopped holding.
+
+Most of that is self-limiting and must **not** be warned about. Every time bound
+in a snapshot is an absolute instant, so a replayed decision always grants less
+than a fresh one would and never more; and a rule matching a live grant always
+carries a deadline, because the grant's expiry bounds it even where the route
+authored no duration (0005). The proxy arms that deadline before it provisions or
+dials and fires it at once when it has already passed, so a stale grant-gated
+decision never reaches the target.
+
+What is left is narrow and real: a rule matching `context.days`,
+`context.time_of_day` or `device`, carrying a cache hint, on a route with **no
+`max_session_duration`**. No grant supplies a bound and the snapshot carries no
+`session_deadline`, so `ttl_seconds` bounds admission and nothing bounds the
+session — a connection admitted after the window closed runs until somebody
+closes it.
+
+Report it as a **warning the author may override**, on the same terms as the
+interpreter warning above and for the same reason: "office-hours access, sessions
+unbounded once started" is a policy somebody may genuinely mean. Name the rule,
+the matched term that the key does not carry, and the two fixes — add a
+`max_session_duration`, or drop the hint.
+
+`PolicyValidator` is `WhenAbsentCore` (0004), so this is Control's own
+publish-time check beside the capability and interpreter checks above, sharing
+their reporting shape and their override path, rather than a registered default.
+A validator an operator registers adds governance rules on top of it and never
+replaces it. The severity vocabulary to report it in already exists —
+`ext.FindingAdvice`, `ext.FindingWarning`, `ext.FindingBlocking` — and the line it
+sits on is the one `ext.PolicyValidator`'s own doc comment draws: the compiler
+decides whether a policy is *valid*, this surface decides whether it is
+advisable.
 
 ### Explain a decision (M4)
 Given a `decision_id` or a session id, return the whole story: the inputs, the
@@ -198,6 +243,13 @@ phases earlier, not discovered there.
   `account-confined` rung, produces a warning naming the executable and the rung's
   real guarantee; publication succeeds when the author accepts it, and the
   acceptance is audited like any other mutating action.
+- **The cache-hint warning fires only where it should.** A rule matching
+  `context.time_of_day` (or `context.days`, or `device`) that carries a cache
+  hint and authors no `max_session_duration` produces an overridable warning
+  naming the rule and the unkeyed term. The same rule *with* a
+  `max_session_duration`, and a grant-gated rule with a hint and no duration,
+  produce none — assert both negatives, because a warning that fires on every
+  cached rule is one authors learn to click through.
 - `explain` returns a complete story for an allow, for a deny, and for a
   decision made under a mapping version that has since changed.
 - Every mutating action appears in the audit store with the actor.

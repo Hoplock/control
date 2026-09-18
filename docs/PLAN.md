@@ -1076,9 +1076,16 @@ Six obligations are easy to miss and are graded by the conformance suite:
 | Device | posture attributes when an endpoint supplies them (optional) |
 | Context | time of day, day of week, source network/geo, the proxy asking (`conn.proxy_id` — the entry proxy on a user's first hop, an inner hop on a chained one) |
 | Target | hostname, labels (`env=prod`, `kind=appliance`, `owner=payments`), zone |
-| Session | requested channel type, in-channel request, forwarding destination, global request, command |
 | Grants | live JIT grants for this subject and scope (M10), including windows confirmed from external context (M16) |
 | External context | a scan, ticket, or incident asserted by an integration and confirmed at decision time (M16) |
+
+The **session axes** — channel type, in-channel request, forwarding destination,
+global request, command — are outputs rather than inputs, and they are absent
+from the table above on purpose. The proxy asks once and enforces for the
+connection's lifetime (proxy D2): at the moment a decision is made no channel has
+been opened and no command has been typed. What the engine emits is the
+allow-list the proxy then enforces against each of them as it arrives (§5.2), so
+a rule has nothing to match on and `internal/policy` offers no way to try.
 
 ### 5.2 Outputs
 
@@ -1176,7 +1183,10 @@ the connection's lifetime (proxy D2):
 - **session deadline** (`session_deadline`) — an **absolute instant**, not a
   duration, which the proxy enforces locally so it survives this server being
   unreachable (proxy D16). A duration would re-anchor on every hop of a chained
-  route and silently multiply the window. Reaching it is neither a denial nor an
+  route and silently multiply the window. A bundle authors a *maximum duration*
+  and the engine resolves it against its time input, bounded by the expiry and
+  the asserted window of any grant that supplied the access — which is what "this
+  server sets it having already weighed the window" means below. Reaching it is neither a denial nor an
   outage: the session is closed and the close is explained;
 - **required session capture** (`require_session_capture`) — the route runs only
   if the session is recorded, checked before the target leg is dialled. It is the
