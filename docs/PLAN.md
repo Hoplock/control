@@ -1097,6 +1097,14 @@ is running. That is normal work in the upstream repository with its own prompt
 and its own review, not a shape to approximate here
 (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 
+**It is raised and queued upstream as proxy phase 0042**, which also settles the
+three questions this side could not: how the document is fetched (not inline on
+the event — the stream is replayable, so an inline document would be replayed as
+if current), how a proxy reports the version it is running, and which settings are
+fleet-owned at all rather than bootstrap. When it merges, the work here is to
+re-vendor the contract and wire `fleet.ConfigPublisher`; until then a publish
+stages and shows as drift.
+
 What is built here in the meantime is everything below the wire, and the gap is
 **visible rather than assumed**: the desired version is durable, the composed
 document is stored, the publisher seam (`fleet.ConfigPublisher`, which 0009

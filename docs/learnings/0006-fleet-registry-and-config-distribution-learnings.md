@@ -21,7 +21,7 @@
   max-hops | search-bound`.
 - **Liveness interface 0009 implements:** `fleet.SubscriptionState.LiveSubscriptions(
   ctx, tenant) (map[string]time.Time, error)`. Also `fleet.ConfigPublisher` —
-  **blocked upstream, see below.**
+  **unwired until proxy 0042 lands, see below.**
 - **Enrollment/approval:** operator `IssueGrant` pre-registers (proxy id +
   granted zones + one-time token, SHA-256 stored) → proxy `Enroll` presents
   `<tenant>.<secret>`. The token resolves the tenant (M18); a zone it was not
@@ -29,8 +29,11 @@
 - **Staleness:** `fleet.Liveness{HeartbeatTTL 90s, RelayRegistrationTTL 60s,
   TargetCapabilityTTL 24h, ReportAfter 6h}`, config section `fleet:`. Enrolled +
   heard-from-within-TTL = routable; never-reported is not.
-- **CROSS-REPO DEPENDENCY (upstream, blocking):** config delivery over the event
-  stream needs an event type `hoplock/proxy` does not have. Details.
+- **CROSS-REPO DEPENDENCY (upstream):** config delivery over the event stream
+  needs an event type `hoplock/proxy` does not have. **Already raised and
+  queued** as proxy phase **0042** (`Hoplock/proxy#61`) — do not re-raise it;
+  check whether it has merged, and if it has, vendor the contract and wire
+  `fleet.ConfigPublisher`. Details.
 - **Gotcha:** a config document is stored as **text, not jsonb** — jsonb
   re-renders bytes and the hash beside it would stop matching.
 
@@ -63,6 +66,14 @@ config_changed:
   config_version: integer   # the desired version for THIS proxy
   config_hash: string       # digest of the document's exact bytes
 ```
+
+**This has been raised, not just written down.** Proxy phase **0042** is queued
+for it (`Hoplock/proxy#61`), and the flow that obliged a runnable artifact rather
+than a paragraph is `Hoplock/proxy#60`, which rewrote
+`docs/CROSS-REPO-PROTOCOL.md` §3.2 from a prohibition into a flow — this phase is
+the case it was written from. The next session here does not need to re-derive the
+shape or re-raise the need: read 0042, and if it has merged, the work here is to
+vendor the contract (`make contract-sync`) and wire the publisher.
 
 Nothing was approximated. `fleet.ConfigPublisher` is the seam (0009 implements
 it), its default is a no-op, and everything below the wire is built and tested:
