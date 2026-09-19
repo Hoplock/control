@@ -46,6 +46,10 @@
 - **`contract/` now exists** (0002 landed), so §7's vendoring rules are live for
   the first time. The vendored copy is pinned at `37359c5` while upstream is at
   `ba9ad26`; that is **legitimate and owned** — see below.
+- **Nothing in CI can see a stale pin**, and a note asking for a scheduled check
+  is landed in **0017** (which owns CI). Both contract jobs are pin-relative by
+  construction and both are right to be; the consequence is that artifact
+  staleness has no automated answer today.
 
 ## Details
 
@@ -248,6 +252,8 @@ The prompt stays in `prompts/audit/`, unrenamed and unmoved.
 the PR history, so it catches what §4 structurally cannot, and it is the half
 that found the wrapped citation and the `{proxy_id}` drift this run.
 
+- The **CI question** — 0017 now carries the note, so the next run confirms it
+  is still there rather than re-deriving why CI cannot see a stale pin.
 - The **vendor-pin question** only until 0009 lands. Once it has re-vendored,
   re-check `contract/UPSTREAM` against upstream `main` on the §5 rule above:
   behind is fine where a prompt names the re-vendor, and a finding otherwise.
