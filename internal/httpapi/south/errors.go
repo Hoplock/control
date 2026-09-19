@@ -115,6 +115,15 @@ func notFound(message string) error {
 // act on. It is never a 401: nobody was named to refuse.
 func invalid(message string) error { return contract.Invalid(message) }
 
+// versionUnsupported builds the 5xx for policy this server cannot express
+// within the vocabulary the proxy declared.
+//
+// It is never a 401 and never a 400: a declared wrong version is a fleet
+// mid-upgrade, not a decision about a user and not a malformed caller. The
+// message names both versions because the operator's next question is which
+// proxy to upgrade.
+func versionUnsupported(message string) error { return contract.VersionUnsupported(message) }
+
 // exhausted builds the 409 for a uid cursor that has reached the top of its
 // range. The proxy treats it exactly as an exhausted block — outage-class,
 // nothing provisioned — and the remedy is the operator's.

@@ -14,8 +14,9 @@
 // than a 404, because the proxy would act on it.
 //
 // It is also the only package that speaks both vocabularies. The wire shapes
-// belong to internal/contract and the domain shapes to internal/identity and
-// internal/fleet (PLAN §3), so a contract revision lands here and stops.
+// belong to internal/contract and the domain shapes to internal/identity,
+// internal/fleet and internal/decision (PLAN §3), so a contract revision lands
+// here and stops.
 //
 // Two source-level tests in discipline_test.go keep M11 structural rather than
 // conventional: one fails the build if a function other than the two named

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/identity"
 )
@@ -25,6 +26,7 @@ import (
 type Server struct {
 	identity *identity.Service
 	fleet    *fleet.Registry
+	decision *decision.Service
 	log      *slog.Logger
 	now      func() time.Time
 
@@ -42,6 +44,9 @@ type Options struct {
 	// Fleet answers the proxy's own credential, the chain-leg key
 	// question, host-key trust, capability reports and uid leases.
 	Fleet *fleet.Registry
+	// Decision answers `/v1/authorize`: the endpoint the whole system
+	// turns on (0008).
+	Decision *decision.Service
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -64,10 +69,17 @@ func New(o Options) (*Server, error) {
 	if o.Fleet == nil {
 		return nil, fmt.Errorf("httpapi/south: a fleet registry is required")
 	}
+	if o.Decision == nil {
+		// Same reasoning as the two above, and it bites hardest here: a
+		// listener that authenticates everybody and can decide nothing
+		// holds every handshake in the estate open to answer `5xx`.
+		return nil, fmt.Errorf("httpapi/south: a decision service is required")
+	}
 
 	s := &Server{
 		identity:       o.Identity,
 		fleet:          o.Fleet,
+		decision:       o.Decision,
 		log:            o.Logger,
 		now:            o.Now,
 		maxBodyBytes:   o.MaxBodyBytes,
@@ -89,17 +101,18 @@ func New(o Options) (*Server, error) {
 	return s, nil
 }
 
-// servedPaths are the contract endpoints THIS PHASE answers.
+// servedPaths are the contract endpoints THIS BUILD answers.
 //
-// The rest of the contract is mounted by the phase that implements it —
-// `/v1/authorize` (0008), the event stream (0009), log ingest (0010) — and
-// until then a request for one is a 404 with the contract's envelope rather
-// than a route that pretends. A stub answering a plausible-looking empty
-// policy would be worse than absent: the proxy would act on it.
+// The rest of the contract is mounted by the phase that implements it — the
+// event stream (0009), log ingest (0010) — and until then a request for one is
+// a 404 with the contract's envelope rather than a route that pretends. A stub
+// answering a plausible-looking empty policy would be worse than absent: the
+// proxy would act on it.
 var servedPaths = []string{
 	contract.PathAuthCert,
 	contract.PathAuthPassword,
 	contract.PathAuthMFAPoll,
+	contract.PathAuthorize,
 	contract.PathHostKeyReport,
 	contract.PathCapabilitiesReport,
 	contract.PathUIDLease,
@@ -112,6 +125,7 @@ func (s *Server) build() {
 	mux.Handle("POST "+contract.PathAuthCert, s.endpoint(h.authenticateCert))
 	mux.Handle("POST "+contract.PathAuthPassword, s.endpoint(h.authenticatePassword))
 	mux.Handle("POST "+contract.PathAuthMFAPoll, s.endpoint(h.pollMFA))
+	mux.Handle("POST "+contract.PathAuthorize, s.endpoint(h.authorize))
 	mux.Handle("POST "+contract.PathHostKeyReport, s.endpoint(h.reportHostKey))
 	mux.Handle("POST "+contract.PathCapabilitiesReport, s.endpoint(h.reportCapabilities))
 	mux.Handle("POST "+contract.PathUIDLease, s.endpoint(h.leaseUIDs))

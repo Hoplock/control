@@ -32,6 +32,9 @@ type Registry struct {
 	maxHops  int
 	uids     UIDAllocation
 	log      *slog.Logger
+	// maxCacheTTL is the ceiling on a hint's lifetime (PLAN §5.4). Zero
+	// takes DefaultMaxCacheTTL.
+	maxCacheTTL time.Duration
 }
 
 // Option configures a Registry.
@@ -75,6 +78,17 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// WithMaxCacheTTL sets the ceiling on a cache hint's lifetime. It clamps
+// DOWNWARD only: a bundle asking for longer gets the ceiling, and one asking
+// for less gets what it asked for. A non-positive value keeps the default.
+func WithMaxCacheTTL(d time.Duration) Option {
+	return func(r *Registry) {
+		if d > 0 {
+			r.maxCacheTTL = d
+		}
+	}
+}
+
 // WithClock overrides the clock. Tests use it; nothing in production should.
 func WithClock(now func() time.Time) Option {
 	return func(r *Registry) {
@@ -96,13 +110,14 @@ func WithRegistryMaxHops(n int) Option {
 // New builds a Registry over a store.
 func New(st *store.Store, opts ...Option) *Registry {
 	r := &Registry{
-		st:       st,
-		liveness: DefaultLiveness(),
-		pub:      noopConfigPublisher{},
-		now:      time.Now,
-		maxHops:  DefaultMaxHops,
-		uids:     DefaultUIDAllocation(),
-		log:      slog.Default(),
+		st:          st,
+		liveness:    DefaultLiveness(),
+		pub:         noopConfigPublisher{},
+		now:         time.Now,
+		maxHops:     DefaultMaxHops,
+		uids:        DefaultUIDAllocation(),
+		log:         slog.Default(),
+		maxCacheTTL: DefaultMaxCacheTTL,
 	}
 	for _, opt := range opts {
 		opt(r)

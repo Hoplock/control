@@ -837,7 +837,13 @@ alternative, and it gives up the one-binary deployment for nothing.
 - **`internal/decision`** — the composition root for an authorize call: gather
   identity, target labels, grants, fleet path, and connection metadata; evaluate;
   build the snapshot; write the decision record; decide whether to issue a cache
-  hint. Latency budget (M5) is enforced here.
+  hint. Latency budget (M5) is enforced here, as a hard deadline on the call and
+  by holding the compiled program and the fleet graph **in memory** — a bundle
+  is compiled once per version and a graph is three whole-tenant reads, and
+  neither belongs on a path a user's handshake is held open for. The decision
+  record is written **synchronously**, before the answer is returned: a decision
+  this server cannot explain afterwards is one it does not serve, on the allow
+  path and the deny path alike (M4).
 - **`internal/fleet`** — the graph, its liveness, and pathfinding. Owns which
   hop direction is possible right now.
 
@@ -1404,16 +1410,25 @@ anything this section governs.
 server-owned lifetime, one revocation stream, and both invariants above, the M9
 one included.
 
-**Neither response carries one today, and the reason is the M9 invariant rather
-than the work.** 0007 serves the host-key endpoint and issues no hint, because
-the revocation stream that would withdraw one is 0009's: a hint issued before
-that stream exists is an access grant with no revocation path at all, which is
-strictly worse than the reporting traffic it saves. Absent means what every
-server did before the field existed — the proxy reports every connection — so
-it is a correct implementation rather than a gap, and
-`fleet.Registry.HostKeyCacheHint` states the answer as a function so a test
-asserts it. **0009 is the phase that may turn either hint on**, and it owes the
-liveness read on both paths before it does.
+**The issue path is one function, and the M9 invariant is the gate on it.**
+0008 built `fleet.Registry.CacheHint`: it takes the liveness read
+(`EventStreamHealthy`), derives the opaque key from the components the rule
+named, and clamps the lifetime downward to the server's ceiling. It lives in
+`internal/fleet` rather than in either handler because two copies of "may I hint
+this proxy right now" would be two places to get M9 wrong, and they would not
+fail together.
+
+**What the gate answers today is no, on both responses, and that is the
+behaviour rather than a placeholder.** Liveness is a live event subscription,
+which is 0009's to serve: with no subscription source wired there is no stream
+that could carry a withdrawal, so `/v1/authorize` issues no hint even where a
+rule authors one, and `/v1/hostkeys/report` issues none either
+(`fleet.Registry.HostKeyCacheHint` states that as a function so a test asserts
+it). Absent means what every server did before the field existed — the proxy
+re-asks — so it is a correct implementation rather than a gap. **0009 is the
+phase that turns hints on**, by wiring the stream; the authorize path then flows
+through the gate it already calls, and the host-key path owes the same call
+rather than a second copy of it.
 
 What is specific to the host-key response is the shape the proxy
 reuses it on, and three consequences this server owns:

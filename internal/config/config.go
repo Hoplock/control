@@ -79,6 +79,16 @@ const (
 	DefaultUIDRangeMax     int32 = 2_147_483_646
 	DefaultUIDBlockSize    int32 = 4096
 	DefaultUIDMaxBlockSize int32 = 1 << 20
+	// DefaultDecisionRefresh is how long a compiled bundle or a fleet graph
+	// is served before this server re-reads which one is active.
+	DefaultDecisionRefresh = 5 * time.Second
+	// DefaultDecisionBudget is the hard deadline on one authorize call. It
+	// is well inside DefaultSouthRequestTimeout, because a deadline that
+	// only fires after the transport's has already fired is not one.
+	DefaultDecisionBudget = 2 * time.Second
+	// DefaultMaxCacheTTL is the ceiling on a cache hint's lifetime (PLAN
+	// §5.4). It clamps downward only.
+	DefaultMaxCacheTTL = 5 * time.Minute
 )
 
 // logLevels is the set LogConfig.Level accepts, ordered from most to least
@@ -97,6 +107,28 @@ type Config struct {
 	South     SouthConfig     `yaml:"south"`
 	MFA       MFAConfig       `yaml:"mfa"`
 	UIDs      UIDConfig       `yaml:"uids"`
+	Decision  DecisionConfig  `yaml:"decision"`
+}
+
+// DecisionConfig bounds the decision path (PLAN M5, §5.4).
+//
+// Like FleetConfig, every field has a default and a zero takes it: a zero
+// budget is not "no deadline", it is an unset field, and reading it as the
+// former would be a handshake held open forever by a config nobody wrote.
+type DecisionConfig struct {
+	// Refresh is how long a compiled policy bundle or a fleet graph is
+	// served before this server re-reads which one is active. It is a bound
+	// on how stale an answer may be, not a cache of answers: every request
+	// is still evaluated.
+	Refresh time.Duration `yaml:"refresh"`
+	// Budget is the hard server-side deadline on one authorize call. A
+	// timeout the proxy classifies as an outage beats a slow answer that
+	// looks like one (M5).
+	Budget time.Duration `yaml:"budget"`
+	// MaxCacheTTL is the ceiling on a cache hint's lifetime. It clamps
+	// DOWNWARD only: the lifetime is policy's to set (PLAN §5.4) and this
+	// is the bound under which "we can withdraw it" stays true.
+	MaxCacheTTL time.Duration `yaml:"max_cache_ttl"`
 }
 
 // SouthConfig bounds the south-bound listener (PLAN M2, M5).
@@ -337,6 +369,15 @@ func (c *Config) applyDefaults() {
 	if c.UIDs.MaxBlockSize == 0 {
 		c.UIDs.MaxBlockSize = DefaultUIDMaxBlockSize
 	}
+	if c.Decision.Refresh == 0 {
+		c.Decision.Refresh = DefaultDecisionRefresh
+	}
+	if c.Decision.Budget == 0 {
+		c.Decision.Budget = DefaultDecisionBudget
+	}
+	if c.Decision.MaxCacheTTL == 0 {
+		c.Decision.MaxCacheTTL = DefaultMaxCacheTTL
+	}
 	// UIDs.LeaseTerm has no default: zero means "state no term", which is
 	// a real answer rather than an unset field.
 }
@@ -373,6 +414,9 @@ func (c *Config) Validate() error {
 	if err := c.MFA.validate(); err != nil {
 		return err
 	}
+	if err := c.Decision.validate(); err != nil {
+		return err
+	}
 	return c.UIDs.validate()
 }
 
@@ -405,6 +449,20 @@ func (m MFAConfig) validate() error {
 	}
 	if m.MaxPolls <= 0 {
 		return &FieldError{Field: "mfa.max_polls", Msg: "must be a positive number of polls"}
+	}
+	return nil
+}
+
+// validate reports the first decision-path bound that cannot be acted on.
+func (d DecisionConfig) validate() error {
+	if d.Refresh <= 0 {
+		return &FieldError{Field: "decision.refresh", Msg: "must not be negative"}
+	}
+	if d.Budget <= 0 {
+		return &FieldError{Field: "decision.budget", Msg: "must not be negative"}
+	}
+	if d.MaxCacheTTL <= 0 {
+		return &FieldError{Field: "decision.max_cache_ttl", Msg: "must not be negative"}
 	}
 	return nil
 }

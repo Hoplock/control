@@ -282,17 +282,21 @@ jobs:
             exit 1
           fi
 
-      # -only names the four groups this phase serves. It is not a way to make
-      # the run green: /v1/authorize is 0008's, the event stream 0009's and log
-      # ingest 0010's, and each of those phases adds its group here in the PR
-      # that serves it.
+      # -only names the groups this build serves. It is not a way to make the
+      # run green: the event stream is 0009's and log ingest 0010's, and each
+      # of those phases adds its group here in the PR that serves it.
+      #
+      # `authorize` covers four groups at once — the envelope, the absent-value
+      # defaults, vocabulary negotiation and the device-field namespace — all
+      # graded against the routes in control-expectations.yaml and the policy in
+      # control-policy.yaml.
       - name: Run the conformance suite against this server
         run: |
           make conform \
             BASE_URL=http://127.0.0.1:8080 \
             TOKEN=default.pdpconform-dev-secret \
             EXPECT=cmd/pdpconform/testdata/control-expectations.yaml \
-            CONFORM_FLAGS='-v -only=authentication,host,capabilities,uid'
+            CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid'
 
       # The server's own log, so a failure above can be read against what it
       # thought it was doing.
