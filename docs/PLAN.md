@@ -117,6 +117,7 @@ decision.
 | **M19** | a deployment has an identity and can be supervised | live | §3, §10, §11 |
 | **M20** | the console is a product surface with a specified design | live | §3, §10 |
 | **M21** | the console is localisable; English is the only catalogue | live | §3, §10 |
+| **M22** | a south-bound credential carries its tenant and names its proxy | live | §3, §10 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -143,15 +144,8 @@ decision.
   (the proxy's contract already treats this as a thin seam); north-bound is
   OIDC for humans and scoped API tokens for automation.
 
-  The south-bound token is `<tenant>.<secret>`, minted per proxy at enrollment
-  and stored only as the SHA-256 of its secret half. The shape is the
-  enrollment token's and the reason is M18's: **the credential carries the
-  tenant**, so south-bound tenancy is resolved from something this server
-  minted rather than from something the caller asserted, and the wire contract
-  grows no tenant field. A token names the proxy it was issued to and is
-  refused for any other proxy's traffic; one issued with no proxy id
-  authenticates "a proxy of this tenant" and nothing narrower, which is a
-  bootstrap credential rather than a deployment's steady state.
+  What is *in* the south-bound token — and why it is not merely an opaque
+  string — is **M22**.
 - **M3 — Policy is data compiled into a decision program, not an embedded
   general-purpose language.** The policy input vocabulary is closed and known:
   subject, claims, groups, device posture, source network, time, target labels,
@@ -721,6 +715,57 @@ decision.
   Arabic, Devanagari — requires bundling another face. That is a real size
   decision for whoever adds it, not a `<link>`, and it is the honest price of an
   air-gapped console.
+- **M22 — A south-bound credential carries its tenant and names its proxy
+  (new).** M2 settles that the proxy→server channel has a credential of its own
+  and that it is a bearer token in the prototype. It does not settle what is in
+  one, and "an opaque string" turned out to be the wrong answer twice over. So:
+
+  > A south-bound token is `<tenant>.<secret>`, minted per proxy at enrollment,
+  > stored only as the SHA-256 of its secret half, and bound to the proxy it was
+  > issued to.
+
+  **The tenant is in the credential because of M18.** Tenancy is a request
+  dimension the caller selects, never a process constant — and south-bound the
+  selector has to come from somewhere. The three candidates are a field on the
+  wire, a header, or the credential. The first is refused by M1: the contract is
+  owned upstream and grows no tenant field, and a proxy asserting its own
+  tenancy would be a caller asserting its own authority. The second is the same
+  thing wearing a hat. The third works because **this server minted it**: the
+  tenant is parsed from the credential and the secret is then verified against
+  the rows under that tenant, so a forged prefix simply fails the comparison in
+  a tenant where no such token exists. Nothing looks a token up across tenants,
+  and no repository method could express it (M18).
+
+  That this needs no change to `hoplock/proxy` at all is the strongest evidence
+  the seam is in the right place, and it is why multi-tenancy costs the wire
+  contract nothing.
+
+  **The proxy id is in the credential because a lease is attributable.** A
+  granted uid block records the `lease_id` an incident resolves a uid back to
+  (§4), and that answer is worthless if the credential presenting the request
+  could name anybody. So a bound token is refused for another proxy's traffic.
+
+  **A token with no proxy id is a real state and not a half-filled row**: it
+  authenticates "a proxy of this tenant" and nothing narrower. It exists for
+  bootstrapping and for the conformance harness, which drives two proxy ids
+  through one listener because uid exclusivity is per *target* and a harness
+  that could only present one proxy would not grade that. It is spelled out at
+  the call site; a deployment's steady state is bound tokens, minted by
+  enrollment.
+
+  **The shape is the enrollment token's on purpose** (`fleet.EnrollmentToken`),
+  because it answers the same question — which tenant is this credential good
+  for — and two spellings of one answer is how they drift.
+
+  Enrollment mints the token **inside the transaction that admits the proxy**. A
+  fleet member admitted with no way to call the API is a half-enrollment an
+  operator repairs by hand, and there is no endpoint it could have asked for one
+  on.
+
+  **What this does not settle** is mTLS, which M2 already names as the intended
+  production form. The seam is one interface and one middleware, and a
+  certificate carries a subject that can say both of these things — so mTLS
+  replaces the transport of this decision without replacing the decision.
 
 ---
 
@@ -815,8 +860,8 @@ alternative, and it gives up the one-binary deployment for nothing.
 
   It also answers the two proxy-credential questions, for the same
   one-source-of-truth reason: whether a presented **channel token** is one this
-  server minted, and whether an offered **key belongs to one of the fleet's own
-  proxies** — the chain leg on `/v1/auth/cert` (proxy D11). The second reads the
+  server minted (M22), and whether an offered **key belongs to one of the
+  fleet's own proxies** — the chain leg on `/v1/auth/cert` (proxy D11). The second reads the
   enrolled rows themselves through a column generated from `public_key`; a list
   of proxy key fingerprints maintained beside them would drift the first time a
   proxy re-enrolled with a new key, silently, in the direction that
@@ -1553,7 +1598,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0004 | **Extension points** | public `ext/` package, registration, import-graph guard (M15) |
 | 0005 | Policy model & decision engine | bundle parse/validate/compile/evaluate + decision records (M3, M4) |
 | 0006 | Fleet registry, health & config distribution | enrollment, heartbeat, zone graph, pathfinding, hop direction, versioned config rollout (M6), the capability store both sources write to (M17) |
-| 0007 | South-bound authentication | the south-bound listener and its credential, `/v1/auth/*`, MFA orchestration, host-key reporting (no cache hint until 0009 can withdraw one), `/v1/capabilities/report`, `/v1/uids/lease` and its monotonic cursor |
+| 0007 | South-bound authentication | the south-bound listener and its credential (M22), `/v1/auth/*`, MFA orchestration, host-key reporting (no cache hint until 0009 can withdraw one), `/v1/capabilities/report`, `/v1/uids/lease` and its monotonic cursor |
 | 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
 | 0009 | Revocation & event fan-out | `/v1/proxies/{proxy_id}/events`, event bus, replay, resync, kill switch (M9) |
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |

@@ -29,14 +29,16 @@
   one). `fleet.Registry.HostKeyCacheHint()` states that as a function, a test
   asserts the response carries none, and there is deliberately **no `cache_key`
   column**: 0009 adds it in the migration that starts issuing hints.
-- **South-bound credential:** `<tenant>.<secret>`, minted at enrollment
-  (`Enrollment.APIToken`), stored as SHA-256. An empty `proxy_id` is a real
-  state meaning unbound. **Chain-leg claim:** `chain_hop_proxy_id`.
+- **South-bound credential is now a decision, M22:** `<tenant>.<secret>`,
+  minted at enrollment (`Enrollment.APIToken`), stored as SHA-256, bound to the
+  proxy it was issued to. An empty `proxy_id` is a real state meaning unbound.
+  **Chain-leg claim:** `chain_hop_proxy_id`.
 - **UID leases:** block 4096, range `2000000..2147483646`, and **`term_seconds`
   is deliberately not stated** — Details says why that is a decision.
-- **Decisions:** none added/amended/withdrawn — the §2 register is unchanged.
-  PLAN §2 (M2), §3, §5.4, §6 and §10 revised in place. **Cross-repo:** none
-  owed; `contract/` and `ext/` untouched.
+- **Decisions: M22 added** (a south-bound credential carries its tenant and
+  names its proxy), with its §2 register row; M2 now cites it rather than
+  restating it. Nothing amended or withdrawn. PLAN §3, §5.4, §6 and §10 also
+  revised in place. **Cross-repo:** none owed; `contract/` and `ext/` untouched.
 - **NEXT session:** there is no north-bound API, so a running server is
   configured with `hoplock-control seed --file`; `make conform` needs `-only`
   because this server implements part of the contract. 0008 adds its group to
@@ -45,30 +47,27 @@
 
 ## Details
 
-### The south-bound credential, and why it is shaped like an enrollment token
+### The south-bound credential is M22, and the reasoning lives there
 
-M2 says "a bearer token in the prototype"; it does not say what is in it. The
-shape chosen is `<tenant>.<secret>`, which is `fleet.EnrollmentToken`'s, and the
-reason is M18 rather than symmetry: **the credential carries the tenant**, so
-south-bound tenancy is resolved from something this server minted rather than
-from something the caller asserted, and the wire contract still grows no tenant
-field. Nothing looks a token up across tenants — the tenant is parsed from the
-credential and the secret verified against the rows under it, so a forged prefix
-fails the comparison in a tenant where no such token exists.
+M2 settles that the south-bound channel has a credential of its own; it does not
+say what is in one. This phase had to decide, so **the answer is a decision —
+M22 — and not a paragraph in here**: `<tenant>.<secret>`, minted per proxy at
+enrollment, stored as SHA-256, bound to the proxy it was issued to. Read the
+plan entry for why the tenant is in the credential rather than on the wire (M18
+needs a selector, M1 refuses a field) and why an unbound token is a real state
+rather than a half-filled row.
 
-`Registry.Enroll` now mints one **inside the transaction that admits the proxy**
-and returns it on `Enrollment.APIToken`. A fleet member admitted with no way to
-call the API is a half-enrollment an operator repairs by hand, and there is no
-endpoint it could have asked for one on.
+What belongs here instead is where it lives in the code:
+`fleet.{MintProxyToken,ParseProxyToken,IssueProxyToken,AuthenticateProxyToken}`,
+the `proxy_api_tokens` table, and `Registry.Enroll`, which mints one **inside
+the transaction that admits the proxy** and returns it on
+`Enrollment.APIToken` — a fleet member admitted with no way to call the API is
+a half-enrollment an operator repairs by hand.
 
-`proxy_api_tokens.proxy_id` **empty is a real state** and means the token is not
-bound to one proxy. A bound token is refused for another proxy's traffic —
-`/v1/uids/lease` is where that bites, because the `lease_id` an incident
-resolves a uid back to is worthless if the credential could name anybody. The
-conformance harness uses an unbound token on purpose: the uid cases lease for
-two proxy ids over one listener, because exclusivity is per TARGET and a suite
-that could only present one proxy would not grade that. It is spelled out at the
-call site rather than arrived at by leaving a field blank.
+One consequence worth knowing before you write a test against it: the
+conformance harness presents an **unbound** token, because the uid cases lease
+for two proxy ids over one listener and exclusivity is per TARGET. A harness
+that could only ever present one proxy would not grade that.
 
 ### What is NOT behind the identity seams, and why
 
