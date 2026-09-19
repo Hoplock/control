@@ -192,8 +192,9 @@ that this PR does not touch. The cause was this PR's:
 detector**, these fixtures hash on every test, and `make test` is
 `go test -race ./...`, so `internal/identity` and `internal/httpapi/south`
 between them burned ~75 CPU-seconds of a two-core runner in parallel with a
-test that measures microseconds. The budget failed at 396µs against 300µs
-while the same measurement on an idle machine is ~65µs.
+test that measures microseconds. The budget failed at 396µs against 300µs —
+and on an idle machine that same 2000-rule case under `-race` measures 244µs,
+which is the next section's problem rather than this one's.
 
 The fix is `identity.HashPasswordWith(subject, password, iterations)`, which is
 what the `iterations` column was already for: a verifier is checked with the
@@ -206,14 +207,45 @@ into a production path.
 under `-race` before you add twenty of them.** A suite that is merely slow is
 also a suite that makes somebody else's timing assertion fail.
 
-Separately, and NOT this PR's: that assertion is fragile on its own. Forced to
-two Ps (`GOMAXPROCS=2 go test -race`) it fails roughly three runs in five **in
-isolation**, on this branch and on the commit before it alike — the 2000-rule
-measurement lands at ~4x the 1000-rule one, which is the GC cost of a program
-twice the size rather than anything quadratic in the evaluator. CI does not
-force two Ps and its linearity check passed; if it starts failing there, the
-measurement wants `testing.Benchmark` rather than a hand-rolled timer, and that
-is 0005's test to change.
+### The eval budget test is measuring race-instrumented code (0005's to fix)
+
+Removing the load above stopped THIS PR failing; it did not make that assertion
+sound. Measured with `testing.Benchmark` at several rule counts, the evaluator
+is exactly what M5 promises and the test is not:
+
+| rules | ns/op | ns/rule | allocs/op |
+| --- | --- | --- | --- |
+| 250 | 3,415 | 13.7 | 1 |
+| 500 | 6,800 | 13.6 | 1 |
+| 1000 | 13,852 | 13.9 | 1 |
+| 2000 | 27,303 | 13.7 | 1 |
+| 4000 | 90,406 | 22.6 | 1 |
+| 8000 | 242,806 | 30.4 | 1 |
+
+**Evaluation is linear to 2000 rules** — 13.6–13.9 ns/rule, flat — at **one
+allocation per call regardless of rule count**. There is no quadratic and no
+unbounded construct, and the ~27µs at 2000 rules is exactly what the test's own
+doc comment recorded. Past 2000 the ns/rule rises with allocations still at 1,
+so that is the working set outgrowing cache rather than anything algorithmic —
+worth knowing if a bundle ever gets that big, and not a defect.
+
+**The defect is in the measurement.** `make test` is `go test -race ./...`, and
+the race detector costs this path 6–9x: the same 2000-rule case measures
+**244µs under `-race`** against a **300µs** budget. The budget was sized as "an
+order of magnitude above the measurement" from the 27µs *non-race* figure, so
+under the only command CI ever runs it has ~19% headroom, not 10x. It has been
+passing on luck; at `GOMAXPROCS=2` it fails about three runs in five in
+isolation, on this branch and the commit before it alike.
+
+So the fix is ~30 lines in `internal/policy/eval/bench_test.go` and touches no
+production code: take the figure from `testing.Benchmark` rather than a
+hand-rolled timer, and compare it against a budget that knows whether the race
+detector is on. **0005's test to change** — and worth changing before 0008,
+because until then every phase's CI can fail for a reason unrelated to it.
+
+(An earlier draft of this file blamed "the GC cost of a program twice the size".
+That was wrong — allocations are constant at one per call. The cause is the
+race multiplier against a budget with no headroom.)
 
 ### Follow-ups this phase deliberately did not do
 
