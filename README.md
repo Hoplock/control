@@ -131,8 +131,10 @@ when a dependency moves it.
 It defines how a session picks up a prompt, branches, what "done" means, and how
 work is handed off to the next session. `docs/KICKOFF.md` has the exact prompts
 to start a session with, including the downstream sync a cross-repo change owes
-this repository. If your change touches a surface another Hoplock repository
-consumes, `docs/CROSS-REPO-PROTOCOL.md` covers that too.
+this repository and the upstream request that turns a need this repository
+cannot meet into work in the repository that owns the shape. If your change
+touches a surface another Hoplock repository consumes — or needs one that does
+not exist yet — `docs/CROSS-REPO-PROTOCOL.md` covers that too.
 
 Four rules are worth knowing before you read anything else:
 

@@ -35,7 +35,11 @@ security team's actual questions.
   record id appears in the response body, so the shape is yours; 0014's
   north-bound query surface is the natural home once it exists. Do not add a
   read endpoint to `/v1` — that is a contract change, which is
-  `docs/CROSS-REPO-PROTOCOL.md` §3.2 and not this phase's to make.
+  `docs/CROSS-REPO-PROTOCOL.md` §3.2 and not this phase's to make. Where this
+  phase genuinely needs a contract shape that does not exist, §3.2 does not stop
+  at saying so: name it under `## Upstream request` in your PR, build the rest
+  behind a named seam, and hand over the filled-in kickoff from
+  `docs/KICKOFF.md` (§4.2).
 - **Idempotent on `record_id`**, enforced by the database (0003). A proxy
   draining its disk buffer after an outage will resend, and it may resend
   concurrently with a live batch, so dedupe in Go is not sufficient.

@@ -204,7 +204,9 @@ version support back needs the argument, not just the conclusion.
   for a proxy the server cannot serve. Control's obligation is identical: drop
   the older vocabularies, keep the mechanism that carries the next one. If this
   phase's audit concludes the field can go, the audit is wrong — that conclusion
-  would take a contract change, which is §3.2 and not this phase's to make.
+  would take a contract change, which is §3.2: not this phase's to make, and not
+  this phase's to merely mention either — raise it as an upstream request with a
+  runnable kickoff (see Out of scope, below).
 - **The refusal is conformant, and stricter — never looser.** The contract itself
   sanctions `5xx` naming the mismatch when a server cannot express its policy
   within the declared version (upstream `api/README.md`, "Versioning: one live
@@ -242,7 +244,15 @@ version support back needs the argument, not just the conclusion.
   silent — which is the point of tying the constant to the document.
 - Any change to how a request declaring the **supported** version is answered.
 - Changing anything upstream. If the audit concludes the contract needs a change,
-  that is `docs/CROSS-REPO-PROTOCOL.md` §3.2: stop and tell the user.
+  that is `docs/CROSS-REPO-PROTOCOL.md` §3.2 — an **upstream request**, not a
+  stopping point. Do not make the change here and do not open a PR in the proxy
+  from this session (§6); instead build everything the gap does not block,
+  name the exact field or enum value under a `## Upstream request` heading in
+  this PR together with what stays broken until it lands, record it in the
+  learnings summary, and end that section with the filled-in "Upstream request"
+  kickoff from `docs/KICKOFF.md`, repeated in your reply to the user (§4.2).
+  Telling the user and leaving it there is what turned the last two such needs
+  into text nobody could run.
 
 ## Acceptance criteria
 - Exactly one place in the tree defines the supported `policy_version`, and one

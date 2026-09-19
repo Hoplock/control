@@ -4,11 +4,13 @@ Copy one of the prompts below into a **fresh** Claude Code session (the repo is
 cloned fresh per session). The prompts in `prompts/queued/` are self-contained;
 `docs/PROTOCOL.md` tells the session how to pick up and deliver the work.
 
-The last two are not phases. An **audit** (`prompts/audit/`) is re-run against
-the whole repository rather than built once, so it is never "next" in the queue
-and only ever starts because somebody pastes its kickoff. A **downstream sync**
-has no prompt file at all, and `docs/CROSS-REPO-PROTOCOL.md` — not
-`docs/PROTOCOL.md` — is what governs it.
+The last three are not phases, and none of them is ever "next" in the queue:
+they run because somebody pastes them. An **audit** (`prompts/audit/`) is re-run
+against the whole repository rather than built once. A **downstream sync** and
+an **upstream request** have no prompt file at all, and
+`docs/CROSS-REPO-PROTOCOL.md` — not `docs/PROTOCOL.md` — is what governs both;
+they are the two directions the same cross-repo obligation runs in, and this
+repository is the only one of the three that owes both.
 
 ## Default: implement the next queued prompt
 
@@ -56,8 +58,11 @@ finding in the prompt that will implement it, not only in the plan. A finding
 that is a whole phase rather than a paragraph may be appended to the queue as
 a new numbered prompt — say so plainly — but never built here. If the work
 seems to need something the upstream repository does not have, that is
-docs/CROSS-REPO-PROTOCOL.md §3.2 — stop and tell me rather than approximating
-it.
+docs/CROSS-REPO-PROTOCOL.md §3.2 — never approximate it, and do not stop at
+telling me: name the exact field, endpoint, enum value or signature, record it
+as a named cross-repo dependency, and hand me the "Upstream request" kickoff
+from docs/KICKOFF.md already filled in, so the proxy phase that answers it can
+actually be started.
 
 Leave the audit prompt where it is — it is re-run, not completed — and record
 this run at the top of its one learnings file, with the as-of markers.
@@ -92,7 +97,7 @@ or to `docs/CROSS-REPO-PROTOCOL.md` owes the same kickoff to
 `hoplock/enterprise`, emitted by the PR that made it — so this section is both
 what you paste and what you copy from when you are the upstream author. An
 upstream PR whose `## Cross-repo impact` section names obligations is required
-to emit it already filled in (that protocol's §4), so normally you paste what
+to emit it already filled in (that protocol's §4.1), so normally you paste what
 the PR gave you rather than composing this by hand.
 
 ```
@@ -108,7 +113,9 @@ A sync changes text, not behaviour: it implements, enforces, and vendors
 nothing, hand-edits no vendored artifact, and adds, renames, or renumbers no
 prompt. Land each obligation in the prompt that will implement it, not only in
 the plan. If the work seems to need something the upstream repository does not
-have, that is §3.2 — stop and tell me rather than approximating it.
+have, that is §3.2 — never approximate it, and do not stop at telling me: name
+the exact shape and hand me the "Upstream request" kickoff from
+docs/KICKOFF.md already filled in.
 
 The obligations to land are in the upstream PR's "## Cross-repo impact"
 section: <the obligations, or "see the PR">.
@@ -131,6 +138,93 @@ worth a paragraph in the PR (`docs/CROSS-REPO-PROTOCOL.md` §5,
 `docs/PROTOCOL.md` §2). What identifies the sync is the PR body naming the
 upstream change.
 
+## Upstream request (no prompt, no number)
+
+The mirror of the block above. A sync carries a **merged** change downstream; a
+**request** carries an **unmet need** upstream — what a repository owes the one
+above it when it needs a shape that does not exist yet
+(`docs/CROSS-REPO-PROTOCOL.md` §3.2, §4.2). The session that hits the gap builds
+everything the gap does not block behind a seam named for what is missing, states
+the shape in its PR under a `## Upstream request` heading, and hands over this
+kickoff already filled in. It does **not** do the upstream work itself (§6).
+
+This repository sits in the middle of the chain
+(`docs/CROSS-REPO-PROTOCOL.md` §2: proxy → control → enterprise), so — like the
+sync block above, and for exactly the same reason — this one runs **both ways**.
+It is the only repository of the three where that is true, which is why both
+halves are spelled out:
+
+- **Sending, up to `hoplock/proxy`.** A phase here that needs a contract field,
+  endpoint or enum value the proxy has not defined emits this kickoff filled in,
+  in its PR and in its reply, pointed at `hoplock/proxy`. Never edit `contract/`
+  to close the gap instead (M1) — that is the failure the flow exists to
+  prevent. You do not run the kickoff here; the user runs it in a fresh session
+  with the proxy checked out.
+- **Receiving, from `hoplock/enterprise`.** An Enterprise phase that needs an
+  `ext/` seam this repository has not exposed (M15) emits the same kickoff
+  pointed **here**, and the prompt below is then what you run, in a fresh
+  session with this repository checked out.
+
+**What it produces is a queued prompt, not the change.** What arrives is a
+*need*, described by somebody who navigated this repository's plan only far
+enough to be blocked by it. Turning that into a specified phase is this
+repository's own work, and it is why the session below stops at the prompt: a
+requester who wrote the prompt too would be specifying a phase against an
+architecture they have not read.
+
+```
+Read docs/PROTOCOL.md and follow it. You are turning an upstream request from
+<requesting repo> into a queued prompt. The request is in <requesting PR URL>,
+under "## Upstream request". Do not implement any queued prompt in this session,
+and do not implement this one.
+
+Read that section, then this repository's docs/PLAN.md — its section headings and
+its decision register — far enough to place the work: which sections and which M
+decisions the phase touches, and whether an existing decision already settles
+part of it. The requester could not do this, which is the whole reason the
+request stops at a need.
+
+Write ONE self-contained prompt into prompts/queued/ per docs/PROTOCOL.md §7 —
+lowest unused number, contiguous above the implemented block, a "Read first"
+block naming plan sections by § and decisions by M id, in-scope and out-of-scope
+items, the exact files and shapes, acceptance criteria and required tests. Cite
+the requesting repository's decision ids by id (E* for enterprise), never
+restated (docs/CROSS-REPO-PROTOCOL.md §1).
+
+Two things the prompt MUST carry, because they are what the request is for:
+- the exact shape asked for, in this repository's own vocabulary, and what
+  downstream is unable to do until it exists;
+- that the phase implementing it owes a downstream sync to EVERY consuming
+  repository once merged — including the one that raised the request, which is
+  the one most easily forgotten because it is already waiting
+  (docs/CROSS-REPO-PROTOCOL.md §5, "The PR that answers an upstream request is
+  not a sync").
+
+If the request cannot be met as asked — it contradicts an M decision, or the
+shape is wrong for reasons the requester could not see — say so and propose the
+alternative rather than queueing a prompt you expect to be wrong. A request is a
+need, not an instruction, and the answer "not like that, like this" is a real
+outcome.
+
+Work on the branch this session was given, whatever it is named — if the name is
+yours to choose, claude/NNNN-short-description matching the prompt you add. Open
+one PR whose body names the PR the request came from, quotes the shape
+requested, and says where in the queue you put it and why.
+```
+
+Fill in `<requesting repo>` and `<requesting PR URL>` and leave the rest alone. The
+two most droppable paragraphs are the two that matter: reading the plan before
+writing the prompt, and the reminder that the phase owes a sync **back**. Dropped,
+you get a prompt specified from outside this repository's architecture, and a
+change that lands here and is never picked up by the repository that asked for it.
+
+When you are **sending** rather than receiving, the same block is what you paste
+into your PR's `## Upstream request` section and into your reply — with
+`hoplock/control` as the requesting repository, your own PR as the URL, and `D`
+in place of `M` for the proxy's decision ids. Your phase does not wait for the
+answer: it merges with the gap named and the seam unwired, because a seam that
+fails visibly is what makes not-waiting safe (§4.2).
+
 ## Rules of thumb
 
 - **One session = one prompt = one PR.** Start a fresh session for each queued
@@ -148,7 +242,14 @@ upstream change.
   from a session that is implementing a prompt — the two are separately
   reviewable and separately revertible. A phase here that changes `ext/` or
   `docs/CROSS-REPO-PROTOCOL.md` **emits** Enterprise's kickoff in its PR and in
-  its reply (`docs/CROSS-REPO-PROTOCOL.md` §4); it does not do that sync itself.
+  its reply (`docs/CROSS-REPO-PROTOCOL.md` §4.1); it does not do that sync itself.
+- **A request is not a phase either, and it produces one rather than being one.**
+  An upstream request arrives as a need and leaves as a queued prompt; the phase
+  that implements it is a later, separate session. Never let the two collapse —
+  a session that writes the prompt and then implements it has reviewed its own
+  specification. The same rule bounds the sending half: the session that found
+  the gap emits the kickoff and never opens the upstream PR itself
+  (`docs/CROSS-REPO-PROTOCOL.md` §3.2, §6).
 - **Don't paste prompt bodies.** Point the session at the file in the repo so it
   reads the canonical version (numbers can change under the invariants in
   `docs/PROTOCOL.md` §6; the file is always current).
@@ -159,7 +260,11 @@ upstream change.
   here may need to *read* the proxy's plan or its mock server; it may never
   change them, and it may never edit `contract/` (see `docs/PLAN.md` M1). If a
   phase turns out to need a contract change, that is a separate piece of work in
-  the Hoplock Proxy repository — stop and tell the user.
+  the Hoplock Proxy repository — raise it as an **upstream request**: build the
+  seam unwired, name the shape under `## Upstream request` in your PR, and hand
+  the user the filled-in kickoff above (`docs/CROSS-REPO-PROTOCOL.md` §3.2,
+  §4.2). Telling the user and stopping there is what left two such needs
+  unowned.
 - **Phase 0002 is worth doing early and well.** After it lands, every later phase
   has a conformance suite it did not write itself telling it whether the server
   is correct. Before it lands, "correct" is an opinion.
