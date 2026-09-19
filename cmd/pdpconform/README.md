@@ -75,17 +75,20 @@ go run ./cmd/hoplock-control --config config.yaml &
 make conform BASE_URL=http://127.0.0.1:8080 \
              TOKEN=default.pdpconform-dev-secret \
              EXPECT=cmd/pdpconform/testdata/control-expectations.yaml \
-             CONFORM_FLAGS='-v -only=authentication,host,capabilities,uid'
+             CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid'
 ```
 
-`testdata/control-seed.yaml` and `testdata/control-expectations.yaml` are **one
-document in two halves**: a login in one and not the other grades nothing, or
-fails for a reason visible in neither. Change them together.
+`testdata/control-seed.yaml`, `testdata/control-policy.yaml` and
+`testdata/control-expectations.yaml` are **one document in three parts**: the
+fixtures, the policy they are decided under, and what the suite asserts. A login
+or a target in one and not the others grades nothing, or fails for a reason
+visible in none of them. Change them together.
 
-`-only` names the four groups phase 0007 serves. `/v1/authorize` is 0008's, the
-event stream 0009's and log ingest 0010's, and each of those phases adds its
-group to the `conform-self` CI job and replaces its placeholder section in the
-expectation file. **Beware the substring collision:** `POST /v1/auth` also
+`-only` names the groups this build serves; `authorize` covers four of them at
+once (the envelope, the absent-value defaults, vocabulary negotiation and the
+device-field namespace). The event stream is 0009's and log ingest 0010's, and
+each of those phases adds its group to the `conform-self` CI job and replaces
+its placeholder section in the expectation file. **Beware the substring collision:** `POST /v1/auth` also
 matches `authorize (POST /v1/authorize)`, and `make` passes `CONFORM_FLAGS`
 unquoted, so a value containing spaces is split by the shell before the flag
 package sees it. Use space-free substrings.

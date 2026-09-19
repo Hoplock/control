@@ -33,6 +33,28 @@ var policyFields = []string{
 
 var deviceFieldName = regexp.MustCompile(contract.DeviceFieldNamePattern)
 
+// The rungs the suite declares on every authorize request. They are the
+// contract's own vocabulary, listed rather than derived so that a rung added
+// upstream is a line to add here — and a suite that silently stopped declaring
+// one would make the server withhold it and the assertion pass for the wrong
+// reason.
+var (
+	executionRungs = []string{
+		string(contract.ExecutionProxyInspected),
+		string(contract.ExecutionNoInteractiveShell),
+		string(contract.ExecutionAccountRestricted),
+		string(contract.ExecutionAccountConfined),
+		string(contract.ExecutionPlatformAuthorized),
+		string(contract.ExecutionPlatformAttested),
+	}
+	reachRungs = []string{
+		string(contract.ReachProxyChannelPolicy),
+		string(contract.ReachAccountEgressRestricted),
+		string(contract.ReachAccountNetworkIsolated),
+		string(contract.ReachPlatformAttested),
+	}
+)
+
 // authorizeBody builds an authorize request as raw JSON.
 //
 // It is built as a map rather than as contract.AuthorizeRequest because two of
@@ -55,6 +77,19 @@ func (s *Suite) authorizeBody(r AuthorizeRoute, version *int32) []byte {
 		"target":      r.Target,
 		"auth_method": string(contract.AuthMethodCert),
 		"conn":        s.conn(r.ProxyID),
+		// The suite declares EVERY rung, and it is not pretending to be a
+		// proxy build when it does. `capabilities` is how a proxy says what
+		// it can provide, and a server is entitled to withhold a rung
+		// nobody declared — so a suite that sent nothing could not grade a
+		// server that honours the field, and the `enforcement` pair below
+		// would pass vacuously against one that cannot express a rung at
+		// all. Declaring everything says "do not constrain me on capability
+		// grounds"; what is graded here is the envelope, never which rungs
+		// an estate can take.
+		"capabilities": map[string]any{
+			"execution": executionRungs,
+			"reach":     reachRungs,
+		},
 	}
 	if r.Port != 0 {
 		body["target_port"] = r.Port

@@ -119,6 +119,10 @@ type DecisionRepository interface {
 	// ListBySubject returns a subject's most recent decisions, newest
 	// first, bounded by limit.
 	ListBySubject(ctx context.Context, tenant Tenant, subjectID string, limit int) ([]Decision, error)
+	// ListBySession returns the decisions taken for one SSH session, newest
+	// first. It is the lookup an operator arrives with, because a session id
+	// is what the user was told; a chained session has one record per hop.
+	ListBySession(ctx context.Context, tenant Tenant, sessionID string, limit int) ([]Decision, error)
 }
 
 // AuditRepository is the append-only audit store (M8). 0010 owns the chain;

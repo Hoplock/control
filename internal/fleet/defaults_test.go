@@ -30,6 +30,7 @@ func TestConfigDefaultsMatchTheFleetsOwn(t *testing.T) {
 		{"target_capability_ttl", config.DefaultTargetCapabilityTTL, want.TargetCapabilityTTL},
 		{"capability_report_after", config.DefaultCapabilityReportAfter, want.ReportAfter},
 		{"max_hops", config.DefaultMaxHops, fleet.DefaultMaxHops},
+		{"max_cache_ttl", config.DefaultMaxCacheTTL, fleet.DefaultMaxCacheTTL},
 	}
 	for _, tc := range cases {
 		if tc.fromConfig != tc.fromTheFleet {

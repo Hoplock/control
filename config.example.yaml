@@ -159,3 +159,35 @@ uids:
   # the outage a held block exists to survive. Set it only if you have a reason
   # to be stricter than the proxy.
   lease_term: 0s
+
+# The decision path (PLAN M5, §5.4, phase 0008). Optional; every field has the
+# default shown, and a zero takes the default rather than disabling the bound.
+#
+# A proxy holds a user's SSH handshake open on every connection and per hop
+# while this server answers, so what is configured here is how long that may
+# take and how stale the material it is answered from may be.
+decision:
+  # How long a compiled policy bundle and a fleet graph are served before this
+  # server re-reads which one is active. It is NOT a cache of answers: every
+  # request is still evaluated against the policy, and this bounds only how
+  # long after an activation the previous bundle may still be serving.
+  # Defaults to 5s. A policy change that has to take effect NOW is a
+  # revocation (M9), which travels on the event stream and has no cache in
+  # front of it.
+  refresh: 5s
+
+  # The hard server-side deadline on one authorize call. A timeout the proxy
+  # can classify as an outage beats a slow answer that looks like one. Keep it
+  # well inside south.request_timeout, or it never fires first and is not a
+  # deadline at all. Defaults to 2s.
+  budget: 2s
+
+  # The ceiling on a cache hint's lifetime. It clamps DOWNWARD only: a rule
+  # asking for less gets what it asked for, and one asking for more gets this.
+  #
+  # The lifetime is policy's to set (PLAN §5.4) and this is not a second
+  # opinion about it — it is the bound under which "we can withdraw this"
+  # stays true, because a withdrawal travels over the revocation stream and a
+  # decision cached for an hour outlives any reasonable bound on noticing that
+  # the stream broke. Defaults to 5m.
+  max_cache_ttl: 5m

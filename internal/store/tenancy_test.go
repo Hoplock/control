@@ -179,6 +179,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		},
 		"Decisions.Get":           func() error { _, err := s.Decisions().Get(ctx, "", "d"); return err },
 		"Decisions.ListBySubject": func() error { _, err := s.Decisions().ListBySubject(ctx, "", "s", 1); return err },
+		"Decisions.ListBySession": func() error { _, err := s.Decisions().ListBySession(ctx, "", "s", 1); return err },
 		"Audit.Append": func() error {
 			return s.Audit().Append(ctx, "", AuditRecord{RecordID: "r", Stream: "s", ChainSeq: 1})
 		},

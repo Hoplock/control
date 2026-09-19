@@ -484,12 +484,21 @@ func (g *Graph) resolveEdge(from Node, edge Edge, visited map[string]bool) []Nod
 	return out
 }
 
-// Trail composes the hop trail the hop metadata carries: what the session has
-// already traversed, the asking proxy, and every proxy the path adds.
+// Trail composes the hop trail from what a session has ALREADY TRAVERSED: the
+// incoming trail, the asking proxy, and any hop it has actually taken.
 //
-// The proxy uses it for loop detection, so it must name every proxy in the
-// chain and not only the ones after this point: a hop that saw a shorter trail
-// than the truth is one that cannot detect the loop it is about to close.
+// The proxy uses it for loop detection, so it must name every proxy the session
+// has been through and not only the ones after this point: a hop that saw a
+// shorter trail than the truth is one that cannot detect the loop it is about
+// to close.
+//
+// PASS ONLY THE HOPS THE SESSION HAS TRAVERSED, which on an authorize answer is
+// NONE. The contract defines `hop.hop_trail` as the trail "to forward to the
+// next proxy, this proxy appended" — the proxies further along a computed path
+// have not been traversed, each appends itself when it asks for its own leg,
+// and a trail that ran ahead of the session would have the next proxy find
+// itself in its own incoming trail and refuse the chain as a loop
+// (proxy `routing.PlanHop`). So 0008 calls `Trail(entry, nil)`.
 func Trail(entry EntryPoint, hops []Hop) []string {
 	trail := make([]string, 0, len(entry.HopTrail)+1+len(hops))
 	trail = append(trail, entry.HopTrail...)

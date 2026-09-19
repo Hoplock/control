@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
@@ -33,6 +34,7 @@ type handlers struct{ s *Server }
 
 var (
 	_ contract.Authenticator      = handlers{}
+	_ contract.Authorizer         = handlers{}
 	_ contract.HostKeyReporter    = handlers{}
 	_ contract.CapabilityReporter = handlers{}
 	_ contract.UIDLeaser          = handlers{}
@@ -220,6 +222,75 @@ func wireIdentity(id identity.Identity) *contract.Identity {
 		Principals:  id.Principals,
 		Groups:      id.Groups,
 		Claims:      id.Claims,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// authorize
+// ---------------------------------------------------------------------------
+
+func (h handlers) authorize(ctx context.Context, r *http.Request) (any, error) {
+	var req contract.AuthorizeRequest
+	if err := decode(r, &req); err != nil {
+		return nil, err
+	}
+	return h.Authorize(ctx, &req)
+}
+
+// Authorize implements contract.Authorizer.
+//
+// It is a translation and a call, like every other handler here: the decision
+// is `internal/decision`'s and the only thing chosen at this layer is which of
+// the three answers the caller gets. That split is what M11 rests on — the
+// service returns a typed [decision.Outcome] whose `Deny` field is the only
+// refusal, so an outage cannot arrive as one.
+func (h handlers) Authorize(ctx context.Context, req *contract.AuthorizeRequest) (*contract.AuthorizeResponse, error) {
+	caller, ok := callerFrom(ctx)
+	if !ok {
+		return nil, errNoCaller
+	}
+	if !caller.Authorises(req.Conn.ProxyID) {
+		// A token issued to one proxy may not ask in another's name. The
+		// route is computed FROM the asking proxy (0008), so a credential
+		// that could name anybody could ask for a route it does not sit
+		// on — and the hop trail, which only ever narrows, would be
+		// narrowing the wrong chain. Same refusal as the uid lease, for
+		// the same reason.
+		h.s.logDeny(ctx, contract.PathAuthorize, "proxy-id-not-authorised",
+			"requested_proxy_id", req.Conn.ProxyID, "token_proxy_id", caller.ProxyID)
+		return nil, deny("the credential was not accepted")
+	}
+
+	out, err := h.s.decision.Authorize(ctx, caller.Tenant, req)
+	if err != nil {
+		var mismatch *decision.VersionMismatchError
+		if errors.As(err, &mismatch) {
+			// A proxy this server cannot answer within the vocabulary it
+			// declared is a ROLLOUT problem, and a 5xx says so: it is not
+			// a statement about the user, and it is never a thinned
+			// snapshot with the restriction quietly dropped.
+			return nil, versionUnsupported(mismatch.Error())
+		}
+		return nil, err
+	}
+	switch {
+	case out.Deny != nil:
+		// The reason is written down — in this server's log and in the
+		// decision record — and the caller is told nothing beyond "access
+		// denied". A precise denial makes the proxy an oracle for probing
+		// the estate (M4).
+		h.s.logDeny(ctx, contract.PathAuthorize, out.Deny.Reason,
+			"subject", req.Identity.Subject,
+			"target", req.Target,
+			"rule", out.Deny.Rule,
+			"decision_id", out.Deny.DecisionID)
+		return nil, deny("access denied")
+	case out.Response != nil:
+		return out.Response, nil
+	default:
+		// An empty outcome is a bug in this server, so it is an outage.
+		// Reading it as a deny would report our bug as the user's.
+		return nil, errEmptyOutcome
 	}
 }
 

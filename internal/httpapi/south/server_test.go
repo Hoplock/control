@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/south"
 	"github.com/hoplock/control/internal/identity"
@@ -53,6 +54,7 @@ func TestTheListenerServesExactlyTheContractPathsThisPhaseImplements(t *testing.
 		contract.PathAuthCert,
 		contract.PathAuthMFAPoll,
 		contract.PathAuthPassword,
+		contract.PathAuthorize,
 		contract.PathCapabilitiesReport,
 		contract.PathHostKeyReport,
 		contract.PathUIDLease,
@@ -707,12 +709,13 @@ func TestTheCorrelationIDIsEchoedAndFiltered(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type harness struct {
-	server *south.Server
-	store  *store.Store
-	fleet  *fleet.Registry
-	logs   *bytes.Buffer
-	clock  time.Time
-	secret string
+	server   *south.Server
+	store    *store.Store
+	fleet    *fleet.Registry
+	decision *decision.Service
+	logs     *bytes.Buffer
+	clock    time.Time
+	secret   string
 }
 
 func newHarness(t *testing.T) *harness { return newHarnessWith(t, nil) }
@@ -730,17 +733,31 @@ func newHarnessWith(t *testing.T, tweak func(*south.Options)) *harness {
 	h.fleet = fleet.New(st,
 		fleet.WithUIDAllocation(fleet.UIDAllocation{BlockSize: 4096}),
 		fleet.WithLogger(logger),
+		fleet.WithClock(h.now),
 	)
 	h.seed(t)
+
+	decisions, err := decision.New(decision.Options{
+		Store:    st,
+		Fleet:    h.fleet,
+		Subjects: identity.NewStoreDirectory(st),
+		Logger:   logger,
+		Now:      h.now,
+	})
+	if err != nil {
+		t.Fatalf("decision.New: %v", err)
+	}
+	h.decision = decisions
 
 	opts := south.Options{
 		Identity: identity.NewService(identity.NewStoreDirectory(st),
 			identity.WithMFAProvider(identity.ScriptedMFA{}),
 			identity.WithClock(h.now),
 		),
-		Fleet:  h.fleet,
-		Logger: logger,
-		Now:    h.now,
+		Fleet:    h.fleet,
+		Decision: decisions,
+		Logger:   logger,
+		Now:      h.now,
 	}
 	if tweak != nil {
 		tweak(&opts)
@@ -761,6 +778,7 @@ func newHarnessWithFleet(t *testing.T, keys identity.FleetKeys) *harness {
 	srv, err := south.New(south.Options{
 		Identity: identity.NewService(panickingDirectory{}, identity.WithClock(h.now)),
 		Fleet:    h.fleet,
+		Decision: h.decision,
 		Logger:   slog.New(slog.NewJSONHandler(h.logs, nil)),
 		Now:      h.now,
 	})

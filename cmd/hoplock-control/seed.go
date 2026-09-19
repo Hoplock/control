@@ -5,12 +5,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -18,6 +21,8 @@ import (
 	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/policy/compile"
+	"github.com/hoplock/control/internal/policy/model"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -84,12 +89,17 @@ type seedDocument struct {
 	Tenant string `yaml:"tenant"`
 	// Subjects are the identities the auth endpoints resolve.
 	Subjects []seedSubject `yaml:"subjects"`
+	// Targets are the hosts a decision is taken about: the labels policy
+	// matches on and the zone the fleet routes to (0003, 0008).
+	Targets []seedTarget `yaml:"targets"`
 	// Proxies are the fleet members. Their keys are what makes a chain leg
 	// recognisable (proxy D11).
 	Proxies []seedProxy `yaml:"proxies"`
 	// HostKeys are target host keys this server already trusts, so a
 	// conformance run has a `known: true` case to grade.
 	HostKeys []seedHostKey `yaml:"host_keys"`
+	// Policy is the bundle this deployment decides under (0005, 0008).
+	Policy *seedPolicy `yaml:"policy"`
 	// Tokens are south-bound channel credentials (M2).
 	Tokens []seedToken `yaml:"tokens"`
 }
@@ -108,6 +118,23 @@ type seedSubject struct {
 	Keys []seedKey `yaml:"keys"`
 	// MFA, when present, enrolls the subject with the scripted provider.
 	MFA *identity.ScriptedMFAConfig `yaml:"mfa"`
+}
+
+type seedTarget struct {
+	ID       string            `yaml:"id"`
+	Hostname string            `yaml:"hostname"`
+	Zone     string            `yaml:"zone"`
+	Labels   map[string]string `yaml:"labels"`
+}
+
+// seedPolicy names the bundle source to compile and activate.
+//
+// It is a FILE rather than an inline document because a bundle is the thing an
+// operator reviews, and a policy buried inside a fixture file is one nobody
+// reads as policy. The path is resolved relative to the seed document, so the
+// two travel together.
+type seedPolicy struct {
+	File string `yaml:"file"`
 }
 
 type seedKey struct {
@@ -142,6 +169,23 @@ type seedProxy struct {
 	// State defaults to "enrolled". Seed "revoked" to prove a withdrawn
 	// proxy cannot authenticate a chain leg.
 	State string `yaml:"state"`
+	// Edges is what this proxy declares it can reach (0006). Without them
+	// the graph is a set of islands and every target outside a proxy's own
+	// zone is unroutable — which is an OUTAGE, so a fixture that forgets
+	// them fails in a way that looks like a bug in the decision layer.
+	Edges []seedEdge `yaml:"edges"`
+	// Relays are the downstream proxies currently holding an outbound relay
+	// registration WITH this one. A relay edge is viable only while its
+	// registration is, and it is never downgraded to a dial (proxy D11).
+	Relays []string `yaml:"relays"`
+}
+
+type seedEdge struct {
+	ToZone      string `yaml:"to_zone"`
+	Direction   string `yaml:"direction"`
+	Address     string `yaml:"address"`
+	NextProxyID string `yaml:"next_proxy_id"`
+	Cost        int    `yaml:"cost"`
 }
 
 type seedHostKey struct {
@@ -175,6 +219,17 @@ func loadSeed(path string) (*seedDocument, error) {
 	var doc seedDocument
 	if err := dec.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("seed: parse %s: %w", path, err)
+	}
+	if doc.Policy != nil {
+		if doc.Policy.File == "" {
+			return nil, fmt.Errorf("seed: policy names no file")
+		}
+		// Relative to the seed document, so the fixture set and the policy
+		// it decides under travel together and neither depends on the
+		// directory the command was run from.
+		if !filepath.IsAbs(doc.Policy.File) {
+			doc.Policy.File = filepath.Join(filepath.Dir(path), doc.Policy.File)
+		}
 	}
 	return &doc, nil
 }
@@ -261,6 +316,21 @@ func (d *seedDocument) apply(ctx context.Context, st *store.Store, tenant store.
 		say("subject %s (%d key(s))", s.ID, len(s.Keys))
 	}
 
+	for _, tgt := range d.Targets {
+		if tgt.ID == "" || tgt.Hostname == "" {
+			return fmt.Errorf("seed: a target needs an id and a hostname")
+		}
+		if err := st.Targets().Upsert(ctx, tenant, store.Target{
+			ID:       tgt.ID,
+			Hostname: tgt.Hostname,
+			Zone:     tgt.Zone,
+			Labels:   tgt.Labels,
+		}); err != nil {
+			return err
+		}
+		say("target %s (%s) zone %s", tgt.Hostname, tgt.ID, tgt.Zone)
+	}
+
 	for _, p := range d.Proxies {
 		if p.ID == "" {
 			return fmt.Errorf("seed: a proxy has no id")
@@ -293,7 +363,37 @@ func (d *seedDocument) apply(ctx context.Context, st *store.Store, tenant store.
 		if err := st.Proxies().Upsert(ctx, tenant, proxy); err != nil {
 			return err
 		}
-		say("proxy %s (%s) key %s", p.ID, state, identity.KeyFingerprint(blob))
+
+		edges := make([]store.ProxyEdge, 0, len(p.Edges))
+		for _, e := range p.Edges {
+			direction := store.HopDirection(e.Direction)
+			if direction == "" {
+				direction = store.HopDial
+			}
+			if direction != store.HopDial && direction != store.HopRelay {
+				return fmt.Errorf("seed: proxy %q edge to zone %q: direction %q is neither dial nor relay",
+					p.ID, e.ToZone, e.Direction)
+			}
+			edges = append(edges, store.ProxyEdge{
+				ProxyID:     p.ID,
+				ToZone:      e.ToZone,
+				Direction:   direction,
+				Address:     e.Address,
+				NextProxyID: e.NextProxyID,
+				Cost:        e.Cost,
+			})
+		}
+		if err := st.ProxyEdges().ReplaceForProxy(ctx, tenant, p.ID, edges); err != nil {
+			return err
+		}
+		if len(p.Relays) > 0 {
+			if err := st.RelayRegistrations().ReplaceForUpstream(
+				ctx, tenant, p.ID, p.Relays, time.Now().UTC()); err != nil {
+				return err
+			}
+		}
+		say("proxy %s (%s) key %s, %d edge(s), %d relay registration(s)",
+			p.ID, state, identity.KeyFingerprint(blob), len(edges), len(p.Relays))
 	}
 
 	for _, k := range d.HostKeys {
@@ -340,7 +440,54 @@ func (d *seedDocument) apply(ctx context.Context, st *store.Store, tenant store.
 		}
 		say("token %s for %s", tokenID, bound)
 	}
+
+	if d.Policy != nil {
+		version, err := d.applyPolicy(ctx, st, tenant)
+		if err != nil {
+			return err
+		}
+		say("policy bundle %d activated from %s", version, d.Policy.File)
+	}
 	return nil
+}
+
+// applyPolicy stores the bundle and makes it the active one.
+//
+// It COMPILES the source first and refuses a bundle that does not compile,
+// rather than storing one the decision path would then fail on. A bundle that
+// cannot compile is not policy that denies everybody — it is a server with no
+// policy at all, which is an outage (M11), and finding that out at seed time
+// costs an error message instead of an estate.
+func (d *seedDocument) applyPolicy(ctx context.Context, st *store.Store, tenant store.Tenant) (int64, error) {
+	source, err := os.ReadFile(d.Policy.File)
+	if err != nil {
+		return 0, fmt.Errorf("seed: policy: %w", err)
+	}
+	bundle, err := model.Parse(source)
+	if err != nil {
+		return 0, fmt.Errorf("seed: policy %s: %w", d.Policy.File, err)
+	}
+	if _, err := compile.Compile(bundle); err != nil {
+		return 0, fmt.Errorf("seed: policy %s: %w", d.Policy.File, err)
+	}
+
+	version, err := st.PolicyBundles().NextVersion(ctx, tenant)
+	if err != nil {
+		return 0, err
+	}
+	sum := sha256.Sum256(source)
+	if err := st.PolicyBundles().Insert(ctx, tenant, store.PolicyBundle{
+		Version:    version,
+		Source:     source,
+		Hash:       "sha256:" + hex.EncodeToString(sum[:]),
+		UploadedBy: "seed",
+	}); err != nil {
+		return 0, err
+	}
+	if err := st.PolicyBundles().Activate(ctx, tenant, version); err != nil {
+		return 0, err
+	}
+	return version, nil
 }
 
 // resolveFingerprint derives a key's fingerprint from its blob where one was

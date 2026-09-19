@@ -5,13 +5,16 @@
 #
 # WHAT THIS FILE DESCRIBES IS A SERVER THAT IMPLEMENTS PART OF THE CONTRACT.
 # Phase 0007 serves authentication, host keys, capability reports and uid
-# leases; `/v1/authorize` is 0008, the event stream 0009, log ingest 0010. The
-# CI leg therefore runs those four groups by name (`-only`), and the sections
-# below for the rest are filled in so the file VALIDATES rather than because
-# anything reads them yet — the suite refuses a file whose missing key would
-# silently turn an assertion into a no-op, and that refusal is worth keeping.
-# The phase that serves an endpoint replaces its section here and adds its
-# group to the CI leg.
+# leases and 0008 serves `/v1/authorize`; the event stream is 0009 and log
+# ingest 0010. The CI leg runs the served groups by name (`-only`), and the
+# sections below for the rest are filled in so the file VALIDATES rather than
+# because anything reads them yet — the suite refuses a file whose missing key
+# would silently turn an assertion into a no-op, and that refusal is worth
+# keeping. The phase that serves an endpoint replaces its section here and adds
+# its group to the CI leg.
+#
+# The authorize routes below are decided under `control-policy.yaml`, which is
+# seeded from `control-seed.yaml`. THE THREE ARE ONE DOCUMENT IN THREE PARTS.
 
 proxy_id: proxy-1
 # A DIFFERENT proxy id for the uid cases: exclusivity is per target, not per
@@ -53,12 +56,11 @@ auth:
     wait_seconds: 2
   unknown_challenge_token: "pdpconform-never-issued-this-token"
 
-# --- not served yet (0008) -------------------------------------------------
-#
-# Every route below names a target this server has no policy for, because it
-# has no policy engine wired to a listener yet. The `authorize`,
-# `absent-value defaults`, `vocabulary negotiation` and `device fields` groups
-# are not in the CI leg's `-only` list; 0008 fills these in and adds them.
+# Each route below names a rule in `control-policy.yaml` and a target in
+# `control-seed.yaml`. The pairs matter most: `defaults.*.default` is a route
+# that must answer WITHOUT the field and `defaults.*.set` one that must answer
+# WITH it, and an assertion that only ever saw the first half would pass
+# vacuously against a server that cannot express the field at all.
 authorize:
   direct:
     login: alice
