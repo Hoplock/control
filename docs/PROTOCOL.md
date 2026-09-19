@@ -142,15 +142,36 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
   prompt number, so nothing in *this* file covers it. That one does: the ordering
   (upstream merges first), the downstream-impact check your PR owes — including
   the ready-to-run sync kickoff it must hand the user for Hoplock Enterprise
-  (§4), taken from `docs/KICKOFF.md`'s "Downstream sync" block — and the
+  (§4.1), taken from `docs/KICKOFF.md`'s "Downstream sync" block — and the
   conventions for a sync PR. It lists the shared surfaces in its Section 1; if
   your change touches none of them, you do not need to read it.
+
+  **This repository owes both hand-over obligations, and it is the only one of
+  the three that does.** §4.1 is the duty looking downstream, above. §4.2 is the
+  same duty looking **up**: a phase here that needs a shape the proxy does not
+  have states it in your PR under a heading spelled exactly
+  `## Upstream request` — the exact field, endpoint, enum value or signature,
+  what you built instead and where the seam is, and what stays broken until it
+  lands — and ends with a ready-to-run kickoff for `hoplock/proxy`, taken from
+  `docs/KICKOFF.md`'s "Upstream request" block and repeated in your reply to the
+  user. That is §3.2, and it is a flow rather than a prohibition: you do not
+  down tools, you do not ship around the gap, and you do not stop at telling the
+  user. Requests also **arrive** here from `hoplock/enterprise` (M15), which the
+  same `docs/KICKOFF.md` block covers; a phase that answers one owes a
+  downstream sync to every consumer once merged, **including the repository that
+  asked** — the one most easily forgotten because it is already waiting (§5).
 - **Never edit `contract/` (M1).** That directory is vendored from the proxy
   repository and is generated, not authored. If the contract is wrong or missing
-  something you need, **stop and tell the user**: the change is made in the
-  Hoplock Proxy repository, merged there, and pulled in with `make contract-sync`. Editing
-  the local copy makes CI green while the two components silently diverge, which
-  is the exact failure this rule exists to prevent.
+  something you need, **raise it as an upstream request** — build the rest
+  behind a seam named for what is missing, name the exact shape under
+  `## Upstream request` in your PR, and hand over the filled-in kickoff
+  (`docs/CROSS-REPO-PROTOCOL.md` §3.2, §4.2; the block is in
+  `docs/KICKOFF.md`). The change is then made in the Hoplock Proxy repository,
+  merged there, and pulled in with `make contract-sync` by the phase that needs
+  it. Editing the local copy makes CI green while the two components silently
+  diverge, which is the exact failure this rule exists to prevent; telling the
+  user and stopping there is the quieter failure beside it, and it is the one
+  that has actually happened.
 - **Never import Hoplock Enterprise (M15).** The dependency runs one way:
   Enterprise imports this module, never the reverse. If a phase seems to need
   something from Enterprise, it needs an **extension point** in `ext/` instead —
@@ -357,7 +378,9 @@ what neither can deliver:
 
 - **At PR open** — the link, plus what the description cannot carry: a question
   you need answered, or a ready-to-run kickoff for the user to paste
-  (`docs/CROSS-REPO-PROTOCOL.md` §4).
+  (`docs/CROSS-REPO-PROTOCOL.md` §4 — a downstream sync kickoff for Hoplock
+  Enterprise (§4.1), an upstream request kickoff for the Hoplock Proxy
+  repository (§4.2), or both; this repository can owe either).
 - **At green** — one line (below).
 - **At merge** — one line, and stop, unless the user has to *act* on something.
 

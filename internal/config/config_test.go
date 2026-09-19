@@ -248,3 +248,92 @@ func TestSlogLevel(t *testing.T) {
 		}
 	}
 }
+
+// The fleet's staleness numbers are validated after the defaults are applied, so
+// what is caught is a value no default can rescue: a negative duration, a
+// non-positive hop cap, or a report interval that guarantees every record expires
+// between two reports (PLAN M6, M17).
+func TestFleetStalenessIsValidated(t *testing.T) {
+	base := `listeners: {south: "0.0.0.0:8443", north: "127.0.0.1:9443"}
+database: {dsn: "postgres://x"}
+`
+	cases := map[string]struct{ doc, field string }{
+		"negative heartbeat ttl": {
+			doc:   base + "fleet: {heartbeat_ttl: -1s}\n",
+			field: "fleet.heartbeat_ttl",
+		},
+		"negative relay ttl": {
+			doc:   base + "fleet: {relay_registration_ttl: -1s}\n",
+			field: "fleet.relay_registration_ttl",
+		},
+		"negative capability ttl": {
+			doc:   base + "fleet: {target_capability_ttl: -1h}\n",
+			field: "fleet.target_capability_ttl",
+		},
+		"negative max hops": {
+			doc:   base + "fleet: {max_hops: -1}\n",
+			field: "fleet.max_hops",
+		},
+		"report interval at the ttl": {
+			doc:   base + "fleet: {target_capability_ttl: 1h, capability_report_after: 1h}\n",
+			field: "fleet.capability_report_after",
+		},
+	}
+	for name, tc := range cases {
+		_, err := config.Parse(strings.NewReader(tc.doc))
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		var fe *config.FieldError
+		if !errors.As(err, &fe) {
+			t.Errorf("%s: err = %v, want a *FieldError", name, err)
+			continue
+		}
+		if fe.Field != tc.field {
+			t.Errorf("%s: field = %q, want %q", name, fe.Field, tc.field)
+		}
+	}
+}
+
+// A document that says nothing about the fleet takes every default, so an
+// operator who never wants to think about staleness never has to. A field written
+// as an explicit zero takes it too: YAML cannot distinguish that from absent, and
+// the safe reading of `0s` is the default rather than "everything is stale".
+func TestFleetDefaultsApplyWhenTheSectionIsAbsent(t *testing.T) {
+	cfg, err := config.Parse(strings.NewReader(`listeners: {south: "0.0.0.0:8443", north: "127.0.0.1:9443"}
+database: {dsn: "postgres://x"}
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.Fleet.HeartbeatTTL != config.DefaultHeartbeatTTL {
+		t.Errorf("heartbeat ttl = %v, want %v", cfg.Fleet.HeartbeatTTL, config.DefaultHeartbeatTTL)
+	}
+	if cfg.Fleet.RelayRegistrationTTL != config.DefaultRelayRegistrationTTL {
+		t.Errorf("relay ttl = %v, want %v", cfg.Fleet.RelayRegistrationTTL, config.DefaultRelayRegistrationTTL)
+	}
+	if cfg.Fleet.TargetCapabilityTTL != config.DefaultTargetCapabilityTTL {
+		t.Errorf("capability ttl = %v, want %v", cfg.Fleet.TargetCapabilityTTL, config.DefaultTargetCapabilityTTL)
+	}
+	if cfg.Fleet.CapabilityReportAfter != config.DefaultCapabilityReportAfter {
+		t.Errorf("report interval = %v, want %v", cfg.Fleet.CapabilityReportAfter, config.DefaultCapabilityReportAfter)
+	}
+	if cfg.Fleet.MaxHops != config.DefaultMaxHops {
+		t.Errorf("max hops = %d, want %d", cfg.Fleet.MaxHops, config.DefaultMaxHops)
+	}
+
+	zeroed, err := config.Parse(strings.NewReader(`listeners: {south: "0.0.0.0:8443", north: "127.0.0.1:9443"}
+database: {dsn: "postgres://x"}
+fleet: {heartbeat_ttl: 0s, max_hops: 0}
+`))
+	if err != nil {
+		t.Fatalf("Parse with explicit zeros: %v", err)
+	}
+	if zeroed.Fleet.HeartbeatTTL != config.DefaultHeartbeatTTL {
+		t.Errorf("heartbeat ttl = %v, want the default %v", zeroed.Fleet.HeartbeatTTL, config.DefaultHeartbeatTTL)
+	}
+	if zeroed.Fleet.MaxHops != config.DefaultMaxHops {
+		t.Errorf("max hops = %d, want the default %d", zeroed.Fleet.MaxHops, config.DefaultMaxHops)
+	}
+}

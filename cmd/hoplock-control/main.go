@@ -14,9 +14,13 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/config"
+	"github.com/hoplock/control/internal/extdefault"
 )
 
 // defaultConfigPath is where the server looks when --config is not given.
@@ -32,6 +36,19 @@ func main() {
 // run is main's testable body: it returns an error instead of exiting, so the
 // startup path can be exercised without a process.
 func run(args []string, stdout, stderr io.Writer) error {
+	// Subcommands are dispatched before flags are parsed, so `migrate` can
+	// carry flags of its own without the daemon's flag set having to know
+	// about them. A leading argument that is not a flag and not a known
+	// subcommand is an error rather than something to ignore.
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "migrate":
+			return runMigrate(args[1:], stdout, stderr)
+		default:
+			return fmt.Errorf("unknown subcommand %q (known: migrate)", args[0])
+		}
+	}
+
 	fs := flag.NewFlagSet("hoplock-control", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to the YAML configuration file")
@@ -55,6 +72,24 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}))
 	slog.SetDefault(log)
 
+	// Extensions are registered before anything starts and are immutable
+	// afterwards (PLAN M15), so a request can never see a half-registered
+	// seam. In this binary only Control's own defaults are registered; the
+	// Hoplock Enterprise binary does the same and adds its own before
+	// sealing. The sealed set is logged point by point, because an operator
+	// debugging behaviour has to be able to see what is in play.
+	registry := ext.NewRegistry()
+	if err := extdefault.Register(registry, extdefault.Deps{Node: ext.Node{
+		Version:   versionString(),
+		StartedAt: time.Now().UTC(),
+	}}); err != nil {
+		return err
+	}
+	extensions, err := registry.Seal()
+	if err != nil {
+		return err
+	}
+
 	// The listeners are named here but nothing binds them yet: phase 0001
 	// stands the repository up and starts no service (PLAN §10).
 	log.Info("starting",
@@ -62,7 +97,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		"tenant", cfg.Tenant,
 		"south_listener", cfg.Listeners.South,
 		"north_listener", cfg.Listeners.North,
+		"extension_providers", extensions.Providers(),
 	)
+	extdefault.Log(log, extensions)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

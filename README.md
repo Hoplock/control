@@ -58,12 +58,16 @@ The proxy↔control contract is `api/control.yaml` in the
 [Hoplock Proxy repository](https://github.com/hoplock/proxy). This repo vendors a
 pinned copy under `contract/` and treats it as read-only and generated (PLAN M1):
 
-- `make contract-sync` pulls a new version and records the upstream commit.
-- `make contract-check` fails if the local copy was edited or drifted. CI runs it.
-- `make conform` runs `cmd/pdpconform`, a black-box conformance suite, against a
-  running implementation. CI runs it against **this server and the proxy repo's
-  mock control server** — a suite only ever run against the implementation it
-  was written beside proves agreement with itself.
+- `make contract-sync REF=<ref>` pulls a revision and records the upstream
+  commit, date, and checksum in `contract/UPSTREAM`.
+- `make contract-check` fails if the local copy was edited or drifted. CI runs it
+  as a job of its own, so the failure names itself.
+- `make conform BASE_URL=... TOKEN=... EXPECT=...` runs `cmd/pdpconform`, a
+  black-box conformance suite, against a running implementation. CI runs it
+  against the proxy repo's **mock control server** today, and against this
+  server once it serves anything — a suite only ever run against the
+  implementation it was written beside proves agreement with itself.
+  See `cmd/pdpconform/README.md` for the expectation-file format.
 
 A contract change starts in the proxy repo, lands there, and arrives here
 through `contract-sync`. Never the other way around.
@@ -77,9 +81,8 @@ through `contract-sync`. Never the other way around.
 | `cmd/policyctl` | CLI: validate, simulate, explain, apply a policy bundle |
 | `ext/` | **public** extension points — the seam Hoplock Enterprise implements |
 | `ui/` | management console, embedded into the binary |
-| `internal/` | implementation packages (see `docs/PLAN.md` §3) |
+| `internal/` | implementation packages (see `docs/PLAN.md` §3), including the forward-only SQL in `internal/store/migrations/` |
 | `contract/` | **vendored** contract from the proxy repo — never edited here |
-| `migrations/` | versioned, forward-only SQL |
 | `deploy/` | docker-compose topology: this server + Postgres + a real proxy |
 | `docs/` | plan, session protocol, and per-phase learnings |
 | `prompts/` | queued and implemented phase prompts |
@@ -115,7 +118,7 @@ Useful targets (`make help` lists them all):
 | `make license-check` | verify the per-file SPDX header on every Go file |
 | `make fmt` / `make tidy` | format sources; reconcile `go.mod`/`go.sum` |
 | `make check` | everything CI runs, in CI's order |
-| `make contract-check` / `contract-sync` / `conform` | the contract workflow above (phase 0002) |
+| `make contract-check` / `contract-sync` / `conform` | the contract workflow above |
 
 The `go` directive in `go.mod` is a **floor**, not a preference: CI builds on
 both it and the latest stable release with `GOTOOLCHAIN=local`, so the floor is
@@ -128,8 +131,10 @@ when a dependency moves it.
 It defines how a session picks up a prompt, branches, what "done" means, and how
 work is handed off to the next session. `docs/KICKOFF.md` has the exact prompts
 to start a session with, including the downstream sync a cross-repo change owes
-this repository. If your change touches a surface another Hoplock repository
-consumes, `docs/CROSS-REPO-PROTOCOL.md` covers that too.
+this repository and the upstream request that turns a need this repository
+cannot meet into work in the repository that owns the shape. If your change
+touches a surface another Hoplock repository consumes — or needs one that does
+not exist yet — `docs/CROSS-REPO-PROTOCOL.md` covers that too.
 
 Four rules are worth knowing before you read anything else:
 

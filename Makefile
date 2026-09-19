@@ -18,10 +18,24 @@ LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DA
 # Config used by `make run`. Never committed; copy config.example.yaml.
 CONFIG ?= config.yaml
 
+# `make contract-sync` takes the ref to vendor, so a session can pin one.
+REF ?= main
+
+# `make migrate` passes these through. DRY_RUN=1 is shorthand for --dry-run.
+MIGRATE_FLAGS ?= $(if $(DRY_RUN),--dry-run,)
+
+# `make conform` inputs. BASE_URL is the server under test; EXPECT is the
+# expectation file describing what that server is configured to serve
+# (cmd/pdpconform/README.md). TOKEN is the proxy bearer token.
+BASE_URL ?= http://127.0.0.1:8080
+TOKEN    ?=
+EXPECT   ?= cmd/pdpconform/testdata/mock-expectations.yaml
+CONFORM_FLAGS ?=
+
 GO             ?= go
 GOLANGCI_LINT  ?= golangci-lint
 
-.PHONY: all build test vet lint fmt license-check tidy clean run \
+.PHONY: all build test vet lint exhaustive-guard fmt license-check tidy clean run migrate \
         contract-check contract-sync conform check help
 
 all: build
@@ -41,6 +55,14 @@ vet:
 ## lint: run golangci-lint with the repository's linter set.
 lint:
 	$(GOLANGCI_LINT) run
+
+## exhaustive-guard: prove the `exhaustive` linter rejects an unhandled enum member.
+#
+# M3's closed vocabulary rests on that linter and on nothing else (PLAN M13), and
+# a linter that is enabled but silent is worse than none. This target is what
+# checks the check. It needs golangci-lint, so it runs in the lint job.
+exhaustive-guard:
+	GOLANGCI_LINT=$(GOLANGCI_LINT) ./scripts/exhaustive-guard.sh
 
 ## fmt: format every Go file in place.
 fmt:
@@ -62,29 +84,33 @@ clean:
 run:
 	$(GO) run ./cmd/hoplock-control --config $(CONFIG)
 
+## migrate: apply pending migrations to $(CONFIG)'s database. DRY_RUN=1 to preview.
+#
+# Never run on boot (PLAN §8): two nodes starting together must not race to
+# build the schema, so applying migrations is a thing an operator does.
+migrate:
+	$(GO) run ./cmd/hoplock-control migrate --config $(CONFIG) $(MIGRATE_FLAGS)
+
 ## check: everything CI runs on a pull request, in CI's order.
 check: build vet test lint license-check
 
-# --- Placeholders ------------------------------------------------------------
-# These targets exist so that the Definition-of-Done checklist in
-# docs/PROTOCOL.md can name them before they do anything. A target that is
-# missing and a target that fails read very differently in a checklist: the
-# first looks like a typo, the second says "not yet".
+# --- The vendored contract (M1) and the conformance suite -------------------
 
-## contract-check: verify the vendored contract is unmodified (phase 0002).
+## contract-check: verify the vendored contract is unmodified (PLAN M1).
 contract-check:
-	@echo "contract-check: implemented in phase 0002" >&2
-	@exit 1
+	./scripts/contract-check.sh
 
-## contract-sync: pull the contract from the Hoplock Proxy repository (phase 0002).
+## contract-sync: pull the contract from the Hoplock Proxy repository. REF=<ref>
 contract-sync:
-	@echo "contract-sync: implemented in phase 0002" >&2
-	@exit 1
+	REF=$(REF) ./scripts/contract-sync.sh
 
-## conform: run the black-box contract conformance suite (phase 0002).
+## conform: run the black-box conformance suite. BASE_URL=, TOKEN=, EXPECT=
 conform:
-	@echo "conform: implemented in phase 0002" >&2
-	@exit 1
+	$(GO) run ./cmd/pdpconform \
+	    -base-url '$(BASE_URL)' \
+	    -token '$(TOKEN)' \
+	    -expectations '$(EXPECT)' \
+	    $(CONFORM_FLAGS)
 
 ## help: list the targets.
 help:

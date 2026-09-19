@@ -153,7 +153,13 @@ says "a scanner said so" without saying which scan is not explained.
   exists.
 - Any change to `contract/`. The grant-context fields are the proxy's
   (`CROSS-REPO-PROTOCOL.md` §3.2): if one is missing, that is upstream work with
-  its own prompt, never a local edit to a vendored artifact.
+  its own prompt, never a local edit to a vendored artifact — and never merely
+  mentioned, either. Build the rest behind a seam named for the missing field,
+  state it under `## Upstream request` in this PR, and end that section with the
+  filled-in "Upstream request" kickoff from `docs/KICKOFF.md`, repeated in your
+  reply to the user (§4.2). This PR can therefore owe **both** hand-over
+  sections at once — `## Cross-repo impact` looking down at
+  `hoplock/enterprise`, and `## Upstream request` looking up at the proxy.
 
 ## Acceptance criteria
 - `ext.AccessContextProvider` is defined, documented, registered under 0004's
@@ -178,7 +184,7 @@ says "a scanner said so" without saying which scan is not explained.
 
 ## Cross-repo impact
 
-Per `CROSS-REPO-PROTOCOL.md` §4, state per repository. Expect at least:
+Per `CROSS-REPO-PROTOCOL.md` §4.1, state per repository. Expect at least:
 `hoplock/enterprise` gains a real `ext` point to implement, and its packaged
 Qualys and BMC Helix integrations are written against this interface — so its
 prompt for them must not be opened before this merges (§2).
@@ -190,7 +196,7 @@ sync kickoff for it, already filled in** — the "Downstream sync" block in
 obligations just stated. There is no branch blank to fill — the sync session
 uses whatever branch it was given (§5), so do not invent a suffix for it. Repeat
 that kickoff in your reply to the user, saying it needs a **fresh session with
-`hoplock/enterprise` checked out** (`CROSS-REPO-PROTOCOL.md` §4, "Hand over a
+`hoplock/enterprise` checked out** (`CROSS-REPO-PROTOCOL.md` §4.1, "Hand over a
 runnable sync kickoff"). The kickoff does not make the sync yours to do: this PR
 merges first and the sync runs afterwards, in its own session, downstream (§2).
 

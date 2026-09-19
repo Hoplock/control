@@ -190,8 +190,11 @@ paths distinct in the code, because they are answered from different data.
   because it will look like an obvious field to add to the snapshot: **if a
   value is only correct when it is fresh, it cannot ride on anything this
   section governs** — not the authorize response, and not the host-key one
-  either. Add an endpoint instead, and say so upstream rather than inventing one
-  here (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
+  either. Add an endpoint instead: never invent one here, and raise it as an
+  **upstream request** rather than only saying so — name the endpoint and its
+  method under `## Upstream request` in your PR, build the rest behind a seam
+  named for what is missing, and hand the user the filled-in kickoff from
+  `docs/KICKOFF.md` (`docs/CROSS-REPO-PROTOCOL.md` §3.2, §4.2).
 
 ### Decision records (M4)
 Every evaluation — allow and deny alike — writes a record: inputs, matched rule,

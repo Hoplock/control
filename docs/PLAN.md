@@ -331,10 +331,24 @@ decision.
 
   1. **Control never imports Enterprise.** The dependency runs one way. An
      import-graph test fails the build if it ever does not.
-  2. **Every extension point ships a real default here.** A seam is not a hole
+  2. **Every extension point has a real answer here.** A seam is not a hole
      where core functionality used to be. Control alone must be a complete,
      self-hostable product: a deployment of Hoplock Proxy + Hoplock Control is
      a working infrastructure access system, not a demo waiting for a licence.
+
+     That answer takes one of exactly three forms, and `ext.PointInfo` records
+     which, so the claim is checkable rather than aspirational. **Core:**
+     Control's own code path continues and the seam is purely additive — the
+     local audit store, manual grants, its own software keys, the compiler's
+     checks — and the catalogue names the phase that builds it. **Default:**
+     everything above the seam goes through it, so Control's wiring registers an
+     implementation behind it (`internal/extdefault`), and the registry refuses
+     to seal if one was promised and is missing. **Disabled:** the point adds a
+     capability Control never claimed — a long-term archive, directory
+     provisioning, somebody else's automation pulling a lever an operator can
+     already pull — and says so out loud. A point that supplies nothing from
+     Control and is not the third case fails the build, which is what stops
+     "ships a real default" from decaying into a promise.
 
   The line is **governance and scale, not capability**. Control decides access,
   distributes policy, records what happened, and lets an operator explain any
@@ -710,8 +724,8 @@ control/
 │   └── policyctl/          # CLI: validate, simulate, explain, apply a bundle
 ├── internal/
 │   ├── config/             # YAML config loader
-│   ├── contract/           # generated Go types + handlers for the vendored contract
-│   ├── store/              # Postgres repositories + migrations
+│   ├── contract/           # hand-written Go types + handler interfaces for the vendored contract
+│   ├── store/              # Postgres repositories, and migrations/ — the embedded SQL
 │   ├── policy/
 │   │   ├── model/          # the policy bundle: parse, validate, version
 │   │   ├── compile/        # bundle -> decision program
@@ -724,6 +738,7 @@ control/
 │   ├── audit/              # ingest, hash chain, query, retention (M8)
 │   ├── export/             # SIEM sinks (Splunk/Sentinel/Elastic)
 │   ├── access/             # JIT requests, approvals, grants, notifiers (M10)
+│   ├── extdefault/         # Control's own implementations behind the ext/ seam (M15)
 │   ├── instance/           # deployment identity, supervisory registration (M19)
 │   └── httpapi/
 │       ├── south/          # proxy-facing handlers (the contract)
@@ -734,15 +749,30 @@ control/
 ├── contract/               # VENDORED from the Hoplock Proxy repository — read-only (M1)
 ├── deploy/                 # docker-compose: this server + Postgres + a proxy
 ├── docs/                   # this plan, protocol, cross-repo protocol, learnings
-├── prompts/                # queued and implemented phase prompts
-└── migrations/             # versioned SQL, forward-only
+└── prompts/                # queued and implemented phase prompts
 ```
+
+The forward-only SQL lives in `internal/store/migrations/` rather than in a
+top-level `migrations/`, and the reason is mechanical: `go:embed` cannot reach
+outside its own package directory, so a top-level directory would need a
+top-level *package* to embed it — and `ext/` is the only non-internal package
+this module has (M15). Reading the files off disk at runtime was the
+alternative, and it gives up the one-binary deployment for nothing.
 
 ### Component responsibilities
 
 - **`internal/contract`** — the only package that knows the wire shapes of the
   south-bound API. Everything else speaks domain types, so a contract revision
-  in the Hoplock Proxy repository lands in one package here.
+  in the Hoplock Proxy repository lands in one package here. The types are
+  **hand-written and tested against the vendored document** rather than
+  generated from it: the contract's two open namespaces (`TargetAuth.params`
+  and the `device_field.` names inside it) and its one `oneOf`
+  (`grant_context.additional_context`, a string or an object and nothing else)
+  are shapes a generator renders as `map[string]any`, which would put the
+  absent-value discipline back in every caller's hands. What a generator would
+  have caught — an enum drifting, a field renamed, a path removed — is caught
+  instead by a test that reads `contract/control.yaml` and compares it with the
+  constants, in both directions.
 - **`internal/policy`** — pure. Parse → validate → compile → evaluate, no HTTP,
   no database, no clock of its own (time is an input). This is the package that
   must be exhaustively tested, because it is where the product's promises are
@@ -755,9 +785,34 @@ control/
   hint. Latency budget (M5) is enforced here.
 - **`internal/fleet`** — the graph, its liveness, and pathfinding. Owns which
   hop direction is possible right now.
+
+  It also owns the two things that hang off the same rows, because both are
+  properties of a proxy rather than of a policy: the **capability store** both
+  sources write to (M17 — the proxy build's declared set, and the per-target
+  reports `/v1/capabilities/report` accumulates), and **configuration
+  distribution** — a versioned document per zone and per proxy, composed into one
+  effective document per proxy, with rollback and with drift between desired and
+  running visible rather than derived.
+
+  The package is split so that the part worth proving is provable without a
+  database: `Graph` and its `Path` are pure values over pure inputs, and
+  `Registry` is what loads those inputs out of `internal/store` and applies the
+  staleness rule. A path is a function of the nodes, the edges, the live relay
+  registrations and the clock, and nothing else.
 - **`internal/audit`** — append-only writer, chain verifier, and query API.
   Nothing else writes audit rows.
 - **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
+- **`internal/extdefault`** — Control's own side of the extension seam: what
+  this repository registers into an `ext.Registry` before the server starts, so
+  a deployment with no Hoplock Enterprise present is a complete product rather
+  than a set of holes (M15). It is a separate package from `ext` because `ext`
+  is what Enterprise imports and stays interface-only; a default belongs on this
+  side of that line. Most of Control's answers are *not* here and that is the
+  design: where Control's behaviour when nothing is registered is its own core
+  code path — the local audit store, manual grants, its own software keys, the
+  compiler's checks — the seam is additive and there is no default to register.
+  What lands here is the narrower set where everything above the seam goes
+  through it, which today is the single-node cluster coordinator.
 - **`internal/instance`** — this deployment's own identity and version, and the
   outbound registration client that makes it supervisable (M19). It is a
   *client* of something above it, which makes it the only package here that
@@ -798,6 +853,16 @@ Six obligations are easy to miss and are graded by the conformance suite:
 - **The priority ack means durable.** The proxy acts on a critical security
   event knowing this server recorded it. Acking before the write lands turns
   that guarantee into a lie that only shows up after an incident.
+
+  **Nothing on the contract reads a record back, and that is deliberate**
+  (upstream `Hoplock/proxy#56`, merged): a proxy writes logs and never queries
+  them, so an operator read API on `/v1` would be one every Hoplock Control
+  implements and no proxy calls. The same answer covers publishing an event,
+  which gap recovery needs in order to be gradeable at all. Both guarantees are
+  therefore observable only through paths **this server** exposes outside `/v1`,
+  and the conformance suite takes them as inputs — `logs.read_url` (phase 0010)
+  and `events.publish_url` (phase 0009). Neither is a licence to add the
+  endpoint to `/v1`.
 - **Answer within the vocabulary the proxy declared.** Every policy field is
   additive within a vocabulary and carries a documented absent-value default, and
   in exchange the proxy **fails a session closed on an authorize field it does not
@@ -816,7 +881,12 @@ Six obligations are easy to miss and are graded by the conformance suite:
 
   **The current vocabulary is `4`**, exported upstream as
   `control.PolicyVersion`: the two enforcement axes and the session bounds
-  (§5.2). The vendored document is `4.0.0`.
+  (§5.2). The vendored document is `4.0.0`; upstream is at `4.1.0`
+  (`Hoplock/proxy#56`, merged) and phase 0009 re-vendors. That the document moved
+  while the vocabulary did not is the normal case rather than an anomaly — the
+  number governs `/v1/authorize` and nothing else, and `#56` added a field to the
+  event stream. Read both numbers out of `contract/control.yaml`, never from this
+  line (0018).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -851,8 +921,10 @@ Six obligations are easy to miss and are graded by the conformance suite:
 
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
   `policy_version` (0002, 0018). Nor may it assume the document version only
-  rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, while the
-  vocabulary stood still at `4`.
+  rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
+  `Hoplock/proxy#56` then moved it up to `4.1.0` for a field on the event
+  stream — the vocabulary stood still at `4` through both, which is the whole
+  point.
 
   **One live vocabulary, and removing versions is not removing versioning.**
   Upstream `Hoplock/proxy#53` (merged) collapsed the contract: it deleted the
@@ -961,6 +1033,27 @@ Six obligations are easy to miss and are graded by the conformance suite:
   stops hearing them reconnects and, past its staleness threshold, stops serving
   cached decisions entirely. A server that stalls its heartbeat writer degrades
   the whole fleet to uncached — correctly, but for the wrong reason.
+
+  **This is two obligations, not one** (upstream `Hoplock/proxy#56`, merged).
+  The stream now carries `RevocationEvent.heartbeat_interval_seconds` — the
+  interval the server says it is keeping **now** — so "within the interval the
+  server advertises" is a claim read off the wire rather than a number typed
+  into a conformance harness. This server must keep the interval it advertises,
+  **and** that interval must be within the ceiling of **10 seconds or less**, so
+  that two consecutive intervals fit inside the proxy's 20s reconnect timeout
+  and one lost heartbeat is not mistaken for a dead stream. Meeting either half
+  alone is a failure: a server advertising 600s and honestly keeping to it
+  passes its own claim and breaks every proxy in the fleet.
+
+  Absent stays legal and means what every server did before the field existed —
+  the reader falls back to its own timers — and the field **advertises rather
+  than configures**: a reader may use it to notice a dead stream *sooner* than
+  its own timeout and must never extend that timeout to accommodate a large
+  advertised interval. Sooner always, later never, the same rule as
+  `cache.ttl_seconds` and `report_after_seconds`; the inverse would let a broken
+  or hostile server silence itself indefinitely by announcing that it intends
+  to, which is §6.4's fail-closed rule turned upside down. Phase 0009 re-vendors
+  the contract and implements both halves.
 - **A chained hop is a caller, and this server is what makes chaining work.**
   Proxy phase 0008 (`Hoplock/proxy#6`, merged) turned multi-hop on, and it added
   no field to the contract: both halves are behaviour this server owes.
@@ -985,6 +1078,42 @@ Six obligations are easy to miss and are graded by the conformance suite:
 
   Phases: 0007 and 0008 respectively; 0017 proves the pair against a real proxy.
 
+### Configuration distribution has no event type yet
+
+An operator configures a fleet rather than N files (M6, phase 0006): which zones
+a proxy serves, its relay registrations, its contract expectations, its log
+shipping cadence. Delivery **reuses the event stream** rather than inventing a
+second channel, because proxies already hold one outbound subscription and must
+not need a second inbound path — the same reasoning that made the revocation
+stream outbound in the first place (proxy §6.4).
+
+**The stream cannot carry it today.** `RevocationEvent.type` enumerates
+`session_kill`, `cache_invalidate`, `heartbeat` and `resync`, and none of them
+can say "your desired configuration moved". The contract is owned upstream and
+vendored read-only (M1), so the missing piece is a change in `hoplock/proxy`: an
+event type (or a field on the heartbeat event) naming the proxy's desired config
+version and hash, which the proxy answers by fetching and then reporting what it
+is running. That is normal work in the upstream repository with its own prompt
+and its own review, not a shape to approximate here
+(`docs/CROSS-REPO-PROTOCOL.md` §3.2).
+
+**It is raised and queued upstream as proxy phase 0042**, which also settles the
+three questions this side could not: how the document is fetched (not inline on
+the event — the stream is replayable, so an inline document would be replayed as
+if current), how a proxy reports the version it is running, and which settings are
+fleet-owned at all rather than bootstrap. When it merges, the work here is to
+re-vendor the contract and wire `fleet.ConfigPublisher`; until then a publish
+stages and shows as drift.
+
+What is built here in the meantime is everything below the wire, and the gap is
+**visible rather than assumed**: the desired version is durable, the composed
+document is stored, the publisher seam (`fleet.ConfigPublisher`, which 0009
+implements) is a no-op until the event exists, and a proxy that has not caught up
+shows as drift in the fleet view and in the API rather than being taken for
+current. Inventing the event type locally is the failure M1 exists to prevent —
+it would make CI green here while the two components silently disagreed about
+what a config event is.
+
 ---
 
 ## 5. Policy model & evaluation (M3, M4)
@@ -997,9 +1126,16 @@ Six obligations are easy to miss and are graded by the conformance suite:
 | Device | posture attributes when an endpoint supplies them (optional) |
 | Context | time of day, day of week, source network/geo, the proxy asking (`conn.proxy_id` — the entry proxy on a user's first hop, an inner hop on a chained one) |
 | Target | hostname, labels (`env=prod`, `kind=appliance`, `owner=payments`), zone |
-| Session | requested channel type, in-channel request, forwarding destination, global request, command |
 | Grants | live JIT grants for this subject and scope (M10), including windows confirmed from external context (M16) |
 | External context | a scan, ticket, or incident asserted by an integration and confirmed at decision time (M16) |
+
+The **session axes** — channel type, in-channel request, forwarding destination,
+global request, command — are outputs rather than inputs, and they are absent
+from the table above on purpose. The proxy asks once and enforces for the
+connection's lifetime (proxy D2): at the moment a decision is made no channel has
+been opened and no command has been typed. What the engine emits is the
+allow-list the proxy then enforces against each of them as it arrives (§5.2), so
+a rule has nothing to match on and `internal/policy` offers no way to try.
 
 ### 5.2 Outputs
 
@@ -1099,7 +1235,10 @@ the connection's lifetime (proxy D2):
 - **session deadline** (`session_deadline`) — an **absolute instant**, not a
   duration, which the proxy enforces locally so it survives this server being
   unreachable (proxy D16). A duration would re-anchor on every hop of a chained
-  route and silently multiply the window. Reaching it is neither a denial nor an
+  route and silently multiply the window. A bundle authors a *maximum duration*
+  and the engine resolves it against its time input, bounded by the expiry and
+  the asserted window of any grant that supplied the access — which is what "this
+  server sets it having already weighed the window" means below. Reaching it is neither a denial nor an
   outage: the session is closed and the close is explained;
 - **required session capture** (`require_session_capture`) — the route runs only
   if the session is recorded, checked before the target leg is dialled. It is the
@@ -1281,9 +1420,13 @@ reuses it on, and three consequences this server owns:
 - **Errors/logging**: no secrets, no credentials, no tokens in errors or logs.
   Every response carries a correlation id; every `5xx` says outage, never deny
   (M11).
-- **Migrations**: forward-only, versioned, applied by an explicit command — never
-  automatically on boot in production, where two nodes starting at once must not
-  race.
+- **Migrations**: forward-only, versioned, applied by an explicit command —
+  `hoplock-control migrate` (`--dry-run` prints what would be applied and
+  changes nothing), also reachable as `make migrate`. Never automatically on
+  boot in production, where two nodes starting at once must not race; the
+  server has no code path that migrates. A migration's checksum is recorded
+  when it is applied, so editing a merged one is an error rather than a silent
+  divergence between two deployments.
 - **Testing**: unit tests per package; the policy engine tested exhaustively and
   in isolation; Postgres-backed tests against a real database in CI; the
   conformance suite (M1) run against this server **and** the proxy's mock.
@@ -1346,7 +1489,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 > the contract document itself that trusts no PR body. It is run when the user
 > names it, **before** building on text the proxy may have moved underneath us.
 >
-> It exists because `docs/CROSS-REPO-PROTOCOL.md` §4 puts the downstream look on
+> It exists because `docs/CROSS-REPO-PROTOCOL.md` §4.1 puts the downstream look on
 > the upstream author at merge time, and two of those looks have now described
 > text this repository did not contain. A check that runs once, from one side,
 > needs a compensating pass from this one.
@@ -1370,7 +1513,13 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 > This revision is **downstream-driven**: `hoplock/enterprise` needs both seams
 > to build a multi-instance supervisory plane (its E14). Per
 > `docs/CROSS-REPO-PROTOCOL.md` §2 it merges here first, and Enterprise
-> describes it only afterwards.
+> describes it only afterwards. It reached this plan with no flow to carry it —
+> which is one of the two cases `docs/CROSS-REPO-PROTOCOL.md` §3.2 now names,
+> and why that section is a flow with an owner and a runnable kickoff rather
+> than a rule ending in "tell the user". A request arriving here today follows
+> §3.2 and `docs/KICKOFF.md`'s "Upstream request" block, and the phase that
+> answers it owes a downstream sync **back** to the repository that asked (§5).
+> That is what phase 0015 would owe `hoplock/enterprise` once it merges.
 
 > **Renumbering note (privileged-access revision).** Phase 0013 is new: external
 > access context (M16) has to exist before the north-bound API is built, because

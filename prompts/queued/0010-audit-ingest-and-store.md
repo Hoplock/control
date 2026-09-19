@@ -24,6 +24,22 @@ security team's actual questions.
   committed before the response is written. The proxy acts on a critical
   security event knowing this server recorded it; acking early turns that
   guarantee into a lie that only surfaces after an incident.
+- **A read path outside `/v1`, because the durability guarantee is otherwise
+  unobservable.** Upstream `Hoplock/proxy#56` (merged) states it plainly:
+  nothing on the contract reads a record back, the priority ack is the server's
+  word, and that is deliberate — a proxy writes logs and never queries them, so
+  an operator read API on `/v1` would be one every Hoplock Control implements
+  and no proxy calls. The obligation therefore lands **here**: expose a path of
+  this server's own that names a record by `record_id`, and point the
+  conformance suite's `logs.read_url` at it. The suite asserts only that the
+  record id appears in the response body, so the shape is yours; 0014's
+  north-bound query surface is the natural home once it exists. Do not add a
+  read endpoint to `/v1` — that is a contract change, which is
+  `docs/CROSS-REPO-PROTOCOL.md` §3.2 and not this phase's to make. Where this
+  phase genuinely needs a contract shape that does not exist, §3.2 does not stop
+  at saying so: name it under `## Upstream request` in your PR, build the rest
+  behind a named seam, and hand over the filled-in kickoff from
+  `docs/KICKOFF.md` (§4.2).
 - **Idempotent on `record_id`**, enforced by the database (0003). A proxy
   draining its disk buffer after an outage will resend, and it may resend
   concurrently with a live batch, so dedupe in Go is not sufficient.

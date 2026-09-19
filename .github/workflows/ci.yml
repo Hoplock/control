@@ -39,6 +39,31 @@ jobs:
         #
         # Keep the floor entry equal to the `go` directive in go.mod.
         go: ["1.27.0", "stable"]
+
+    # A real Postgres, because the repository layer IS the SQL (PLAN M13,
+    # §8): a fake tests the fake, and the two things in this schema that are
+    # correct only because Postgres enforces them — the uid cursor's row lock
+    # and the audit table's record_id uniqueness — are invisible to one.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # storetest reads this. Unset, the Postgres-backed tests skip — and in
+      # CI they FAIL instead, because a skipped test reads as a passing one in
+      # the log and this is the leg that is supposed to run them.
+      HOPLOCK_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,6 +110,13 @@ jobs:
           # that moves the floor.
           version: v2.13.2
 
+      # Checks the check. `exhaustive` is what holds M3's closed vocabulary
+      # together (PLAN M13), so this writes a switch and a lookup map with a
+      # missing enum member and fails unless the linter names both. It lives in
+      # this job because it is the job with a linter in it.
+      - name: Prove the exhaustive linter rejects an unhandled member
+        run: make exhaustive-guard
+
   license:
     name: license headers
     runs-on: ubuntu-latest
@@ -93,3 +125,77 @@ jobs:
 
       - name: Check per-file SPDX headers
         run: make license-check
+
+  contract:
+    name: vendored contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Its own job, so the failure names itself. A local edit of
+      # contract/control.yaml produces two green test suites and one broken
+      # product (PLAN M1); this is the discovery point, and it reads very
+      # differently as a job than as a line in the middle of a build log.
+      - name: Check the vendored contract against contract/UPSTREAM
+        run: make contract-check
+
+  conform:
+    name: conformance suite vs the proxy mock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The suite is run against an implementation it was NOT written beside.
+      # That is the whole point of running it here: a suite only ever pointed at
+      # the server it grew up with tests agreement with itself (PLAN M1). The
+      # mock already implements the contract, so a disagreement is a real
+      # finding on one side or the other, and the PR says which.
+      - name: Resolve the commit the contract was vendored from
+        id: upstream
+        run: |
+          commit="$(sed -n -E 's/^commit=(.*)$/\1/p' contract/UPSTREAM)"
+          test -n "$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "grading against hoplock/proxy@$commit"
+
+      # Pinned to that commit rather than to a branch: grading the suite against
+      # a mock built from a different revision of the contract would make an
+      # upstream change look like a conformance failure here.
+      - name: Check out the Hoplock Proxy repository (for cmd/mock-control)
+        uses: actions/checkout@v4
+        with:
+          repository: hoplock/proxy
+          ref: ${{ steps.upstream.outputs.commit }}
+          path: .proxy
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Build and start the mock control server
+        run: |
+          go -C .proxy build -o "$GITHUB_WORKSPACE/mock-control" ./cmd/mock-control
+          ./mock-control -listen 127.0.0.1:8080 \
+            -fixtures cmd/pdpconform/testdata/mock-fixtures.yaml &
+          up=0
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8080/debug/logs; then
+              up=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [ "$up" -ne 1 ]; then
+            echo "mock-control did not come up" >&2
+            exit 1
+          fi
+
+      # -v prints the details of PASSING assertions too, so a reader of the log
+      # can see a case graded something rather than passing vacuously.
+      - name: Run the conformance suite
+        run: |
+          make conform \
+            BASE_URL=http://127.0.0.1:8080 \
+            TOKEN=pdpconform-dev-token \
+            EXPECT=cmd/pdpconform/testdata/mock-expectations.yaml \
+            CONFORM_FLAGS=-v

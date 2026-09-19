@@ -67,3 +67,30 @@ func TestDefaultConfigPathIsNotCommitted(t *testing.T) {
 		t.Fatalf("%s is committed to the repository; it must stay local (see .gitignore)", defaultConfigPath)
 	}
 }
+
+// Migrations are applied by an explicit command and never on boot (PLAN §8).
+// The dispatch is what makes that possible, so an unknown leading word must be
+// an error rather than something the daemon's flag set silently ignores.
+func TestRunRejectsAnUnknownSubcommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"migrat"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("run: want an error for an unknown subcommand, got nil")
+	}
+	if !strings.Contains(err.Error(), "migrate") {
+		t.Errorf("run error = %q, want it to name the subcommands that exist", err)
+	}
+}
+
+// The subcommand reads the same config the daemon does, so a missing file is
+// reported the same way rather than as a database failure.
+func TestMigrateReportsConfigError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"migrate", "--config", filepath.Join(t.TempDir(), "absent.yaml")}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("run migrate: want an error for a missing config file, got nil")
+	}
+	if !strings.Contains(err.Error(), "absent.yaml") {
+		t.Errorf("run migrate error = %q, want it to name the file", err)
+	}
+}
