@@ -199,3 +199,103 @@ jobs:
             TOKEN=pdpconform-dev-token \
             EXPECT=cmd/pdpconform/testdata/mock-expectations.yaml \
             CONFORM_FLAGS=-v
+
+  conform-self:
+    name: conformance suite vs this server
+    runs-on: ubuntu-latest
+
+    # The same suite, pointed at the real implementation. The job above keeps
+    # the SUITE honest by grading a server it was not written beside; this one
+    # is what grades US (PLAN M1), and phase 0007 is the first phase with
+    # anything for it to grade.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hoplock
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # The server reads its own configuration file, so the leg exercises the
+      # real startup path rather than a test harness that happens to share a
+      # package with it.
+      - name: Write the server's configuration
+        run: |
+          cat > ci-config.yaml <<'YAML'
+          tenant: default
+          listeners:
+            south: 127.0.0.1:8080
+            north: 127.0.0.1:8081
+          database:
+            dsn: postgres://postgres:postgres@127.0.0.1:5432/hoplock?sslmode=disable
+          log:
+            level: info
+          YAML
+
+      # Migrations are an explicit command and never run on boot (PLAN §8), so
+      # the leg runs them the way an operator does.
+      - name: Apply migrations
+        run: go run ./cmd/hoplock-control migrate --config ci-config.yaml
+
+      # The fixtures the expectation file describes. There is no north-bound
+      # API yet (0014), so `seed` is how a server is configured to serve
+      # anything at all — see cmd/hoplock-control/seed.go for why that is not a
+      # back door.
+      - name: Seed the fixtures the suite expects
+        run: |
+          go run ./cmd/hoplock-control seed \
+            --config ci-config.yaml \
+            --file cmd/pdpconform/testdata/control-seed.yaml
+
+      - name: Start the server
+        run: |
+          go build -o hoplock-control ./cmd/hoplock-control
+          ./hoplock-control --config ci-config.yaml > server.log 2>&1 &
+          up=0
+          for _ in $(seq 1 60); do
+            # A 401 is the listener answering: every route is behind the proxy
+            # credential, so an unauthenticated probe reaching the error
+            # envelope means the server is up and the chain is wired.
+            code="$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/v1/auth/cert || true)"
+            if [ "$code" = "401" ]; then
+              up=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [ "$up" -ne 1 ]; then
+            echo "the server did not come up" >&2
+            cat server.log >&2
+            exit 1
+          fi
+
+      # -only names the four groups this phase serves. It is not a way to make
+      # the run green: /v1/authorize is 0008's, the event stream 0009's and log
+      # ingest 0010's, and each of those phases adds its group here in the PR
+      # that serves it.
+      - name: Run the conformance suite against this server
+        run: |
+          make conform \
+            BASE_URL=http://127.0.0.1:8080 \
+            TOKEN=default.pdpconform-dev-secret \
+            EXPECT=cmd/pdpconform/testdata/control-expectations.yaml \
+            CONFORM_FLAGS='-v -only=authentication,host,capabilities,uid'
+
+      # The server's own log, so a failure above can be read against what it
+      # thought it was doing.
+      - name: Print the server log
+        if: always()
+        run: cat server.log

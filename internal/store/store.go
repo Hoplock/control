@@ -157,6 +157,37 @@ func (s *Store) InTx(ctx context.Context, fn func(ctx context.Context, tx *Store
 	return nil
 }
 
+// inTx runs fn in a transaction, REUSING the caller's if there already is one.
+//
+// It exists because a row lock needs a transaction, and the two places that
+// take one — the uid cursor's advance and an MFA challenge's poll — may both
+// be called from inside InTx, where opening a second transaction on a second
+// connection would deadlock against the first. So: when this Store is already
+// transaction-bound, run in place; only a pool-bound Store begins anything.
+func (s *Store) inTx(ctx context.Context, op string, fn func(context.Context, querier) error) error {
+	if s.pool == nil {
+		return fn(ctx, s.db)
+	}
+
+	pgtx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return wrap(op, err)
+	}
+	defer func() {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.rollbackTimeout())
+		defer cancel()
+		_ = pgtx.Rollback(rollbackCtx)
+	}()
+
+	if err := fn(ctx, pgtx); err != nil {
+		return err
+	}
+	if err := pgtx.Commit(ctx); err != nil {
+		return wrap(op, err)
+	}
+	return nil
+}
+
 // errNestedTx reports InTx called on a Store that is already inside one.
 var errNestedTx = fmt.Errorf("InTx on a transaction-bound Store: nest the work in the existing transaction instead")
 
@@ -224,3 +255,21 @@ func checkTenant(op string, t Tenant) error {
 	}
 	return nil
 }
+
+// SubjectKeys returns the subject key repository (0007).
+func (s *Store) SubjectKeys() SubjectKeyRepository { return subjectKeyRepo{s} }
+
+// SubjectPasswords returns the local password repository (0007).
+func (s *Store) SubjectPasswords() SubjectPasswordRepository { return passwordRepo{s} }
+
+// MFA returns the second-factor repository (0007).
+func (s *Store) MFA() MFARepository { return mfaRepo{s} }
+
+// TargetHostKeys returns the host-key record repository (0007).
+func (s *Store) TargetHostKeys() TargetHostKeyRepository { return hostKeyRepo{s} }
+
+// UIDLeases returns the append-only record of granted uid blocks (0007).
+func (s *Store) UIDLeases() UIDLeaseRepository { return uidLeaseRepo{s} }
+
+// ProxyTokens returns the proxy channel-credential repository (0007).
+func (s *Store) ProxyTokens() ProxyTokenRepository { return proxyTokenRepo{s} }

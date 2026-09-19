@@ -1,0 +1,201 @@
+# 0007 — south-bound authentication & host keys — Learnings
+
+## Summary
+- **What shipped:** the south-bound listener and its credential, `/v1/auth/*`
+  with MFA owned end to end, `/v1/hostkeys/report`, `/v1/capabilities/report`
+  and `/v1/uids/lease` — plus a CI leg that runs the conformance suite **against
+  this server** (15/15 across the four groups this phase serves).
+- **Key packages:** `internal/httpapi/south/{server,middleware,errors,handlers}.go`,
+  `internal/identity/{identity,outcome,service,mfa,scripted,password}.go`,
+  `internal/fleet/{hostkey,uidlease,token}.go`, `internal/store/south*.go`,
+  `cmd/hoplock-control/{serve,seed}.go`.
+- **Migration `0003_southbound_authentication.sql`.** New tables:
+  `subject_keys`, `subject_passwords`, `subject_mfa`, `mfa_challenges`,
+  `target_host_keys`, `uid_leases`, `proxy_api_tokens`; plus
+  `proxies.key_fingerprint`, a GENERATED column
+  (`'SHA256:' || rtrim(encode(sha256(public_key),'base64'),'=')`) that is the
+  whole of "is this key one of ours". `identity.KeyFingerprint` is its Go half
+  and two tests pin them to each other.
+- **M11 is structural, not a convention.** `identity` answers `(Outcome, error)`
+  — an error is an OUTAGE with nothing to inspect, a deny is `Outcome.Deny`;
+  `fleet.AuthenticateProxyToken` answers `(caller, ok, error)`;
+  `south.statusFor` is the only place a status is chosen, and two AST tests
+  (`south/discipline_test.go`) fail the build if a third function calls
+  `contract.Denied` or a handler names a status constant.
+- **0011 implements `identity.Directory` and `identity.MFAProvider`.** Challenge
+  lifetime, poll rate, single use and expiry-as-deny stay ABOVE those seams.
+  `identity.ScriptedMFA`/`ScriptedMFAConfig` is the deterministic provider.
+- **NO cache hint is issued** (M9 — 0009 owns the stream that would withdraw
+  one). `fleet.Registry.HostKeyCacheHint()` states that as a function, a test
+  asserts the response carries none, and there is deliberately **no `cache_key`
+  column**: 0009 adds it in the migration that starts issuing hints.
+- **South-bound credential:** `<tenant>.<secret>`, minted at enrollment
+  (`Enrollment.APIToken`), stored as SHA-256. An empty `proxy_id` is a real
+  state meaning unbound. **Chain-leg claim:** `chain_hop_proxy_id`.
+- **UID leases:** block 4096, range `2000000..2147483646`, and **`term_seconds`
+  is deliberately not stated** — Details says why that is a decision.
+- **Decisions:** none added/amended/withdrawn — the §2 register is unchanged.
+  PLAN §2 (M2), §3, §5.4, §6 and §10 revised in place. **Cross-repo:** none
+  owed; `contract/` and `ext/` untouched.
+- **NEXT session:** there is no north-bound API, so a running server is
+  configured with `hoplock-control seed --file`; `make conform` needs `-only`
+  because this server implements part of the contract. 0008 adds its group to
+  the `conform-self` CI leg and replaces the placeholder `authorize:` block in
+  `cmd/pdpconform/testdata/control-expectations.yaml`.
+
+## Details
+
+### The south-bound credential, and why it is shaped like an enrollment token
+
+M2 says "a bearer token in the prototype"; it does not say what is in it. The
+shape chosen is `<tenant>.<secret>`, which is `fleet.EnrollmentToken`'s, and the
+reason is M18 rather than symmetry: **the credential carries the tenant**, so
+south-bound tenancy is resolved from something this server minted rather than
+from something the caller asserted, and the wire contract still grows no tenant
+field. Nothing looks a token up across tenants — the tenant is parsed from the
+credential and the secret verified against the rows under it, so a forged prefix
+fails the comparison in a tenant where no such token exists.
+
+`Registry.Enroll` now mints one **inside the transaction that admits the proxy**
+and returns it on `Enrollment.APIToken`. A fleet member admitted with no way to
+call the API is a half-enrollment an operator repairs by hand, and there is no
+endpoint it could have asked for one on.
+
+`proxy_api_tokens.proxy_id` **empty is a real state** and means the token is not
+bound to one proxy. A bound token is refused for another proxy's traffic —
+`/v1/uids/lease` is where that bites, because the `lease_id` an incident
+resolves a uid back to is worthless if the credential could name anybody. The
+conformance harness uses an unbound token on purpose: the uid cases lease for
+two proxy ids over one listener, because exclusivity is per TARGET and a suite
+that could only present one proxy would not grade that. It is spelled out at the
+call site rather than arrived at by leaving a field blank.
+
+### What is NOT behind the identity seams, and why
+
+`identity.Directory` and `identity.MFAProvider` are what 0011 replaces. What
+stays above them is everything about the CONVERSATION rather than about the
+factor: challenge lifetime, poll-rate enforcement, single use, expiry-as-deny,
+and the clamping of a provider's proposed terms. A provider that returned a
+24-hour TTL would otherwise hold an SSH handshake open for a day, and every
+provider would have to re-implement replay resistance.
+
+Two bugs this arrangement caught while it was being written, both worth knowing:
+
+- **`PollChallenge` must return the row as it stood BEFORE the poll it is
+  stamping.** The first version returned the new `last_polled_at`, so every poll
+  appeared to have arrived zero milliseconds after the last one and the rate
+  limiter refused all of them — the challenge never resolved. The repository
+  interface now says so explicitly; if you change that method, the poll-rate
+  test is the one that notices.
+- **A duplicate-key conflict aborts the transaction it happens in.** The uid
+  cursor is therefore created OUTSIDE `InTx`, where a losing racer can swallow
+  the conflict and read what the winner wrote. Inside, the loser would find
+  every later statement refused with `25P02`, and two proxies reporting a
+  brand-new target at the same instant would take each other down.
+
+### The password oracle is accepted, not overlooked
+
+A wrong password is refused outright and a correct one is answered with an MFA
+challenge, so the presence of the challenge confirms the first factor. That is
+real, it is **known, evaluated and accepted for this product**, and the test
+`TestAWrongPasswordIsRefusedOutright` asserts the absence of a decoy so a later
+session cannot "harden" it. Two reasons, the first decisive:
+
+1. The contract **requires** it. `200` on `/v1/auth/password` is documented as
+   "the password was accepted", so a decoy challenge for a wrong password would
+   be a `200` the contract says means something else (M1).
+2. A decoy is an amplifier: upstream measured one failed guess going from 1
+   Control call to ~121, and from a stateless rejection to a connection held
+   open for the challenge's lifetime.
+
+The control that blunts enumeration here is rate limiting, which is not this
+phase's. **A change of mind starts upstream**, at that `200` description in
+`contract/control.yaml` (`docs/CROSS-REPO-PROTOCOL.md` §3.2) — not behind a flag
+here.
+
+### Passwords: PBKDF2, and why that is the right trade rather than the best KDF
+
+`crypto/pbkdf2` (stdlib, Go 1.24+), SHA-256, 600k iterations, 16-byte salt, with
+the parameters stored beside each digest so the cost can be raised without
+invalidating existing rows. A memory-hard KDF resists offline cracking better
+and would be right for a product whose primary credential is a password — this
+one's is not: passwords are the fallback the proxy tries after certificate
+authentication was not accepted, and **0011 empties this table**. Buying a
+dependency for a table scheduled to empty is the wrong trade. The `algorithm`
+column is how a second KDF lands beside this one if that ordering changes.
+
+A digest written with an algorithm this build does not implement is an **error**,
+not a mismatch: "I cannot check this" is an outage, and answering `false` would
+report an operator's half-finished migration as the user's fault.
+
+### `term_seconds`: this server states none, on purpose
+
+The contract asks for a term and this server answers nothing (config
+`uids.lease_term`, default `0s`). The term bounds how long the PROXY keeps
+allocating from a block it holds; it is **not** what makes the uids
+non-reusable — the monotonic cursor is. A block ends when it is exhausted or
+when its term runs out, and both fail closed while this server is unreachable,
+so shortening the term costs availability during exactly the outage a held block
+exists to survive, and buys nothing. Absent leaves the proxy its own default (a
+day), which is a better-informed number than one this server would type. The
+proxy's own mock answers `0` for the same reason.
+
+The block size is 4096 and the cap is 2^20. `uid_count` on the request is a
+request rather than a requirement; what is granted is
+`min(requested, max_block_size, remaining)`, and a block is **never** granted
+outside the requested `[range_min, range_max]` — a block outside it is refused by
+the proxy anyway, so granting one only turns a clear `409` into a confusing
+outage.
+
+`observed_floor` is the highest uid **seen given out**, so the lowest still free
+is one past it: the cursor is raised to `observed_floor + 1`, clamped to the
+requested range and to `range_end`. It never lowers. The exposure is stated
+rather than hidden — root on a target can report a large floor and burn that
+target's range — and it is the right side of an invariant that prefers refusing
+to reusing.
+
+### What `seed` is, and when it goes away
+
+There is no north-bound API until 0014, so there is no way to configure a server
+to serve anything — which makes the acceptance criterion ("the conformance
+suite's assertions pass against this server, and CI runs it") unreachable
+without one. `hoplock-control seed --file <doc>` is that one. Three properties
+keep it from being a back door: it writes and never reads, it takes a reviewable
+file, and the credentials it writes are hashed by the same functions the running
+server verifies against — there is no seed-only path into the credential tables.
+When 0014 lands it becomes a thin client of that API or it goes away.
+
+`cmd/pdpconform/testdata/control-seed.yaml` and `control-expectations.yaml` are
+**one document in two halves**. A login in one and not the other grades nothing
+or fails invisibly; change them together.
+
+### `-only` now takes a list, and that is not a way to be green
+
+`pdpconform`'s `-only` accepts comma-separated substrings, because a server that
+implements part of the contract has to be graded on the part it implements. The
+`conform-self` CI leg names `authentication,host,capabilities,uid`. Beware the
+substring collision that cost a debugging round: `POST /v1/auth` also matches
+`authorize (POST /v1/authorize)`, and the Makefile passes `CONFORM_FLAGS`
+unquoted so a value with spaces is split by the shell. Use space-free
+substrings.
+
+0008, 0009 and 0010 each add their group in the PR that serves the endpoint, and
+replace the placeholder sections in `control-expectations.yaml` — which are
+filled in only so the file validates, since the suite (correctly) refuses one
+whose missing key would turn an assertion into a no-op.
+
+### Follow-ups this phase deliberately did not do
+
+- **Rate limiting** on `/v1/auth/*`. It is the control that actually blunts
+  password enumeration, and it is nobody's phase yet. Worth queueing.
+- **Retiring resolved and expired `mfa_challenges` rows.** The index is there
+  (`mfa_challenges_expiry_idx`); nothing sweeps. It is housekeeping, not
+  correctness — a resolved row is refused, not honoured — but the table grows
+  with every authentication.
+- **The `cache` hint on `/v1/hostkeys/report`.** 0009's, and it owes three
+  things before it may say yes: the M9 liveness read on THIS path and not only
+  on authorize; hinting only an already-known, accepted key (never a `reject`,
+  never a `known: false`); and storing the issued key on the host-key record,
+  because a subject-scoped `cache_invalidate` cannot match a host-key decision —
+  it was not made for a person. A key nobody stored is a decision nobody can
+  withdraw short of resyncing the entire fleet's cache.

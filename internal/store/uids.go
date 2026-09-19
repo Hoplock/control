@@ -80,7 +80,7 @@ func (r uidRepo) Advance(ctx context.Context, tenant Tenant, targetID string, si
 	// call is made once per BLOCK, not once per session, and it is not on
 	// the decision path (PLAN §4). M5's budget is untouched.
 	block := UIDBlock{}
-	err := r.inTx(ctx, op, func(ctx context.Context, tx querier) error {
+	err := r.s.inTx(ctx, op, func(ctx context.Context, tx querier) error {
 		var nextUID, rangeEnd int64
 		err := tx.QueryRow(ctx, `
 			SELECT next_uid, range_end
@@ -146,35 +146,4 @@ func (r uidRepo) RaiseFloor(ctx context.Context, tenant Tenant, targetID string,
 		return UIDCursor{}, wrap(op, err)
 	}
 	return c, nil
-}
-
-// inTx runs fn in a transaction, reusing the caller's if there already is one.
-//
-// Advance needs a row lock, and a row lock needs a transaction — but Advance
-// may also be called from inside InTx (0007 records the lease alongside it),
-// where opening a second transaction on a second connection would deadlock
-// against the first. So: when this Store is already transaction-bound, run in
-// place; only a pool-bound Store begins anything.
-func (r uidRepo) inTx(ctx context.Context, op string, fn func(context.Context, querier) error) error {
-	if r.s.pool == nil {
-		return fn(ctx, r.s.db)
-	}
-
-	pgtx, err := r.s.pool.Begin(ctx)
-	if err != nil {
-		return wrap(op, err)
-	}
-	defer func() {
-		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.s.rollbackTimeout())
-		defer cancel()
-		_ = pgtx.Rollback(rollbackCtx)
-	}()
-
-	if err := fn(ctx, pgtx); err != nil {
-		return err
-	}
-	if err := pgtx.Commit(ctx); err != nil {
-		return wrap(op, err)
-	}
-	return nil
 }

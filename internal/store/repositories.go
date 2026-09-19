@@ -68,6 +68,14 @@ type ProxyRepository interface {
 	// graph load (0006): pathfinding needs the whole fleet at once, and the
 	// fleet is small relative to the estate.
 	List(ctx context.Context, tenant Tenant) ([]Proxy, error)
+	// GetByKeyFingerprint answers "is this key one of ours" — the chain-leg
+	// question on /v1/auth/cert (proxy D11, 0007). It reads the enrolled
+	// rows themselves, through a column generated from `public_key`, rather
+	// than a list of proxy key fingerprints kept beside them: two answers to
+	// one question drift the first time a proxy re-enrolls with a new key.
+	// Absent is ErrNotFound, which here means "not one of ours" and is not a
+	// deny on its own.
+	GetByKeyFingerprint(ctx context.Context, tenant Tenant, fingerprint string) (Proxy, error)
 	// RecordHealth stamps what a heartbeat carried: liveness, session count,
 	// last error, and — where the report named them — the contract version
 	// and the declared capability set.
@@ -180,6 +188,118 @@ type UIDCursorRepository interface {
 	// not an error — it is a stale observation, and ignoring it is the
 	// correct answer.
 	RaiseFloor(ctx context.Context, tenant Tenant, targetID string, floor int64) (UIDCursor, error)
+}
+
+// The south-bound API's repositories (0007). Like the fleet's below, they sit
+// beside the tables they are about rather than inside them: a subject's keys
+// outlive any one of them, a host key outlives the proxy that reported it, and
+// a challenge outlives nothing at all.
+
+// SubjectKeyRepository stores the public keys and certificates a subject may
+// offer on `/v1/auth/cert`.
+type SubjectKeyRepository interface {
+	// GetByFingerprint is the auth path's lookup: a key arrives and this
+	// answers whose it is. Absent is ErrNotFound — which is a DENY one
+	// layer up and nothing else is, because everything the wrapper cannot
+	// positively identify is an outage (M11).
+	GetByFingerprint(ctx context.Context, tenant Tenant, fingerprint string) (SubjectKey, error)
+	// ListBySubject returns a subject's keys, in fingerprint order.
+	ListBySubject(ctx context.Context, tenant Tenant, subjectID string) ([]SubjectKey, error)
+	// Put writes a key, replacing any existing row with the same
+	// fingerprint.
+	Put(ctx context.Context, tenant Tenant, k SubjectKey) error
+	// Revoke withdraws a key at time at. A key already revoked keeps its
+	// original instant. Absent is ErrNotFound.
+	Revoke(ctx context.Context, tenant Tenant, fingerprint string, at time.Time) error
+}
+
+// SubjectPasswordRepository stores the local password verifier (0011
+// federates it away).
+type SubjectPasswordRepository interface {
+	// Get returns a subject's verifier. Absent is ErrNotFound, and it is a
+	// real state: a subject with no password cannot authenticate with one.
+	Get(ctx context.Context, tenant Tenant, subjectID string) (PasswordDigest, error)
+	// Put writes a verifier, replacing any existing one.
+	Put(ctx context.Context, tenant Tenant, d PasswordDigest) error
+	// Delete removes one. Absent is ErrNotFound.
+	Delete(ctx context.Context, tenant Tenant, subjectID string) error
+}
+
+// MFARepository stores second-factor enrollments and the challenges
+// outstanding against them (PLAN §6).
+//
+// The challenges are rows rather than a map in a process because nothing makes
+// a proxy's polls land on the node that issued one (M5).
+type MFARepository interface {
+	// GetEnrollment returns which provider a subject is enrolled with.
+	// Absent is ErrNotFound and means no second factor.
+	GetEnrollment(ctx context.Context, tenant Tenant, subjectID string) (MFAEnrollment, error)
+	// PutEnrollment writes one, replacing any existing row.
+	PutEnrollment(ctx context.Context, tenant Tenant, e MFAEnrollment) error
+	// CreateChallenge issues a challenge. A token already present is
+	// ErrConflict: re-issuing over an outstanding challenge would resurrect
+	// a spent token.
+	CreateChallenge(ctx context.Context, tenant Tenant, c MFAChallenge) error
+	// GetChallenge reads one without polling it. Absent is ErrNotFound.
+	GetChallenge(ctx context.Context, tenant Tenant, token string) (MFAChallenge, error)
+	// PollChallenge takes the challenge under a row lock and stamps the
+	// poll. The lock is what stops two concurrent polls both resolving one
+	// challenge. Absent is ErrNotFound.
+	//
+	// It returns the row AS IT STOOD BEFORE THIS POLL, with Polls already
+	// counting it — so LastPolledAt is the PREVIOUS poll's instant, which
+	// is what poll-rate enforcement measures against. Returning the stamp
+	// just written would make every poll look like it arrived zero
+	// milliseconds after the last one.
+	PollChallenge(ctx context.Context, tenant Tenant, token string, at time.Time) (MFAChallenge, error)
+	// ResolveChallenge spends a challenge, once. A challenge that is no
+	// longer outstanding is ErrConflict, whichever way it went — which is
+	// what makes the token single-use.
+	ResolveChallenge(ctx context.Context, tenant Tenant, token string, state MFAChallengeState, at time.Time) error
+}
+
+// TargetHostKeyRepository records what a target has been seen presenting
+// (proxy D7).
+type TargetHostKeyRepository interface {
+	// Record writes a sighting and reports whether this exact key had been
+	// seen before. The boolean comes from the write itself rather than from
+	// a preceding read, so two proxies reporting one new key concurrently
+	// agree on which of them saw it first.
+	Record(ctx context.Context, tenant Tenant, k TargetHostKey) (TargetHostKey, bool, error)
+	// ListForTarget returns every key this target has presented, oldest
+	// first. A CHANGED key is a question about the set, not about the row
+	// just written.
+	ListForTarget(ctx context.Context, tenant Tenant, hostname string, port int32) ([]TargetHostKey, error)
+}
+
+// UIDLeaseRepository is the append-only record of granted uid blocks.
+//
+// There is no Release, no Delete and no lookup by block, and their absence is
+// the design: nothing may read this table in order to decide what to allocate.
+// The cursor is the only allocator (PLAN §4).
+type UIDLeaseRepository interface {
+	// Record appends the audit row for a granted block.
+	Record(ctx context.Context, tenant Tenant, l UIDLease) error
+	// Get resolves a lease id — the incident query. Absent is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, leaseID string) (UIDLease, error)
+	// ListForTarget returns a target's grants, lowest block first.
+	ListForTarget(ctx context.Context, tenant Tenant, targetID string) ([]UIDLease, error)
+}
+
+// ProxyTokenRepository stores the proxy->server channel credential (M2).
+//
+// Only the hash of a token's secret half is stored, and no method here takes a
+// usable credential: the caller hashes, this looks up.
+type ProxyTokenRepository interface {
+	// Insert stores a minted token. A duplicate id or secret is
+	// ErrConflict.
+	Insert(ctx context.Context, tenant Tenant, t ProxyAPIToken) error
+	// GetByHash is the middleware's lookup. Absent is ErrNotFound.
+	GetByHash(ctx context.Context, tenant Tenant, hash []byte) (ProxyAPIToken, error)
+	// Revoke withdraws a token at time at. Absent is ErrNotFound.
+	Revoke(ctx context.Context, tenant Tenant, tokenID string, at time.Time) error
+	// ListByProxy returns the tokens issued to one proxy, oldest first.
+	ListByProxy(ctx context.Context, tenant Tenant, proxyID string) ([]ProxyAPIToken, error)
 }
 
 // The fleet registry's repositories (0006). They sit beside ProxyRepository

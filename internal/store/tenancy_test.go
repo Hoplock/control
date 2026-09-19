@@ -34,6 +34,14 @@ var repositoryInterfaces = map[string]reflect.Type{
 	"RelayRegistrationRepository": reflect.TypeOf((*RelayRegistrationRepository)(nil)).Elem(),
 	"ProxyConfigRepository":       reflect.TypeOf((*ProxyConfigRepository)(nil)).Elem(),
 	"TargetCapabilityRepository":  reflect.TypeOf((*TargetCapabilityRepository)(nil)).Elem(),
+
+	// The south-bound API (0007).
+	"SubjectKeyRepository":      reflect.TypeOf((*SubjectKeyRepository)(nil)).Elem(),
+	"SubjectPasswordRepository": reflect.TypeOf((*SubjectPasswordRepository)(nil)).Elem(),
+	"MFARepository":             reflect.TypeOf((*MFARepository)(nil)).Elem(),
+	"TargetHostKeyRepository":   reflect.TypeOf((*TargetHostKeyRepository)(nil)).Elem(),
+	"UIDLeaseRepository":        reflect.TypeOf((*UIDLeaseRepository)(nil)).Elem(),
+	"ProxyTokenRepository":      reflect.TypeOf((*ProxyTokenRepository)(nil)).Elem(),
 }
 
 // Tenancy is unforgeable at the repository boundary (M18).
@@ -102,6 +110,13 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"RelayRegistrationRepository": s.RelayRegistrations(),
 		"ProxyConfigRepository":       s.ProxyConfigs(),
 		"TargetCapabilityRepository":  s.TargetCapabilities(),
+
+		"SubjectKeyRepository":      s.SubjectKeys(),
+		"SubjectPasswordRepository": s.SubjectPasswords(),
+		"MFARepository":             s.MFA(),
+		"TargetHostKeyRepository":   s.TargetHostKeys(),
+		"UIDLeaseRepository":        s.UIDLeases(),
+		"ProxyTokenRepository":      s.ProxyTokens(),
 	}
 
 	if len(got) != len(repositoryInterfaces) {
@@ -238,6 +253,82 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return err
 		},
 		"TargetCapabilities.List": func() error { _, err := s.TargetCapabilities().List(ctx, ""); return err },
+
+		// The south-bound API (0007). These are the credential lookups, so
+		// a method here that read across tenants would authenticate one
+		// tenant's user against another's key.
+		"Proxies.GetByKeyFingerprint": func() error {
+			_, err := s.Proxies().GetByKeyFingerprint(ctx, "", "SHA256:x")
+			return err
+		},
+		"SubjectKeys.GetByFingerprint": func() error {
+			_, err := s.SubjectKeys().GetByFingerprint(ctx, "", "SHA256:x")
+			return err
+		},
+		"SubjectKeys.ListBySubject": func() error {
+			_, err := s.SubjectKeys().ListBySubject(ctx, "", "s")
+			return err
+		},
+		"SubjectKeys.Put": func() error {
+			return s.SubjectKeys().Put(ctx, "", SubjectKey{Fingerprint: "SHA256:x", SubjectID: "s"})
+		},
+		"SubjectKeys.Revoke": func() error {
+			return s.SubjectKeys().Revoke(ctx, "", "SHA256:x", nowForTest())
+		},
+		"SubjectPasswords.Get": func() error { _, err := s.SubjectPasswords().Get(ctx, "", "s"); return err },
+		"SubjectPasswords.Put": func() error {
+			return s.SubjectPasswords().Put(ctx, "", PasswordDigest{
+				SubjectID: "s", Algorithm: "pbkdf2-sha256", Iterations: 1,
+				Salt: []byte("s"), Digest: []byte("d"),
+			})
+		},
+		"SubjectPasswords.Delete": func() error { return s.SubjectPasswords().Delete(ctx, "", "s") },
+		"MFA.GetEnrollment":       func() error { _, err := s.MFA().GetEnrollment(ctx, "", "s"); return err },
+		"MFA.PutEnrollment": func() error {
+			return s.MFA().PutEnrollment(ctx, "", MFAEnrollment{SubjectID: "s", Provider: "scripted"})
+		},
+		"MFA.CreateChallenge": func() error {
+			return s.MFA().CreateChallenge(ctx, "", MFAChallenge{
+				Token: "t", SubjectID: "s", IssuedAt: nowForTest(), ExpiresAt: nowForTest(),
+			})
+		},
+		"MFA.GetChallenge": func() error { _, err := s.MFA().GetChallenge(ctx, "", "t"); return err },
+		"MFA.PollChallenge": func() error {
+			_, err := s.MFA().PollChallenge(ctx, "", "t", nowForTest())
+			return err
+		},
+		"MFA.ResolveChallenge": func() error {
+			return s.MFA().ResolveChallenge(ctx, "", "t", MFAChallengeApproved, nowForTest())
+		},
+		"TargetHostKeys.Record": func() error {
+			_, _, err := s.TargetHostKeys().Record(ctx, "", TargetHostKey{
+				Hostname: "h", Fingerprint: "SHA256:x", Decision: HostKeyAccepted,
+			})
+			return err
+		},
+		"TargetHostKeys.ListForTarget": func() error {
+			_, err := s.TargetHostKeys().ListForTarget(ctx, "", "h", 22)
+			return err
+		},
+		"UIDLeases.Record": func() error {
+			return s.UIDLeases().Record(ctx, "", UIDLease{
+				LeaseID: "l", TargetID: "h", ProxyID: "p", From: 1, To: 2,
+			})
+		},
+		"UIDLeases.Get":           func() error { _, err := s.UIDLeases().Get(ctx, "", "l"); return err },
+		"UIDLeases.ListForTarget": func() error { _, err := s.UIDLeases().ListForTarget(ctx, "", "h"); return err },
+		"ProxyTokens.Insert": func() error {
+			return s.ProxyTokens().Insert(ctx, "", ProxyAPIToken{TokenID: "t", TokenHash: []byte("h")})
+		},
+		"ProxyTokens.GetByHash": func() error {
+			_, err := s.ProxyTokens().GetByHash(ctx, "", []byte("h"))
+			return err
+		},
+		"ProxyTokens.Revoke": func() error { return s.ProxyTokens().Revoke(ctx, "", "t", nowForTest()) },
+		"ProxyTokens.ListByProxy": func() error {
+			_, err := s.ProxyTokens().ListByProxy(ctx, "", "p")
+			return err
+		},
 	}
 
 	if got, want := len(calls), totalRepositoryMethods(); got != want {

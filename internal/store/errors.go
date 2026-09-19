@@ -174,6 +174,14 @@ func invalid(op, msg string) error {
 	return &Error{Op: op, Kind: KindInvalid, Err: errors.New(msg)}
 }
 
+// conflict builds a collided-with-existing-state error. It is the answer to a
+// write the database refused because of what is already there, and to a state
+// transition that has already happened — a second resolution of a single-use
+// challenge, for one.
+func conflict(op, msg string) error {
+	return &Error{Op: op, Kind: KindConflict, Err: errors.New(msg)}
+}
+
 // exhausted builds a used-up-resource error.
 func exhausted(op, msg string) error {
 	return &Error{Op: op, Kind: KindExhausted, Err: errors.New(msg)}

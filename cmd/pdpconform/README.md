@@ -44,7 +44,7 @@ go run ./cmd/pdpconform -base-url URL -token TOKEN -expectations FILE [-v] [-onl
 | `-base-url` | The server under test. Required. |
 | `-token` | The bearer token it accepts from a proxy. |
 | `-expectations` | The file below. Required. |
-| `-only` | Run only groups whose name contains this substring. For debugging one endpoint; never for making a run green. |
+| `-only` | Run only groups whose name contains one of these comma-separated substrings. For debugging one endpoint, and for grading a server that implements part of the contract — phase 0007's CI leg names the four groups it serves. Never for making a run green: leaving a group out is a statement the PR has to make in words too. |
 | `-v` | Print the details of passing assertions too, which is how you check a case is not passing vacuously. |
 | `-timeout` | Per-request timeout. The event stream is exempt: it never ends on its own. |
 
@@ -59,6 +59,36 @@ make conform BASE_URL=http://127.0.0.1:8080 TOKEN=pdpconform-dev-token
 
 `testdata/mock-fixtures.yaml` configures the mock to serve what
 `testdata/mock-expectations.yaml` names. Both are test data.
+
+## Running it locally against THIS server
+
+The suite is pointed at the real implementation by a second pair of files and
+no Go at all. There is no north-bound API yet (0014), so the server is
+configured with `hoplock-control seed`:
+
+```
+go run ./cmd/hoplock-control migrate --config config.yaml
+go run ./cmd/hoplock-control seed    --config config.yaml \
+    --file cmd/pdpconform/testdata/control-seed.yaml
+go run ./cmd/hoplock-control --config config.yaml &
+
+make conform BASE_URL=http://127.0.0.1:8080 \
+             TOKEN=default.pdpconform-dev-secret \
+             EXPECT=cmd/pdpconform/testdata/control-expectations.yaml \
+             CONFORM_FLAGS='-v -only=authentication,host,capabilities,uid'
+```
+
+`testdata/control-seed.yaml` and `testdata/control-expectations.yaml` are **one
+document in two halves**: a login in one and not the other grades nothing, or
+fails for a reason visible in neither. Change them together.
+
+`-only` names the four groups phase 0007 serves. `/v1/authorize` is 0008's, the
+event stream 0009's and log ingest 0010's, and each of those phases adds its
+group to the `conform-self` CI job and replaces its placeholder section in the
+expectation file. **Beware the substring collision:** `POST /v1/auth` also
+matches `authorize (POST /v1/authorize)`, and `make` passes `CONFORM_FLAGS`
+unquoted, so a value containing spaces is split by the shell before the flag
+package sees it. Use space-free substrings.
 
 ## The expectation file
 

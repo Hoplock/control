@@ -21,6 +21,7 @@ import (
 	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/extdefault"
+	"github.com/hoplock/control/internal/store"
 )
 
 // defaultConfigPath is where the server looks when --config is not given.
@@ -44,8 +45,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		switch args[0] {
 		case "migrate":
 			return runMigrate(args[1:], stdout, stderr)
+		case "seed":
+			return runSeed(args[1:], stdout, stderr)
 		default:
-			return fmt.Errorf("unknown subcommand %q (known: migrate)", args[0])
+			return fmt.Errorf("unknown subcommand %q (known: migrate, seed)", args[0])
 		}
 	}
 
@@ -90,8 +93,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	// The listeners are named here but nothing binds them yet: phase 0001
-	// stands the repository up and starts no service (PLAN §10).
 	log.Info("starting",
 		"version", versionString(),
 		"tenant", cfg.Tenant,
@@ -104,8 +105,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	<-ctx.Done()
-	stop()
+	// The store is opened and NOT migrated. Migrations are an explicit
+	// command (PLAN §8): two nodes starting together must not race to build
+	// the schema.
+	st, err := store.Open(ctx, cfg.Database.DSN)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	// The south-bound listener is bound; the north-bound one is not (0014).
+	// They are two listeners from here on rather than two fields (M2).
+	if err := serveSouth(ctx, cfg, st, log); err != nil {
+		return err
+	}
 
 	log.Info("shutting down")
 	return nil

@@ -28,7 +28,7 @@ func main() {
 		baseURL = flag.String("base-url", "", "base URL of the server under test, e.g. http://127.0.0.1:8080")
 		token   = flag.String("token", "", "bearer token the server accepts from a proxy")
 		expect  = flag.String("expectations", "", "path to the expectation file (see cmd/pdpconform/README.md)")
-		only    = flag.String("only", "", "run only the groups whose names contain this substring")
+		only    = flag.String("only", "", "run only the groups whose names contain one of these comma-separated substrings")
 		timeout = flag.Duration("timeout", 30*time.Second, "per-request timeout; the event stream is exempt")
 		verbose = flag.Bool("v", false, "print the details of passing assertions too")
 	)
@@ -69,7 +69,7 @@ func run(baseURL, token, expectPath, only string, timeout time.Duration, verbose
 		{groupEvents, s.CheckEvents},
 		{groupErrors, s.CheckErrors},
 	} {
-		if only != "" && !strings.Contains(g.name, only) {
+		if !selected(g.name, only) {
 			continue
 		}
 		g.fn()
@@ -82,4 +82,28 @@ func run(baseURL, token, expectPath, only string, timeout time.Duration, verbose
 		os.Exit(1)
 	}
 	return nil
+}
+
+// selected reports whether a group should run.
+//
+// `-only` takes a COMMA-SEPARATED list rather than a single substring, because
+// a server that implements part of the contract has to be graded on the part
+// it implements: phase 0007 serves authentication, host keys, capability
+// reports and uid leases, and nothing else, so its CI leg names four groups.
+// The alternative — four invocations against one server — makes the uid cases
+// share a run id with nothing, and reads in the log as four unrelated runs.
+//
+// It is still never a way to make a run green: leaving a group out says this
+// server does not serve those endpoints yet, which is a statement the PR has
+// to make in words as well as in a flag.
+func selected(group, only string) bool {
+	if only == "" {
+		return true
+	}
+	for _, want := range strings.Split(only, ",") {
+		if want = strings.TrimSpace(want); want != "" && strings.Contains(group, want) {
+			return true
+		}
+	}
+	return false
 }
