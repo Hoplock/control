@@ -113,6 +113,42 @@ The proxy only relays and polls; the whole conversation is yours.
 - **Never log, store, or echo the password.** Assert it in a test against your
   actual log output, not by inspection.
 
+#### A correct password is confirmed by the challenge, and that is accepted
+
+A wrong password is refused outright and a correct one is answered with an MFA
+challenge, so the **presence of the challenge confirms the first factor** even
+though no message says so. That is a real oracle, it is **known, evaluated and
+accepted for this product**, and it is not yours to close.
+
+Two reasons, and the first is decisive. The contract **requires** it: `200` on
+`/v1/auth/password` is documented as "the password was accepted", so answering a
+*wrong* password with a decoy challenge would return a `200` that the contract
+says means something else — a contract violation, not a hardening (M1: the
+contract wins for wire shapes). Second, a decoy is an amplifier handed to the
+attacker: upstream measured one failed guess going from **1 Control call to
+~121**, and from a stateless rejection to a connection held open for the
+challenge's lifetime. It would also narrow the timing channel rather than close
+it, so it buys a statistical oracle in place of a single-probe one.
+
+The control that actually blunts enumeration here is **rate limiting**, which is
+out of scope for this phase. So: no decoy challenges, no equalising delays
+invented here, and no "fix" for this in review. A future change of mind starts
+**upstream**, at the `200` description on `/v1/auth/password` in
+`contract/control.yaml` — until that sentence is relaxed, a decoy is a contract
+violation, and relaxing it is not this phase's to do.
+
+If you conclude the product genuinely needs it, that is
+`docs/CROSS-REPO-PROTOCOL.md` **§3.2, which is a flow and not a prohibition**:
+name the exact sentence you need changed under `## Upstream request` in your PR,
+keep this endpoint's behaviour as the contract states it meanwhile, and hand over
+the filled-in **"Upstream request"** kickoff from `docs/KICKOFF.md` (§4.2). Do not
+quietly implement the decoy behind a flag while the request is open.
+
+This is recorded here because it is a decision **this** repository owns (proxy
+D2: the proxy originates no policy) that was taken in the proxy's phase 0034 —
+which touched no shared surface, so no `## Cross-repo impact` section ever
+carried it downstream.
+
 ### Host key reporting
 Record a reported target host key and return the trust decision. Prototype
 policy is trust-on-first-use with a record (proxy D7); return an explicit

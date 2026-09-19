@@ -108,6 +108,37 @@ Each scenario is a product claim, proven across both components:
 - Verify the gate once by pinning a known-vulnerable dependency and confirming
   it fails, then revert. A gate nobody has seen fail is not known to be a gate.
 - Keep `make conform` in CI against both this server and the proxy's mock.
+- **A scheduled job answering "is our vendored contract currently behind
+  upstream?"** — the same reasoning as `govulncheck` above, applied to M1. Today
+  nothing answers it. Both existing contract jobs are **pin-relative by
+  construction**: `make contract-check` is a local checksum against
+  `contract/UPSTREAM` and contacts nothing, and the `conform` job checks the
+  proxy out *at the commit in `contract/UPSTREAM`* — deliberately, because a mock
+  built from a different revision would make an upstream change look like a
+  conformance failure here. Both are right, and between them they mean a pin that
+  has fallen behind is **invisible to CI**: the tree stays internally consistent
+  and green while the two components drift, which is the exact failure vendoring
+  exists to prevent.
+
+  Three things this job must get right, and the first is what makes it
+  workable:
+
+  - **It does not gate PRs.** A pin that is behind is *legitimate* whenever a
+    prompt names the re-vendor (`prompts/audit/cross-repo-impact.md` §5) — that
+    is how a sync is supposed to work, since a sync vendors nothing (§3.1) and
+    the owning phase re-vendors. A blocking check would turn any proxy merge into
+    red CI on every unrelated Control PR, and the job would be deleted within a
+    week. Make it a scheduled notice, on its own trigger.
+  - **It reports the gap, not a verdict.** Name the pinned commit, the current
+    upstream `api/` head, and the PRs in between. Whether the gap is owed a sync
+    is a judgement about who owns the re-vendor, and the answer lives in the
+    prompts.
+  - **It is not a substitute for the audit.** It catches staleness of the
+    *artifact*; the audit catches drift of the *text*, which no checksum can see.
+
+  Note in the job that it can go amber with no change to this repository, exactly
+  as `govulncheck` can go red with no code change, and that the fix is a sync or a
+  phase that re-vendors — never deleting the job.
 
 ### Hardening & close-out
 - Address TODOs from earlier phases that block a coherent prototype.

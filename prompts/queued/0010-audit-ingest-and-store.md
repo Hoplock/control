@@ -111,6 +111,26 @@ queryable in its own right rather than buried in a session blob:
   a record that lies, and this is the field the whole enforcement vocabulary
   exists to make true.
 
+  **The credential method is two fields, and the user is told neither.** The
+  record and the operator surface carry `target_auth_method` — which entry of
+  the ladder was satisfied — and `target_auth_rung`, its **0-based index** into
+  `target_auth_ladder`. The index is what makes degradation queryable: a rung of
+  `0` is the method policy preferred, and anything above it is the deployment
+  accepting its second choice, which is a thing an operator wants to count
+  across the estate rather than reconstruct per session.
+
+  Store `algorithm_profile` beside them (0008). Anything other than `default` is
+  a deliberate weakening of the proxy→target leg, and the point of recording it
+  is that an operator learns a route runs on SHA-1 from the record rather than by
+  reading policy.
+
+  **This is the one place PLAN §4.3's disclosure rule does not apply** (proxy
+  D14): the rung in force is an audit fact and never a user-facing one. Do not
+  surface it in anything the connecting user sees, and do not "fix" that later —
+  the information is about the estate rather than about the user's own request.
+  "You got the weaker credential" tells an attacker which targets are softest and
+  tells an honest user nothing they can act on.
+
   The rung has four fields, and they need storing and indexing as
   four rather than being flattened into one string: `enforcement_execution` and
   `enforcement_reach` (the two axes are separate questions and are queried

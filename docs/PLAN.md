@@ -846,7 +846,7 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/uids/lease` | Grant a proxy an **exclusive block of ephemeral uids for one target** out of a per-target allocation cursor that **only ever advances**; `409` when the cursor has reached the top of the range |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
 | `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
-| `GET /v1/proxies/{id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` |
+| `GET /v1/proxies/{proxy_id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` |
 
 Six obligations are easy to miss and are graded by the conformance suite:
 
@@ -1161,8 +1161,10 @@ the connection's lifetime (proxy D2):
   served, so the check belongs at authoring time (0005) and again before the
   response is written (0008);
 - **device platform and expiry posture** on `ephemeral-account` routes (proxy
-  D13), and a **per-route algorithm profile** where the target speaks something
-  `x/crypto` does not enable by default;
+  D13), and a **per-route algorithm profile** (`algorithm_profile`) where the
+  target speaks something `x/crypto` does not enable by default — a named preset
+  (`default`, `legacy-rsa-sha1`, `legacy-device`), absent ⇒ `default`, and
+  anything else a deliberate weakening that carries its own audit record (§7);
 - **additional device fields** on those same routes — the open
   `device_field.<name>` namespace that sits beside the five
   `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
@@ -1381,9 +1383,16 @@ reuses it on, and three consequences this server owns:
   `proxy-inspected` is the whole point of the vocabulary, so a session that ran on
   a different rung than the policy asked for must say so: a ladder degrades and a
   rung can be unavailable, and a record repeating the request would be a record
-  that lies. The same holds for the credential method (proxy D14).
-- **Grant context rides every record for a session** (`grant_context`, contract
-  v4), copied through by the proxy as opaque data. Store it as it arrives —
+  that lies. The same holds for the credential method (proxy D14), which puts two
+  more fields on the record: `target_auth_method` and `target_auth_rung`, the
+  **0-based index** of the satisfied entry into `target_auth_ladder`. Beside them
+  sits `algorithm_profile` (§5.2), because anything but `default` is a deliberate
+  weakening of the proxy→target leg. All three are **audit facts and never
+  user-facing ones** — the single place §4.3's disclosure rule does not apply,
+  because the rung in force is information about the estate rather than about the
+  user's own request.
+- **Grant context rides every record for a session** (`grant_context`),
+  copied through by the proxy as opaque data. Store it as it arrives —
   including `additional_context`, which is a string **or** an object — and never
   parse it into policy: it is what lets an auditor answer "why was this allowed"
   without joining two systems by hand, and M16 is what puts it there.
@@ -1459,7 +1468,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0006 | Fleet registry, health & config distribution | enrollment, heartbeat, zone graph, pathfinding, hop direction, versioned config rollout (M6), the capability store both sources write to (M17) |
 | 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting and its cache hint, `/v1/capabilities/report`, `/v1/uids/lease` and its monotonic cursor |
 | 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
-| 0009 | Revocation & event fan-out | `/v1/proxies/{id}/events`, event bus, replay, resync, kill switch (M9) |
+| 0009 | Revocation & event fan-out | `/v1/proxies/{proxy_id}/events`, event bus, replay, resync, kill switch (M9) |
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |
 | 0011 | Identity, users, groups, roles & RBAC | local identity, roles, RBAC, OIDC/SAML federation, claim mapping, SSH CA (M7) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |

@@ -252,9 +252,31 @@ exist when this prompt was first written, and each has a rule attached:
   lowercase letters, digits, hyphens and underscores and ≤64 characters, value
   non-empty and ≤256 characters, ≤16 per entry — and emit no name of your own
   invention: a field this server made up is one no driver declares.
-- **A per-route algorithm profile** where the target speaks something the
-  proxy's SSH stack does not enable by default. This deliberately weakens a leg,
-  so it is a policy choice with an audit consequence, never a default.
+- **A per-route algorithm profile** (`algorithm_profile`) where the target
+  speaks something the proxy's SSH stack does not enable by default. It is a
+  **named preset**, not an algorithm list, and the enum is exactly
+  `default`, `legacy-rsa-sha1`, `legacy-device`:
+
+  - `default` — nothing beyond the library defaults, and **absent ⇒ `default`**.
+    It is the only value that is not a weakening, so emit the field only where
+    policy genuinely names one of the other two.
+  - `legacy-rsa-sha1` — additionally offers RSA with SHA-1 signatures
+    (`ssh-rsa`) for host keys and public-key auth.
+  - `legacy-device` — `legacy-rsa-sha1` plus the SHA-1 key exchanges, CBC
+    ciphers and SHA-1 MACs that appliance firmware of that era offers.
+
+  Two properties make this safe and it needs both, so neither is this server's
+  to relax. It is **named by the server, per route** — never a proxy-wide knob,
+  which would weaken every leg in the fleet to serve the oldest device on it.
+  And a **preset cannot be widened one algorithm at a time** by someone who does
+  not know what they are enabling. Emit no value outside the enum: the proxy
+  refuses an unknown profile rather than coercing it, because coercing down to
+  `default` would deny every route on the estate this exists for and coercing up
+  would weaken a leg nobody asked to weaken.
+
+  Anything other than `default` is a weakening and **emits its own audit event**
+  (0010), on D14's sibling rule for credential methods: an operator learns that a
+  route runs on SHA-1 from the record, not by reading policy.
 - **A session deadline** (`session_deadline`), as an **absolute instant** —
   RFC 3339, not a duration. A duration re-anchors at each hop of a chained route
   and silently multiplies the window. The proxy enforces it locally, so it holds
