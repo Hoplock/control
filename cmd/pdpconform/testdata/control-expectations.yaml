@@ -1,0 +1,163 @@
+# Expectations for THIS server, seeded from control-seed.yaml beside this file.
+#
+# It is the other half of that document: a login here that is not seeded there
+# fails for a reason nobody can see in either file. Change them together.
+#
+# WHAT THIS FILE DESCRIBES IS A SERVER THAT IMPLEMENTS PART OF THE CONTRACT.
+# Phase 0007 serves authentication, host keys, capability reports and uid
+# leases; `/v1/authorize` is 0008, the event stream 0009, log ingest 0010. The
+# CI leg therefore runs those four groups by name (`-only`), and the sections
+# below for the rest are filled in so the file VALIDATES rather than because
+# anything reads them yet — the suite refuses a file whose missing key would
+# silently turn an assertion into a no-op, and that refusal is worth keeping.
+# The phase that serves an endpoint replaces its section here and adds its
+# group to the CI leg.
+
+proxy_id: proxy-1
+# A DIFFERENT proxy id for the uid cases: exclusivity is per target, not per
+# proxy, and a server that keyed its cursor by proxy would look perfect to a
+# single-proxy suite and hand the same uid to two proxies on one host. It is
+# not seeded as a fleet member because a lease needs no enrolled row — the
+# suite's token is unbound, which is what lets it speak for both.
+second_proxy_id: proxy-2
+
+auth:
+  cert_accept:
+    login: alice
+    target: host.company.com
+    expect_subject: alice@example.com
+    key:
+      type: ssh-ed25519
+      # Derived from alice's key blob in the seed file. If you change the blob,
+      # change this: `ssh-keygen -lf` prints the same string.
+      fingerprint: "SHA256:hycF5UA/TZli3k4QVe6d9VeX8hHei7UUMXFWOdtBqcA"
+  cert_deny:
+    login: alice
+    key:
+      type: ssh-ed25519
+      fingerprint: "SHA256:ZZZZ9999nobodyhasthiskey9999ZZZZ9999nobody9"
+  password_no_mfa:
+    login: bob
+    password: "bob-dev-password"
+  password_mfa_approve:
+    login: alice
+    password: "alice-dev-password"
+    max_polls: 20
+  password_mfa_deny:
+    login: mallory
+    password: "mallory-dev-password"
+    max_polls: 20
+  password_mfa_expiry:
+    login: forgetful
+    password: "forgetful-dev-password"
+    wait_seconds: 2
+  unknown_challenge_token: "pdpconform-never-issued-this-token"
+
+# --- not served yet (0008) -------------------------------------------------
+#
+# Every route below names a target this server has no policy for, because it
+# has no policy engine wired to a listener yet. The `authorize`,
+# `absent-value defaults`, `vocabulary negotiation` and `device fields` groups
+# are not in the CI leg's `-only` list; 0008 fills these in and adds them.
+authorize:
+  direct:
+    login: alice
+    subject: alice@example.com
+    target: host.company.com
+  nexthop:
+    login: alice
+    subject: alice@example.com
+    target: deep.internal.company.com
+    proxy_id: proxy-1
+  deny:
+    login: alice
+    subject: alice@example.com
+    target: nobody-may-reach-this.company.com
+  full:
+    login: alice
+    subject: alice@example.com
+    target: scan-target-01.company.com
+  ladder:
+    login: alice
+    subject: alice@example.com
+    target: edge-fw-01.company.com
+  defaults:
+    enforcement:
+      default: { login: alice, subject: alice@example.com, target: host.company.com }
+      set:     { login: alice, subject: alice@example.com, target: build-01.company.com }
+    session_deadline:
+      default: { login: alice, subject: alice@example.com, target: host.company.com }
+      set:     { login: alice, subject: alice@example.com, target: scan-target-01.company.com }
+    require_session_capture:
+      default: { login: alice, subject: alice@example.com, target: host.company.com }
+      set:     { login: alice, subject: alice@example.com, target: scan-target-01.company.com }
+    concurrency:
+      default: { login: alice, subject: alice@example.com, target: host.company.com }
+      set:     { login: alice, subject: alice@example.com, target: automation-01.company.com }
+  negotiation:
+    login: alice
+    subject: alice@example.com
+    target: build-01.company.com
+  device_fields:
+    with_fields:
+      login: alice
+      subject: alice@example.com
+      target: core-fw-01.company.com
+    without_fields:
+      login: alice
+      subject: alice@example.com
+      target: crown-fw-01.company.com
+
+hostkeys:
+  first_sighting:
+    # The suite generates a fingerprint unique to the run for this target, so
+    # the case grades a genuine first sighting on every run rather than only
+    # the first.
+    target: fresh-host.company.com
+  known:
+    target: host.company.com
+    fingerprint: "SHA256:CCCC3333hostkey3333CCCC3333hostkey3333CCCC"
+
+capabilities:
+  target: host.company.com
+  # 6h, which is `fleet.capability_report_after`'s default. Asserting the value
+  # rather than leaving it at -1 is deliberate: the server owns the freshness
+  # of its own record, and a server that answered nothing would be leaving the
+  # interval to the proxy without having decided to.
+  expect_report_after_seconds: 21600
+
+uids:
+  # Three separate targets, each suffixed per run by the suite: the cursor only
+  # ever advances and is never reset, so a fixed name would grade the invariant
+  # on the first run against a database and nothing at all on the second.
+  target: uid-nonoverlap.company.com
+  range_min: 2000000
+  range_max: 2099999
+  uid_count: 4096
+  abandoned_leases: 2
+  # This server states no `term_seconds` (the term bounds only how long the
+  # proxy keeps allocating, and shortening it buys nothing), so this is the
+  # whole wait for the expiry case rather than slack on top of a stated term.
+  expiry_wait_seconds: 2
+  floor:
+    target: uid-floor.company.com
+    range_min: 2500000
+    range_max: 2599999
+  exhaustion:
+    # Three blocks wide at the uid_count above, so the cursor reaches the top
+    # of the range quickly and the 409 is graded rather than timed out.
+    target: uid-exhaust.company.com
+    range_min: 3000000
+    range_max: 3012287
+
+# --- not served yet (0010) -------------------------------------------------
+logs:
+  read_url: "http://127.0.0.1:8080/debug/logs"
+  batch_size: 3
+
+# --- not served yet (0009) -------------------------------------------------
+events:
+  proxy_id: proxy-1
+  heartbeat_interval_seconds: 5
+  publish_url: "http://127.0.0.1:8080/debug/revoke"
+  publish_body: '{"type":"cache_invalidate","cache_invalidate":{"all":true}}'

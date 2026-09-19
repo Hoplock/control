@@ -5,6 +5,9 @@ harness later phases build fixtures with (PLAN M13, §3).
 
 - `migrations/` — the schema, embedded into the binary. Read its README first.
 - `repositories.go` — the whole repository surface in one place.
+- `south.go` / `south_types.go` — the rows the south-bound API answers out of
+  (0007): subject keys and passwords, MFA enrollments and challenges, target
+  host keys, uid leases, and the proxy's channel credential.
 - `errors.go` — the not-found/failure distinction M11 depends on.
 - `storetest/` — the Postgres-backed harness (`storetest.New(t)`).
 

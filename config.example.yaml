@@ -87,3 +87,75 @@ fleet:
   # server would answer routes they refuse, which is an outage in front of a
   # user rather than a message to you.
   max_hops: 4
+
+# The south-bound listener's bounds (PLAN M2, M5, phase 0007). Optional; every
+# field has the default shown.
+south:
+  # The largest request body this listener accepts. Every south-bound payload
+  # is a small JSON object. Defaults to 1048576 (1 MiB).
+  max_body_bytes: 1048576
+
+  # How long one request may take before this server ANSWERS rather than
+  # hangs. A proxy holds a user's SSH handshake open while it waits, and a
+  # timeout it can classify as an outage is strictly better than a slow answer
+  # that looks like one. Defaults to 10s.
+  request_timeout: 10s
+
+# MFA orchestration (PLAN §6). Optional; every field has the default shown.
+#
+# The contract makes MFA entirely this server's concern: the proxy relays and
+# polls, and never contacts a provider itself. These numbers are the terms of
+# that conversation, and they are operational — the TTL is how long a user has
+# to reach for their phone while their handshake is held open.
+mfa:
+  # How long a challenge stays answerable. Past it a poll is a DENY, never a
+  # 200 that leaves the proxy polling forever. Defaults to 2m.
+  challenge_ttl: 2m
+
+  # The interval advertised to the proxy on the challenge. The proxy honours
+  # it, so this — not the provider's patience — is what sets the load of an
+  # outstanding challenge. Must be shorter than challenge_ttl. Defaults to 2s.
+  poll_after: 2s
+
+  # How many polls one challenge answers before it is abandoned. It bounds a
+  # challenge's total cost independently of how fast it is polled. Defaults to
+  # 120.
+  max_polls: 120
+
+# Ephemeral-uid allocation (PLAN §4, `POST /v1/uids/lease`). Optional; every
+# field has the default shown.
+#
+# THE INVARIANT THESE NUMBERS SIT UNDER IS NOT CONFIGURABLE: the per-target
+# cursor only ever advances, and a granted block is never reclaimed — used,
+# abandoned or expired alike. There is no release call because there is nothing
+# to give back. What you are choosing below is how much is granted at a time
+# and out of what range.
+uids:
+  # The range allocated from when a proxy's lease names no bounds. A proxy that
+  # states range_min/range_max overrides these, and this server never grants a
+  # block outside what the proxy asked for: those bounds encode facts about
+  # your fleet (above every distribution's UID_MAX, above systemd's
+  # dynamic-user range, at the top of SSSD's id-mapping range, below 2^31) that
+  # this server has no way to know. Default 2000000 / 2147483646.
+  range_min: 2000000
+  range_max: 2147483646
+
+  # How many uids a block carries when the proxy asks for no particular size,
+  # and the most one lease may take. `uid_count` on the request is a REQUEST,
+  # not a requirement. A block is never reclaimed, so one oversized grant is
+  # permanent — which is what max_block_size is for. Defaults: 4096 / 1048576.
+  block_size: 4096
+  max_block_size: 1048576
+
+  # `term_seconds` on the response: how long a proxy may keep allocating from
+  # the block it holds.
+  #
+  # ZERO IS THE DEFAULT AND IT MEANS "this server states no term", leaving the
+  # proxy its own (a day). The term is NOT what makes the uids non-reusable —
+  # the cursor above is — so an expired block is one the proxy stops using,
+  # never one this server hands to somebody else. A block ends when it is
+  # exhausted or when its term runs out, and both fail closed while this server
+  # is unreachable, so shortening the term costs availability during exactly
+  # the outage a held block exists to survive. Set it only if you have a reason
+  # to be stricter than the proxy.
+  lease_term: 0s

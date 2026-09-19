@@ -158,43 +158,91 @@ func BenchmarkEvaluateLastRuleMatches(b *testing.B) {
 // more than roughly double the cost. The linearity check is what actually
 // catches a regression — an accidental quadratic passes a generous ceiling on a
 // small bundle and falls over on a real one.
+//
+// # Why the measurement is testing.Benchmark and the budget knows about -race
+//
+// This test used to time a fixed number of iterations by hand and take the best
+// of several runs. It failed intermittently, and phase 0007 measured why. Two
+// separate faults, neither of them in the evaluator:
+//
+//  1. **The budget was being compared against race-instrumented code.**
+//     `make test` is `go test -race ./...`, which is the only way CI ever runs
+//     these, and the detector costs this path 6-9x. The 2,000-rule case
+//     measures ~27µs without it and ~244µs with it — against a 300µs budget
+//     that was set as "an order of magnitude above the measurement" from the
+//     27µs figure. Under the command that actually runs, the order of magnitude
+//     was about 19% of headroom, and the test was passing on luck.
+//  2. **A hand-rolled timer is noisy at the scale being measured.** Best-of-N
+//     over a fixed iteration count does not discard a warm-up properly and does
+//     not adapt N to the speed of the machine, so on a two-core runner the
+//     ratio between the two sizes wandered up to ~4x — tripping the linearity
+//     check — when a calibrated measurement of the same code gives ~2.6x.
+//
+// So the figure now comes from [testing.Benchmark], which calibrates the
+// iteration count and reports a per-op time, and the ceiling is
+// [measurementBudget], which is [evaluationBudget] in a normal build and a
+// scaled version of it under the detector. EVALUATIONBUDGET IS STILL THE M5
+// NUMBER and does not move: what changes is that a run knows which of the two
+// things it is measuring.
+//
+// What was NOT wrong is the evaluator. Measured across 250..8,000 rules it is
+// flat at 13.6-13.9 ns/rule to 2,000 and allocates ONCE per call whatever the
+// rule count, which is what the third assertion below now pins directly.
 func TestEvaluationIsLinearAndWithinBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
 	}
-	measure := func(rules int) time.Duration {
+
+	measure := func(rules int) testing.BenchmarkResult {
 		prog := benchProgram(t, rules)
 		in := benchInput(rules)
-		// Warm up, then take the best of several runs: the minimum is the
-		// figure least polluted by a noisy neighbour on a CI runner.
-		for range 50 {
-			eval.Evaluate(prog, in)
-		}
-		best := time.Duration(1<<63 - 1)
-		for range 9 {
-			start := time.Now()
-			const iterations = 50
-			for range iterations {
+		r := testing.Benchmark(func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
 				eval.Evaluate(prog, in)
 			}
-			if d := time.Since(start) / iterations; d < best {
-				best = d
-			}
+		})
+		if r.N == 0 {
+			t.Fatalf("the benchmark over %d rules ran no iterations", rules)
 		}
-		return best
+		return r
 	}
 
 	half, full := measure(benchRules/2), measure(benchRules)
-	t.Logf("evaluation: %d rules in %v, %d rules in %v", benchRules/2, half, benchRules, full)
+	halfNs, fullNs := time.Duration(half.NsPerOp()), time.Duration(full.NsPerOp())
 
-	if full > evaluationBudget {
-		t.Errorf("worst-case evaluation took %v over %d rules, budget is %v (M5)",
-			full, benchRules, evaluationBudget)
+	// Logged as ns/rule as well as ns/op, because the per-rule figure is the
+	// one a reader can compare against the numbers in this file's header
+	// without doing arithmetic during an incident.
+	t.Logf("evaluation %s: %d rules in %v (%.1f ns/rule, %d allocs), %d rules in %v (%.1f ns/rule, %d allocs)",
+		measurementMode,
+		benchRules/2, halfNs, float64(half.NsPerOp())/float64(benchRules/2), half.AllocsPerOp(),
+		benchRules, fullNs, float64(full.NsPerOp())/float64(benchRules), full.AllocsPerOp())
+
+	if fullNs > measurementBudget {
+		t.Errorf("worst-case evaluation took %v over %d rules, budget %s is %v (M5)",
+			fullNs, benchRules, measurementMode, measurementBudget)
 	}
+
 	// Four times the cost for twice the rules is not linear by any reading,
 	// and the slack absorbs a slow runner without hiding a real regression.
-	if half > 0 && full > 4*half {
+	// A calibrated measurement of today's evaluator sits at ~2x without the
+	// detector and ~2.6x with it, so the threshold has room without being
+	// vacuous.
+	if halfNs > 0 && fullNs > 4*halfNs {
 		t.Errorf("evaluation is not linear in rule count: %v for %d rules, %v for %d",
-			half, benchRules/2, full, benchRules)
+			halfNs, benchRules/2, fullNs, benchRules)
+	}
+
+	// THE ASSERTION WITH NO CLOCK IN IT, and the one most likely to catch a
+	// real regression. Evaluation allocates once per call — the snapshot — and
+	// that is independent of how many rules were examined. Something that
+	// allocated per rule (a slice appended to in the match loop, an explanation
+	// built for every rule rather than the one that matched) would show up here
+	// exactly, on any machine, under any load, with no threshold to tune.
+	if full.AllocsPerOp() > half.AllocsPerOp() {
+		t.Errorf("evaluation allocated %d times over %d rules and %d times over %d: "+
+			"allocations must not grow with rule count",
+			full.AllocsPerOp(), benchRules, half.AllocsPerOp(), benchRules/2)
 	}
 }

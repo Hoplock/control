@@ -117,6 +117,7 @@ decision.
 | **M19** | a deployment has an identity and can be supervised | live | §3, §10, §11 |
 | **M20** | the console is a product surface with a specified design | live | §3, §10 |
 | **M21** | the console is localisable; English is the only catalogue | live | §3, §10 |
+| **M22** | a south-bound credential carries its tenant and names its proxy | live | §3, §10 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -142,6 +143,9 @@ decision.
   is a bearer token in the prototype with mTLS as the intended production form
   (the proxy's contract already treats this as a thin seam); north-bound is
   OIDC for humans and scoped API tokens for automation.
+
+  What is *in* the south-bound token — and why it is not merely an opaque
+  string — is **M22**.
 - **M3 — Policy is data compiled into a decision program, not an embedded
   general-purpose language.** The policy input vocabulary is closed and known:
   subject, claims, groups, device posture, source network, time, target labels,
@@ -711,6 +715,57 @@ decision.
   Arabic, Devanagari — requires bundling another face. That is a real size
   decision for whoever adds it, not a `<link>`, and it is the honest price of an
   air-gapped console.
+- **M22 — A south-bound credential carries its tenant and names its proxy
+  (new).** M2 settles that the proxy→server channel has a credential of its own
+  and that it is a bearer token in the prototype. It does not settle what is in
+  one, and "an opaque string" turned out to be the wrong answer twice over. So:
+
+  > A south-bound token is `<tenant>.<secret>`, minted per proxy at enrollment,
+  > stored only as the SHA-256 of its secret half, and bound to the proxy it was
+  > issued to.
+
+  **The tenant is in the credential because of M18.** Tenancy is a request
+  dimension the caller selects, never a process constant — and south-bound the
+  selector has to come from somewhere. The three candidates are a field on the
+  wire, a header, or the credential. The first is refused by M1: the contract is
+  owned upstream and grows no tenant field, and a proxy asserting its own
+  tenancy would be a caller asserting its own authority. The second is the same
+  thing wearing a hat. The third works because **this server minted it**: the
+  tenant is parsed from the credential and the secret is then verified against
+  the rows under that tenant, so a forged prefix simply fails the comparison in
+  a tenant where no such token exists. Nothing looks a token up across tenants,
+  and no repository method could express it (M18).
+
+  That this needs no change to `hoplock/proxy` at all is the strongest evidence
+  the seam is in the right place, and it is why multi-tenancy costs the wire
+  contract nothing.
+
+  **The proxy id is in the credential because a lease is attributable.** A
+  granted uid block records the `lease_id` an incident resolves a uid back to
+  (§4), and that answer is worthless if the credential presenting the request
+  could name anybody. So a bound token is refused for another proxy's traffic.
+
+  **A token with no proxy id is a real state and not a half-filled row**: it
+  authenticates "a proxy of this tenant" and nothing narrower. It exists for
+  bootstrapping and for the conformance harness, which drives two proxy ids
+  through one listener because uid exclusivity is per *target* and a harness
+  that could only present one proxy would not grade that. It is spelled out at
+  the call site; a deployment's steady state is bound tokens, minted by
+  enrollment.
+
+  **The shape is the enrollment token's on purpose** (`fleet.EnrollmentToken`),
+  because it answers the same question — which tenant is this credential good
+  for — and two spellings of one answer is how they drift.
+
+  Enrollment mints the token **inside the transaction that admits the proxy**. A
+  fleet member admitted with no way to call the API is a half-enrollment an
+  operator repairs by hand, and there is no endpoint it could have asked for one
+  on.
+
+  **What this does not settle** is mTLS, which M2 already names as the intended
+  production form. The seam is one interface and one middleware, and a
+  certificate carries a subject that can say both of these things — so mTLS
+  replaces the transport of this decision without replacing the decision.
 
 ---
 
@@ -794,11 +849,50 @@ alternative, and it gives up the one-binary deployment for nothing.
   effective document per proxy, with rollback and with drift between desired and
   running visible rather than derived.
 
+  And it owns **everything a proxy reports about a target**, which is the same
+  rule stated from the other side: the capability store above, the **host-key
+  record** (`/v1/hostkeys/report`, proxy D7) and the **uid allocation cursor and
+  its leases** (`/v1/uids/lease`, §4). All three are keyed by target, all three
+  arrive on the south-bound listener, and all three are observations rather than
+  decisions. Splitting them would put half of one answer in a second package;
+  keeping them here is what makes "several names for one host are several
+  records" a single known imprecision rather than three.
+
+  It also answers the two proxy-credential questions, for the same
+  one-source-of-truth reason: whether a presented **channel token** is one this
+  server minted (M22), and whether an offered **key belongs to one of the
+  fleet's own proxies** — the chain leg on `/v1/auth/cert` (proxy D11). The second reads the
+  enrolled rows themselves through a column generated from `public_key`; a list
+  of proxy key fingerprints maintained beside them would drift the first time a
+  proxy re-enrolled with a new key, silently, in the direction that
+  authenticates.
+
   The package is split so that the part worth proving is provable without a
   database: `Graph` and its `Path` are pure values over pure inputs, and
   `Registry` is what loads those inputs out of `internal/store` and applies the
   staleness rule. A path is a function of the nodes, the edges, the live relay
   registrations and the clock, and nothing else.
+- **`internal/identity`** — who is asking, and the whole MFA conversation. It
+  resolves an offered key or a password to an identity and owns what the
+  contract makes this server's alone: challenge lifetime, poll-rate
+  enforcement, single use, and expiry as a deny (§6). The factor itself sits
+  behind an `MFAProvider` seam and the identities behind a `Directory` one, so
+  0011's IdP broker is a substitution rather than a rewrite — and what must
+  NOT move behind either seam is anything about the conversation, because that
+  is the same whoever supplies the factor.
+
+  It answers `(Outcome, error)` rather than `(Identity, error)`, and the split
+  is M11 made structural: a non-nil error is an OUTAGE with nothing to inspect,
+  and a deny is a field on the outcome that only code building one on purpose
+  can set. The two cannot be mistaken for each other by a caller in a hurry.
+- **`internal/httpapi/south`** — the proxy-facing transport, and the only place
+  that speaks both the wire vocabulary and the domain one. It owns the
+  middleware chain (correlation ids, the access log that never writes a body, a
+  body limit, a request deadline, panic recovery, the proxy credential) and the
+  **error mapper**, which is the single place a status code is chosen. Two
+  source-level tests keep that structural rather than conventional: one fails
+  the build if a third function can construct a 401, the other if a handler
+  names a status constant.
 - **`internal/audit`** — append-only writer, chain verifier, and query API.
   Nothing else writes audit rows.
 - **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
@@ -1305,10 +1399,23 @@ because of anything specific to authorize. The test is cacheability, not
 endpoint: if a value is only safe when it is fresh, it does not belong on
 anything this section governs.
 
-**The same hint rides on two responses**: `/v1/authorize` (0008) and
-`POST /v1/hostkeys/report` (0007). It is the same object under the same rules — one opaque server key, a
+**The same hint rides on two responses**: `/v1/authorize` and
+`POST /v1/hostkeys/report`. It is the same object under the same rules — one opaque server key, a
 server-owned lifetime, one revocation stream, and both invariants above, the M9
-one included. What is specific to the host-key response is the shape the proxy
+one included.
+
+**Neither response carries one today, and the reason is the M9 invariant rather
+than the work.** 0007 serves the host-key endpoint and issues no hint, because
+the revocation stream that would withdraw one is 0009's: a hint issued before
+that stream exists is an access grant with no revocation path at all, which is
+strictly worse than the reporting traffic it saves. Absent means what every
+server did before the field existed — the proxy reports every connection — so
+it is a correct implementation rather than a gap, and
+`fleet.Registry.HostKeyCacheHint` states the answer as a function so a test
+asserts it. **0009 is the phase that may turn either hint on**, and it owes the
+liveness read on both paths before it does.
+
+What is specific to the host-key response is the shape the proxy
 reuses it on, and three consequences this server owns:
 
 - **The proxy keys host-key reuse on `target`, `target_port` and
@@ -1340,9 +1447,34 @@ reuses it on, and three consequences this server owns:
   Alice match the `sre` rule" is answered by the mapping as often as by the rule.
 - **MFA orchestration.** The contract makes MFA entirely this server's concern:
   the proxy relays and polls. That means owning challenge lifetime, poll
-  intervals, replay resistance, and the deny-on-expiry path. Determinism matters
-  for tests — the proxy's mock models it with a "pending polls" counter, and
-  the conformance suite depends on that behaviour being reproducible here.
+  intervals, replay resistance, and the deny-on-expiry path — none of which is
+  a provider's business, because all of it is the same whichever provider is in
+  play. A provider supplies a factor and answers "how is it going"; everything
+  else is `internal/identity`'s.
+
+  Four rules that follow, and each has a test:
+
+  - **A challenge is single use.** A resolved one is never replayable,
+    whichever way it resolved — an approved one most of all, since replaying it
+    turns one approval into an unlimited supply. The row is kept and refused
+    rather than deleted, so a later poll is told "spent" rather than "never
+    issued": two different facts that deserve two different audit records even
+    though they share a status code.
+  - **Expiry is a deny**, never a `200` that leaves the proxy polling.
+  - **Challenges are rows, not process memory.** Nothing makes a proxy's polls
+    land on the node that issued one, so an in-memory challenge answers
+    "unknown token" — a deny — to a user who did nothing wrong, on a deployment
+    that has merely been scaled out (M5).
+  - **Poll rate and a poll budget are both bounded.** A poll inside the
+    advertised interval is answered from the stored row without consulting the
+    provider; past the budget the challenge is abandoned. A caller that ignores
+    `poll_after_ms` is finite either way.
+
+  Determinism matters for tests — the proxy's mock models it with a "pending
+  polls" counter, and the conformance suite depends on that behaviour being
+  reproducible here, so `identity.ScriptedMFA` mirrors that fixture field for
+  field. It is a CI facility and not a second factor: a subject enrolled with
+  it has one that answers the way its row says it will.
 - **Credential brokerage (proxy D6a).** The route names the target credential
   method. Beyond selecting it, this server is the natural home for the
   credentials themselves: an SSH CA issuing short-lived, narrowly-scoped target
@@ -1466,7 +1598,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0004 | **Extension points** | public `ext/` package, registration, import-graph guard (M15) |
 | 0005 | Policy model & decision engine | bundle parse/validate/compile/evaluate + decision records (M3, M4) |
 | 0006 | Fleet registry, health & config distribution | enrollment, heartbeat, zone graph, pathfinding, hop direction, versioned config rollout (M6), the capability store both sources write to (M17) |
-| 0007 | South-bound authentication | `/v1/auth/*`, MFA orchestration, host-key reporting and its cache hint, `/v1/capabilities/report`, `/v1/uids/lease` and its monotonic cursor |
+| 0007 | South-bound authentication | the south-bound listener and its credential (M22), `/v1/auth/*`, MFA orchestration, host-key reporting (no cache hint until 0009 can withdraw one), `/v1/capabilities/report`, `/v1/uids/lease` and its monotonic cursor |
 | 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
 | 0009 | Revocation & event fan-out | `/v1/proxies/{proxy_id}/events`, event bus, replay, resync, kill switch (M9) |
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |

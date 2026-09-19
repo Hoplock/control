@@ -51,6 +51,36 @@ const (
 	DefaultMaxHops = 4
 )
 
+// The south-bound listener's defaults (PLAN M2, M5, 0007).
+//
+// They are stated here for the same reason the fleet's are: config is the
+// lowest layer in this module, and a dependency on the packages that consume
+// these numbers would make loading a file depend on the server. Each consumer
+// declares the same default and a test asserts the two agree.
+const (
+	// DefaultSouthMaxBodyBytes caps a south-bound request body.
+	DefaultSouthMaxBodyBytes int64 = 1 << 20
+	// DefaultSouthRequestTimeout bounds one south-bound request. A
+	// server-side timeout that ANSWERS is strictly better than a slow
+	// answer that looks like an outage (M5).
+	DefaultSouthRequestTimeout = 10 * time.Second
+	// DefaultMFAChallengeTTL is how long a second factor stays answerable.
+	DefaultMFAChallengeTTL = 2 * time.Minute
+	// DefaultMFAPollAfter is the interval a challenge advertises.
+	DefaultMFAPollAfter = 2 * time.Second
+	// DefaultMFAMaxPolls bounds a challenge's total cost independently of
+	// how fast it is polled.
+	DefaultMFAMaxPolls = 120
+	// The ephemeral-uid allocation defaults (PLAN §4). The range sits above
+	// every distribution's own UID_MAX, above systemd's dynamic-user range
+	// and at the top of SSSD's default id-mapping range, and below 2^31 so a
+	// uid stays a positive int32.
+	DefaultUIDRangeMin     int32 = 2_000_000
+	DefaultUIDRangeMax     int32 = 2_147_483_646
+	DefaultUIDBlockSize    int32 = 4096
+	DefaultUIDMaxBlockSize int32 = 1 << 20
+)
+
 // logLevels is the set LogConfig.Level accepts, ordered from most to least
 // verbose.
 var logLevels = []string{"debug", "info", "warn", "error"}
@@ -64,6 +94,60 @@ type Config struct {
 	Database  DatabaseConfig  `yaml:"database"`
 	Log       LogConfig       `yaml:"log"`
 	Fleet     FleetConfig     `yaml:"fleet"`
+	South     SouthConfig     `yaml:"south"`
+	MFA       MFAConfig       `yaml:"mfa"`
+	UIDs      UIDConfig       `yaml:"uids"`
+}
+
+// SouthConfig bounds the south-bound listener (PLAN M2, M5).
+type SouthConfig struct {
+	// MaxBodyBytes caps a request body. Every south-bound payload is a
+	// small JSON object.
+	MaxBodyBytes int64 `yaml:"max_body_bytes"`
+	// RequestTimeout bounds a single request. It is a deadline on the
+	// handler rather than a suggestion: a timeout the proxy classifies as
+	// an outage is strictly better than a held connection.
+	RequestTimeout time.Duration `yaml:"request_timeout"`
+}
+
+// MFAConfig is the challenge conversation this server owns (PLAN §6).
+//
+// The numbers are here because they are operational: the TTL is how long a
+// user has to reach for their phone while their SSH handshake is held open,
+// and that depends on who the users are.
+type MFAConfig struct {
+	// ChallengeTTL is how long a challenge stays answerable. Past it a poll
+	// is a DENY, never a 200 that leaves the proxy polling.
+	ChallengeTTL time.Duration `yaml:"challenge_ttl"`
+	// PollAfter is the interval advertised on a challenge.
+	PollAfter time.Duration `yaml:"poll_after"`
+	// MaxPolls bounds a challenge's total cost.
+	MaxPolls int `yaml:"max_polls"`
+}
+
+// UIDConfig is the ephemeral-uid allocation policy (PLAN §4).
+//
+// The invariant these numbers sit under is not configurable: the per-target
+// cursor only ever advances, and a granted block is never reclaimed. What is
+// configurable is how much is granted at a time and out of what range.
+type UIDConfig struct {
+	// RangeMin and RangeMax are allocated from when a lease names no
+	// range. A proxy that states its own bounds overrides these, because
+	// those bounds encode facts about the fleet this server cannot know.
+	RangeMin int32 `yaml:"range_min"`
+	RangeMax int32 `yaml:"range_max"`
+	// BlockSize is granted when the proxy asks for no particular size.
+	BlockSize int32 `yaml:"block_size"`
+	// MaxBlockSize caps what one lease may take. A block is never
+	// reclaimed, so one oversized request is permanent.
+	MaxBlockSize int32 `yaml:"max_block_size"`
+	// LeaseTerm is `term_seconds`. ZERO IS THE DEFAULT AND IT IS DELIBERATE:
+	// this server states no term, leaving the proxy its own. The term bounds
+	// only how long the proxy keeps allocating from a block — it is not what
+	// makes the uids non-reusable — so shortening it costs availability
+	// during exactly the outage a held block exists to survive, and buys
+	// nothing.
+	LeaseTerm time.Duration `yaml:"lease_term"`
 }
 
 // FleetConfig holds the fleet registry's staleness rule and its hop cap
@@ -226,6 +310,35 @@ func (c *Config) applyDefaults() {
 	if c.Fleet.MaxHops == 0 {
 		c.Fleet.MaxHops = DefaultMaxHops
 	}
+	if c.South.MaxBodyBytes == 0 {
+		c.South.MaxBodyBytes = DefaultSouthMaxBodyBytes
+	}
+	if c.South.RequestTimeout == 0 {
+		c.South.RequestTimeout = DefaultSouthRequestTimeout
+	}
+	if c.MFA.ChallengeTTL == 0 {
+		c.MFA.ChallengeTTL = DefaultMFAChallengeTTL
+	}
+	if c.MFA.PollAfter == 0 {
+		c.MFA.PollAfter = DefaultMFAPollAfter
+	}
+	if c.MFA.MaxPolls == 0 {
+		c.MFA.MaxPolls = DefaultMFAMaxPolls
+	}
+	if c.UIDs.RangeMin == 0 {
+		c.UIDs.RangeMin = DefaultUIDRangeMin
+	}
+	if c.UIDs.RangeMax == 0 {
+		c.UIDs.RangeMax = DefaultUIDRangeMax
+	}
+	if c.UIDs.BlockSize == 0 {
+		c.UIDs.BlockSize = DefaultUIDBlockSize
+	}
+	if c.UIDs.MaxBlockSize == 0 {
+		c.UIDs.MaxBlockSize = DefaultUIDMaxBlockSize
+	}
+	// UIDs.LeaseTerm has no default: zero means "state no term", which is
+	// a real answer rather than an unset field.
 }
 
 // Validate reports the first field that is missing or invalid.
@@ -251,7 +364,72 @@ func (c *Config) Validate() error {
 			Msg:   fmt.Sprintf("%q is not one of %s", c.Log.Level, strings.Join(logLevels, ", ")),
 		}
 	}
-	return c.Fleet.validate()
+	if err := c.Fleet.validate(); err != nil {
+		return err
+	}
+	if err := c.South.validate(); err != nil {
+		return err
+	}
+	if err := c.MFA.validate(); err != nil {
+		return err
+	}
+	return c.UIDs.validate()
+}
+
+// validate reports the first south-bound bound that cannot be acted on.
+func (s SouthConfig) validate() error {
+	if s.MaxBodyBytes <= 0 {
+		return &FieldError{Field: "south.max_body_bytes", Msg: "must be a positive number of bytes"}
+	}
+	if s.RequestTimeout <= 0 {
+		return &FieldError{Field: "south.request_timeout", Msg: "must not be negative"}
+	}
+	return nil
+}
+
+// validate reports the first MFA setting that cannot be acted on.
+func (m MFAConfig) validate() error {
+	if m.ChallengeTTL <= 0 {
+		return &FieldError{Field: "mfa.challenge_ttl", Msg: "must not be negative"}
+	}
+	if m.PollAfter <= 0 {
+		return &FieldError{Field: "mfa.poll_after", Msg: "must not be negative"}
+	}
+	if m.PollAfter >= m.ChallengeTTL {
+		// A challenge the proxy may poll at most once before it expires is
+		// a second factor nobody can answer.
+		return &FieldError{
+			Field: "mfa.poll_after",
+			Msg:   "must be shorter than mfa.challenge_ttl, or the challenge expires before it can be polled",
+		}
+	}
+	if m.MaxPolls <= 0 {
+		return &FieldError{Field: "mfa.max_polls", Msg: "must be a positive number of polls"}
+	}
+	return nil
+}
+
+// validate reports the first uid setting that cannot be acted on.
+func (u UIDConfig) validate() error {
+	if u.RangeMin < 0 {
+		return &FieldError{Field: "uids.range_min", Msg: "must not be negative"}
+	}
+	if u.RangeMax <= u.RangeMin {
+		return &FieldError{Field: "uids.range_max", Msg: "must be greater than uids.range_min"}
+	}
+	if u.BlockSize <= 0 {
+		return &FieldError{Field: "uids.block_size", Msg: "must be a positive number of uids"}
+	}
+	if u.MaxBlockSize < u.BlockSize {
+		return &FieldError{
+			Field: "uids.max_block_size",
+			Msg:   "must not be smaller than uids.block_size",
+		}
+	}
+	if u.LeaseTerm < 0 {
+		return &FieldError{Field: "uids.lease_term", Msg: "must not be negative"}
+	}
+	return nil
 }
 
 // validate reports the first fleet field that cannot be acted on.

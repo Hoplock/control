@@ -1,0 +1,106 @@
+# The fixtures this server is configured with for a conformance run.
+#
+# `hoplock-control seed --file <this>` writes them; `control-expectations.yaml`
+# beside this file is what the suite is told to expect from them. THE TWO ARE
+# ONE DOCUMENT IN TWO HALVES — a login here that is not named there grades
+# nothing, and a login there that is not seeded here fails for a reason nobody
+# can see in either file — so change them together.
+#
+# Nothing in here is a secret. The passwords and the token secret are fixtures
+# for a CI database that is created and destroyed in one job; a deployment
+# seeds its own file and keeps it off any host it need not be on.
+#
+# The seed command exists because the north-bound API does not yet (0014).
+# When it does, this becomes a thin client of it or it goes away.
+
+tenant: default
+
+subjects:
+  # The suite's main identity: a key, a password, and a second factor that
+  # approves after one pending poll.
+  - id: alice@example.com
+    display_name: Alice Example
+    source: local
+    principals: [alice]
+    groups: [sre]
+    password: alice-dev-password
+    keys:
+      # The fingerprint is DERIVED from this blob rather than stated, so a
+      # fixture cannot claim a fingerprint its key does not have.
+      - type: ssh-ed25519
+        blob: aG9wbG9jay1jb25mb3JtYW5jZS1maXh0dXJlLWtleS1hbGljZQ==
+    mfa:
+      # The deterministic provider, mirroring the proxy mock's MFA fixture
+      # field for field: the conformance suite drives approve, deny and expiry
+      # through the same shapes against both servers, so a case that passes
+      # there and fails here is a real disagreement rather than two
+      # differently-configured fixtures.
+      pending_polls: 1
+      decision: approve
+      poll_after_ms: 100
+      ttl_ms: 60000
+      prompt: Approve the Hoplock sign-in
+
+  # A password that completes the flow on its own: no second factor enrolled.
+  - id: bob@example.com
+    display_name: Bob Example
+    principals: [bob]
+    password: bob-dev-password
+
+  # A challenge that resolves to a refusal.
+  - id: mallory@example.com
+    display_name: Mallory Example
+    principals: [mallory]
+    password: mallory-dev-password
+    mfa:
+      pending_polls: 1
+      decision: deny
+      poll_after_ms: 100
+      ttl_ms: 60000
+
+  # A challenge nobody answers. The short TTL is the point: the suite waits
+  # past the challenge's own `expires_at` and asserts the poll is a 401.
+  - id: forgetful@example.com
+    display_name: Forgetful Example
+    principals: [forgetful]
+    password: forgetful-dev-password
+    mfa:
+      pending_polls: 1000
+      decision: approve
+      poll_after_ms: 100
+      ttl_ms: 2000
+
+proxies:
+  # The proxy the suite presents itself as.
+  - id: proxy-1
+    zone: edge
+    heartbeat: true
+    key:
+      type: ssh-ed25519
+      blob: aG9wbG9jay1jb25mb3JtYW5jZS1maXh0dXJlLWtleS1wcm94eS0x
+
+  # The second hop. A cert-auth call offering THIS key with a user's login is
+  # a CHAIN LEG (proxy D11): the answer is that user's identity, established
+  # here, carrying a `chain_hop_proxy_id` claim naming this proxy.
+  - id: proxy-2
+    zone: deep
+    heartbeat: true
+    key:
+      type: ssh-ed25519
+      blob: aG9wbG9jay1jb25mb3JtYW5jZS1maXh0dXJlLWtleS1wcm94eS0y
+
+host_keys:
+  # A target this server already trusts, so the suite has a `known: true` case
+  # to grade. A first sighting is generated per run by the suite itself —
+  # "first sighting" is only first once.
+  - target: host.company.com
+    type: ssh-ed25519
+    fingerprint: "SHA256:CCCC3333hostkey3333CCCC3333hostkey3333CCCC"
+
+tokens:
+  # The suite's channel credential. UNBOUND on purpose: the uid cases lease for
+  # two different proxy ids over one listener, because exclusivity is per
+  # TARGET and a suite that could only ever present one proxy would not grade
+  # that. A deployment's proxies carry bound tokens, minted at enrollment.
+  - secret: pdpconform-dev-secret
+    label: conformance suite

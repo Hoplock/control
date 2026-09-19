@@ -6,6 +6,7 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -29,6 +30,8 @@ type Registry struct {
 	pub      ConfigPublisher
 	now      nowFunc
 	maxHops  int
+	uids     UIDAllocation
+	log      *slog.Logger
 }
 
 // Option configures a Registry.
@@ -52,6 +55,22 @@ func WithConfigPublisher(p ConfigPublisher) Option {
 	return func(r *Registry) {
 		if p != nil {
 			r.pub = p
+		}
+	}
+}
+
+// WithLogger sets where this registry writes the events it is the only witness
+// to — a target presenting a host key it has not presented before, and a uid
+// cursor raised by a floor observed on a target.
+//
+// 0010 moves both into the audit store. Until then these log lines ARE the
+// record, which is why the shape is fixed now and the destination is a option
+// rather than slog's default: a deployment that routes its logs somewhere must
+// not lose the one it most needs to keep.
+func WithLogger(l *slog.Logger) Option {
+	return func(r *Registry) {
+		if l != nil {
+			r.log = l
 		}
 	}
 }
@@ -82,6 +101,8 @@ func New(st *store.Store, opts ...Option) *Registry {
 		pub:      noopConfigPublisher{},
 		now:      time.Now,
 		maxHops:  DefaultMaxHops,
+		uids:     DefaultUIDAllocation(),
+		log:      slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -148,6 +169,14 @@ type Enrollment struct {
 	// is handed back on enrollment because a proxy must not have to ask a
 	// second time for the thing it needs in order to work.
 	Config store.ProxyConfigState
+	// APIToken is the south-bound channel credential this enrollment minted,
+	// bound to this proxy (M2, 0007). It is returned ONCE, for the same
+	// reason the enrollment token is: only its hash is stored.
+	//
+	// It is handed back here rather than fetched afterwards because a proxy
+	// with no channel credential cannot call anything — including whatever
+	// endpoint would have issued it.
+	APIToken ProxyToken
 }
 
 // Enroll admits a proxy to the fleet, or refuses it.
@@ -218,6 +247,29 @@ func (r *Registry) Enroll(ctx context.Context, req EnrollmentRequest) (Enrollmen
 		if err := tx.ProxyEdges().ReplaceForProxy(ctx, tenant, req.ProxyID, edgesToStore(req.Edges)); err != nil {
 			return err
 		}
+
+		// The channel credential is minted inside the same transaction as
+		// the row it authenticates. A proxy admitted to the fleet with no
+		// way to call the API is a half-enrollment an operator has to
+		// repair by hand, which is what this transaction exists to prevent.
+		token, err := MintProxyToken(tenant)
+		if err != nil {
+			return err
+		}
+		tokenID, err := newTokenID()
+		if err != nil {
+			return err
+		}
+		if err := tx.ProxyTokens().Insert(ctx, tenant, store.ProxyAPIToken{
+			TokenID:   tokenID,
+			ProxyID:   req.ProxyID,
+			TokenHash: token.Hash(),
+			Label:     "enrollment",
+			IssuedAt:  r.now(),
+		}); err != nil {
+			return err
+		}
+		out.APIToken = token
 
 		state, err := materialiseConfig(ctx, tx, tenant, req.ProxyID, string(req.Zone), r.now())
 		if err != nil {
