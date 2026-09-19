@@ -45,11 +45,15 @@ const DSNEnv = "HOPLOCK_TEST_DSN"
 // New returns a Store connected to a private schema with every migration
 // applied, and registers the cleanup that drops it.
 //
+// It takes a testing.TB rather than a *testing.T so that a BENCHMARK can have
+// a real database too. M5 is a latency claim, and a benchmark measured against
+// a fake measures the fake (0008).
+//
 // With DSNEnv unset the test is skipped — a contributor without Postgres can
 // still run `go test ./...` — EXCEPT in CI, where a skip is indistinguishable
 // from a pass in the log and this whole file would quietly stop being run. CI
 // gets a failure naming the missing variable instead.
-func New(t *testing.T) *store.Store {
+func New(t testing.TB) *store.Store {
 	t.Helper()
 
 	dsn := os.Getenv(DSNEnv)
@@ -80,7 +84,7 @@ func New(t *testing.T) *store.Store {
 // NewSchema creates an empty private schema and registers the cleanup that
 // drops it. New builds on it; a test that needs an UNMIGRATED database — the
 // dry-run test does — calls it directly.
-func NewSchema(t *testing.T, dsn string) string {
+func NewSchema(t testing.TB, dsn string) string {
 	t.Helper()
 
 	schema := "hoplock_test_" + randomSuffix(t)
@@ -103,7 +107,7 @@ func NewSchema(t *testing.T, dsn string) string {
 
 // DSN returns the configured test DSN, skipping or failing exactly as New
 // does. A test that needs its own pool — the concurrency tests do — uses this.
-func DSN(t *testing.T) string {
+func DSN(t testing.TB) string {
 	t.Helper()
 	dsn := os.Getenv(DSNEnv)
 	if dsn == "" {
@@ -127,7 +131,7 @@ func DSNForSchema(dsn, schema string) string {
 }
 
 // dropSchema removes a test schema and everything in it.
-func dropSchema(t *testing.T, dsn, schema string) {
+func dropSchema(t testing.TB, dsn, schema string) {
 	t.Helper()
 	// Not t.Context(): cleanup runs after the test's context is cancelled,
 	// and a schema left behind accumulates until somebody notices.
@@ -147,7 +151,7 @@ func dropSchema(t *testing.T, dsn, schema string) {
 }
 
 // randomSuffix returns a schema-name-safe random string.
-func randomSuffix(t *testing.T) string {
+func randomSuffix(t testing.TB) string {
 	t.Helper()
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -186,7 +190,7 @@ type UIDCursorFixture struct {
 }
 
 // Seed writes a fixture, failing the test on the first error.
-func Seed(t *testing.T, st *store.Store, f Fixture) {
+func Seed(t testing.TB, st *store.Store, f Fixture) {
 	t.Helper()
 	ctx := t.Context()
 

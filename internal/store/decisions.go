@@ -10,7 +10,8 @@ import (
 
 type decisionRepo struct{ s *Store }
 
-const decisionColumns = `decision_id, subject_id, target_id, inputs_digest, matched_rule, obligations, snapshot, decided_at`
+const decisionColumns = `decision_id, subject_id, target_id, inputs_digest, inputs, explanation, ` +
+	`effect, proxy_id, session_id, matched_rule, obligations, snapshot, decided_at`
 
 // defaultDecisionLimit bounds ListBySubject when the caller asks for no limit.
 // Unbounded work is never acceptable on a path the decision layer shares (M5).
@@ -38,10 +39,12 @@ func (r decisionRepo) Insert(ctx context.Context, tenant Tenant, d Decision) err
 
 	_, err := r.s.db.Exec(ctx, `
 		INSERT INTO decisions (tenant, decision_id, subject_id, target_id,
-		                       inputs_digest, matched_rule, obligations, snapshot, decided_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		tenant, d.ID, d.SubjectID, d.TargetID, d.InputsDigest, d.MatchedRule,
-		nonNilStrings(d.Obligations), nonNilJSON(d.Snapshot), decidedAt)
+		                       inputs_digest, inputs, explanation, effect, proxy_id, session_id,
+		                       matched_rule, obligations, snapshot, decided_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		tenant, d.ID, d.SubjectID, d.TargetID, d.InputsDigest,
+		nonNilJSON(d.Inputs), nonNilJSON(d.Explanation), d.Effect, d.ProxyID, d.SessionID,
+		d.MatchedRule, nonNilStrings(d.Obligations), nonNilJSON(d.Snapshot), decidedAt)
 	return wrap(op, err)
 }
 
@@ -95,9 +98,50 @@ func (r decisionRepo) ListBySubject(ctx context.Context, tenant Tenant, subjectI
 	return out, wrap(op, rows.Err())
 }
 
+// ListBySession returns the decisions taken for one SSH session, newest first.
+//
+// It is the lookup an operator actually arrives with: the proxy tells a user
+// "access denied" and a session id (M4), and a chained session produces one
+// record per hop under that id. Bounded like ListBySubject — nothing on or
+// beside the decision path does unbounded work (M5).
+func (r decisionRepo) ListBySession(ctx context.Context, tenant Tenant, sessionID string, limit int) ([]Decision, error) {
+	const op = "store.Decisions.ListBySession"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = defaultDecisionLimit
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.s.db.Query(ctx, `
+		SELECT `+decisionColumns+`
+		FROM decisions
+		WHERE tenant = $1 AND session_id = $2
+		ORDER BY decided_at DESC, decision_id DESC
+		LIMIT $3`, tenant, sessionID, limit)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+
+	var out []Decision
+	for rows.Next() {
+		d, err := scanDecision(op, rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, wrap(op, rows.Err())
+}
+
 func scanDecision(op string, row rowScanner) (Decision, error) {
 	var d Decision
-	err := row.Scan(&d.ID, &d.SubjectID, &d.TargetID, &d.InputsDigest, &d.MatchedRule,
+	err := row.Scan(&d.ID, &d.SubjectID, &d.TargetID, &d.InputsDigest, &d.Inputs, &d.Explanation,
+		&d.Effect, &d.ProxyID, &d.SessionID, &d.MatchedRule,
 		&d.Obligations, &d.Snapshot, &d.DecidedAt)
 	if err != nil {
 		return Decision{}, wrap(op, err)

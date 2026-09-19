@@ -155,6 +155,24 @@ type Decision struct {
 	// InputsDigest fixes the inputs the evaluation saw, so a simulation can
 	// say whether it is replaying the same question.
 	InputsDigest string
+	// Inputs is the whole question, as a document: subject, target, context
+	// — INCLUDING the hop trail the decision was taken under — and the live
+	// grants. The digest beside it is an identity for the same thing and
+	// not a substitute: "which hop asked, and what had it already been
+	// through" is unrecoverable afterwards (PLAN §5.3).
+	Inputs json.RawMessage
+	// Explanation is the engine's own account of the answer: effect, basis,
+	// the terms that matched, the deny reason, the bundle digest.
+	Explanation json.RawMessage
+	// Effect is `allow` or `deny`. A denial carries no snapshot, so without
+	// it a deny and a snapshot that failed to serialise read alike — and
+	// the deny path is the one an operator arrives on (M4).
+	Effect string
+	// ProxyID is the hop that asked, and SessionID the session it asked
+	// for. The user is told a session id, so that is the id an operator
+	// starts from.
+	ProxyID   string
+	SessionID string
 	// MatchedRule names the rule that produced the answer. Empty means no
 	// rule matched, which is itself an explanation.
 	MatchedRule string

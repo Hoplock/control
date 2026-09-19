@@ -1,0 +1,274 @@
+# The policy a conformance run against THIS server is decided under.
+#
+# `control-seed.yaml` beside this file seeds the identities, the fleet and the
+# targets; `control-expectations.yaml` names which route grades which
+# assertion. THE THREE ARE ONE DOCUMENT IN THREE PARTS — a rule here whose
+# target is not seeded there answers an outage nobody can see in any of them —
+# so change them together.
+#
+# Every rule matches a NAMED target. That is what makes the deny case gradeable:
+# `nobody-may-reach-this.company.com` is named by no rule and has no target row,
+# so the bundle's always-present default-deny fires and the answer is a 401
+# decision rather than an unroutable outage.
+#
+# The hostnames are fixtures. They are not anybody's estate.
+
+schema_version: 1
+tenant: default
+description: the conformance suite's fixture policy
+timezone: UTC
+
+labels:
+  env: [prod, dev]
+  kind: [host, appliance]
+
+groups: [sre]
+
+rules:
+  # ---------------------------------------------------------------------
+  # The bare route: `authorize.direct`, and the DEFAULT half of all four
+  # absent-value pairs.
+  #
+  # It must carry none of `enforcement`, `session_deadline`,
+  # `require_session_capture` or `concurrency` — the suite asserts each is
+  # absent here and present on its paired route, and a field that crept in
+  # would make one of those pairs grade nothing.
+  # ---------------------------------------------------------------------
+  - id: direct-host
+    description: a plain shell on the edge host, with none of the newer vocabulary
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [host.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+
+  # ---------------------------------------------------------------------
+  # `authorize.nexthop`: the same shape for a target in the deep zone, which
+  # the fleet graph reaches through proxy-2. Which hop answers what is the
+  # graph's business, not this rule's — the rule says only that a path may
+  # traverse hops.
+  # ---------------------------------------------------------------------
+  - id: deep-chain
+    description: a host inside the protected zone, reached through the chain
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [deep.internal.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+
+  # ---------------------------------------------------------------------
+  # `authorize.full`, and the SET half of the session_deadline and
+  # require_session_capture pairs: the richest connection policy this
+  # fixture expresses.
+  # ---------------------------------------------------------------------
+  - id: scan-target
+    description: a bounded, recorded session over the full channel vocabulary
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [scan-target-01.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session, direct-tcpip]
+      requests:
+        types: [pty-req, shell, exec]
+        subsystems: [sftp]
+      forwards:
+        direct_tcpip:
+          - host: postgres.prod.company.com
+            port: 5432
+      global_requests:
+        types: []
+      filter:
+        mode: whitelist
+        exec_mode: restricted
+        restricted_exec:
+          commands:
+            - executable: /usr/bin/systemctl
+              form: positional
+              args:
+                - kind: oneof
+                  values: [status, restart]
+                - kind: prefix
+                  value: hoplock-
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+      max_session_duration: 4h
+      require_session_capture: true
+
+  # ---------------------------------------------------------------------
+  # `authorize.negotiation` and the SET half of the enforcement pair.
+  #
+  # The rung is ATTESTED, which is the one kind a brokered-key route may
+  # carry: the target enforces its own command authorization already and
+  # this product configures nothing. The system verifies none of that, so
+  # what the contract asks for instead is attributability — who says so, and
+  # where it is written down.
+  # ---------------------------------------------------------------------
+  - id: build-host
+    description: a standing account on a build host whose own controls are attested
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [build-01.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-key
+          username: buildsvc
+          credential_ref: local://build-01
+      algorithm_profile: legacy-rsa-sha1
+      enforcement:
+        execution: platform-attested
+        reach: platform-attested
+        attestation:
+          asserted_by: platform-engineering
+          reference: CR-2261
+      max_session_duration: 2h
+
+  # ---------------------------------------------------------------------
+  # The SET half of the concurrency pair. Only the proxy can count live
+  # sessions, so this states the ceiling and the proxy enforces it —
+  # exceeding it is a policy denial, never an outage.
+  # ---------------------------------------------------------------------
+  - id: automation-host
+    description: a service account with a ceiling on how many sessions may be live
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [automation-01.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-key
+          username: automation
+          credential_ref: local://automation-01
+      concurrency:
+        max_sessions_per_subject: 2
+        max_sessions_per_target: 8
+
+  # ---------------------------------------------------------------------
+  # `authorize.ladder`: a two-entry ladder whose second entry is
+  # `brokered-key`. The suite asserts `params.username` on EVERY entry —
+  # the contract's one tightening, which includes brokered-key and is
+  # announced as a break rather than gated on a version.
+  # ---------------------------------------------------------------------
+  - id: edge-firewall
+    description: provision an administrator if the appliance allows it, else log in as the standing one
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [edge-fw-01.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-account
+          username: hoplock-ops
+          platform: fortigate
+          credential_kind: password
+          expiry_posture: target-enforced
+          lifetime_seconds: 900
+        - method: brokered-key
+          username: netadmin
+          credential_ref: local://edge-fw-01
+      algorithm_profile: legacy-device
+
+  # ---------------------------------------------------------------------
+  # `authorize.device_fields.with_fields`: the open `device_field.<name>`
+  # namespace. `vdom` scopes the provisioned administrator to one virtual
+  # domain — ABSENT, the administrator is global, which is the strongest
+  # account the device has.
+  # ---------------------------------------------------------------------
+  - id: core-firewall
+    description: a VDOM-scoped administrator on a FortiGate running virtual domains
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [core-fw-01.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-account
+          username: hoplock-ops
+          platform: fortigate
+          credential_kind: password
+          expiry_posture: target-enforced
+          lifetime_seconds: 900
+          device_fields:
+            vdom: root
+      algorithm_profile: legacy-device
+
+  # ---------------------------------------------------------------------
+  # `authorize.device_fields.without_fields`: the comparable route carrying
+  # no device field. The suite finds the lowest vocabulary at which THIS is
+  # served and asserts the one above is served at the same one — a name in
+  # an open namespace is not a new policy field and demands no bump.
+  # ---------------------------------------------------------------------
+  - id: crown-firewall
+    description: the same appliance shape with no virtual domains to scope to
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [crown-fw-01.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-account
+          username: hoplock-ops
+          platform: fortigate
+          credential_kind: password
+          expiry_posture: target-enforced
+          lifetime_seconds: 900
+      algorithm_profile: legacy-device

@@ -149,10 +149,18 @@ func (r *Registry) ReportHostKey(ctx context.Context, tenant store.Tenant, rep H
 // reports every connection — so answering no hint is a correct implementation
 // rather than a gap, and the conformance suite grades it as a pass.
 //
+// The ISSUE PATH now exists above both responses: 0008 built
+// [Registry.CacheHint], which takes the M9 liveness read
+// ([Registry.EventStreamHealthy]), derives the opaque key and clamps the
+// lifetime. This endpoint does not call it, and the reason it still answers no
+// is unchanged — with no subscription source wired there is no healthy stream
+// and therefore no withdrawable hint, so the shared path would answer no here
+// too. What 0009 changes is the stream, not the rule.
+//
 // What 0009 owes before it may say yes, none of it optional:
 //
-//   - the M9 liveness read on THIS path, not only on authorize: a proxy whose
-//     event stream is unhealthy gets no hint.
+//   - issue through [Registry.CacheHint] rather than beside it, so the M9
+//     liveness read is taken on THIS path as well as on authorize.
 //   - hint only a key already ruled on and accepted. A `reject` and a
 //     `known: false` are never reused however they are hinted, so a hint on
 //     either is dead weight that says the rule was not read.

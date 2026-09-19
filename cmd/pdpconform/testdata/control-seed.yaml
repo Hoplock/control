@@ -70,14 +70,64 @@ subjects:
       poll_after_ms: 100
       ttl_ms: 2000
 
+# The hosts a decision is taken about (0003, 0008). The ZONE is what the fleet
+# routes to, so a target in `deep` is reachable only through the chain and one
+# in `edge` is direct from the proxy the suite presents itself as.
+#
+# `nobody-may-reach-this.company.com` is deliberately ABSENT from this list and
+# from the policy: named by no rule, it falls to the bundle's default-deny and
+# the answer is a 401 decision. That is the deny case, and it only grades a
+# decision as long as nothing here quietly makes it routable.
+targets:
+  - id: host
+    hostname: host.company.com
+    zone: edge
+    labels: {env: prod, kind: host}
+  - id: deep-host
+    hostname: deep.internal.company.com
+    zone: deep
+    labels: {env: prod, kind: host}
+  - id: scan-target-01
+    hostname: scan-target-01.company.com
+    zone: edge
+    labels: {env: prod, kind: host}
+  - id: build-01
+    hostname: build-01.company.com
+    zone: edge
+    labels: {env: dev, kind: host}
+  - id: automation-01
+    hostname: automation-01.company.com
+    zone: edge
+    labels: {env: prod, kind: host}
+  - id: edge-fw-01
+    hostname: edge-fw-01.company.com
+    zone: edge
+    labels: {env: prod, kind: appliance}
+  - id: core-fw-01
+    hostname: core-fw-01.company.com
+    zone: edge
+    labels: {env: prod, kind: appliance}
+  - id: crown-fw-01
+    hostname: crown-fw-01.company.com
+    zone: edge
+    labels: {env: prod, kind: appliance}
+
 proxies:
-  # The proxy the suite presents itself as.
+  # The proxy the suite presents itself as. Its edge into the deep zone is what
+  # makes `authorize.nexthop` a chain rather than an outage: without it the
+  # graph is two islands and a target in `deep` is unroutable.
   - id: proxy-1
     zone: edge
     heartbeat: true
     key:
       type: ssh-ed25519
       blob: aG9wbG9jay1jb25mb3JtYW5jZS1maXh0dXJlLWtleS1wcm94eS0x
+    edges:
+      - to_zone: deep
+        direction: dial
+        address: proxy-2.company.com:2222
+        next_proxy_id: proxy-2
+        cost: 1
 
   # The second hop. A cert-auth call offering THIS key with a user's login is
   # a CHAIN LEG (proxy D11): the answer is that user's identity, established
@@ -96,6 +146,12 @@ host_keys:
   - target: host.company.com
     type: ssh-ed25519
     fingerprint: "SHA256:CCCC3333hostkey3333CCCC3333hostkey3333CCCC"
+
+# The policy every authorize case is decided under. It is a file of its own
+# because a bundle is the thing an operator reviews, and policy buried inside a
+# fixture is policy nobody reads as policy. The path is relative to this file.
+policy:
+  file: control-policy.yaml
 
 tokens:
   # The suite's channel credential. UNBOUND on purpose: the uid cases lease for

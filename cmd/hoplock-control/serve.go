@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/config"
+	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/south"
 	"github.com/hoplock/control/internal/identity"
@@ -40,6 +41,7 @@ func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *s
 		}),
 		fleet.WithRegistryMaxHops(cfg.Fleet.MaxHops),
 		fleet.WithLogger(log),
+		fleet.WithMaxCacheTTL(cfg.Decision.MaxCacheTTL),
 		fleet.WithUIDAllocation(fleet.UIDAllocation{
 			RangeMin:     cfg.UIDs.RangeMin,
 			RangeMax:     cfg.UIDs.RangeMax,
@@ -60,9 +62,26 @@ func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *s
 		identity.WithMaxPolls(cfg.MFA.MaxPolls),
 	)
 
+	// The composition root for `/v1/authorize` (0008). It holds the
+	// compiled policy and the fleet graph in memory rather than reloading
+	// either per request: a proxy is holding a user's handshake open while
+	// this answers (M5).
+	decisions, err := decision.New(decision.Options{
+		Store:    st,
+		Fleet:    registry,
+		Subjects: identity.NewStoreDirectory(st),
+		Logger:   log,
+		Refresh:  cfg.Decision.Refresh,
+		Budget:   cfg.Decision.Budget,
+	})
+	if err != nil {
+		return err
+	}
+
 	handler, err := south.New(south.Options{
 		Identity:       auth,
 		Fleet:          registry,
+		Decision:       decisions,
 		Logger:         log,
 		MaxBodyBytes:   cfg.South.MaxBodyBytes,
 		RequestTimeout: cfg.South.RequestTimeout,
