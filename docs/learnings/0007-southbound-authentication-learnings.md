@@ -35,6 +35,12 @@
   **Chain-leg claim:** `chain_hop_proxy_id`.
 - **UID leases:** block 4096, range `2000000..2147483646`, and **`term_seconds`
   is deliberately not stated** — Details says why that is a decision.
+- **Also fixed here, in 0005's code:** `TestEvaluationIsLinearAndWithinBudget`
+  was comparing a race-instrumented measurement against M5's production budget
+  (~19% headroom, not 10x) with a hand-rolled timer. Now `testing.Benchmark` +
+  a build-tagged `measurementBudget` + an allocations-do-not-grow assertion.
+  **The evaluator was never at fault** — it is flat at ~13.7 ns/rule and one
+  alloc per call.
 - **Decisions: M22 added** (a south-bound credential carries its tenant and
   names its proxy), with its §2 register row; M2 now cites it rather than
   restating it. Nothing amended or withdrawn. PLAN §3, §5.4, §6 and §10 also
@@ -207,11 +213,12 @@ into a production path.
 under `-race` before you add twenty of them.** A suite that is merely slow is
 also a suite that makes somebody else's timing assertion fail.
 
-### The eval budget test is measuring race-instrumented code (0005's to fix)
+### The eval budget test was measuring race-instrumented code (fixed here)
 
 Removing the load above stopped THIS PR failing; it did not make that assertion
-sound. Measured with `testing.Benchmark` at several rule counts, the evaluator
-is exactly what M5 promises and the test is not:
+sound, so the assertion is fixed here too. Measured with `testing.Benchmark` at
+several rule counts, the evaluator is exactly what M5 promises and the test was
+not:
 
 | rules | ns/op | ns/rule | allocs/op |
 | --- | --- | --- | --- |
@@ -237,11 +244,30 @@ under the only command CI ever runs it has ~19% headroom, not 10x. It has been
 passing on luck; at `GOMAXPROCS=2` it fails about three runs in five in
 isolation, on this branch and the commit before it alike.
 
-So the fix is ~30 lines in `internal/policy/eval/bench_test.go` and touches no
-production code: take the figure from `testing.Benchmark` rather than a
-hand-rolled timer, and compare it against a budget that knows whether the race
-detector is on. **0005's test to change** — and worth changing before 0008,
-because until then every phase's CI can fail for a reason unrelated to it.
+**The fix, in `internal/policy/eval/`, touches no production code.** The figure
+now comes from `testing.Benchmark`, which calibrates the iteration count and
+discards the warm-up; `measurementBudget` is `evaluationBudget` in a normal
+build and `10 *` it under `-race`, split across `budget_norace_test.go` and
+`budget_race_test.go` by build tag. **`evaluationBudget` is still the M5 number
+and did not move** — what changed is that a run knows which of two things it is
+measuring.
+
+A third assertion was added, and it is the one most likely to earn its keep:
+**allocations must not grow with rule count.** Evaluation allocates once per
+call — the snapshot — whatever the rule count, so anything that allocated per
+rule shows up exactly, on any machine, under any load, with no threshold to
+tune. It is the linearity check without a clock in it.
+
+Before and after, `GOMAXPROCS=2 go test -race` under deliberate CPU load, five
+runs each: the old test failed one in five at **500.8µs** against its 300µs
+budget, and its *passing* runs measured 222–255µs — ~19% of headroom, which is
+the real finding. The new one passed five of five, including a run that
+measured **598µs** and would have failed outright before, with linearity at
+2.69x and allocations at 1.
+
+Cost: the eval package goes from ~6s to ~10s under `-race`, which is
+`testing.Benchmark`'s calibration. Set against the ~75s this PR took *out* of
+`identity` and `south`, the suite is far ahead.
 
 (An earlier draft of this file blamed "the GC cost of a program twice the size".
 That was wrong — allocations are constant at one per call. The cause is the
