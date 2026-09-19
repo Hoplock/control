@@ -6,25 +6,34 @@
 
 ---
 
-## Run 2026-09-14
+## Run 2026-09-19
+
+> Taken against proxy `37359c5` on **2026-09-14**, then **re-verified and
+> extended to `ba9ad26` on 2026-09-19** before merge, after five Control phases
+> (0002–0006) and three more proxy PRs landed in between. One run, one record:
+> the earlier date is when the walk started, not a separate run. Every finding
+> below was re-confirmed against `origin/main` on the later date — **none had
+> been fixed by the intervening work.**
 
 ## Summary
-- **As-of markers.** Proxy `main` at **`37359c54a6256136935fc48670d345d5fadfc6ac`**
-  ("Merge pull request #55"). **Highest proxy PR examined: #53.** Bounded set:
-  **18 merges**, from `git log --oneline --merges --full-history -- api/
-  docs/CROSS-REPO-PROTOCOL.md`. Both halves reached: files (clone) **and** PR
-  bodies (GitHub API).
-- **The next run can skip** re-deriving the history before #53. Start from the
-  same command, take only merges newer than `66fd233` (#53), and re-run §5's
-  contract check — that half is against the *document*, so it is never skippable.
+- **As-of markers.** Proxy `main` at **`ba9ad26`** ("Merge pull request #61").
+  **Highest proxy PR examined: #61.** Bounded set: **21 merges**, from
+  `git log --oneline --merges --full-history -- api/ docs/CROSS-REPO-PROTOCOL.md`.
+  Both halves reached: files (clone) **and** PR bodies (GitHub API).
+- **The next run can skip** re-deriving the history before #61. Take merges newer
+  than `ba9ad26`, and re-run §5's contract check — that half reads the *document*
+  and is never skippable.
 - **The command in the prompt was wrong and is now fixed.** Without
-  `--full-history` git's history simplification drops merges TREESAME to a
-  parent: the bare form returns **1** merge, the `--full-history` form **18**.
-  Every previous run of this audit was searching a 1-PR set.
+  `--full-history` git drops merges TREESAME to a parent: the bare form returns
+  **1** merge, the `--full-history` form **21**. Every earlier run of this audit
+  was searching a 1-PR set.
 - **Three obligations were missing and are landed here**, all traceable to
   `Hoplock/proxy#15` (contract v3), whose sync never ran as its own PR:
-  `algorithm_profile` (0008 §snapshot, 0010, PLAN §5.2/§7),
-  `target_auth_method` + `target_auth_rung` (0010, PLAN §7).
+  `algorithm_profile` (0008, 0010, PLAN §5.2/§7), and `target_auth_method` +
+  `target_auth_rung` (0010, PLAN §7). **All three are now in this repository's
+  own vendored `contract/control.yaml`** and named by no prompt — so this is no
+  longer "upstream said something we have not heard"; the fields sit in-tree
+  unreferenced.
 - **One §6 assumption landed**: the `/v1/auth/password` first-factor oracle,
   decided in proxy phase 0034, is **Control's** decision (proxy D2) and the
   contract *requires* it — now in 0007 so no session "hardens" it into a
@@ -34,6 +43,9 @@
   read `#3 from mauroasilva/…` (a predecessor repo) while `Hoplock/proxy#3` is a
   different, later PR — so a number resolved naively returns a wrong body that
   looks right.
+- **`contract/` now exists** (0002 landed), so §7's vendoring rules are live for
+  the first time. The vendored copy is pinned at `37359c5` while upstream is at
+  `ba9ad26`; that is **legitimate and owned** — see below.
 
 ## Details
 
@@ -53,7 +65,7 @@ now written into the prompt.
 ### The bounded set: 18 merges, not 1
 
 ```
-git -C /home/user/proxy log --oneline --merges --full-history \
+git -C <proxy clone> log --oneline --merges --full-history \
     -- api/ docs/CROSS-REPO-PROTOCOL.md
 ```
 
@@ -102,9 +114,46 @@ directly. `management.yaml` has **0** hits in this repository.
 | #51 | `api/` both | Yes | `POST /v1/uids/lease`; cursor only ever advances; floor not on the cacheable response | Landed (Control#16), thoroughly: 0003 (the `CHECK`/trigger), 0007 §198+, 0002 §159+, PLAN §791/§906 |
 | #53 | `api/` both | Yes | singular `target_auth` gone; `policy_version` REQUIRED; `info.version` `4.0.0`; history sections gone | Landed (Control#19), thoroughly — see §5 below |
 
-Buckets: **12 stated obligations**, **1 stated "None"** (#26, verified against
-the diff), **2 with no section** (#1 misnamed but substantive; #33 absent and
-genuinely none), **4 unreachable**.
+| #56 | `api/` both | Yes | re-vendor; `RevocationEvent.HeartbeatIntervalSeconds` + resolver; conformance reads the advertised interval; two ambiguities now answered | Landed (`07d5ce5`) — 0009 rewritten to own it, 0018 and PLAN updated. **The re-vendor is deliberately deferred to 0009 step 1** (below) |
+| #60 | protocol | Yes | mirror the file; `KICKOFF.md` "Upstream request" block both ways; `PROTOCOL.md` §3 cites §4.1 + §4.2; learnings README; **this audit prompt's §3.2 citations**; `0018` | Landed (Control#28) — all six items, including this prompt's §3.2 wording |
+| #61 | none of its own | Yes — **"None"**, verified | none | Correct. It appears in the set only because the *merge* diff spans #60; its own branch changed no surface |
+
+Buckets: **14 stated obligations**, **2 stated "None"** (#26 and #61, both
+verified against the diff), **2 with no section** (#1 misnamed but substantive;
+#33 absent and genuinely none), **4 unreachable**.
+
+### Re-verification on 2026-09-19
+
+Between the two dates Control implemented **0002–0006** and took two syncs
+(#56, #60); the proxy merged **#56, #59, #60, #61**. Every finding was re-run
+against `origin/main` at `6b0cdb7`:
+
+| Finding | Status on 2026-09-19 |
+| --- | --- |
+| `--full-history` missing from the prompt | **still absent** — still needed |
+| PR-number-collision edge missing | **still absent** — still needed |
+| `algorithm_profile` | **still 0 hits** in `prompts/` and `docs/PLAN.md` |
+| `target_auth_method` / `target_auth_rung` | **still 0 hits** |
+| first-factor oracle absent from 0007 | **still absent** |
+| `/v1/proxies/{id}/events` | **still `{id}`** at PLAN §4 and §10 |
+| wrapped `contract v4` citation | **still present** at `PLAN:1385` |
+
+Nothing was fixed by the intervening work, and the first four are now *more*
+load-bearing than they were: `contract/` landed with 0002, so
+`algorithm_profile`, `target_auth_method` and `target_auth_rung` are in this
+repository's own vendored contract, and no prompt names them.
+
+One thing the re-verification **removed** from the finding list. The vendored
+copy is pinned at `37359c5` while upstream is `ba9ad26`, and `make
+contract-check` passes because it checks the copy against its *pin*, not the pin
+against upstream. That looked like a silent divergence, and it is not: #56's sync
+recorded the obligation and **phase 0009 owns the re-vendor as its explicit step
+1** (`prompts/queued/0009…:10-20, 45-60`), `0018:84-86` says the copy is already
+behind and names 0009, and `PLAN:884` states both numbers. The audit prompt's own
+§5 already carries the rule that settles it — a gap between `contract/UPSTREAM`
+and upstream `main` is a finding **only when no prompt names the re-vendor** — so
+this is correctly owned, and re-vendoring here would be a §3.1 sync folded into
+an audit, which §7 forbids.
 
 ### §5 — the independent contract check
 
@@ -120,9 +169,9 @@ Against the **document**, not the claims about it.
   `contract\n  v4` — survived the sync that removed every other citation. Found
   with a wrap-insensitive scan, now written into the prompt. Restated in the
   present tense and the number deleted.
-- **The two version numbers are current.** `info.version` **4.0.0** (upstream
-  `api/control.yaml:59`) and `policy_version` **4**
-  (`internal/control/contract.go:53`). Both are stated where the owning phase
+- **The two version numbers are current, including the split.** The vendored
+  `contract/control.yaml` says **4.0.0** and upstream `api/control.yaml` now says
+  **4.1.0** (#56 moved it up); `policy_version` is **4** on both. Both are stated where the owning phase
   sees them (0002, 0018, PLAN §4), and **non-monotonicity is explicitly
   recorded** — `0018:107`, `0002:234`, `PLAN:854` all note the `4.3.0`→`4.0.0`
   move. No check assumes it only rises.
@@ -187,7 +236,7 @@ The prompt stays in `prompts/audit/`, unrenamed and unmoved.
 
 ### What the next run can skip, precisely
 
-- The 18-merge derivation up to and including **#53** (`66fd233`). Take merges
+- The 21-merge derivation up to and including **#61** (`ba9ad26`). Take merges
   newer than that commit.
 - The `D*` register check **for the ids listed above**, unless the proxy's
   register changes — cheap to re-confirm, and D17's withdrawn status is the one
@@ -198,6 +247,10 @@ The prompt stays in `prompts/audit/`, unrenamed and unmoved.
 **Do not skip** §5's contract check. It reads the current document rather than
 the PR history, so it catches what §4 structurally cannot, and it is the half
 that found the wrapped citation and the `{proxy_id}` drift this run.
+
+- The **vendor-pin question** only until 0009 lands. Once it has re-vendored,
+  re-check `contract/UPSTREAM` against upstream `main` on the §5 rule above:
+  behind is fine where a prompt names the re-vendor, and a finding otherwise.
 
 ### Not found
 

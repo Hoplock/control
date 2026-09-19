@@ -134,9 +134,15 @@ The control that actually blunts enumeration here is **rate limiting**, which is
 out of scope for this phase. So: no decoy challenges, no equalising delays
 invented here, and no "fix" for this in review. A future change of mind starts
 **upstream**, at the `200` description on `/v1/auth/password` in
-`api/control.yaml` — until that sentence is relaxed, a decoy is a contract
-violation, and changing it is `docs/CROSS-REPO-PROTOCOL.md` §3.2, not this
-phase.
+`contract/control.yaml` — until that sentence is relaxed, a decoy is a contract
+violation, and relaxing it is not this phase's to do.
+
+If you conclude the product genuinely needs it, that is
+`docs/CROSS-REPO-PROTOCOL.md` **§3.2, which is a flow and not a prohibition**:
+name the exact sentence you need changed under `## Upstream request` in your PR,
+keep this endpoint's behaviour as the contract states it meanwhile, and hand over
+the filled-in **"Upstream request"** kickoff from `docs/KICKOFF.md` (§4.2). Do not
+quietly implement the decoy behind a flag while the request is open.
 
 This is recorded here because it is a decision **this** repository owns (proxy
 D2: the proxy originates no policy) that was taken in the proxy's phase 0034 —
