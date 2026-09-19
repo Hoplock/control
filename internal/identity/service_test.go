@@ -17,6 +17,17 @@ import (
 
 const tenant = store.Tenant("acme")
 
+// testIterations is the work factor fixtures hash at.
+//
+// It is real PBKDF2 and it is nowhere near a production cost, which is the
+// point: at the default a single hash takes about a second under the race
+// detector, and a suite that seeds a fixture per case would spend minutes
+// proving the standard library is slow. A digest is verified with the
+// parameters stored beside it, so nothing under test behaves differently.
+// TestHashPasswordUsesTheProductionWorkFactor is what keeps this from leaking
+// into a production path.
+const testIterations = 4096
+
 // ---------------------------------------------------------------------------
 // certificate / key authentication
 // ---------------------------------------------------------------------------
@@ -561,13 +572,13 @@ func TestAProviderFailureIsAnOutage(t *testing.T) {
 func TestPasswordsAreSaltedAndVerifiable(t *testing.T) {
 	t.Parallel()
 
-	first, err := identity.HashPassword("alice@example.com", "hunter2")
+	first, err := identity.HashPasswordWith("alice@example.com", "hunter2", testIterations)
 	if err != nil {
-		t.Fatalf("HashPassword: %v", err)
+		t.Fatalf("HashPasswordWith: %v", err)
 	}
-	second, err := identity.HashPassword("alice@example.com", "hunter2")
+	second, err := identity.HashPasswordWith("alice@example.com", "hunter2", testIterations)
 	if err != nil {
-		t.Fatalf("HashPassword: %v", err)
+		t.Fatalf("HashPasswordWith: %v", err)
 	}
 	if string(first.Digest) == string(second.Digest) {
 		t.Error("two hashes of one password are identical; the salt is not doing anything")
@@ -575,8 +586,34 @@ func TestPasswordsAreSaltedAndVerifiable(t *testing.T) {
 	if string(first.Digest) == "hunter2" {
 		t.Fatal("the stored digest is the password")
 	}
-	if first.Iterations <= 0 || len(first.Salt) == 0 {
-		t.Errorf("digest = %+v, want a salt and a work factor stored beside it", first)
+	if first.Iterations != testIterations || len(first.Salt) == 0 {
+		t.Errorf("digest = %+v, want a salt and the work factor it was written with stored beside it", first)
+	}
+
+	// A non-positive work factor is a caller's bug and is refused rather than
+	// quietly becoming a default: a digest written at zero iterations is not a
+	// digest.
+	if _, err := identity.HashPasswordWith("alice@example.com", "hunter2", 0); err == nil {
+		t.Error("a work factor of zero was accepted")
+	}
+}
+
+// The cheap fixtures above must not be able to leak into a deployment. This is
+// the assertion that keeps HashPasswordWith a test facility: the production
+// entry point writes the production work factor, whatever tests do.
+func TestHashPasswordUsesTheProductionWorkFactor(t *testing.T) {
+	t.Parallel()
+
+	got, err := identity.HashPassword("alice@example.com", "hunter2")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	if got.Iterations != identity.DefaultPBKDF2Iterations {
+		t.Errorf("HashPassword wrote %d iterations, want the production default of %d",
+			got.Iterations, identity.DefaultPBKDF2Iterations)
+	}
+	if got.Algorithm != identity.AlgorithmPBKDF2SHA256 {
+		t.Errorf("HashPassword wrote algorithm %q, want %q", got.Algorithm, identity.AlgorithmPBKDF2SHA256)
 	}
 }
 
@@ -734,7 +771,7 @@ func (d *fakeDirectory) addKey(fingerprint, subjectID string) {
 }
 
 func (d *fakeDirectory) addPassword(subjectID, password string) {
-	digest, err := identity.HashPassword(subjectID, password)
+	digest, err := identity.HashPasswordWith(subjectID, password, testIterations)
 	if err != nil {
 		panic(err)
 	}

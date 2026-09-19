@@ -32,6 +32,11 @@ const (
 	alicePass    = "alice-dev-password"
 	aliceKeyBlob = "alice public key material"
 	proxyKeyBlob = "proxy-2 public key material"
+	// Real PBKDF2 at nowhere near a production work factor. At the default a
+	// single hash costs about a second under the race detector, and this
+	// harness runs once per test; a verifier is checked with the parameters
+	// stored beside it, so nothing under test behaves differently.
+	testIterations = 4096
 )
 
 // ---------------------------------------------------------------------------
@@ -790,7 +795,7 @@ func (h *harness) seed(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed key: %v", err)
 	}
-	digest, err := identity.HashPassword("alice@example.com", alicePass)
+	digest, err := identity.HashPasswordWith("alice@example.com", alicePass, testIterations)
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
 	}

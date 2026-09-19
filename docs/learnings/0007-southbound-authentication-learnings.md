@@ -184,6 +184,38 @@ replace the placeholder sections in `control-expectations.yaml` — which are
 filled in only so the file validates, since the suite (correctly) refuses one
 whose missing key would turn an assertion into a no-op.
 
+### A test fixture must not hash at a production work factor
+
+The first CI run went red on `internal/policy/eval`'s
+`TestEvaluationIsLinearAndWithinBudget` — a wall-clock assertion in 0005's code
+that this PR does not touch. The cause was this PR's:
+**PBKDF2 at 600k iterations costs about a second per hash under the race
+detector**, these fixtures hash on every test, and `make test` is
+`go test -race ./...`, so `internal/identity` and `internal/httpapi/south`
+between them burned ~75 CPU-seconds of a two-core runner in parallel with a
+test that measures microseconds. The budget failed at 396µs against 300µs
+while the same measurement on an idle machine is ~65µs.
+
+The fix is `identity.HashPasswordWith(subject, password, iterations)`, which is
+what the `iterations` column was already for: a verifier is checked with the
+parameters stored beside it, so a fixture writes a cheap digest and the
+production path is unchanged. Both test packages dropped from ~40s to ~2s.
+`TestHashPasswordUsesTheProductionWorkFactor` stops the cheap value leaking
+into a production path.
+
+**If you add Postgres-backed fixtures in a later phase, look at what they cost
+under `-race` before you add twenty of them.** A suite that is merely slow is
+also a suite that makes somebody else's timing assertion fail.
+
+Separately, and NOT this PR's: that assertion is fragile on its own. Forced to
+two Ps (`GOMAXPROCS=2 go test -race`) it fails roughly three runs in five **in
+isolation**, on this branch and on the commit before it alike — the 2000-rule
+measurement lands at ~4x the 1000-rule one, which is the GC cost of a program
+twice the size rather than anything quadratic in the evaluator. CI does not
+force two Ps and its linearity check passed; if it starts failing there, the
+measurement wants `testing.Benchmark` rather than a hand-rolled timer, and that
+is 0005's test to change.
+
 ### Follow-ups this phase deliberately did not do
 
 - **Rate limiting** on `/v1/auth/*`. It is the control that actually blunts
