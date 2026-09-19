@@ -1430,7 +1430,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 > the contract document itself that trusts no PR body. It is run when the user
 > names it, **before** building on text the proxy may have moved underneath us.
 >
-> It exists because `docs/CROSS-REPO-PROTOCOL.md` §4 puts the downstream look on
+> It exists because `docs/CROSS-REPO-PROTOCOL.md` §4.1 puts the downstream look on
 > the upstream author at merge time, and two of those looks have now described
 > text this repository did not contain. A check that runs once, from one side,
 > needs a compensating pass from this one.
@@ -1454,7 +1454,13 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 > This revision is **downstream-driven**: `hoplock/enterprise` needs both seams
 > to build a multi-instance supervisory plane (its E14). Per
 > `docs/CROSS-REPO-PROTOCOL.md` §2 it merges here first, and Enterprise
-> describes it only afterwards.
+> describes it only afterwards. It reached this plan with no flow to carry it —
+> which is one of the two cases `docs/CROSS-REPO-PROTOCOL.md` §3.2 now names,
+> and why that section is a flow with an owner and a runnable kickoff rather
+> than a rule ending in "tell the user". A request arriving here today follows
+> §3.2 and `docs/KICKOFF.md`'s "Upstream request" block, and the phase that
+> answers it owes a downstream sync **back** to the repository that asked (§5).
+> That is what phase 0015 would owe `hoplock/enterprise` once it merges.
 
 > **Renumbering note (privileged-access revision).** Phase 0013 is new: external
 > access context (M16) has to exist before the north-bound API is built, because

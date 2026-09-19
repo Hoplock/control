@@ -25,10 +25,14 @@
   session).
 - `docs/CROSS-REPO-PROTOCOL.md` — **in full.** It is short and it is the subject
   of this phase: §1 (the shared surfaces and who owns each), §2 (the direction
-  rule), §3.1 (the sync flow), §3.2 (upstream-blocked — the answer when this
-  repository needs something the proxy does not have), §4 (the upstream author's
-  obligation to look downstream, which is what this phase audits), §5 (what a
-  sync PR owes, including "how you searched"), §6 (the guardrails).
+  rule), §3.1 (the sync flow), §3.2 (**upstream request** — the flow when this
+  repository needs something the proxy does not have; it is a flow now, not a
+  prohibition, and it ends in a runnable kickoff rather than in telling the
+  user), §4 (the two hand-over obligations: §4.1, the upstream author's
+  obligation to look downstream, which is what this phase audits, and §4.2, the
+  mirror duty this phase itself owes whenever it finds a gap), §5 (what a
+  sync PR owes, including "how you searched", and why the PR that answers a
+  request is not one), §6 (the guardrails).
 - `docs/PLAN.md` — the decision register at the head of **§2**, then **§4** (the
   endpoint table and the obligations graded by the conformance suite), **§5**
   (§5.2 in particular — the snapshot this server answers with), **§8**
@@ -65,7 +69,7 @@ This is an **audit that fixes text**. It ships no behaviour.
 
 ### Why this phase exists
 
-`docs/CROSS-REPO-PROTOCOL.md` §4 puts the downstream look on the upstream
+`docs/CROSS-REPO-PROTOCOL.md` §4.1 puts the downstream look on the upstream
 author, before merge, in a section named `## Cross-repo impact`. That is the
 right place for it and it is the only place it happens — which means when it
 does not happen, or happens from memory, nothing catches it. Two cases, both
@@ -133,9 +137,9 @@ changed a shared surface and was **reverted** later, and a change that reached
 Three buckets, and the third is the interesting one:
 
 1. **Obligations stated** for `hoplock/control`.
-2. **"None" stated** — a finding in its own right, per §4, and cheap to verify
+2. **"None" stated** — a finding in its own right, per §4.1, and cheap to verify
    against the diff.
-3. **No `## Cross-repo impact` section at all.** §4 says an omitted section is
+3. **No `## Cross-repo impact` section at all.** §4.1 says an omitted section is
    indistinguishable from never having looked. Treat these as unaudited and
    derive the obligation from the diff yourself.
 
@@ -149,7 +153,7 @@ plan; that asymmetry is the whole reason the rule exists.
 
 ### 5. Check the contract itself, not the claims about it
 
-This is the half that catches what §4 cannot, and it is not optional. A PR body
+This is the half that catches what §4.1 cannot, and it is not optional. A PR body
 is a claim, written before merge, about two repositories at once; the contract
 document is what is true now. Check this repository's prompts against the
 **document**:
@@ -190,7 +194,7 @@ document is what is true now. Check this repository's prompts against the
 
 The proxy's `prompts/implemented/` and `docs/learnings/` are where "Control will
 do X" gets written down without ever becoming an impact section — an assumption
-inside an upstream phase is not a contract change, so §4 never fires on it.
+inside an upstream phase is not a contract change, so §4.1 never fires on it.
 
 Read the implemented prompts' titles and each learnings **summary block**; open
 a full file only where the summary shows it touches this server. What you are
@@ -225,10 +229,20 @@ Text only, with a sync's discipline (§3.1, §6):
   at the end is allowed where the audit finds work that is genuinely a phase, but
   prefer a sentence in the prompt that already owns the area: a new prompt is a
   PR someone has to run, and most findings here are a paragraph;
-- anything this repository needs that the proxy does not have is **§3.2**: stop,
-  name the exact field, signature or endpoint, tell the user, and record it as a
-  named cross-repo dependency. Do not approximate it, and do not open a PR
-  upstream from this session.
+- anything this repository needs that the proxy does not have is **§3.2**, which
+  is a flow and not a stopping point. Do not approximate it, and do not open a PR
+  upstream from this session (§6) — but do not stop at telling the user either,
+  which is the failure that flow was rewritten to fix. For each such need:
+  **name the exact field, signature, endpoint or enum value**; record it as a
+  named cross-repo dependency in the learnings summary; state it in this PR under
+  a heading spelled exactly `## Upstream request`, with what stays broken until
+  it lands; and **end that section with a ready-to-run kickoff for
+  `hoplock/proxy`** — the "Upstream request" block in `docs/KICKOFF.md`, verbatim
+  except for its blanks — repeated in your reply to the user, saying plainly that
+  it needs a fresh session with `hoplock/proxy` checked out (§4.2). An audit
+  builds nothing, so §3.2's "build the seam unwired" step has no work here; the
+  named shape and the kickoff are the whole deliverable, and without the kickoff
+  the finding is archived rather than raised.
 
 ### 8. Leave an as-of marker
 
@@ -244,8 +258,11 @@ periodic check quietly becomes a one-off.
 
 ## Out of scope
 - Implementing any phase, here or upstream.
-- **Changing anything in `hoplock/proxy`** — the direction rule (§2). A needed
-  upstream change is §3.2 and is the user's to schedule as its own work.
+- **Changing anything in `hoplock/proxy`** — the direction rule (§2) and §6. A
+  needed upstream change is raised here as an **upstream request** (§3.2, §4.2)
+  and is then the user's to schedule as its own work, in its own session, with
+  its own number and prompt. Raising it is in scope; doing it is not, and the
+  two are not the same line.
 - `hoplock/enterprise`. Control→Enterprise is a different direction with a
   different owner (M15), and `ext/` does not exist yet.
 - Re-vendoring or bumping the contract (that is a sync, §3.1).
@@ -259,8 +276,11 @@ periodic check quietly becomes a one-off.
   either where it is landed in this repository (file + line) or why it is not
   owed.
 - **Every stated obligation is traced**, and every missing one is either landed
-  by this PR in the prompt that will implement it, or listed as a §3.2 dependency
-  with the exact upstream shape named.
+  by this PR in the prompt that will implement it, or raised as a §3.2 upstream
+  request with the exact upstream shape named — in the learnings summary, in this
+  PR's `## Upstream request` section, and as a filled-in kickoff for
+  `hoplock/proxy` (§4.2). A named shape with no kickoff does not count: it is the
+  half that has twice been done and twice led nowhere.
 - **The independent contract check of §5 is done**, and the greps are written
   down verbatim. "I checked carefully" is not a finding a reviewer can re-derive.
 - **Every `D*` id cited in this repository resolves** in the proxy's register
@@ -268,8 +288,10 @@ periodic check quietly becomes a one-off.
 - No prompt renumbered, no prompt renamed, no vendored artifact hand-edited,
   nothing pushed upstream.
 - `make check` passes.
-- The reply to the user lists, separately: obligations landed, §3.2 dependencies
-  found, and anything the audit could not reach (see §1).
+- The reply to the user lists, separately: obligations landed, §3.2 upstream
+  requests raised — each with its filled-in kickoff, said plainly to need a fresh
+  session with `hoplock/proxy` checked out — and anything the audit could not
+  reach (see §1).
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`, with two deliberate departures that follow from this
@@ -288,8 +310,9 @@ prompt being a repeating audit rather than a phase:
 
 That summary block MUST give: the **as-of markers** (§8), the bounded-set
 command and how many PRs it produced, the findings table, every obligation
-landed and where, every §3.2 dependency as a named shape, and what the next run
-can skip because this one covered it.
+landed and where, every §3.2 upstream request as a named shape — with the fact
+that its kickoff was emitted, so a later run can tell a raised need from a
+recorded one — and what the next run can skip because this one covered it.
 
 Write the reasoning into the prompts and the plan as you go, not only into the
 PR body: a rationale that lives only in a merged PR description has been

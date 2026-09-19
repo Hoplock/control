@@ -15,7 +15,12 @@ downstream build. Treat it the way this repository treats the vendored wire
 contract: change it deliberately, say so in the phase's learnings file, and
 never as a drive-by. A phase that adds or changes an interface here owes a
 `## Cross-repo impact` section and a ready-to-run sync kickoff for
-`hoplock/enterprise` (`docs/CROSS-REPO-PROTOCOL.md` §4).
+`hoplock/enterprise` (`docs/CROSS-REPO-PROTOCOL.md` §4.1). Traffic runs the
+other way too: when `hoplock/enterprise` needs a seam here that does not exist,
+it raises an **upstream request** (§3.2, §4.2) and hands over the kickoff that
+turns it into a queued prompt in this repository — `docs/KICKOFF.md`'s
+"Upstream request" block. A phase that answers one owes the sync back to
+Enterprise like any other consumer (§5).
 
 ## Two rules that bound everything here
 

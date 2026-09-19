@@ -42,8 +42,14 @@ which is why it is a CI job of its own rather than a step inside another one:
 when it fails, the failure names itself.
 
 If the contract is wrong, ambiguous, or missing something this repository
-needs, **stop and say so** (PROTOCOL §3). The remedy is a change upstream, not
-a change here.
+needs, the remedy is a change upstream, not a change here — and saying so is
+where it starts, not where it ends. Raise it as an **upstream request**
+(`docs/CROSS-REPO-PROTOCOL.md` §3.2, §4.2, and PROTOCOL §3): build everything
+the gap does not block behind a seam named for the missing shape, name that
+shape — the field and its type, the endpoint and its method, the enum value —
+under a `## Upstream request` heading in your PR, and hand the user the
+filled-in kickoff from `docs/KICKOFF.md` so the proxy phase that answers it can
+actually be started.
 
 ## What the checksum does and does not catch
 

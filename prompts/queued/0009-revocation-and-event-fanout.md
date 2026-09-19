@@ -177,7 +177,11 @@ is away**, so this phase must expose a publish path *outside* `/v1` and point
 `cmd/mock-control` `POST /debug/revoke` is the reference shape; the suite
 asserts nothing about the shape, only that it works. Do not invent a `/v1`
 endpoint for this — that would be a contract change, which is
-`docs/CROSS-REPO-PROTOCOL.md` §3.2 and not this phase's to make.
+`docs/CROSS-REPO-PROTOCOL.md` §3.2 and not this phase's to make. If some other
+part of this phase does turn out to need a shape the contract lacks, §3.2 is a
+flow and not a stopping point: build the rest behind a named seam, state the
+exact shape under `## Upstream request` in your PR, and end that section with
+the filled-in kickoff from `docs/KICKOFF.md`, repeated in your reply (§4.2).
 
 `session_kill` carries a `reason` that is **shown to the user**
 before their connection closes, so it must be safe to disclose; validate that it

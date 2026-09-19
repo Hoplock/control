@@ -75,8 +75,14 @@ disks.
   - remember that a new method is a **vocabulary** change and therefore bumps
     `policy_version` upstream, which is the mechanism that lets a fleet upgrade
     without an outage. That is upstream's to do, not this phase's;
-  - write the required upstream change into your learnings as a named,
-    precise cross-repo dependency, and tell the user.
+  - **raise it as an upstream request, not only as a note.** Write it into your
+    learnings as a named, precise cross-repo dependency *and* state the exact
+    method value under a `## Upstream request` heading in your PR — what you
+    built instead, where the seam is, and what stays broken until it lands —
+    ending with the filled-in "Upstream request" kickoff from
+    `docs/KICKOFF.md`, repeated in your reply to the user
+    (`docs/CROSS-REPO-PROTOCOL.md` §3.2, §4.2). A dependency that only the
+    learnings file remembers has been archived, not raised.
 
 ### Tenant resolution and per-tenant identity (M18)
 This phase owns the north-bound half of M18: **a caller never asserts its own

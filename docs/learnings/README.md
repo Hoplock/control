@@ -24,3 +24,17 @@ by something it cannot see:
 - **Cross-repo dependencies** — anything that needs a contract change in the
   Hoplock Proxy repository. Name the exact field. A later session must not discover it
   by being blocked halfway through its phase.
+
+  **The summary block is the record, not the whole obligation.** A dependency
+  that only a learnings file (or only a PR body) remembers has been archived,
+  not raised: that is precisely what happened to phase 0006's revocation-stream
+  event type, which named the shape here and in its PR, approximated nothing,
+  and still produced nothing anybody could run. So the same dependency is also
+  owed, by the PR that found it, as a `## Upstream request` section — the exact
+  shape, what you built instead and where the seam is, and what stays broken
+  until it lands — ending with a **ready-to-run kickoff** for
+  `hoplock/proxy`, repeated in the reply to the user
+  (`docs/CROSS-REPO-PROTOCOL.md` §3.2, §4.2; the kickoff block is in
+  `docs/KICKOFF.md`). Write it in both places: the summary is how the *next
+  session here* finds it by reading, and the kickoff is how the upstream phase
+  actually gets started.
