@@ -161,6 +161,9 @@ func ErrorKind(err error) Kind {
 	return KindInternal
 }
 
+// errEnrollmentConsumed reports a one-time enrollment token used twice.
+var errEnrollmentConsumed = errors.New("enrollment token has already been consumed")
+
 // notFound builds an absent-row error.
 func notFound(op string) error {
 	return &Error{Op: op, Kind: KindNotFound}

@@ -99,6 +99,24 @@ type Proxy struct {
 	State EnrollmentState
 	// LastHeartbeatAt is zero when the proxy has never reported.
 	LastHeartbeatAt time.Time
+	// ContractVersion is the policy vocabulary the proxy declared at
+	// enrollment. It is a FLEET-READINESS signal — "can this zone be routed
+	// through yet" — and never the authority on what a given connection may
+	// be answered with: the proxy declares that per call in `policy_version`
+	// on the authorize request, and 0008 answers within that. A stored value
+	// can be stale; a request field cannot.
+	ContractVersion int
+	// DeclaredCapabilities is what this proxy's BUILD says it can provide
+	// (M17), stored as the proxy sent it. The device-field namespace is open
+	// and the contract enumerates no names, so a registry validating against
+	// a list of its own would reject exactly the customer-written driver
+	// proxy D13 makes first-class. 0006 owns the shape.
+	DeclaredCapabilities json.RawMessage
+	// SessionCount, LastError and LastErrorAt are health, as an operator
+	// needs them during an incident (0016 renders them).
+	SessionCount int
+	LastError    string
+	LastErrorAt  time.Time
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

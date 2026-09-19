@@ -196,6 +196,21 @@ func (s *Store) Grants() GrantRepository { return grantRepo{s} }
 // UIDCursors returns the uid allocation cursor repository.
 func (s *Store) UIDCursors() UIDCursorRepository { return uidRepo{s} }
 
+// ProxyEnrollments returns the enrollment-grant repository (0006).
+func (s *Store) ProxyEnrollments() ProxyEnrollmentRepository { return proxyEnrollmentRepo{s} }
+
+// ProxyEdges returns the declared-reachability repository (0006).
+func (s *Store) ProxyEdges() ProxyEdgeRepository { return proxyEdgeRepo{s} }
+
+// RelayRegistrations returns the relay-registration repository (0006).
+func (s *Store) RelayRegistrations() RelayRegistrationRepository { return relayRegistrationRepo{s} }
+
+// ProxyConfigs returns the fleet configuration repository (0006).
+func (s *Store) ProxyConfigs() ProxyConfigRepository { return proxyConfigRepo{s} }
+
+// TargetCapabilities returns the per-target capability repository (0006, M17).
+func (s *Store) TargetCapabilities() TargetCapabilityRepository { return targetCapabilityRepo{s} }
+
 // checkTenant rejects an empty tenant.
 //
 // M18 makes the tenant a value a caller supplies, which means the zero value

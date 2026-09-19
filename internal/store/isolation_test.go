@@ -71,11 +71,13 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 			_, err := st.UIDCursors().RaiseFloor(ctx, tenantA, bOnly, 150000)
 			return err
 		},
-		"Proxies.RecordHeartbeat": func() error { return st.Proxies().RecordHeartbeat(ctx, tenantA, bOnly, now) },
-		"Grants.Revoke":           func() error { return st.Grants().Revoke(ctx, tenantA, bOnly, now) },
-		"Subjects.Delete":         func() error { return st.Subjects().Delete(ctx, tenantA, bOnly) },
-		"Targets.Delete":          func() error { return st.Targets().Delete(ctx, tenantA, bOnly) },
-		"Proxies.Delete":          func() error { return st.Proxies().Delete(ctx, tenantA, bOnly) },
+		"Proxies.RecordHealth": func() error {
+			return st.Proxies().RecordHealth(ctx, tenantA, store.ProxyHealthReport{ProxyID: bOnly, At: now})
+		},
+		"Grants.Revoke":   func() error { return st.Grants().Revoke(ctx, tenantA, bOnly, now) },
+		"Subjects.Delete": func() error { return st.Subjects().Delete(ctx, tenantA, bOnly) },
+		"Targets.Delete":  func() error { return st.Targets().Delete(ctx, tenantA, bOnly) },
+		"Proxies.Delete":  func() error { return st.Proxies().Delete(ctx, tenantA, bOnly) },
 	}
 	for name, read := range reads {
 		if err := read(); !store.IsNotFound(err) {

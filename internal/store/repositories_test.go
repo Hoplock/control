@@ -126,8 +126,8 @@ func TestProxyHeartbeatIsNotClobberedByAnUpsert(t *testing.T) {
 	}
 
 	beat := time.Now().UTC().Truncate(time.Millisecond)
-	if err := st.Proxies().RecordHeartbeat(ctx, tenantA, "proxy-1", beat); err != nil {
-		t.Fatalf("RecordHeartbeat: %v", err)
+	if err := st.Proxies().RecordHealth(ctx, tenantA, store.ProxyHealthReport{ProxyID: "proxy-1", At: beat}); err != nil {
+		t.Fatalf("RecordHealth: %v", err)
 	}
 
 	// Re-enrolling describes the proxy, not its liveness. A proxy that has
@@ -149,8 +149,8 @@ func TestProxyHeartbeatIsNotClobberedByAnUpsert(t *testing.T) {
 	}
 
 	// A heartbeat from a proxy with no row is not a row to create.
-	if err := st.Proxies().RecordHeartbeat(ctx, tenantA, "unknown", beat); !store.IsNotFound(err) {
-		t.Errorf("RecordHeartbeat for an unknown proxy: %v, want ErrNotFound", err)
+	if err := st.Proxies().RecordHealth(ctx, tenantA, store.ProxyHealthReport{ProxyID: "unknown", At: beat}); !store.IsNotFound(err) {
+		t.Errorf("RecordHealth for an unknown proxy: %v, want ErrNotFound", err)
 	}
 
 	inZone, err := st.Proxies().ListByZone(ctx, tenantA, "zone-b")

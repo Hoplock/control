@@ -27,6 +27,13 @@ var repositoryInterfaces = map[string]reflect.Type{
 	"AuditRepository":        reflect.TypeOf((*AuditRepository)(nil)).Elem(),
 	"GrantRepository":        reflect.TypeOf((*GrantRepository)(nil)).Elem(),
 	"UIDCursorRepository":    reflect.TypeOf((*UIDCursorRepository)(nil)).Elem(),
+
+	// The fleet registry (0006).
+	"ProxyEnrollmentRepository":   reflect.TypeOf((*ProxyEnrollmentRepository)(nil)).Elem(),
+	"ProxyEdgeRepository":         reflect.TypeOf((*ProxyEdgeRepository)(nil)).Elem(),
+	"RelayRegistrationRepository": reflect.TypeOf((*RelayRegistrationRepository)(nil)).Elem(),
+	"ProxyConfigRepository":       reflect.TypeOf((*ProxyConfigRepository)(nil)).Elem(),
+	"TargetCapabilityRepository":  reflect.TypeOf((*TargetCapabilityRepository)(nil)).Elem(),
 }
 
 // Tenancy is unforgeable at the repository boundary (M18).
@@ -89,6 +96,12 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"AuditRepository":        s.Audit(),
 		"GrantRepository":        s.Grants(),
 		"UIDCursorRepository":    s.UIDCursors(),
+
+		"ProxyEnrollmentRepository":   s.ProxyEnrollments(),
+		"ProxyEdgeRepository":         s.ProxyEdges(),
+		"RelayRegistrationRepository": s.RelayRegistrations(),
+		"ProxyConfigRepository":       s.ProxyConfigs(),
+		"TargetCapabilityRepository":  s.TargetCapabilities(),
 	}
 
 	if len(got) != len(repositoryInterfaces) {
@@ -134,8 +147,11 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Proxies.Upsert": func() error {
 			return s.Proxies().Upsert(ctx, "", Proxy{ID: "p", State: EnrollmentEnrolled})
 		},
-		"Proxies.RecordHeartbeat": func() error { return s.Proxies().RecordHeartbeat(ctx, "", "p", nowForTest()) },
-		"Proxies.Delete":          func() error { return s.Proxies().Delete(ctx, "", "p") },
+		"Proxies.List": func() error { _, err := s.Proxies().List(ctx, ""); return err },
+		"Proxies.RecordHealth": func() error {
+			return s.Proxies().RecordHealth(ctx, "", ProxyHealthReport{ProxyID: "p", At: nowForTest()})
+		},
+		"Proxies.Delete": func() error { return s.Proxies().Delete(ctx, "", "p") },
 		"PolicyBundles.Insert": func() error {
 			return s.PolicyBundles().Insert(ctx, "", PolicyBundle{Version: 1, Hash: "h"})
 		},
@@ -167,6 +183,61 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.UIDCursors().RaiseFloor(ctx, "", "t", 1)
 			return err
 		},
+
+		// The fleet registry (0006).
+		"ProxyEnrollments.Create": func() error {
+			return s.ProxyEnrollments().Create(ctx, "", ProxyEnrollment{ProxyID: "p", TokenHash: []byte("h")})
+		},
+		"ProxyEnrollments.Get": func() error { _, err := s.ProxyEnrollments().Get(ctx, "", "p"); return err },
+		"ProxyEnrollments.Consume": func() error {
+			return s.ProxyEnrollments().Consume(ctx, "", "p", nowForTest())
+		},
+		"ProxyEnrollments.Delete": func() error { return s.ProxyEnrollments().Delete(ctx, "", "p") },
+		"ProxyEdges.List":         func() error { _, err := s.ProxyEdges().List(ctx, ""); return err },
+		"ProxyEdges.ReplaceForProxy": func() error {
+			return s.ProxyEdges().ReplaceForProxy(ctx, "", "p", nil)
+		},
+		"RelayRegistrations.List": func() error { _, err := s.RelayRegistrations().List(ctx, ""); return err },
+		"RelayRegistrations.ReplaceForUpstream": func() error {
+			return s.RelayRegistrations().ReplaceForUpstream(ctx, "", "p", nil, nowForTest())
+		},
+		"ProxyConfigs.InsertVersion": func() error {
+			return s.ProxyConfigs().InsertVersion(ctx, "", ProxyConfigVersion{
+				Scope: ConfigScope{Kind: ConfigScopeZone, ID: "z"}, Version: 1,
+				Document: []byte(`{}`), Hash: "h",
+			})
+		},
+		"ProxyConfigs.GetVersion": func() error {
+			_, err := s.ProxyConfigs().GetVersion(ctx, "", ConfigScope{Kind: ConfigScopeZone, ID: "z"}, 1)
+			return err
+		},
+		"ProxyConfigs.NextVersion": func() error {
+			_, err := s.ProxyConfigs().NextVersion(ctx, "", ConfigScope{Kind: ConfigScopeZone, ID: "z"})
+			return err
+		},
+		"ProxyConfigs.SetDesired": func() error {
+			return s.ProxyConfigs().SetDesired(ctx, "", ConfigScope{Kind: ConfigScopeZone, ID: "z"}, 1, "op", nowForTest())
+		},
+		"ProxyConfigs.GetDesired": func() error {
+			_, err := s.ProxyConfigs().GetDesired(ctx, "", ConfigScope{Kind: ConfigScopeZone, ID: "z"})
+			return err
+		},
+		"ProxyConfigs.PutState": func() error {
+			return s.ProxyConfigs().PutState(ctx, "", ProxyConfigState{ProxyID: "p"})
+		},
+		"ProxyConfigs.GetState":   func() error { _, err := s.ProxyConfigs().GetState(ctx, "", "p"); return err },
+		"ProxyConfigs.ListStates": func() error { _, err := s.ProxyConfigs().ListStates(ctx, ""); return err },
+		"ProxyConfigs.ReportRunning": func() error {
+			return s.ProxyConfigs().ReportRunning(ctx, "", "p", 1, "h", nowForTest())
+		},
+		"TargetCapabilities.Put": func() error {
+			return s.TargetCapabilities().Put(ctx, "", TargetCapabilityRecord{Hostname: "h"})
+		},
+		"TargetCapabilities.Get": func() error {
+			_, err := s.TargetCapabilities().Get(ctx, "", "h", 22, "linux")
+			return err
+		},
+		"TargetCapabilities.List": func() error { _, err := s.TargetCapabilities().List(ctx, ""); return err },
 	}
 
 	if got, want := len(calls), totalRepositoryMethods(); got != want {

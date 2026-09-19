@@ -64,10 +64,18 @@ type ProxyRepository interface {
 	// It does not touch LastHeartbeatAt unless the value given is non-zero,
 	// so a re-enrollment cannot silently mark a silent proxy as live.
 	Upsert(ctx context.Context, tenant Tenant, p Proxy) error
-	// RecordHeartbeat stamps a proxy as having reported at t. Absent is
-	// ErrNotFound: a heartbeat from a proxy this server has no row for is
-	// not a row to create, it is a question for 0006.
-	RecordHeartbeat(ctx context.Context, tenant Tenant, proxyID string, t time.Time) error
+	// List returns every proxy in the tenant, in id order. This is the
+	// graph load (0006): pathfinding needs the whole fleet at once, and the
+	// fleet is small relative to the estate.
+	List(ctx context.Context, tenant Tenant) ([]Proxy, error)
+	// RecordHealth stamps what a heartbeat carried: liveness, session count,
+	// last error, and — where the report named them — the contract version
+	// and the declared capability set.
+	//
+	// Absent is ErrNotFound: a heartbeat from a proxy this server has no row
+	// for is not a row to create, it is an unenrolled proxy, and creating
+	// the row would be the auto-enrollment 0006 exists to refuse.
+	RecordHealth(ctx context.Context, tenant Tenant, h ProxyHealthReport) error
 	// Delete removes a proxy. Absent is ErrNotFound.
 	Delete(ctx context.Context, tenant Tenant, proxyID string) error
 }
@@ -172,4 +180,107 @@ type UIDCursorRepository interface {
 	// not an error — it is a stale observation, and ignoring it is the
 	// correct answer.
 	RaiseFloor(ctx context.Context, tenant Tenant, targetID string, floor int64) (UIDCursor, error)
+}
+
+// The fleet registry's repositories (0006). They sit beside ProxyRepository
+// above rather than inside it because they are different tables with different
+// lifetimes: a grant outlives an enrollment, an edge outlives a heartbeat, and
+// a configuration version outlives the proxy that ran it.
+
+// ProxyEnrollmentRepository stores the grants a proxy may enroll against.
+//
+// Enrollment is an administrative act (0006): a proxy cannot enroll itself into
+// a zone it was not granted, because an auto-enrolling fleet lets anyone who
+// can reach this server insert a hop into other people's routes.
+type ProxyEnrollmentRepository interface {
+	// Create issues a grant. An existing grant for the id is ErrConflict:
+	// re-issuing one silently is how a spent token comes back to life.
+	Create(ctx context.Context, tenant Tenant, e ProxyEnrollment) error
+	// Get returns a grant. Absent is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, proxyID string) (ProxyEnrollment, error)
+	// Consume marks the grant spent, atomically. A grant already consumed is
+	// ErrConflict — the check and the write are one statement, so two
+	// concurrent enrollments cannot both win.
+	Consume(ctx context.Context, tenant Tenant, proxyID string, at time.Time) error
+	// Delete withdraws a grant. Absent is ErrNotFound.
+	Delete(ctx context.Context, tenant Tenant, proxyID string) error
+}
+
+// ProxyEdgeRepository stores declared reachability — the graph's edge set (M6).
+type ProxyEdgeRepository interface {
+	// List returns every edge in the tenant, in (proxy, zone, direction, next
+	// proxy) order — the primary key's order. It is the graph load, and the
+	// ordering is part of the stable tiebreak that makes two nodes answer the
+	// same request identically.
+	List(ctx context.Context, tenant Tenant) ([]ProxyEdge, error)
+	// ReplaceForProxy makes edges the proxy's complete edge set, in one
+	// transaction. An enrollment declares reachability as a whole, so a
+	// re-declaration that dropped a zone must remove the edge rather than
+	// leave a stale one routable.
+	ReplaceForProxy(ctx context.Context, tenant Tenant, proxyID string, edges []ProxyEdge) error
+}
+
+// RelayRegistrationRepository stores which downstream proxies hold an outbound
+// relay connection open right now (proxy D11).
+type RelayRegistrationRepository interface {
+	// List returns every registration in the tenant, in
+	// (upstream, downstream) order.
+	List(ctx context.Context, tenant Tenant) ([]RelayRegistration, error)
+	// ReplaceForUpstream makes downstream the complete set of registrations
+	// this upstream is holding, as of at, in one transaction.
+	//
+	// It is a replacement rather than a touch because the upstream reports
+	// what it holds, and a registration it has stopped reporting is one that
+	// dropped. A relay edge to a dropped registration must fall out of
+	// routing immediately: the alternative is a route that hangs.
+	ReplaceForUpstream(ctx context.Context, tenant Tenant, upstreamProxyID string, downstream []string, at time.Time) error
+}
+
+// ProxyConfigRepository stores versioned configuration and its rollout state.
+type ProxyConfigRepository interface {
+	// InsertVersion stores an immutable document version. A version already
+	// present is ErrConflict.
+	InsertVersion(ctx context.Context, tenant Tenant, v ProxyConfigVersion) error
+	// GetVersion returns one version. Absent is ErrNotFound.
+	GetVersion(ctx context.Context, tenant Tenant, scope ConfigScope, version int64) (ProxyConfigVersion, error)
+	// NextVersion returns the version a new document for this scope takes.
+	NextVersion(ctx context.Context, tenant Tenant, scope ConfigScope) (int64, error)
+	// SetDesired publishes a version, recording what it displaced so that a
+	// rollback is a first-class operation rather than an operator retyping
+	// yesterday's document under pressure.
+	SetDesired(ctx context.Context, tenant Tenant, scope ConfigScope, version int64, publishedBy string, at time.Time) error
+	// GetDesired returns which version of a scope is published. Absent is
+	// ErrNotFound, which is a real state: a scope nobody has published has
+	// no desired version, and composing one would be inventing it.
+	GetDesired(ctx context.Context, tenant Tenant, scope ConfigScope) (ProxyConfigDesired, error)
+	// PutState writes the composed document a proxy should be running. It
+	// does not touch what the proxy reported.
+	PutState(ctx context.Context, tenant Tenant, s ProxyConfigState) error
+	// GetState returns one proxy's rollout state. Absent is ErrNotFound.
+	GetState(ctx context.Context, tenant Tenant, proxyID string) (ProxyConfigState, error)
+	// ListStates returns every proxy's rollout state, in id order. Drift is
+	// read off it, and silent drift across a fleet is indistinguishable from
+	// a broken rollout.
+	ListStates(ctx context.Context, tenant Tenant) ([]ProxyConfigState, error)
+	// ReportRunning records what a proxy says it is running. Absent is
+	// ErrNotFound.
+	ReportRunning(ctx context.Context, tenant Tenant, proxyID string, version int64, hash string, at time.Time) error
+}
+
+// TargetCapabilityRepository stores what one TARGET can take (M17).
+//
+// It is the second capability source, and the only one that can exist: an
+// authorize call happens before the proxy has ever touched the target, so a
+// first-ever connection has nothing to declare.
+type TargetCapabilityRepository interface {
+	// Put records an observation, replacing any earlier one for the same
+	// (hostname, port, platform).
+	Put(ctx context.Context, tenant Tenant, r TargetCapabilityRecord) error
+	// Get returns one record. Absent is ErrNotFound — and absent, stale and
+	// undated are ONE case to the caller above (M17), so this error is not a
+	// failure to report, it is an input.
+	Get(ctx context.Context, tenant Tenant, hostname string, port int32, platform string) (TargetCapabilityRecord, error)
+	// List returns every record in the tenant, in (hostname, port, platform)
+	// order. The pre-publish query (0014) walks it.
+	List(ctx context.Context, tenant Tenant) ([]TargetCapabilityRecord, error)
 }
