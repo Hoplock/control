@@ -241,15 +241,23 @@ type EventExpectations struct {
 	// ProxyID is the stream subscribed to; it may differ from the suite's own
 	// ProxyID if the server scopes streams narrowly.
 	ProxyID string `yaml:"proxy_id"`
-	// HeartbeatIntervalSeconds is the interval the server advertises, and the
-	// ceiling the suite holds it to. It is an input here because the contract
-	// carried no field for it when this suite was written; upstream
-	// Hoplock/proxy#56 has since added
-	// RevocationEvent.heartbeat_interval_seconds, so the interval is a claim the
-	// server makes on the stream and this key becomes the fallback for a server
-	// that advertises nothing — which stays a conformant server. Reading the
-	// claim off the stream lands with phase 0009, which re-vendors the contract;
-	// see cmd/pdpconform/README.md.
+	// HeartbeatIntervalSeconds is the FALLBACK bound, for a server that
+	// advertises nothing.
+	//
+	// It used to be the bound itself, because the contract carried no field
+	// for one when this suite was written. Upstream Hoplock/proxy#56 added
+	// `RevocationEvent.heartbeat_interval_seconds`, so the interval is now a
+	// claim the server makes on the stream and the suite grades that claim —
+	// both that the server keeps it and that it is inside the contract's
+	// ceiling.
+	//
+	// IT IS STILL REQUIRED IN PRACTICE, AND NOT BY THIS STRUCT. Absent stays
+	// a legal answer from a server: it means what every server did before
+	// the field existed. But a server advertising nothing, against a file
+	// configuring no fallback, is UNGRADEABLE — so the heartbeat cases fail
+	// rather than pass, and this key is what makes such a server gradeable
+	// again. Leaving it out is therefore safe only for a server that does
+	// advertise.
 	HeartbeatIntervalSeconds int `yaml:"heartbeat_interval_seconds"`
 	// PublishURL is how the suite makes the server emit an event. The contract
 	// deliberately defines no endpoint for this — publishing is an operator
@@ -257,6 +265,15 @@ type EventExpectations struct {
 	// and the suite asserts nothing about its shape.
 	PublishURL  string `yaml:"publish_url"`
 	PublishBody string `yaml:"publish_body"`
+	// PublishToken is the credential that path requires, when it is not the
+	// proxy token the suite was given.
+	//
+	// It is a separate key because the publish path is a separate surface:
+	// the proxy credential authenticates a proxy asking about decisions,
+	// and publishing one is an operator action. A server that serves both
+	// from one listener and one credential is free to leave this empty,
+	// which is what the proxy's `cmd/mock-control` does.
+	PublishToken string `yaml:"publish_token"`
 }
 
 // LoadExpectations reads and strictly decodes an expectation file.
@@ -333,9 +350,15 @@ func (e *Expectations) validate() error {
 	if e.UIDs.Exhaustion.RangeMax <= e.UIDs.Exhaustion.RangeMin {
 		missing = append(missing, "uids.exhaustion.range_max must exceed range_min")
 	}
-	if e.Events.HeartbeatIntervalSeconds <= 0 {
-		missing = append(missing, "events.heartbeat_interval_seconds must be positive")
-	}
+	// events.heartbeat_interval_seconds is deliberately NOT checked here.
+	// It stopped being the bound when upstream Hoplock/proxy#56 put the
+	// interval on the wire and became the fallback for a server that
+	// advertises none, so a file that omits it is describing a server it
+	// expects to advertise rather than a file with a hole in it. What
+	// stops that from becoming a vacuous pass is in CheckEvents: a server
+	// that advertises nothing with no fallback configured FAILS as
+	// ungradeable, which is the outcome this validation used to buy and
+	// the only one worth having.
 
 	if len(missing) > 0 {
 		return fmt.Errorf("missing or invalid: %s", strings.Join(missing, ", "))

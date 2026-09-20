@@ -86,9 +86,9 @@ visible in none of them. Change them together.
 
 `-only` names the groups this build serves; `authorize` covers four of them at
 once (the envelope, the absent-value defaults, vocabulary negotiation and the
-device-field namespace). The event stream is 0009's and log ingest 0010's, and
-each of those phases adds its group to the `conform-self` CI job and replaces
-its placeholder section in the expectation file. **Beware the substring collision:** `POST /v1/auth` also
+device-field namespace). Log ingest is 0010's, and that phase adds its group to
+the `conform-self` CI job and replaces its placeholder section in the
+expectation file. **Beware the substring collision:** `POST /v1/auth` also
 matches `authorize (POST /v1/authorize)`, and `make` passes `CONFORM_FLAGS`
 unquoted, so a value containing spaces is split by the shell before the flag
 package sees it. Use space-free substrings.
@@ -200,8 +200,8 @@ label appended.
 | Key | Meaning |
 | --- | --- |
 | `proxy_id` | The stream subscribed to. |
-| `heartbeat_interval_seconds` | The fallback bound, for a server that advertises no interval. **The contract carries `RevocationEvent.heartbeat_interval_seconds`** (upstream `Hoplock/proxy#56`), so the interval is a claim the server makes on the stream rather than a number configured here — but absent is a legal answer, meaning the reader stays on its own timers, and this key is what keeps such a server gradeable. **Today the suite still reads the bound from this key alone**; reading it off the stream lands with phase 0009, which re-vendors the contract. |
-| `publish_url`, `publish_body` | How the suite makes the server emit an event. The contract deliberately defines no endpoint for this — publishing is an operator action, not a proxy-facing one — so the implementation supplies the path and the suite takes it as an input, asserting nothing about its shape. |
+| `heartbeat_interval_seconds` | **The fallback bound, not the bound.** The suite reads `RevocationEvent.heartbeat_interval_seconds` off the stream (upstream `Hoplock/proxy#56`) and grades the server against that claim. Absent is a legal answer — it means the reader stays on its own timers — and this key is what keeps such a server gradeable. A server that advertises nothing against a file that configures nothing is **ungradeable and therefore FAILS**, because a vacuous pass is worse than a failure. |
+| `publish_url`, `publish_body`, `publish_token` | How the suite makes the server emit an event. The contract deliberately defines no endpoint for this — publishing is an operator action, not a proxy-facing one — so the implementation supplies the path and the suite takes it as an input, asserting nothing about its shape. `publish_token` is for a server that keeps the operator surface on its own listener with its own credential; left empty, the suite presents the proxy token. |
 
 ## What the suite asserts, and what it deliberately does not
 
@@ -241,9 +241,10 @@ next contract revision:
 opposite directions — one became a field, the other became a stated boundary —
 and what is left is recorded here and in `docs/learnings/0002-*`.
 
-**The heartbeat interval is on the wire.** It was not when this suite was
-written, which is why the bound is still an input above. The contract now
-carries `RevocationEvent.heartbeat_interval_seconds`: the interval the server is
+**The heartbeat interval is on the wire, and the suite now reads it there.**
+It was not when this suite was written, which is why the expectation key
+survives as a fallback rather than as the bound. The contract carries
+`RevocationEvent.heartbeat_interval_seconds`: the interval the server is
 **currently keeping**, normally on `heartbeat` events but legal on any, and a
 later event carrying a different value re-states the interval rather than
 contradicting an earlier one. Three rules come with it —
@@ -257,12 +258,23 @@ contradicting an earlier one. Three rules come with it —
   **10 seconds or less**, so two consecutive intervals fit inside the proxy's
   20s reconnect timeout.
 
-So "within the interval the server advertises" is now gradeable from the stream,
-and it is **two** assertions rather than one: the server keeps the interval it
+So "within the interval the server advertises" is graded from the stream, and it
+is **two** assertions rather than one: the server keeps the interval it
 advertises, *and* that interval is inside the ceiling. A server advertising 600s
-and honestly keeping to it passes the first and breaks every proxy in the fleet.
-Phase 0009 re-vendors the contract and makes this case read the claim instead of
-the configuration.
+and honestly keeping to it passes the first and breaks every proxy in the fleet,
+which is why they are separate cases — a failure names which half.
+
+Both are contract-level rather than facts about any one server, so they live in
+the shared assertions and not in an expectation file. The same suite runs
+against Hoplock Proxy's `cmd/mock-control`, which advertises an interval derived
+from its own `heartbeat_ms` (rounded up, so it never claims one it does not
+keep); getting this layer wrong is how the mock starts failing for no reason
+anyone can see.
+
+`checks_events_test.go` points these two cases at deliberately wrong servers —
+one stalling its writer, one advertising 600s, one advertising nothing with no
+fallback configured — and asserts that the suite **fails** each. A pair of
+assertions that cannot fail is a pair that grades nothing.
 
 **Nothing publishes an event or reads a record back, and that is the answer, not
 a gap.** Both operations are operator-facing rather than proxy-facing: a proxy
@@ -278,4 +290,7 @@ This still means two of PLAN §4's obligations cannot be graded against a server
 that serves only the contract — the difference is that this is now a documented
 boundary with a reason, rather than something the contract forgot. Hoplock
 Proxy's `cmd/mock-control` `GET /debug/logs` and `POST /debug/revoke` are the
-reference shapes, and both stay mock-only.
+reference shapes. This server answers the second of them with a publish
+listener of its own, off unless `events.publish_listener` is configured and
+credentialled (phase 0009, `cmd/hoplock-control/publish.go`); the CI leg
+configures one, which is what makes gap recovery gradeable here.

@@ -3,6 +3,8 @@
 
 package contract
 
+import "time"
+
 // Absent-value defaults, resolved in one place.
 //
 // The contract's whole discipline here is that absence and emptiness are not
@@ -117,6 +119,39 @@ func (h *HopMetadata) Direction() HopConnection {
 // The proxy never invents a lifetime.
 func (c *CacheHint) Cacheable() bool {
 	return c != nil && c.TTLSeconds > 0
+}
+
+// MaxHeartbeatIntervalSeconds is the contract's ceiling on the revocation
+// stream's heartbeat interval, in seconds.
+//
+// It is a number rather than a preference: the proxy's reconnect timeout
+// defaults to 20s, so two consecutive intervals at this ceiling still fit
+// inside it and ONE LOST HEARTBEAT IS NOT MISTAKEN FOR A DEAD STREAM. A server
+// that advertises more than this and then honestly keeps to it passes its own
+// claim and takes the whole fleet off cached decisions.
+const MaxHeartbeatIntervalSeconds = 10
+
+// MaxHeartbeatInterval is [MaxHeartbeatIntervalSeconds] as a duration.
+const MaxHeartbeatInterval = MaxHeartbeatIntervalSeconds * time.Second
+
+// AdvertisedHeartbeatInterval resolves `heartbeat_interval_seconds`: the
+// interval the server says it is keeping now.
+//
+// It returns a BOOLEAN as well as the value, exactly as [AuthorizeResponse.Deadline]
+// does, and for the same reason: absent means what every server did before the
+// field existed — the reader falls back to its own timers — and a bare zero is
+// a value a caller can misread as "no interval at all". A decoded event cannot
+// tell an omitted key from `0`, so the distinction has to be made here or not
+// at all.
+//
+// The value it returns may be used to notice a dead stream SOONER than the
+// reader's own timeout and never to extend one. See the field's own
+// documentation for why the inverse is a server silencing itself.
+func (e *RevocationEvent) AdvertisedHeartbeatInterval() (time.Duration, bool) {
+	if e == nil || e.HeartbeatIntervalSeconds <= 0 {
+		return 0, false
+	}
+	return time.Duration(e.HeartbeatIntervalSeconds) * time.Second, true
 }
 
 // Declares resolves `capabilities` on the request: absent declares nothing, so a

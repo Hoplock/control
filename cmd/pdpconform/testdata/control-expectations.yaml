@@ -5,10 +5,10 @@
 #
 # WHAT THIS FILE DESCRIBES IS A SERVER THAT IMPLEMENTS PART OF THE CONTRACT.
 # Phase 0007 serves authentication, host keys, capability reports and uid
-# leases and 0008 serves `/v1/authorize`; the event stream is 0009 and log
-# ingest 0010. The CI leg runs the served groups by name (`-only`), and the
-# sections below for the rest are filled in so the file VALIDATES rather than
-# because anything reads them yet — the suite refuses a file whose missing key
+# leases, 0008 serves `/v1/authorize` and 0009 the event stream; log ingest is
+# 0010. The CI leg runs the served groups by name (`-only`), and the section
+# below for the rest is filled in so the file VALIDATES rather than
+# because anything reads it yet — the suite refuses a file whose missing key
 # would silently turn an assertion into a no-op, and that refusal is worth
 # keeping. The phase that serves an endpoint replaces its section here and adds
 # its group to the CI leg.
@@ -157,9 +157,24 @@ logs:
   read_url: "http://127.0.0.1:8080/debug/logs"
   batch_size: 3
 
-# --- not served yet (0009) -------------------------------------------------
 events:
   proxy_id: proxy-1
+  # The FALLBACK, not the bound. This server advertises
+  # `heartbeat_interval_seconds` on every event it writes (upstream
+  # Hoplock/proxy#56), and the suite grades that claim — both that it is kept
+  # and that it is inside the contract's 10s ceiling. This key is what would
+  # make a server advertising nothing gradeable, and it is kept so that a
+  # regression which stopped advertising fails on the claim rather than
+  # becoming ungradeable.
   heartbeat_interval_seconds: 5
-  publish_url: "http://127.0.0.1:8080/debug/revoke"
-  publish_body: '{"type":"cache_invalidate","cache_invalidate":{"all":true}}'
+  # A SEPARATE PORT, and not a `/v1` path. The contract states outright that
+  # nothing on `/v1` publishes an event — an event is an operator action — so
+  # the publish path is this implementation's to expose, and the south-bound
+  # listener serves the contract and nothing else (M2). It is bound only
+  # because this file configures one: see events.publish_listener.
+  publish_url: "http://127.0.0.1:8082/debug/revoke"
+  # A credential of its own, because the surface is of a different kind: the
+  # proxy token authenticates a proxy asking about decisions, and this
+  # publishes the kill switch.
+  publish_token: "pdpconform-dev-publish-token"
+  publish_body: '{"type":"cache_invalidate","all":true}'

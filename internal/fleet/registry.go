@@ -35,6 +35,11 @@ type Registry struct {
 	// maxCacheTTL is the ceiling on a hint's lifetime (PLAN §5.4). Zero
 	// takes DefaultMaxCacheTTL.
 	maxCacheTTL time.Duration
+	// hostKeyCacheTTL is the lifetime authored for a host-key decision.
+	// Authorize's lifetime comes from the rule that decided it; a host-key
+	// answer has no rule, so this server states its own. Zero takes
+	// DefaultHostKeyCacheTTL.
+	hostKeyCacheTTL time.Duration
 }
 
 // Option configures a Registry.
@@ -89,6 +94,19 @@ func WithMaxCacheTTL(d time.Duration) Option {
 	}
 }
 
+// WithHostKeyCacheTTL sets how long a host-key decision may be reused. It is
+// still clamped by [Registry.ClampCacheTTL], so it can only ever shorten what
+// the ceiling already allows. A non-positive value keeps the default; to issue
+// no host-key hint at all, take the stream away rather than the lifetime —
+// that is the state M9 describes and it is the one the gate already answers.
+func WithHostKeyCacheTTL(d time.Duration) Option {
+	return func(r *Registry) {
+		if d > 0 {
+			r.hostKeyCacheTTL = d
+		}
+	}
+}
+
 // WithClock overrides the clock. Tests use it; nothing in production should.
 func WithClock(now func() time.Time) Option {
 	return func(r *Registry) {
@@ -110,14 +128,15 @@ func WithRegistryMaxHops(n int) Option {
 // New builds a Registry over a store.
 func New(st *store.Store, opts ...Option) *Registry {
 	r := &Registry{
-		st:          st,
-		liveness:    DefaultLiveness(),
-		pub:         noopConfigPublisher{},
-		now:         time.Now,
-		maxHops:     DefaultMaxHops,
-		uids:        DefaultUIDAllocation(),
-		log:         slog.Default(),
-		maxCacheTTL: DefaultMaxCacheTTL,
+		st:              st,
+		liveness:        DefaultLiveness(),
+		pub:             noopConfigPublisher{},
+		now:             time.Now,
+		maxHops:         DefaultMaxHops,
+		uids:            DefaultUIDAllocation(),
+		log:             slog.Default(),
+		maxCacheTTL:     DefaultMaxCacheTTL,
+		hostKeyCacheTTL: DefaultHostKeyCacheTTL,
 	}
 	for _, opt := range opts {
 		opt(r)

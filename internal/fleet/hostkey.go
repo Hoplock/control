@@ -5,9 +5,13 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strconv"
+	"time"
 
+	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -56,6 +60,11 @@ type HostKeyDecision struct {
 	// which is what an operator needs in order to tell a rotation from an
 	// interception.
 	PreviousFingerprints []string
+	// Cache is the hint this server issues on the response, or nil for
+	// none. It is produced by [Registry.CacheHint] — the one issue path,
+	// with the M9 liveness read already in front of it — and never beside
+	// it. See [Registry.HostKeyCacheHint].
+	Cache *contract.CacheHint
 }
 
 // ReportHostKey records a sighting and answers the trust decision.
@@ -72,9 +81,8 @@ type HostKeyDecision struct {
 // proxy holding a cached answer for the old key misses on the new one and
 // reports it on the first connection that sees it.
 //
-// This phase issues NO cache hint, so nothing above needs the M9 liveness read
-// yet. See [Registry.HostKeyCacheHint] for why, and for what turning hints on
-// costs.
+// The `cache` hint is issued here, through the one issue path, and only for a
+// key this server has ruled on and accepted — see [Registry.HostKeyCacheHint].
 func (r *Registry) ReportHostKey(ctx context.Context, tenant store.Tenant, rep HostKeyReport) (HostKeyDecision, error) {
 	if rep.Hostname == "" {
 		return HostKeyDecision{}, fmt.Errorf("fleet.ReportHostKey: hostname is required")
@@ -102,6 +110,13 @@ func (r *Registry) ReportHostKey(ctx context.Context, tenant store.Tenant, rep H
 		LastSeenAt:      now,
 		LastReportedBy:  rep.ReportedBy,
 		FirstReportedBy: rep.ReportedBy,
+		// Written on every sighting, from the one derivation, so the key
+		// on the record and the key on the wire cannot drift apart. It
+		// identifies the DECISION rather than any particular cached copy
+		// of it: whether a proxy holds one is what the hint below
+		// decides, and an operator withdrawing the decision publishes
+		// this either way.
+		CacheKey: HostKeyCacheKey(tenant, rep.Hostname, rep.Port, rep.Fingerprint),
 	})
 	if err != nil {
 		return HostKeyDecision{}, err
@@ -115,6 +130,21 @@ func (r *Registry) ReportHostKey(ctx context.Context, tenant store.Tenant, rep H
 	}
 	slices.Sort(out.PreviousFingerprints)
 	out.Changed = !known && len(out.PreviousFingerprints) > 0
+
+	out.Cache, err = r.hostKeyCacheHint(ctx, tenant, rep, out)
+	if err != nil {
+		// Not a failure of the report: the sighting is recorded and the
+		// trust answer is decided. Refusing a correct decision over an
+		// optimisation is the worse trade (M5), so the answer goes out
+		// without a hint and the reason is written down.
+		r.log.WarnContext(ctx, "could not decide whether to hint a host-key decision",
+			"event", "hostkey_cache_hint_undecided",
+			"tenant", tenant.String(),
+			"target", rep.Hostname,
+			"proxy_id", rep.ReportedBy,
+			"error", err.Error(),
+		)
+	}
 
 	if out.Changed {
 		// 0010 owns audit ingest; until then this is the record, and the
@@ -134,42 +164,125 @@ func (r *Registry) ReportHostKey(ctx context.Context, tenant store.Tenant, rep H
 }
 
 // HostKeyCacheHint reports whether this server issues a `cache` hint on
-// `/v1/hostkeys/report`, and it answers NO.
+// `/v1/hostkeys/report`, and since 0009 wired the revocation stream it answers
+// YES — subject to the three conditions below, every one of which can withhold
+// one on a given report.
 //
-// The field exists, the contract names it as its own worked example of a field
-// outside `policy_version`, and upstream measured this endpoint at 46% of the
-// Control calls that survive an authorize cache hit — so the saving is real
-// and it is not the reason to withhold it. M9 is: **never issue a hint the
-// revocation stream cannot withdraw**, and this server does not serve
-// `GET /v1/proxies/{proxy_id}/events` yet (0009). A hint issued now would be an
-// access grant with no revocation path at all, which is strictly worse than
-// the reporting traffic it saves.
+// The saving is real: upstream measured this endpoint at 46% of the Control
+// calls that survive an authorize cache hit. What kept it withheld until now
+// was M9 — NEVER ISSUE A HINT THE REVOCATION STREAM CANNOT WITHDRAW — and the
+// answer to that is the stream itself, not a change of mind about the rule.
 //
-// Absent means what every server did before the field existed — the proxy
-// reports every connection — so answering no hint is a correct implementation
-// rather than a gap, and the conformance suite grades it as a pass.
+// The three conditions, in the order [Registry.hostKeyCacheHint] applies them:
 //
-// The ISSUE PATH now exists above both responses: 0008 built
-// [Registry.CacheHint], which takes the M9 liveness read
-// ([Registry.EventStreamHealthy]), derives the opaque key and clamps the
-// lifetime. This endpoint does not call it, and the reason it still answers no
-// is unchanged — with no subscription source wired there is no healthy stream
-// and therefore no withdrawable hint, so the shared path would answer no here
-// too. What 0009 changes is the stream, not the rule.
-//
-// What 0009 owes before it may say yes, none of it optional:
-//
-//   - issue through [Registry.CacheHint] rather than beside it, so the M9
-//     liveness read is taken on THIS path as well as on authorize.
-//   - hint only a key already ruled on and accepted. A `reject` and a
-//     `known: false` are never reused however they are hinted, so a hint on
-//     either is dead weight that says the rule was not read.
-//   - store the key on the host-key record. A subject-scoped
-//     `cache_invalidate` cannot match a host-key decision — it was not made
-//     for a person — so withdrawing one means publishing that decision's own
-//     key, or `resync`. A key nobody stored is a decision nobody can withdraw
-//     short of resyncing the entire fleet's cache.
+//   - THE STREAM MUST BE HEALTHY FOR THE ASKING PROXY. That read is
+//     [Registry.EventStreamHealthy] and it is taken inside
+//     [Registry.CacheHint], which is the one issue path both responses go
+//     through. Two copies of "may I hint this proxy right now" would be two
+//     places to get M9 wrong and they would not fail together (PLAN §5.4).
+//   - THE KEY MUST BE ONE THIS SERVER HAS RULED ON AND ACCEPTED. A `reject`
+//     and a `known: false` are never reused by the proxy however they are
+//     hinted, so a hint on either is dead weight — and a hint on a first
+//     sighting would replay trust-on-first-use into the audit log for every
+//     later connection.
+//   - THE KEY THE HINT CARRIES MUST BE ON THE RECORD. It is written by
+//     [Registry.ReportHostKey] on every sighting, from the same derivation the
+//     hint uses, because a subject-scoped `cache_invalidate` cannot match a
+//     host-key decision — it was not made for a person — so withdrawing one
+//     means publishing that decision's own key, or `resync`. A key nobody
+//     stored is a decision nobody can withdraw short of resyncing the whole
+//     fleet's cache.
 //
 // It is a function rather than a comment so that the answer is asserted by a
 // test rather than remembered.
-func (r *Registry) HostKeyCacheHint() bool { return false }
+func (r *Registry) HostKeyCacheHint() bool { return true }
+
+// DefaultHostKeyCacheTTL is how long a host-key decision may be reused when
+// nothing configures it.
+//
+// It is the server's risk appetite rather than an optimisation dial: within it,
+// a target that has rotated its key, been rebuilt, or been intercepted is
+// reported late by the proxies that already hold the old answer. The ceiling in
+// [Registry.ClampCacheTTL] bounds it further and only downward.
+const DefaultHostKeyCacheTTL = 5 * time.Minute
+
+// hostKeyCacheHint applies the three conditions above.
+func (r *Registry) hostKeyCacheHint(ctx context.Context, tenant store.Tenant, rep HostKeyReport, out HostKeyDecision) (*contract.CacheHint, error) {
+	if out.Decision != store.HostKeyAccepted || !out.Known {
+		// A first sighting and a rejection are both answers the proxy
+		// must keep bringing back.
+		return nil, nil
+	}
+	ttl := r.hostKeyCacheTTL
+	if ttl <= 0 {
+		ttl = DefaultHostKeyCacheTTL
+	}
+	return r.CacheHint(ctx, tenant, CacheHintRequest{
+		ProxyID: rep.ReportedBy,
+		TTL:     ttl,
+		Scope:   HostKeyCacheScope(rep.Hostname, rep.Port, rep.Fingerprint),
+	})
+}
+
+// HostKeyCacheScope is the sharing scope of a host-key decision.
+//
+// It names exactly what the proxy keys its own reuse on — target, port and key
+// fingerprint — and nothing wider. What is reused is therefore the answer to
+// "may this target, presenting THIS key, be reached", so a target presenting a
+// different key is a different lookup, misses, and is reported (proxy D7).
+// There is no subject in it, which is the same fact that makes a subject-scoped
+// invalidation unable to reach one.
+func HostKeyCacheScope(hostname string, port int32, fingerprint string) []string {
+	return CacheScope(
+		[2]string{"kind", "hostkey"},
+		[2]string{"target", hostname},
+		[2]string{"port", strconv.FormatInt(int64(port), 10)},
+		[2]string{"fingerprint", fingerprint},
+	)
+}
+
+// HostKeyCacheKey is the key a host-key decision is hinted and withdrawn under.
+func HostKeyCacheKey(tenant store.Tenant, hostname string, port int32, fingerprint string) string {
+	return CacheKey(tenant, HostKeyCacheScope(hostname, port, fingerprint))
+}
+
+// Why withdrawing a host-key decision is a lookup rather than a derivation.
+//
+// The key is derived, so an operator surface could compute one and publish it
+// without asking this server anything — and it would then publish a key for a
+// target and fingerprint nobody has ever reported, report success, and drop
+// nothing. A revocation that silently misses is worse than one that refuses,
+// so the decision is resolved from the record and the two failures below are
+// returned rather than papered over.
+var (
+	// ErrNoHostKeyRecord is a target and fingerprint this server has never
+	// been told about. There is no decision to withdraw.
+	ErrNoHostKeyRecord = errors.New("fleet: no host-key decision is recorded for that target and fingerprint")
+	// ErrNoHostKeyCacheKey is a record written before this server issued
+	// keys (migration 0005). The decision exists; the key it would be
+	// withdrawn under was never recorded, so `resync` is the only honest
+	// answer until the next sighting backfills it.
+	ErrNoHostKeyCacheKey = errors.New("fleet: that host-key decision carries no cache key, so it cannot be withdrawn by key")
+)
+
+// HostKeyCacheKeyOf resolves a recorded host-key decision to the key it is
+// withdrawn under.
+func (r *Registry) HostKeyCacheKeyOf(ctx context.Context, tenant store.Tenant, hostname string, port int32, fingerprint string) (string, error) {
+	if hostname == "" || fingerprint == "" {
+		return "", fmt.Errorf("fleet.HostKeyCacheKeyOf: a hostname and a fingerprint are required")
+	}
+	keys, err := r.st.TargetHostKeys().ListForTarget(ctx, tenant, hostname, port)
+	if err != nil {
+		return "", err
+	}
+	for _, k := range keys {
+		if k.Fingerprint != fingerprint {
+			continue
+		}
+		if k.CacheKey == "" {
+			return "", ErrNoHostKeyCacheKey
+		}
+		return k.CacheKey, nil
+	}
+	return "", ErrNoHostKeyRecord
+}

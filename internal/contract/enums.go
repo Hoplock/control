@@ -39,6 +39,12 @@ const (
 	PathProxyEvents = "/v1/proxies/{proxy_id}/events"
 )
 
+// MediaTypeNDJSON is the content type of the revocation stream: one
+// RevocationEvent per line, for as long as the connection lasts. It is not
+// `application/json` — the body is never a single document and a client that
+// waited for one would wait for the life of the subscription.
+const MediaTypeNDJSON = "application/x-ndjson"
+
 // AuthStatus is AuthenticateResponse.status.
 type AuthStatus string
 

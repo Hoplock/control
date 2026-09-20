@@ -413,7 +413,7 @@ func scanMFAChallenge(op string, row rowScanner) (MFAChallenge, error) {
 type hostKeyRepo struct{ s *Store }
 
 const hostKeyColumns = `hostname, port, fingerprint, key_type, decision,
-	first_seen_at, last_seen_at, first_reported_by, last_reported_by`
+	first_seen_at, last_seen_at, first_reported_by, last_reported_by, cache_key`
 
 // Record is trust-on-first-use, in one statement.
 //
@@ -446,18 +446,34 @@ func (r hostKeyRepo) Record(ctx context.Context, tenant Tenant, k TargetHostKey)
 	row := r.s.db.QueryRow(ctx, `
 		INSERT INTO target_host_keys
 			(tenant, hostname, port, fingerprint, key_type, decision,
-			 first_seen_at, last_seen_at, first_reported_by, last_reported_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $8)
+			 first_seen_at, last_seen_at, first_reported_by, last_reported_by,
+			 cache_key)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $8, $9)
 		ON CONFLICT (tenant, hostname, port, fingerprint) DO UPDATE SET
 			last_seen_at     = EXCLUDED.last_seen_at,
-			last_reported_by = EXCLUDED.last_reported_by
+			last_reported_by = EXCLUDED.last_reported_by,
+			-- The key is derived from the columns in the conflict
+			-- target, so a caller that supplies one only ever
+			-- writes the same value back; a row written before
+			-- migration 0005 has none, and the next sighting
+			-- backfills it, which is what makes those rows
+			-- withdrawable at all. An EMPTY incoming key never
+			-- erases a stored one: a caller that did not derive a
+			-- key has said nothing about the decision, not that
+			-- the decision has no key, and blanking it would make
+			-- an issued hint unwithdrawable.
+			cache_key        = CASE
+				WHEN EXCLUDED.cache_key <> '' THEN EXCLUDED.cache_key
+				ELSE target_host_keys.cache_key
+			END
 		RETURNING `+hostKeyColumns+`, (xmax <> 0) AS known`,
 		tenant, k.Hostname, k.Port, k.Fingerprint, k.KeyType, string(k.Decision),
-		k.LastSeenAt, k.LastReportedBy)
+		k.LastSeenAt, k.LastReportedBy, k.CacheKey)
 
 	var decision string
 	err := row.Scan(&got.Hostname, &got.Port, &got.Fingerprint, &got.KeyType, &decision,
-		&got.FirstSeenAt, &got.LastSeenAt, &got.FirstReportedBy, &got.LastReportedBy, &known)
+		&got.FirstSeenAt, &got.LastSeenAt, &got.FirstReportedBy, &got.LastReportedBy,
+		&got.CacheKey, &known)
 	if err != nil {
 		return TargetHostKey{}, false, wrap(op, err)
 	}
@@ -495,7 +511,8 @@ func (r hostKeyRepo) ListForTarget(ctx context.Context, tenant Tenant, hostname 
 			decision string
 		)
 		if err := rows.Scan(&k.Hostname, &k.Port, &k.Fingerprint, &k.KeyType, &decision,
-			&k.FirstSeenAt, &k.LastSeenAt, &k.FirstReportedBy, &k.LastReportedBy); err != nil {
+			&k.FirstSeenAt, &k.LastSeenAt, &k.FirstReportedBy, &k.LastReportedBy,
+			&k.CacheKey); err != nil {
 			return nil, wrap(op, err)
 		}
 		k.Decision = HostKeyDecisionKind(decision)

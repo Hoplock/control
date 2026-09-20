@@ -292,11 +292,41 @@ type CacheHint struct {
 
 // RevocationEvent is one line of GET /v1/proxies/{proxy_id}/events.
 type RevocationEvent struct {
-	EventID         string                `json:"event_id"`
-	Type            EventType             `json:"type"`
-	Timestamp       string                `json:"timestamp"`
-	SessionKill     *SessionKillEvent     `json:"session_kill,omitempty"`
-	CacheInvalidate *CacheInvalidateEvent `json:"cache_invalidate,omitempty"`
+	EventID   string    `json:"event_id"`
+	Type      EventType `json:"type"`
+	Timestamp string    `json:"timestamp"`
+	// HeartbeatIntervalSeconds is the interval the server says it is
+	// keeping NOW. The server sets it on `heartbeat` events, MAY set it on
+	// any event, and a reader takes it wherever it appears — a later event
+	// carrying a different value is the server re-stating the interval it
+	// keeps now, not contradicting an earlier claim.
+	//
+	// Two rules travel with this field and are worth more than the field is.
+	//
+	// IT ADVERTISES, IT DOES NOT CONFIGURE. Absent means what every server
+	// did before the field existed: the reader falls back to its own timers.
+	// That is the same absent-value discipline as HostKeyReportResponse.cache
+	// and for the same reason, which is why it is read through
+	// [RevocationEvent.AdvertisedHeartbeatInterval] and never off the field:
+	// a decoded event cannot tell an omitted key from `0`.
+	//
+	// IT MAY ONLY EVER TIGHTEN DETECTION, NEVER LOOSEN IT. A reader may use
+	// it to notice a dead stream SOONER than its configured timeout; it must
+	// never extend that timeout to accommodate a large advertised interval.
+	// Sooner is always allowed, later is not — the same rule as
+	// `cache.ttl_seconds` (clamp shorter, never longer) and
+	// `report_after_seconds` (re-observe sooner, never later). The inverse
+	// would let a broken or hostile server silence itself indefinitely by
+	// announcing that it intends to, which is the proxy's fail-closed rule
+	// turned upside down.
+	//
+	// The ceiling in [MaxHeartbeatIntervalSeconds] is NOT replaced by this
+	// field: a server advertising 600s and honestly keeping to it passes its
+	// own claim and breaks every proxy in the fleet, so both halves are
+	// conformance requirements.
+	HeartbeatIntervalSeconds int32                 `json:"heartbeat_interval_seconds,omitempty"`
+	SessionKill              *SessionKillEvent     `json:"session_kill,omitempty"`
+	CacheInvalidate          *CacheInvalidateEvent `json:"cache_invalidate,omitempty"`
 }
 
 // SessionKillEvent ends sessions that are already in flight.

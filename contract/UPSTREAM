@@ -9,9 +9,9 @@
 
 repository=https://github.com/hoplock/proxy
 path=api/control.yaml
-ref=main
-commit=37359c54a6256136935fc48670d345d5fadfc6ac
-commit_date=2026-09-14T21:15:10+01:00
-synced_at=2026-09-15
+ref=7c2a356d892105911213062f99781f8a2f8326bc
+commit=7c2a356d892105911213062f99781f8a2f8326bc
+commit_date=2026-09-16T00:20:19+01:00
+synced_at=2026-09-19
 file=control.yaml
-sha256=a362cbd3df06d12b3163e9fc49a2883c2b74e98a1daff37f72a64f529408bfbd
+sha256=544b7aac7a322356742fd9b654e6d1b15069193c153e92519d22eef9122d4a1b
