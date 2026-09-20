@@ -231,7 +231,19 @@ type LogExpectations struct {
 	//
 	// The assertion is that the record id appears in the response body, so any
 	// read path that names the record satisfies it.
+	//
+	// A `{record_id}` placeholder in the URL is replaced with the id the case
+	// just ingested. It is optional: a server whose read path is a listing
+	// leaves it out and the URL is fetched as written, which is what the proxy
+	// mock's own hook does.
 	ReadURL string `yaml:"read_url"`
+	// ReadToken is the credential that path requires, when it is not the
+	// south-bound proxy token. It is a separate key for the same reason
+	// `events.publish_token` is: the read path is a surface of a different
+	// kind, and a server that serves audit records to a proxy's own token has
+	// made every proxy a reader of everybody's records. Empty sends no
+	// Authorization header at all.
+	ReadToken string `yaml:"read_token"`
 	// BatchSize is how many records go in the batch that is then replayed.
 	BatchSize int `yaml:"batch_size"`
 }

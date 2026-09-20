@@ -28,6 +28,7 @@ type Server struct {
 	fleet    *fleet.Registry
 	decision *decision.Service
 	events   EventStream
+	logs     LogIngest
 	log      *slog.Logger
 	now      func() time.Time
 
@@ -51,6 +52,9 @@ type Options struct {
 	// Events is the revocation broker this listener streams from
 	// (`internal/revoke`, M9).
 	Events EventStream
+	// Logs is the audit ingester behind the two log paths
+	// (`internal/audit`, M8).
+	Logs LogIngest
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -88,12 +92,22 @@ func New(o Options) (*Server, error) {
 		// answer every authorize with no hint and no way to say why.
 		return nil, fmt.Errorf("httpapi/south: an event stream is required")
 	}
+	if o.Logs == nil {
+		// The same rule a fourth time, and here it is the quietest
+		// failure of the four: a listener without an ingester answers
+		// 5xx to every batch, the proxy keeps buffering to disk, and
+		// nothing looks wrong until the buffer fills or an incident
+		// needs a record that was never shipped. An audit store is not
+		// optional equipment (M8).
+		return nil, fmt.Errorf("httpapi/south: a log ingester is required")
+	}
 
 	s := &Server{
 		identity:       o.Identity,
 		fleet:          o.Fleet,
 		decision:       o.Decision,
 		events:         o.Events,
+		logs:           o.Logs,
 		log:            o.Logger,
 		now:            o.Now,
 		maxBodyBytes:   o.MaxBodyBytes,
@@ -117,11 +131,10 @@ func New(o Options) (*Server, error) {
 
 // servedPaths are the contract endpoints THIS BUILD answers.
 //
-// The rest of the contract is mounted by the phase that implements it — log
-// ingest (0010) — and until then a request for one is a 404 with the
-// contract's envelope rather than a route that pretends. A stub answering a
-// plausible-looking empty policy would be worse than absent: the proxy would
-// act on it.
+// EVERY ENDPOINT THE CONTRACT DEFINES IS NOW ON THIS LIST. `enums_test.go`
+// holds the other half of that statement — it reads the paths out of the
+// vendored document — so an endpoint added upstream and not served here is a
+// missing route rather than a shorter list.
 var servedPaths = []string{
 	contract.PathAuthCert,
 	contract.PathAuthPassword,
@@ -130,6 +143,8 @@ var servedPaths = []string{
 	contract.PathHostKeyReport,
 	contract.PathCapabilitiesReport,
 	contract.PathUIDLease,
+	contract.PathLogsBatch,
+	contract.PathLogsPriority,
 	contract.PathProxyEvents,
 }
 
@@ -144,6 +159,13 @@ func (s *Server) build() {
 	mux.Handle("POST "+contract.PathHostKeyReport, s.endpoint(h.reportHostKey))
 	mux.Handle("POST "+contract.PathCapabilitiesReport, s.endpoint(h.reportCapabilities))
 	mux.Handle("POST "+contract.PathUIDLease, s.endpoint(h.leaseUIDs))
+
+	// The one 202. It is the contract's own distinction between the two log
+	// paths — a batch is ACCEPTED FOR STORAGE and a priority record is
+	// DURABLE — and it is worth keeping visible here rather than hiding
+	// inside a handler that returns a status.
+	mux.Handle("POST "+contract.PathLogsBatch, s.endpointStatus(http.StatusAccepted, h.ingestLogBatch))
+	mux.Handle("POST "+contract.PathLogsPriority, s.endpoint(h.ingestLogPriority))
 
 	// The one GET, and the one route that does not go through
 	// [Server.endpoint]: it answers a stream rather than a document, so it

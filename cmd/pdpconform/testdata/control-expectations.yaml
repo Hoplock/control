@@ -152,9 +152,20 @@ uids:
     range_min: 3000000
     range_max: 3012287
 
-# --- not served yet (0010) -------------------------------------------------
 logs:
-  read_url: "http://127.0.0.1:8080/debug/logs"
+  # A SEPARATE PORT, and not a `/v1` path. Nothing on `/v1` reads a record back
+  # — the contract says so, because a proxy writes logs and never queries them
+  # — so the priority ack's durability guarantee is observable only through a
+  # path this implementation exposes outside it (phase 0010). It is bound only
+  # because this file's server configures one: see audit.read_listener.
+  #
+  # `{record_id}` is substituted with the id the case just ingested, so the
+  # assertion is that THE RECORD was found rather than that a listing happened
+  # to mention it.
+  read_url: "http://127.0.0.1:8083/debug/logs/{record_id}"
+  # A credential of its own, because the surface is of a different kind: the
+  # proxy token ships logs, and this reads everybody's.
+  read_token: "pdpconform-dev-audit-token"
   batch_size: 3
 
 events:

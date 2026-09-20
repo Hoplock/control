@@ -184,8 +184,12 @@ type Decision struct {
 	DecidedAt time.Time
 }
 
-// AuditRecord is one row of the append-only audit store (M8). 0010 owns
-// ingest, the hash chain, and retention; the columns land here.
+// AuditRecord is one row of the append-only audit store (M8).
+//
+// `Body` is the record; everything beside it is a derived index. The chain
+// hash covers `Body`'s bytes exactly, so a verifier re-hashes the stored text
+// and consults nothing else — see migration 0006 for why that forces text
+// rather than jsonb.
 type AuditRecord struct {
 	// RecordID is assigned by the CLIENT and is the idempotency key: a
 	// proxy draining its disk buffer after an outage resends, and the
@@ -198,9 +202,8 @@ type AuditRecord struct {
 	Stream string
 	// ChainSeq is this record's position in its chain, starting at 1.
 	ChainSeq int64
-	// PrevHash and Hash are the chain fields. 0010 fills them; a record
-	// written before then carries empty strings, which verify as an
-	// unchained record rather than as a broken chain.
+	// PrevHash and Hash are the chain fields. PrevHash is empty at
+	// ChainSeq 1 and is the predecessor's Hash everywhere else.
 	PrevHash string
 	Hash     string
 	// SessionID ties records to a session, and is empty for records that
@@ -210,14 +213,97 @@ type AuditRecord struct {
 	// from the contract's log record.
 	Kind     string
 	Severity string
-	// Payload is the record body.
-	Payload json.RawMessage
+	// Body is the canonical JSON this server hashed, stored verbatim.
+	Body string
+	// Subject, Login, Target and Message are the record's own fields,
+	// lifted out of Body so they can be filtered on.
+	Subject string
+	Login   string
+	Target  string
+	Message string
+	// Event is the producer's own event name. It is what identifies the
+	// ephemeral-account mapping event and the device configuration-change
+	// event, both of which share a Kind with ordinary traffic.
+	Event string
+	// DecisionID joins to the decision that permitted the access (M4), and
+	// ProxyID names the enrolled proxy that ingested the record — which is
+	// where the tenant came from (M18), never the body.
+	DecisionID string
+	ProxyID    string
+	// Attributes is the record's whole attribute map.
+	Attributes map[string]string
+	// DeviceFields are the `device_field.<name>` values the account was
+	// provisioned with (proxy D13). Open, opaque, and never credential
+	// material.
+	DeviceFields map[string]string
+	// Enforcement is the rung IN FORCE, never the rung policy asked for.
+	Enforcement EnforcementFacts
+	// TargetAuthMethod is the ladder entry that was satisfied, and
+	// TargetAuthRung its 0-based index into the ladder. Nil means the
+	// record stated no rung, which is not the same fact as rung 0.
+	TargetAuthMethod string
+	TargetAuthRung   *int32
+	// AlgorithmProfile is the profile the proxy→target leg ran under.
+	// Anything but `default` is a deliberate weakening.
+	AlgorithmProfile string
+	// Grant is the external grant context the session ran under (M16).
+	Grant GrantContextFacts
+	// CaptureBytes and CaptureSHA256 describe the session capture stored in
+	// audit_captures, without carrying it.
+	CaptureBytes  int32
+	CaptureSHA256 string
 	// RecordedAt is when the client says the event happened; ReceivedAt is
 	// when this server stored it. They differ by however long the proxy was
 	// buffering, which is exactly the gap an auditor wants to see.
 	RecordedAt time.Time
 	ReceivedAt time.Time
 }
+
+// EnforcementFacts is the enforcement rung a session actually ran on.
+//
+// Verified is a POINTER because nil and false are different facts: nil is "the
+// record stated no rung", false is "a rung that this system verified nothing
+// about" — an attested one, where the target enforces something already. A
+// schema that collapsed them would turn an unverified claim into an apparent
+// guarantee, which is the liability the contract's attribution rule exists to
+// avoid.
+type EnforcementFacts struct {
+	Execution  string
+	Reach      string
+	Verified   *bool
+	AttestedBy string
+}
+
+// Stated reports whether the record said anything about a rung at all.
+func (e EnforcementFacts) Stated() bool {
+	return e.Execution != "" || e.Reach != "" || e.Verified != nil || e.AttestedBy != ""
+}
+
+// GrantContextFacts is why access was granted, as an external system asserted
+// it (M16). It is carried verbatim and never parsed into policy.
+type GrantContextFacts struct {
+	System      string
+	Reference   string
+	WindowStart *time.Time
+	WindowEnd   *time.Time
+	// AdditionalKind is `string`, `object`, or empty when there is none.
+	// Additional is the text that arrived, neither coerced into the other
+	// shape nor re-rendered.
+	AdditionalKind string
+	Additional     string
+}
+
+// Stated reports whether the record carried any grant context.
+func (g GrantContextFacts) Stated() bool {
+	return g.System != "" || g.Reference != "" || g.WindowStart != nil ||
+		g.WindowEnd != nil || g.AdditionalKind != ""
+}
+
+// AdditionalContextKind values for GrantContextFacts.AdditionalKind.
+const (
+	AdditionalContextString = "string"
+	AdditionalContextObject = "object"
+)
 
 // GrantOrigin says how a grant came to exist. All three are the same object to
 // the decision engine — that is the point of M10 — but "explain why" that

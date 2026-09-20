@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
@@ -47,7 +48,12 @@ const (
 
 // The day somebody mounts an admin route on the wrong mux is not the day
 // anyone notices, so the route table is asserted rather than sampled.
-func TestTheListenerServesExactlyTheContractPathsThisPhaseImplements(t *testing.T) {
+//
+// With log ingest (0010) this is now EVERY endpoint the contract defines.
+// `internal/contract`'s enum test reads the paths out of the vendored
+// document, so the two halves together mean an endpoint added upstream shows
+// up as a missing route rather than as a shorter list here.
+func TestTheListenerServesExactlyTheContractPaths(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 
@@ -59,6 +65,8 @@ func TestTheListenerServesExactlyTheContractPathsThisPhaseImplements(t *testing.
 		contract.PathCapabilitiesReport,
 		contract.PathHostKeyReport,
 		contract.PathUIDLease,
+		contract.PathLogsBatch,
+		contract.PathLogsPriority,
 		contract.PathProxyEvents,
 	}
 	got := h.server.Routes()
@@ -719,6 +727,7 @@ type harness struct {
 	store    *store.Store
 	fleet    *fleet.Registry
 	decision *decision.Service
+	ingest   *audit.Ingester
 	logs     *bytes.Buffer
 	clock    time.Time
 	secret   string
@@ -782,6 +791,12 @@ func newHarnessWith(t *testing.T, tweak func(*south.Options)) *harness {
 	}
 	h.decision = decisions
 
+	ingest, err := audit.New(audit.Options{Store: st, Logger: logger})
+	if err != nil {
+		t.Fatalf("audit.New: %v", err)
+	}
+	h.ingest = ingest
+
 	opts := south.Options{
 		Identity: identity.NewService(identity.NewStoreDirectory(st),
 			identity.WithMFAProvider(identity.ScriptedMFA{}),
@@ -790,6 +805,7 @@ func newHarnessWith(t *testing.T, tweak func(*south.Options)) *harness {
 		Fleet:    h.fleet,
 		Decision: decisions,
 		Events:   h.bus,
+		Logs:     ingest,
 		Logger:   logger,
 		Now:      h.now,
 	}
@@ -814,6 +830,7 @@ func newHarnessWithFleet(t *testing.T, keys identity.FleetKeys) *harness {
 		Fleet:    h.fleet,
 		Decision: h.decision,
 		Events:   h.bus,
+		Logs:     h.ingest,
 		Logger:   slog.New(slog.NewJSONHandler(h.logs, nil)),
 		Now:      h.now,
 	})

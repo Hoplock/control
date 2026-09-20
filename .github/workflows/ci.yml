@@ -252,6 +252,16 @@ jobs:
           events:
             publish_listener: 127.0.0.1:8082
             publish_token: pdpconform-dev-publish-token
+          # The record read-back path the suite reads the priority ack
+          # through, on its OWN port again. Nothing on `/v1` reads a record
+          # back — the contract says so, because a proxy writes logs and never
+          # queries them — so the durability guarantee the proxy acts on is
+          # observable only through a path the implementation exposes outside
+          # it (phase 0010). Deleted by 0014, which repoints the suite at the
+          # north-bound audit query route.
+          audit:
+            read_listener: 127.0.0.1:8083
+            read_token: pdpconform-dev-audit-token
           YAML
 
       # Migrations are an explicit command and never run on boot (PLAN §8), so
@@ -291,9 +301,10 @@ jobs:
             exit 1
           fi
 
-      # -only names the groups this build serves. It is not a way to make the
-      # run green: log ingest is 0010's, and that phase adds its group here in
-      # the PR that serves it.
+      # -only names the groups this build serves. With log ingest (0010) that
+      # is now EVERY group the suite has, so the filter is kept for the shape
+      # of the command rather than to exclude anything: a group added upstream
+      # has to be named here deliberately, which is the point.
       #
       # `authorize` covers four groups at once — the envelope, the absent-value
       # defaults, vocabulary negotiation and the device-field namespace — all
@@ -305,7 +316,7 @@ jobs:
             BASE_URL=http://127.0.0.1:8080 \
             TOKEN=default.pdpconform-dev-secret \
             EXPECT=cmd/pdpconform/testdata/control-expectations.yaml \
-            CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid,revocation'
+            CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid,logs,revocation'
 
       # The server's own log, so a failure above can be read against what it
       # thought it was doing.

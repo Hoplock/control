@@ -136,6 +136,43 @@ type Config struct {
 	UIDs      UIDConfig       `yaml:"uids"`
 	Decision  DecisionConfig  `yaml:"decision"`
 	Events    EventsConfig    `yaml:"events"`
+	Audit     AuditConfig     `yaml:"audit"`
+}
+
+// AuditConfig bounds log ingest and configures the record read-back path
+// (PLAN §7, M8).
+//
+// THE READ PATH IS NOT PART OF THE CONTRACT, and that is deliberate upstream:
+// a proxy writes logs and never queries them, so an operator read API on `/v1`
+// would be one every Hoplock Control implements and no proxy calls
+// (`Hoplock/proxy#56`). The priority ack's durability guarantee is therefore
+// observable only through a path this server exposes outside `/v1`, which is
+// what this listener is — and what the conformance suite takes as
+// `logs.read_url`.
+//
+// It follows `events.publish_listener` in every respect: OFF UNLESS
+// CONFIGURED, refusing to bind without a credential of its own, on a port of
+// its own because the south-bound listener serves the contract and nothing
+// else (M2). It is superseded and DELETED by 0014's north-bound audit query
+// route — `docs/PROTOCOL.md` §3 permits a debug endpoint only against a named
+// successor whose own prompt carries the removal, and 0014's does, file by
+// file.
+type AuditConfig struct {
+	// ReadListener is an OPTIONAL address for the record read-back path,
+	// host:port. EMPTY IS THE DEFAULT AND MEANS NOT BOUND.
+	ReadListener string `yaml:"read_listener"`
+	// ReadToken is the bearer token that listener requires. It is REQUIRED
+	// whenever ReadListener is set: the path reads audit records, which are
+	// the most sensitive documents this server holds.
+	ReadToken string `yaml:"read_token"`
+	// MaxBatchRecords, MaxRecordBytes and MaxCaptureBytes bound one ingest
+	// request. Zero takes the shipped default. They are configurable
+	// because a fleet's record sizes are a property of its estate, and
+	// bounded because an unbounded ingest path is a memory-exhaustion
+	// surface reachable by any enrolled proxy.
+	MaxBatchRecords int `yaml:"max_batch_records"`
+	MaxRecordBytes  int `yaml:"max_record_bytes"`
+	MaxCaptureBytes int `yaml:"max_capture_bytes"`
 }
 
 // EventsConfig is the revocation stream (PLAN M9, §4).
@@ -508,6 +545,9 @@ func (c *Config) Validate() error {
 	if err := c.Events.validate(c.Listeners); err != nil {
 		return err
 	}
+	if err := c.Audit.validate(c.Listeners, c.Events); err != nil {
+		return err
+	}
 	return c.UIDs.validate()
 }
 
@@ -559,6 +599,48 @@ func (e EventsConfig) validate(l ListenersConfig) error {
 		return &FieldError{
 			Field: "events.publish_listener",
 			Msg:   "must differ from listeners.south and listeners.north: the south-bound listener serves the contract and nothing else",
+		}
+	}
+	return nil
+}
+
+// validate reports the first audit setting that cannot be acted on.
+func (a AuditConfig) validate(l ListenersConfig, e EventsConfig) error {
+	for _, f := range []struct {
+		name  string
+		value int
+		unit  string
+	}{
+		{"audit.max_batch_records", a.MaxBatchRecords, "number of records"},
+		{"audit.max_record_bytes", a.MaxRecordBytes, "number of bytes"},
+		{"audit.max_capture_bytes", a.MaxCaptureBytes, "number of bytes"},
+	} {
+		if f.value < 0 {
+			return &FieldError{Field: f.name, Msg: "must be a positive " + f.unit + ", or absent for the default"}
+		}
+	}
+
+	if a.ReadListener == "" {
+		if a.ReadToken != "" {
+			return &FieldError{
+				Field: "audit.read_token",
+				Msg:   "is set but audit.read_listener is not, so nothing would ever read it",
+			}
+		}
+		return nil
+	}
+	if a.ReadToken == "" {
+		// The path serves audit records. A deployment that binds it
+		// without a credential has published its audit store.
+		return &FieldError{
+			Field: "audit.read_token",
+			Msg:   "is required when audit.read_listener is set",
+		}
+	}
+	if a.ReadListener == l.South || a.ReadListener == l.North || a.ReadListener == e.PublishListener {
+		return &FieldError{
+			Field: "audit.read_listener",
+			Msg:   "must differ from listeners.south, listeners.north and events.publish_listener: the south-bound listener serves the contract and nothing else, and a read path must not share a port with the kill switch",
 		}
 	}
 	return nil

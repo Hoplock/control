@@ -75,9 +75,15 @@ func TestOnlyTheMapperNamesAStatusCode(t *testing.T) {
 	// revocation stream's success status, written before the stream has
 	// anything to say because a subscription has to be open first; every
 	// refusal on that route is still decided before it and still goes
-	// through the mapper. None of the seven lets a handler choose what the
-	// caller is told on a failure.
-	allowed := []string{"statusFor", "withRecovery", "endpoint", "writeError", "Write", "withLogging", "openStream"}
+	// through the mapper.
+	//
+	// `build` is the ROUTER rather than a handler, and it is the one place a
+	// route's own success code is declared: `/v1/logs/batch` answers 202
+	// because the contract distinguishes "accepted for storage" from
+	// "durable", and naming that beside the route is what keeps it
+	// reviewable in one place. It still cannot choose what a caller is told
+	// on a FAILURE, which is what this test is really about.
+	allowed := []string{"statusFor", "withRecovery", "endpoint", "writeError", "Write", "withLogging", "openStream", "build"}
 
 	var offenders []string
 	forEachSelector(t, "http", func(sel, file, fn string, pos token.Position) {

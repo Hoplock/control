@@ -249,7 +249,7 @@ func TestDuplicateAuditRecordIsRejectedByTheDatabase(t *testing.T) {
 	// replaying a buffer with a re-serialised payload would send.
 	resend := rec
 	resend.ChainSeq = 2
-	resend.Payload = json.RawMessage(`{"resent":true}`)
+	resend.Body = `{"resent":true}`
 	err := st.Audit().Append(ctx, tenantA, resend)
 	if !store.IsConflict(err) {
 		t.Fatalf("resending record_id %q: %v, want ErrConflict", rec.RecordID, err)
@@ -268,8 +268,8 @@ func TestDuplicateAuditRecordIsRejectedByTheDatabase(t *testing.T) {
 	// insert through raw SQL, with no Go guard anywhere in the path, must
 	// fail too.
 	_, rawErr := st.Pool().Exec(ctx, `
-		INSERT INTO audit_records (tenant, record_id, stream, chain_seq, kind, severity, payload, recorded_at)
-		VALUES ($1, 'r-1', 'session', 9, 'k', 'info', '{}'::jsonb, now())`, tenantA)
+		INSERT INTO audit_records (tenant, record_id, stream, chain_seq, kind, severity, body, recorded_at)
+		VALUES ($1, 'r-1', 'session', 9, 'k', 'info', '{}', now())`, tenantA)
 	if rawErr == nil {
 		t.Error("a raw duplicate insert succeeded: record_id uniqueness is not enforced by the database")
 	}

@@ -157,6 +157,18 @@ appears in simulation like any other change.
 ### Audit query & operator actions
 - Query over 0010's store, including the showcase join (blocked commands on
   `env=prod`, with the access that permitted them).
+- **Retention, and the one rule it must not break.** Deleting a record out of
+  the middle of a hash chain leaves its successor pointing at a hash nothing
+  produces, which is indistinguishable from tampering — the mechanism cannot
+  tell a policy from an attacker and must not try. A retention job therefore
+  deletes a contiguous PREFIX of a stream and records the sequence it deleted
+  up to and the hash of the last record it removed, so verification resumes
+  from there rather than reporting a break (PLAN §7). Session captures are the
+  separate and easier case: they live in their own table and the record keeps
+  their digest, so deleting captures while keeping records leaves a chain that
+  still verifies and a store that can say the bytes are gone rather than
+  changed. `hoplock-control audit-verify` (0010) is what has to keep passing
+  across a retention pass, and a test should run it after one.
 - Operator actions: kill a session, kill everything for a subject, invalidate
   cached decisions (publishing through 0009), withdraw a **host-key** decision
   by the key stored on its record, and enroll/approve a proxy (0006). Each
@@ -199,9 +211,36 @@ a scoped API token, and seed that token the way `control-seed.yaml` seeds the
 south-bound one. The suite asserts nothing about the shape of that path — only
 that posting to it makes an event happen — so no suite code changes.
 
-**The log read path (0010).** The same treatment for whatever 0010 exposed for
-`logs.read_url`; read its learnings for what it named, and repoint that key at
-the audit query route this phase builds.
+**The log read path (0010).** Once the north-bound surface serves the audit
+query, delete:
+
+- `cmd/hoplock-control/auditread.go` and `cmd/hoplock-control/auditread_test.go`;
+- `AuditConfig.ReadListener` and `AuditConfig.ReadToken` in
+  `internal/config/config.go`, the two branches of `AuditConfig.validate` that
+  check them (the bounds beside them — `max_batch_records`, `max_record_bytes`,
+  `max_capture_bytes` — STAY: they are ingest limits and nothing supersedes
+  them), and the `read_listener`/`read_token` half of the `audit:` block in
+  `config.example.yaml`;
+- `startAuditReadListener` and its shutdown handling in
+  `cmd/hoplock-control/serve.go`, including the `auditReader` arm of the
+  listener error channel;
+- the `audit:` block in the `conform-self` job's `ci-config.yaml`
+  (`.github/workflows/ci.yml`) — the two read keys only.
+
+Then repoint `logs.read_url` and `logs.read_token` in
+`cmd/pdpconform/testdata/control-expectations.yaml` at the north-bound record
+route and a scoped API token, and seed that token the way `control-seed.yaml`
+seeds the south-bound one. **Keep the `{record_id}` placeholder**: the suite
+substitutes the id it just ingested, which is what makes the durability
+assertion exact rather than a listing that happens to mention the id
+(`cmd/pdpconform/checks_logs.go`). No suite code changes.
+
+The north-bound replacement must serve a record BY ID, because that is what the
+suite's substitution asks for. `audit.Reader.Get` is the call; the rendering in
+`auditread.go` (`auditRecordView`) is a starting point rather than a
+requirement, and it carries the chain fields deliberately — a reader who can
+see the position and the hash can check a record against a chain they already
+hold without asking this server to vouch for it.
 
 Note the asymmetry deliberately: `hoplock-control seed` is **not** on this list.
 It is a command rather than a bound endpoint — nothing serves it, so it cannot
@@ -328,11 +367,14 @@ phases earlier, not discovered there.
   scoped token. A run of the suite that still passes against the old paths has
   proven nothing about the new ones.
 
-  Two things that look like exceptions and are not. `cmd/pdpconform/testdata/
-  mock-expectations.yaml` names `/debug/revoke` on **the proxy repo's**
-  `cmd/mock-control`: that is the mock's own hook, it stays, and it is not this
-  repository's to delete. `hoplock-control seed` is a command rather than a
-  bound route, so nothing serves it — see above.
+  Three things that look like exceptions and are not.
+  `cmd/pdpconform/testdata/mock-expectations.yaml` names `/debug/revoke` and
+  `/debug/logs` on **the proxy repo's** `cmd/mock-control`: those are the
+  mock's own hooks, they stay, and they are not this repository's to delete.
+  `hoplock-control seed` is a command rather than a bound route, so nothing
+  serves it — see above. And `hoplock-control audit-verify` (0010) is also a
+  command rather than a bound route: it is the verifier an operator runs and a
+  customer is handed, it is not a debug path, and it stays.
 - **A publication that cannot reach a host-key decision says so on the
   response.** Invalidating by subject reports that host-key decisions were not
   covered; invalidating by key, or a resync, reports that they were. Assert
