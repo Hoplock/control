@@ -4,7 +4,8 @@
 - **What shipped:** `GET /v1/proxies/{proxy_id}/events` — the NDJSON stream,
   `internal/revoke` (bus, replay, resync, heartbeats, backpressure), 0006's
   liveness interface, the operator publish surface, and the cache hints this
-  stream turns on. **36/36 conformance against this server**, 39/39 vs the mock.
+  stream turns on. Conformance **33/33 against this server** (the groups it
+  serves) and **40/40 against the proxy mock** (every group).
 - **Key files:** `internal/revoke/{bus,subscribe,event,operator}.go`,
   `internal/httpapi/south/events.go`, `internal/fleet/hostkey.go`,
   `cmd/hoplock-control/publish.go`, `cmd/pdpconform/checks_events.go`, migration
