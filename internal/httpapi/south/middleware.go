@@ -134,6 +134,15 @@ func (w *statusRecorder) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Unwrap is what lets [http.ResponseController] reach the real writer through
+// this wrapper.
+//
+// Without it, a `Flush` or a write deadline on the revocation stream resolves
+// to "not supported" and the subscription ends on its first line — the access
+// log would have silently turned the fleet's only inbound channel into a
+// single event per connection.
+func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // withLogging writes one line per request.
 //
 // WHAT IT DOES NOT LOG IS THE POINT. No body, no header values, no query
@@ -196,9 +205,24 @@ func (s *Server) withRecovery(next http.Handler) http.Handler {
 }
 
 // withLimits bounds the body and the time a request may take.
+//
+// THE REVOCATION STREAM IS EXEMPT FROM THE DEADLINE AND FROM NOTHING ELSE. It
+// is a subscription the proxy holds open for as long as it is running, so a
+// request timeout would cut it every ten seconds and turn the fleet's only
+// inbound channel into a reconnect storm — which is the shape of an outage
+// rather than of a bound. What it keeps is the body limit (a GET carries none)
+// and the whole chain above and below it: the correlation id, the access log,
+// panic recovery, and the proxy credential. The bound that replaces the
+// deadline is per-write and lives on the handler, because what needs bounding
+// on a stream is a peer that has stopped reading, not one that is idle.
 func (s *Server) withLimits(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, s.maxBodyBytes)
+
+		if isEventStream(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
 		defer cancel()

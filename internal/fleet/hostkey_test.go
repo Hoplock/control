@@ -4,7 +4,9 @@
 package fleet_test
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/store"
@@ -141,21 +143,142 @@ func TestTheHostKeyRecordIsKeyedByPortAsWellAsHost(t *testing.T) {
 	}
 }
 
-// THIS PHASE ISSUES NO CACHE HINT, and the difference between "we did not get
-// to it" and "we decided not to" is this assertion.
+// The host-key cache hint, and the three conditions that withhold one.
 //
-// M9: never issue a hint the revocation stream cannot withdraw. The stream is
-// 0009's, so a hint issued now would be an access grant with no revocation
-// path at all — strictly worse than the reporting traffic it saves. Absent
-// means what every server did before the field existed, which the conformance
-// suite grades as a pass.
-func TestNoHostKeyCacheHintIsIssuedUntilTheStreamCanWithdrawIt(t *testing.T) {
+// M9 is the rule that kept this off until now — never issue a hint the
+// revocation stream cannot withdraw — and 0009 serves the stream, so the
+// answer flips. What does not flip is the rule: the gate is still
+// [fleet.Registry.EventStreamHealthy], still taken inside the one issue path
+// both responses go through, and still the reason a proxy with no
+// subscription is answered without a hint.
+func TestTheHostKeyCacheHintIsIssuedOnlyWhenItCanBeWithdrawn(t *testing.T) {
 	t.Parallel()
-	st := storetest.New(t)
-	if fleet.New(st).HostKeyCacheHint() {
-		t.Fatal("this phase issues a host-key cache hint, but does not serve the revocation stream that " +
-			"would withdraw one (M9). Before turning it on: enforce the liveness read on this path, " +
-			"hint only an already-known accepted key, and store the issued key on the host-key record " +
-			"so 0009 can publish it — a subject-scoped invalidation cannot reach a host-key decision.")
+
+	const (
+		target      = "hinted.example.com"
+		port        = int32(22)
+		fingerprint = "SHA256:hinted"
+	)
+	report := fleet.HostKeyReport{
+		Hostname: target, Port: port, Fingerprint: fingerprint, ReportedBy: "proxy-1",
 	}
+
+	if !fleet.New(storetest.New(t)).HostKeyCacheHint() {
+		t.Fatal("this server no longer issues a host-key cache hint; if that is deliberate, " +
+			"say so in Registry.HostKeyCacheHint and change this test with it")
+	}
+
+	t.Run("no subscription, no hint", func(t *testing.T) {
+		t.Parallel()
+		// Nothing wired: there is no stream a withdrawal could travel
+		// over, so a hint would be a grant with no revocation path.
+		st := storetest.New(t)
+		reg := fleet.New(st)
+		ctx := t.Context()
+
+		if _, err := reg.ReportHostKey(ctx, uidTenant, report); err != nil {
+			t.Fatalf("first report: %v", err)
+		}
+		got, err := reg.ReportHostKey(ctx, uidTenant, report)
+		if err != nil {
+			t.Fatalf("second report: %v", err)
+		}
+		if !got.Known {
+			t.Fatal("a key reported a moment ago answered known: false")
+		}
+		if got.Cache != nil {
+			t.Fatalf("cache = %+v, want none: proxy-1 holds no event subscription", got.Cache)
+		}
+	})
+
+	t.Run("a first sighting is never hinted", func(t *testing.T) {
+		t.Parallel()
+		st, reg, c := newRegistry(t, fleet.WithSubscriptionState(subs{"proxy-1": time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)}))
+		_, _ = st, c
+
+		got, err := reg.ReportHostKey(t.Context(), uidTenant, report)
+		if err != nil {
+			t.Fatalf("report: %v", err)
+		}
+		if got.Cache != nil {
+			t.Fatalf("cache = %+v, want none: reusing a first sighting replays trust-on-first-use "+
+				"into the audit log for every later connection", got.Cache)
+		}
+	})
+
+	t.Run("a known accepted key on a live stream is hinted, and the key is on the record", func(t *testing.T) {
+		t.Parallel()
+		st, reg, _ := newRegistry(t, fleet.WithSubscriptionState(subs{"proxy-1": time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)}))
+		ctx := t.Context()
+
+		if _, err := reg.ReportHostKey(ctx, uidTenant, report); err != nil {
+			t.Fatalf("first report: %v", err)
+		}
+		got, err := reg.ReportHostKey(ctx, uidTenant, report)
+		if err != nil {
+			t.Fatalf("second report: %v", err)
+		}
+		if !got.Cache.Cacheable() {
+			t.Fatalf("cache = %+v, want a usable hint", got.Cache)
+		}
+
+		// THE KEY ON THE WIRE AND THE KEY ON THE RECORD ARE ONE VALUE.
+		// A withdrawal publishes what the record holds, so a record
+		// holding anything else is a decision that cannot be withdrawn.
+		stored, err := reg.HostKeyCacheKeyOf(ctx, uidTenant, target, port, fingerprint)
+		if err != nil {
+			t.Fatalf("HostKeyCacheKeyOf: %v", err)
+		}
+		if stored != got.Cache.Key {
+			t.Fatalf("the record holds %q and the response issued %q", stored, got.Cache.Key)
+		}
+
+		keys, err := st.TargetHostKeys().ListForTarget(ctx, uidTenant, target, port)
+		if err != nil || len(keys) != 1 {
+			t.Fatalf("ListForTarget = %v, %v", keys, err)
+		}
+		if keys[0].CacheKey != stored {
+			t.Fatalf("the stored key is %q, want %q", keys[0].CacheKey, stored)
+		}
+	})
+
+	t.Run("the scope is the proxy's own lookup and nothing wider", func(t *testing.T) {
+		t.Parallel()
+		// The proxy keys host-key reuse on target, port and fingerprint.
+		// A key that varied by anything else would be an entry the proxy
+		// never looks up; one that varied by less would be two decisions
+		// sharing an entry.
+		base := fleet.HostKeyCacheKey(uidTenant, target, port, fingerprint)
+		for _, tc := range []struct {
+			name string
+			key  string
+		}{
+			{"a different target", fleet.HostKeyCacheKey(uidTenant, "other.example.com", port, fingerprint)},
+			{"a different port", fleet.HostKeyCacheKey(uidTenant, target, 2222, fingerprint)},
+			{"a different fingerprint", fleet.HostKeyCacheKey(uidTenant, target, port, "SHA256:other")},
+			{"a different tenant", fleet.HostKeyCacheKey(store.Tenant("other"), target, port, fingerprint)},
+		} {
+			if tc.key == base {
+				t.Errorf("%s produces the same cache key, so two decisions share one entry", tc.name)
+			}
+		}
+		// And the same question always produces the same answer: two
+		// Control nodes must derive one key, or the fleet holds two
+		// entries for one decision and a withdrawal drops one of them.
+		if again := fleet.HostKeyCacheKey(uidTenant, target, port, fingerprint); again != base {
+			t.Fatalf("the derivation is not stable: %q then %q", base, again)
+		}
+	})
+
+	t.Run("a decision nobody recorded cannot be withdrawn by key", func(t *testing.T) {
+		t.Parallel()
+		// Deriving one here would always succeed and would match nothing
+		// any proxy holds, so the withdrawal would report success having
+		// dropped nothing.
+		_, reg, _ := newRegistry(t)
+		_, err := reg.HostKeyCacheKeyOf(t.Context(), uidTenant, "unreported.example.com", 22, "SHA256:nothing")
+		if !errors.Is(err, fleet.ErrNoHostKeyRecord) {
+			t.Fatalf("HostKeyCacheKeyOf on an unknown decision = %v, want ErrNoHostKeyRecord", err)
+		}
+	})
 }

@@ -167,6 +167,17 @@ type TargetHostKey struct {
 	LastSeenAt      time.Time
 	FirstReportedBy string
 	LastReportedBy  string
+	// CacheKey is the opaque key this server issues for the decision about
+	// this exact (hostname, port, fingerprint), and the key an operator
+	// publishes to withdraw it.
+	//
+	// It is STORED rather than recomputed on demand because what a
+	// withdrawal has to name is the key that was issued: a key recomputed
+	// by a later revision of the scope would match nothing any proxy
+	// holds, and the withdrawal would report success having dropped
+	// nothing (PLAN §5.4, migration 0005). Empty means no key was recorded
+	// for this sighting, which is what a row written before 0005 has.
+	CacheKey string
 }
 
 // UIDLease is the audit record of one granted block.

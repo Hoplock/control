@@ -146,6 +146,25 @@ decision.
 
   What is *in* the south-bound token — and why it is not merely an opaque
   string — is **M22**.
+
+  **The rule is about surfaces, not about a count of ports.** Until the
+  north-bound API exists (0014) there is one operator action this server has to
+  be able to take — publishing a revocation event — because gap recovery is not
+  gradeable without it and the contract states outright that nothing on `/v1`
+  publishes one (§4). Phase 0009 serves it from a listener of its own
+  (`events.publish_listener`), **off unless configured** and refusing to bind
+  without a credential of its own. It is not a third surface: it is the
+  north-bound surface's temporary front door, and it is a separate port rather
+  than the north-bound one because 0014 owns that listener's credential model —
+  putting a bearer path on it now would pre-empt that design and leave the port
+  half-real. What M2 forbids still holds without exception: it never shares the
+  south-bound port, chain, or credential, and it publishes only.
+
+  **0014 deletes it rather than folding it in.** A finished product has no debug
+  endpoint, so the rule that let this one exist at all (`docs/PROTOCOL.md` §3)
+  required a named successor whose own prompt carries the removal — and 0014's
+  does, file by file, with an acceptance criterion. A supersession that leaves
+  the old path bound has superseded nothing.
 - **M3 — Policy is data compiled into a decision program, not an embedded
   general-purpose language.** The policy input vocabulary is closed and known:
   subject, claims, groups, device posture, source network, time, target labels,
@@ -232,15 +251,24 @@ decision.
   job, that records what it deleted.
 - **M9 — Revocation is fan-out with replay, and it is the kill switch.** The
   proxy holds one long-lived outbound NDJSON subscription (proxy §6.4). This
-  server must fan an operator action out to every proxy that needs it, survive
-  a subscriber reconnecting with a `last_event_id`, and answer `resync` when it
-  cannot replay. In-process broker for the prototype behind an interface, because
-  multi-node deployment turns this into the one component that genuinely needs
-  shared state.
+  server fans an operator action out to every proxy that needs it, survives a
+  subscriber reconnecting with a `last_event_id`, and answers `resync` when it
+  cannot replay. In-process broker for the prototype (`internal/revoke`),
+  because multi-node deployment turns this into the one component that
+  genuinely needs shared state: the event ids are a counter in memory and the
+  replay buffer is a ring in memory, so an id minted by an earlier process is
+  answered with `resync` rather than believed.
 
-  Corollary the contract already states and this server must honour: **a server
+  **A slow subscriber is dropped, not waited for.** Blocking the publisher
+  would make one stalled proxy an outage for the fleet and growing its queue
+  would make it an out-of-memory; a dropped subscriber reconnects into replay
+  or `resync`, so it costs that proxy its cache and nothing else.
+
+  Corollary the contract already states and this server honours: **a server
   that issues cache hints must serve this stream.** Issuing a hint without a
-  working revocation path is issuing an access grant that cannot be withdrawn.
+  working revocation path is issuing an access grant that cannot be withdrawn —
+  which is why the hint gate reads live subscription state and why, before this
+  stream existed, both responses that carry a hint answered without one.
 - **M10 — JIT grants are policy inputs, not a bolt-on.** "Developer requests 30
   minutes on prod, on-call approves, access disappears afterwards" is modelled as
   a first-class **grant** object — subject, scope, expiry, approvers, and the
@@ -961,8 +989,9 @@ Six obligations are easy to miss and are graded by the conformance suite:
   which gap recovery needs in order to be gradeable at all. Both guarantees are
   therefore observable only through paths **this server** exposes outside `/v1`,
   and the conformance suite takes them as inputs — `logs.read_url` (phase 0010)
-  and `events.publish_url` (phase 0009). Neither is a licence to add the
-  endpoint to `/v1`.
+  and `events.publish_url`, which 0009 serves from a listener of its own that is
+  bound only when `events.publish_listener` is configured and credentialled.
+  Neither is a licence to add the endpoint to `/v1`.
 - **Answer within the vocabulary the proxy declared.** Every policy field is
   additive within a vocabulary and carries a documented absent-value default, and
   in exchange the proxy **fails a session closed on an authorize field it does not
@@ -981,8 +1010,8 @@ Six obligations are easy to miss and are graded by the conformance suite:
 
   **The current vocabulary is `4`**, exported upstream as
   `control.PolicyVersion`: the two enforcement axes and the session bounds
-  (§5.2). The vendored document is `4.0.0`; upstream is at `4.1.0`
-  (`Hoplock/proxy#56`, merged) and phase 0009 re-vendors. That the document moved
+  (§5.2). The vendored document is `4.1.0` (`Hoplock/proxy#56`, vendored by
+  phase 0009) and the vocabulary stands still at `4`. That the document moved
   while the vocabulary did not is the normal case rather than an anomaly — the
   number governs `/v1/authorize` and nothing else, and `#56` added a field to the
   event stream. Read both numbers out of `contract/control.yaml`, never from this
@@ -1152,8 +1181,16 @@ Six obligations are easy to miss and are graded by the conformance suite:
   advertised interval. Sooner always, later never, the same rule as
   `cache.ttl_seconds` and `report_after_seconds`; the inverse would let a broken
   or hostile server silence itself indefinitely by announcing that it intends
-  to, which is §6.4's fail-closed rule turned upside down. Phase 0009 re-vendors
-  the contract and implements both halves.
+  to, which is §6.4's fail-closed rule turned upside down.
+
+  **One number, both halves.** The interval this server keeps and the interval
+  it advertises are configured as one value (`events.heartbeat_interval`,
+  default 5s), because two numbers that can drift apart will and the drift is
+  invisible until a fleet is already reconnecting; the advertisement is that
+  value rounded **up** to the whole second, so this server never claims an
+  interval it does not keep. A value whose advertisement would exceed the
+  ceiling is refused when the configuration loads rather than clamped: the
+  process does not start.
 - **A chained hop is a caller, and this server is what makes chaining work.**
   Proxy phase 0008 (`Hoplock/proxy#6`, merged) turned multi-hop on, and it added
   no field to the contract: both halves are behaviour this server owes.
@@ -1207,8 +1244,10 @@ stages and shows as drift.
 
 What is built here in the meantime is everything below the wire, and the gap is
 **visible rather than assumed**: the desired version is durable, the composed
-document is stored, the publisher seam (`fleet.ConfigPublisher`, which 0009
-implements) is a no-op until the event exists, and a proxy that has not caught up
+document is stored, the publisher seam (`fleet.ConfigPublisher`) is a no-op
+until the event exists — 0009 built the stream it would travel on and left this
+seam unwired, because the missing piece is an event TYPE the contract does not
+enumerate rather than a channel to carry it — and a proxy that has not caught up
 shows as drift in the fleet view and in the API rather than being taken for
 current. Inventing the event type locally is the failure M1 exists to prevent —
 it would make CI green here while the two components silently disagreed about
@@ -1418,17 +1457,19 @@ named, and clamps the lifetime downward to the server's ceiling. It lives in
 this proxy right now" would be two places to get M9 wrong, and they would not
 fail together.
 
-**What the gate answers today is no, on both responses, and that is the
-behaviour rather than a placeholder.** Liveness is a live event subscription,
-which is 0009's to serve: with no subscription source wired there is no stream
-that could carry a withdrawal, so `/v1/authorize` issues no hint even where a
-rule authors one, and `/v1/hostkeys/report` issues none either
-(`fleet.Registry.HostKeyCacheHint` states that as a function so a test asserts
-it). Absent means what every server did before the field existed — the proxy
-re-asks — so it is a correct implementation rather than a gap. **0009 is the
-phase that turns hints on**, by wiring the stream; the authorize path then flows
-through the gate it already calls, and the host-key path owes the same call
-rather than a second copy of it.
+**What the gate answers depends on the stream, and that is the whole of the M9
+rule.** Liveness is a live event subscription (`internal/revoke` serves it and
+implements `fleet.SubscriptionState`), so a proxy that holds one is hinted and a
+proxy that does not is answered without a hint — on both responses, through the
+one function. Absent means what every server did before the field existed: the
+proxy re-asks. Before 0009 wired the stream the answer was *no* on both, which
+was the behaviour rather than a placeholder; 0009 turned hints on by supplying
+the subscription source, not by changing the rule in front of them.
+
+The host-key lifetime is this server's own (`fleet.host_key_cache_ttl`, default
+5m, clamped downward by `decision.max_cache_ttl`), because a host-key answer has
+no rule to author one; an authorize lifetime comes from the rule that decided
+it.
 
 What is specific to the host-key response is the shape the proxy
 reuses it on, and three consequences this server owns:
@@ -1449,8 +1490,12 @@ reuses it on, and three consequences this server owns:
 - **A subject-scoped `cache_invalidate` does not drop a host-key decision.** A
   host-key decision is not made for a subject, so `subject` cannot match one.
   Withdrawing a host-key decision means publishing that decision's own `key`, or
-  `resync` — which is why the key this server issued has to be stored with the
-  host-key record (0007) and reachable from the operator surface (0009).
+  `resync`, so the key is stored on the host-key record (`target_host_keys.
+  cache_key`, migration 0005) and resolved from it rather than re-derived — a
+  key recomputed under a later revision of the scope would match nothing any
+  proxy holds, and the withdrawal would report success having dropped nothing.
+  The operator surface therefore says on every publication **what it covered**,
+  because a revocation that silently misses is worse than one that refuses.
 
 ---
 

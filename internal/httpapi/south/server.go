@@ -27,6 +27,7 @@ type Server struct {
 	identity *identity.Service
 	fleet    *fleet.Registry
 	decision *decision.Service
+	events   EventStream
 	log      *slog.Logger
 	now      func() time.Time
 
@@ -47,6 +48,9 @@ type Options struct {
 	// Decision answers `/v1/authorize`: the endpoint the whole system
 	// turns on (0008).
 	Decision *decision.Service
+	// Events is the revocation broker this listener streams from
+	// (`internal/revoke`, M9).
+	Events EventStream
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -75,11 +79,21 @@ func New(o Options) (*Server, error) {
 		// holds every handshake in the estate open to answer `5xx`.
 		return nil, fmt.Errorf("httpapi/south: a decision service is required")
 	}
+	if o.Events == nil {
+		// The same rule again, and this one is the contract's own: A
+		// SERVER THAT ISSUES CACHE HINTS MUST SERVE THIS STREAM (M9).
+		// The hint gate is above both responses that carry one and it
+		// reads the subscription state this broker owns, so a listener
+		// built without it would not merely lack a route — it would
+		// answer every authorize with no hint and no way to say why.
+		return nil, fmt.Errorf("httpapi/south: an event stream is required")
+	}
 
 	s := &Server{
 		identity:       o.Identity,
 		fleet:          o.Fleet,
 		decision:       o.Decision,
+		events:         o.Events,
 		log:            o.Logger,
 		now:            o.Now,
 		maxBodyBytes:   o.MaxBodyBytes,
@@ -103,11 +117,11 @@ func New(o Options) (*Server, error) {
 
 // servedPaths are the contract endpoints THIS BUILD answers.
 //
-// The rest of the contract is mounted by the phase that implements it — the
-// event stream (0009), log ingest (0010) — and until then a request for one is
-// a 404 with the contract's envelope rather than a route that pretends. A stub
-// answering a plausible-looking empty policy would be worse than absent: the
-// proxy would act on it.
+// The rest of the contract is mounted by the phase that implements it — log
+// ingest (0010) — and until then a request for one is a 404 with the
+// contract's envelope rather than a route that pretends. A stub answering a
+// plausible-looking empty policy would be worse than absent: the proxy would
+// act on it.
 var servedPaths = []string{
 	contract.PathAuthCert,
 	contract.PathAuthPassword,
@@ -116,6 +130,7 @@ var servedPaths = []string{
 	contract.PathHostKeyReport,
 	contract.PathCapabilitiesReport,
 	contract.PathUIDLease,
+	contract.PathProxyEvents,
 }
 
 func (s *Server) build() {
@@ -129,6 +144,11 @@ func (s *Server) build() {
 	mux.Handle("POST "+contract.PathHostKeyReport, s.endpoint(h.reportHostKey))
 	mux.Handle("POST "+contract.PathCapabilitiesReport, s.endpoint(h.reportCapabilities))
 	mux.Handle("POST "+contract.PathUIDLease, s.endpoint(h.leaseUIDs))
+
+	// The one GET, and the one route that does not go through
+	// [Server.endpoint]: it answers a stream rather than a document, so it
+	// writes its own status line and its own content type (see events.go).
+	mux.Handle("GET "+contract.PathProxyEvents, http.HandlerFunc(h.subscribeEvents))
 
 	// The catch-all answers the contract's envelope for anything else,
 	// INCLUDING a north-bound path somebody pointed at the wrong port. It

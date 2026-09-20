@@ -67,13 +67,17 @@ func TestOnlyOneFunctionCanProduceA401(t *testing.T) {
 func TestOnlyTheMapperNamesAStatusCode(t *testing.T) {
 	t.Parallel()
 
-	// Four of these WRITE an answer and two only READ one. The middleware
+	// Five of these WRITE an answer and two only READ one. The middleware
 	// produces the two answers no handler can — the recovered panic and the
 	// 200 on the success path — while `Write` records the status net/http
 	// implies for an unheadered body and `withLogging` compares the recorded
-	// status against a threshold to pick a log level. None of the six lets a
-	// handler choose what the caller is told.
-	allowed := []string{"statusFor", "withRecovery", "endpoint", "writeError", "Write", "withLogging"}
+	// status against a threshold to pick a log level. `openStream` is the
+	// revocation stream's success status, written before the stream has
+	// anything to say because a subscription has to be open first; every
+	// refusal on that route is still decided before it and still goes
+	// through the mapper. None of the seven lets a handler choose what the
+	// caller is told on a failure.
+	allowed := []string{"statusFor", "withRecovery", "endpoint", "writeError", "Write", "withLogging", "openStream"}
 
 	var offenders []string
 	forEachSelector(t, "http", func(sel, file, fn string, pos token.Position) {

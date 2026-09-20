@@ -1,7 +1,10 @@
 # 0014 — North-bound API & policy lifecycle
 
 ## Read first
-- `docs/PROTOCOL.md` — session workflow.
+- `docs/PROTOCOL.md` — session workflow, and in **§3** the rule that a debug
+  endpoint may not outlive the phase that needed it. **This phase is limb 4 of
+  that rule for two debug paths** (below): the removals are obligations here,
+  not suggestions.
 - `docs/PLAN.md` — especially **§2 (M2, M3, M4, M9, M15, M17)**, §5 (the bundle
   and the explanation, including §5.2's enforcement rungs and session deadline,
   and §5.4's cache-hint invariants), §7 (audit query).
@@ -155,8 +158,55 @@ appears in simulation like any other change.
 - Query over 0010's store, including the showcase join (blocked commands on
   `env=prod`, with the access that permitted them).
 - Operator actions: kill a session, kill everything for a subject, invalidate
-  cached decisions (publishing through 0009), and enroll/approve a proxy
-  (0006). Each requires the right role and each is audited.
+  cached decisions (publishing through 0009), withdraw a **host-key** decision
+  by the key stored on its record, and enroll/approve a proxy (0006). Each
+  requires the right role and each is audited.
+
+  **Publish through `revoke.Operator` rather than beside it** (0009). It already
+  validates what the contract requires — exactly one selector, a `session_kill`
+  reason that is safe to disclose and never empty — and its `Receipt` reports
+  `CoversHostKeyDecisions`. **That field has to reach the operator.** A
+  subject-scoped `cache_invalidate` cannot match a host-key decision, because
+  the proxy keys one on target, port and fingerprint rather than on a person
+  (PLAN §5.4); an operator who publishes "invalidate everything for Alice" and
+  is not told that a target's host key was untouched has been misled by this
+  server, and a revocation that silently misses is worse than one that refuses.
+
+### Delete the two debug paths this phase supersedes
+
+`docs/PROTOCOL.md` §3 lets a phase add a debug endpoint only when a named
+production API will supersede it and **that phase's prompt carries the
+removal**. This is that phase, for both of them. Neither removal is optional and
+neither is a follow-up: the production route and the deletion land in the same
+PR, because a supersession that leaves the old path bound has superseded
+nothing.
+
+**The revocation publish path (0009).** Once the north-bound surface publishes
+operator events, delete:
+
+- `cmd/hoplock-control/publish.go` and `cmd/hoplock-control/publish_test.go`;
+- `EventsConfig.PublishListener` and `EventsConfig.PublishToken` in
+  `internal/config/config.go`, their validation in `EventsConfig.validate`, and
+  their block in `config.example.yaml`;
+- `startPublishListener` and its shutdown handling in
+  `cmd/hoplock-control/serve.go`;
+- the `events:` block in the `conform-self` job's `ci-config.yaml`
+  (`.github/workflows/ci.yml`).
+
+Then repoint `events.publish_url` and `events.publish_token` in
+`cmd/pdpconform/testdata/control-expectations.yaml` at the north-bound route and
+a scoped API token, and seed that token the way `control-seed.yaml` seeds the
+south-bound one. The suite asserts nothing about the shape of that path — only
+that posting to it makes an event happen — so no suite code changes.
+
+**The log read path (0010).** The same treatment for whatever 0010 exposed for
+`logs.read_url`; read its learnings for what it named, and repoint that key at
+the audit query route this phase builds.
+
+Note the asymmetry deliberately: `hoplock-control seed` is **not** on this list.
+It is a command rather than a bound endpoint — nothing serves it, so it cannot
+be reached — and 0007 already records that it becomes a thin client of this API
+or goes away. Decide which, and say which in your learnings.
 
 ### What is extending this deployment (M15)
 Expose the sealed extension registry read-only: one entry per `ext` point, with
@@ -270,6 +320,24 @@ phases earlier, not discovered there.
   a route added later without isolation must fail this test.
 - With a single tenant configured, the API's shape and responses are identical
   to those a pre-M18 client expects.
+- **Both debug paths are gone, and a test says so.** No Go file under `cmd/` or
+  `internal/` binds a `/debug/` route; the config keys named above no longer
+  parse (a document setting `events.publish_listener` is refused as an unknown
+  key, which the strict loader already gives you); and the conformance suite
+  reaches `events.publish_url` and `logs.read_url` at north-bound routes under a
+  scoped token. A run of the suite that still passes against the old paths has
+  proven nothing about the new ones.
+
+  Two things that look like exceptions and are not. `cmd/pdpconform/testdata/
+  mock-expectations.yaml` names `/debug/revoke` on **the proxy repo's**
+  `cmd/mock-control`: that is the mock's own hook, it stays, and it is not this
+  repository's to delete. `hoplock-control seed` is a command rather than a
+  bound route, so nothing serves it — see above.
+- **A publication that cannot reach a host-key decision says so on the
+  response.** Invalidating by subject reports that host-key decisions were not
+  covered; invalidating by key, or a resync, reports that they were. Assert
+  both, because the failure is an operator believing a withdrawal covered
+  something it could not touch.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add

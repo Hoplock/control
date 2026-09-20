@@ -89,6 +89,33 @@ const (
 	// DefaultMaxCacheTTL is the ceiling on a cache hint's lifetime (PLAN
 	// §5.4). It clamps downward only.
 	DefaultMaxCacheTTL = 5 * time.Minute
+	// DefaultHostKeyCacheTTL is how long a host-key decision may be reused.
+	DefaultHostKeyCacheTTL = 5 * time.Minute
+)
+
+// The revocation stream's defaults (PLAN M9, §4).
+//
+// Stated here for the same reason as the rest, and one of them is not this
+// server's to choose: MaxHeartbeatIntervalSeconds is the CONTRACT's ceiling,
+// so that a configuration past it is refused when the file is loaded rather
+// than discovered by a fleet that has stopped trusting its caches.
+const (
+	// DefaultHeartbeatInterval is how often a subscription is told the
+	// stream is alive. It is also what the stream ADVERTISES, because the
+	// interval kept and the interval claimed are one number (PLAN §4).
+	DefaultHeartbeatInterval = 5 * time.Second
+	// MaxHeartbeatIntervalSeconds is the contract's ceiling, in seconds.
+	// Two consecutive intervals at it still fit inside the proxy's 20s
+	// reconnect timeout, so one lost heartbeat is not a dead stream. It
+	// matches contract.MaxHeartbeatIntervalSeconds and a test asserts the
+	// two agree.
+	MaxHeartbeatIntervalSeconds = 10
+	// DefaultReplayBuffer is how many published events are kept for a
+	// reconnecting subscriber.
+	DefaultReplayBuffer = 1024
+	// DefaultSubscriberQueue is how far one subscriber may fall behind
+	// before it is dropped and left to reconnect.
+	DefaultSubscriberQueue = 256
 )
 
 // logLevels is the set LogConfig.Level accepts, ordered from most to least
@@ -108,6 +135,50 @@ type Config struct {
 	MFA       MFAConfig       `yaml:"mfa"`
 	UIDs      UIDConfig       `yaml:"uids"`
 	Decision  DecisionConfig  `yaml:"decision"`
+	Events    EventsConfig    `yaml:"events"`
+}
+
+// EventsConfig is the revocation stream (PLAN M9, §4).
+//
+// ONE NUMBER, TWO OBLIGATIONS. `heartbeat_interval` is both the interval this
+// server keeps and the interval it advertises on the stream — they are not
+// configured separately, because two numbers that can drift apart will, and
+// the drift is invisible until a fleet is already reconnecting. Configuring it
+// past the contract's ceiling is refused here rather than clamped: a server
+// advertising 600s and honestly keeping to it passes its own claim and takes
+// every proxy in the fleet off cached decisions.
+type EventsConfig struct {
+	// HeartbeatInterval is kept and advertised. Zero takes the default;
+	// anything past MaxHeartbeatIntervalSeconds is refused.
+	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
+	// ReplayBuffer is how many events are retained for a reconnecting
+	// subscriber. Past it the answer is `resync`, which is correct but
+	// costs that proxy its entire decision cache — so the buffer is sized
+	// to cover a reconnect with backoff, not an outage.
+	ReplayBuffer int `yaml:"replay_buffer"`
+	// SubscriberQueue is how far one subscriber may fall behind before it
+	// is dropped and left to reconnect. Dropping is the policy: blocking
+	// the publisher would make one stalled proxy an outage for the fleet,
+	// and growing the queue would make it an out-of-memory.
+	SubscriberQueue int `yaml:"subscriber_queue"`
+	// PublishListener is an OPTIONAL address for the local publish path,
+	// host:port. EMPTY IS THE DEFAULT AND MEANS NOT BOUND.
+	//
+	// Publishing an event is an operator action, and the contract states
+	// outright that nothing on `/v1` publishes one — the proxy-facing API
+	// would otherwise carry an endpoint no proxy calls. The north-bound
+	// API that will own it is 0014's, so until then the conformance suite
+	// (which cannot grade gap recovery without making this server emit an
+	// event while a subscriber is away) drives this listener instead.
+	//
+	// It is off unless configured because what it publishes is the kill
+	// switch, and it is a SEPARATE port because the south-bound listener
+	// serves the contract and nothing else (M2).
+	PublishListener string `yaml:"publish_listener"`
+	// PublishToken is the bearer token the publish listener requires. It
+	// is REQUIRED whenever PublishListener is set: an unauthenticated kill
+	// switch is worse than no kill switch.
+	PublishToken string `yaml:"publish_token"`
 }
 
 // DecisionConfig bounds the decision path (PLAN M5, §5.4).
@@ -219,6 +290,11 @@ type FleetConfig struct {
 	// answer routes they refuse — an outage in front of a user rather than a
 	// message to an operator.
 	MaxHops int `yaml:"max_hops"`
+	// HostKeyCacheTTL is how long a host-key decision may be reused, when
+	// one is hinted at all. It is clamped by decision.max_cache_ttl and only
+	// ever downward. Within it, a target that has rotated its key or been
+	// rebuilt is reported late by the proxies already holding the answer.
+	HostKeyCacheTTL time.Duration `yaml:"host_key_cache_ttl"`
 }
 
 // ListenersConfig holds the two listener addresses. South-bound and
@@ -378,6 +454,18 @@ func (c *Config) applyDefaults() {
 	if c.Decision.MaxCacheTTL == 0 {
 		c.Decision.MaxCacheTTL = DefaultMaxCacheTTL
 	}
+	if c.Fleet.HostKeyCacheTTL == 0 {
+		c.Fleet.HostKeyCacheTTL = DefaultHostKeyCacheTTL
+	}
+	if c.Events.HeartbeatInterval == 0 {
+		c.Events.HeartbeatInterval = DefaultHeartbeatInterval
+	}
+	if c.Events.ReplayBuffer == 0 {
+		c.Events.ReplayBuffer = DefaultReplayBuffer
+	}
+	if c.Events.SubscriberQueue == 0 {
+		c.Events.SubscriberQueue = DefaultSubscriberQueue
+	}
 	// UIDs.LeaseTerm has no default: zero means "state no term", which is
 	// a real answer rather than an unset field.
 }
@@ -417,7 +505,63 @@ func (c *Config) Validate() error {
 	if err := c.Decision.validate(); err != nil {
 		return err
 	}
+	if err := c.Events.validate(c.Listeners); err != nil {
+		return err
+	}
 	return c.UIDs.validate()
+}
+
+// validate reports the first revocation-stream setting that cannot be acted on.
+func (e EventsConfig) validate(l ListenersConfig) error {
+	if e.HeartbeatInterval <= 0 {
+		return &FieldError{Field: "events.heartbeat_interval", Msg: "must not be negative"}
+	}
+	// Rounded UP, because that is what the stream advertises: this server
+	// never claims an interval it does not keep, so 10.001s advertises 11s
+	// and 11s is past the ceiling.
+	advertised := int64(e.HeartbeatInterval / time.Second)
+	if e.HeartbeatInterval%time.Second != 0 {
+		advertised++
+	}
+	if advertised > MaxHeartbeatIntervalSeconds {
+		return &FieldError{
+			Field: "events.heartbeat_interval",
+			Msg: fmt.Sprintf(
+				"advertises %ds, past the contract's ceiling of %ds: two consecutive intervals must fit inside the proxy's 20s reconnect timeout",
+				advertised, MaxHeartbeatIntervalSeconds),
+		}
+	}
+	if e.ReplayBuffer <= 0 {
+		return &FieldError{Field: "events.replay_buffer", Msg: "must be a positive number of events"}
+	}
+	if e.SubscriberQueue <= 0 {
+		return &FieldError{Field: "events.subscriber_queue", Msg: "must be a positive number of events"}
+	}
+	if e.PublishListener == "" {
+		if e.PublishToken != "" {
+			return &FieldError{
+				Field: "events.publish_token",
+				Msg:   "is set but events.publish_listener is not, so nothing would ever read it",
+			}
+		}
+		return nil
+	}
+	if e.PublishToken == "" {
+		// The listener publishes the kill switch. A deployment that
+		// binds it without a credential has opened one to anybody who
+		// can reach the port.
+		return &FieldError{
+			Field: "events.publish_token",
+			Msg:   "is required when events.publish_listener is set",
+		}
+	}
+	if e.PublishListener == l.South || e.PublishListener == l.North {
+		return &FieldError{
+			Field: "events.publish_listener",
+			Msg:   "must differ from listeners.south and listeners.north: the south-bound listener serves the contract and nothing else",
+		}
+	}
+	return nil
 }
 
 // validate reports the first south-bound bound that cannot be acted on.
@@ -505,6 +649,7 @@ func (f FleetConfig) validate() error {
 		{"fleet.relay_registration_ttl", f.RelayRegistrationTTL},
 		{"fleet.target_capability_ttl", f.TargetCapabilityTTL},
 		{"fleet.capability_report_after", f.CapabilityReportAfter},
+		{"fleet.host_key_cache_ttl", f.HostKeyCacheTTL},
 	}
 	for _, d := range durations {
 		if d.value <= 0 {

@@ -38,6 +38,7 @@ var (
 	_ contract.HostKeyReporter    = handlers{}
 	_ contract.CapabilityReporter = handlers{}
 	_ contract.UIDLeaser          = handlers{}
+	_ contract.EventPublisher     = handlers{}
 )
 
 func (s *Server) handlers() handlers { return handlers{s: s} }
@@ -308,10 +309,12 @@ func (h handlers) reportHostKey(ctx context.Context, r *http.Request) (any, erro
 
 // ReportHostKey implements contract.HostKeyReporter.
 //
-// This phase issues NO `cache` hint (M9 — the revocation stream that would
-// withdraw one is 0009's), so the response carries none. Absent means what
-// every server did before the field existed: the proxy reports every
-// connection, which is correct behaviour rather than a thinned answer.
+// The `cache` hint is decided in `internal/fleet`, above both responses that
+// carry one, so that the M9 liveness read happens once rather than in two
+// handlers that would not fail together (PLAN §5.4). Nil is a real answer and
+// the common one — no subscription, a first sighting, or a rejection — and it
+// means what every server did before the field existed: the proxy reports
+// every connection.
 func (h handlers) ReportHostKey(ctx context.Context, req *contract.HostKeyReportRequest) (*contract.HostKeyReportResponse, error) {
 	caller, ok := callerFrom(ctx)
 	if !ok {
@@ -339,6 +342,7 @@ func (h handlers) ReportHostKey(ctx context.Context, req *contract.HostKeyReport
 		Decision: contract.HostKeyDecision(decision.Decision),
 		Known:    decision.Known,
 		Reason:   decision.Reason,
+		Cache:    decision.Cache,
 	}
 	if decision.Changed {
 		// Safe to disclose, and worth disclosing: the proxy puts it in its

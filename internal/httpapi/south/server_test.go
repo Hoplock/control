@@ -23,6 +23,7 @@ import (
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/south"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -58,6 +59,7 @@ func TestTheListenerServesExactlyTheContractPathsThisPhaseImplements(t *testing.
 		contract.PathCapabilitiesReport,
 		contract.PathHostKeyReport,
 		contract.PathUIDLease,
+		contract.PathProxyEvents,
 	}
 	got := h.server.Routes()
 	slices.Sort(want)
@@ -404,9 +406,13 @@ func TestHostKeyReportingAndTheChangedKeyEvent(t *testing.T) {
 		t.Fatalf("first sighting = %+v, want accept and known: false", got)
 	}
 
-	// THIS PHASE ISSUES NO HINT (M9 — the stream that would withdraw one is
-	// 0009's), and the difference between "we did not get to it" and "we
-	// decided not to" is this assertion.
+	// NO HINT HERE, for two independent reasons, and both are decisions
+	// rather than omissions: nothing holds an event subscription, so there
+	// is no stream a withdrawal could travel over (M9); and a first
+	// sighting is never reused however it is hinted, because reusing one
+	// would replay trust-on-first-use into the audit log for every later
+	// connection. The cases that turn the hint ON live in events_test.go,
+	// where a subscription exists to turn it on with.
 	if got.Cache != nil {
 		t.Fatalf("a cache hint was issued (%+v) without a revocation stream to withdraw it", got.Cache)
 	}
@@ -716,6 +722,10 @@ type harness struct {
 	logs     *bytes.Buffer
 	clock    time.Time
 	secret   string
+	// bus is the real broker rather than a stand-in: the stream's behaviour
+	// under a reconnect and under a drain is the thing being served, and a
+	// fake that always had the answer would grade the fake.
+	bus *revoke.Bus
 }
 
 func newHarness(t *testing.T) *harness { return newHarnessWith(t, nil) }
@@ -730,7 +740,30 @@ func newHarnessWith(t *testing.T, tweak func(*south.Options)) *harness {
 		secret: testSecret,
 	}
 	logger := slog.New(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	bus, err := revoke.New(revoke.Options{
+		// Short enough that a test does not spend seconds waiting for a
+		// heartbeat, and still an interval this server keeps and
+		// advertises as one whole second.
+		HeartbeatInterval: 100 * time.Millisecond,
+		Logger:            logger,
+		// The harness's clock, so that "this subscription was last
+		// written to at" and "is it stale" are measured against the
+		// same instant the rest of the harness is frozen at.
+		Now: h.now,
+	})
+	if err != nil {
+		t.Fatalf("revoke.New: %v", err)
+	}
+	h.bus = bus
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = bus.Close(ctx)
+	})
+
 	h.fleet = fleet.New(st,
+		fleet.WithSubscriptionState(bus),
 		fleet.WithUIDAllocation(fleet.UIDAllocation{BlockSize: 4096}),
 		fleet.WithLogger(logger),
 		fleet.WithClock(h.now),
@@ -756,6 +789,7 @@ func newHarnessWith(t *testing.T, tweak func(*south.Options)) *harness {
 		),
 		Fleet:    h.fleet,
 		Decision: decisions,
+		Events:   h.bus,
 		Logger:   logger,
 		Now:      h.now,
 	}
@@ -779,6 +813,7 @@ func newHarnessWithFleet(t *testing.T, keys identity.FleetKeys) *harness {
 		Identity: identity.NewService(panickingDirectory{}, identity.WithClock(h.now)),
 		Fleet:    h.fleet,
 		Decision: h.decision,
+		Events:   h.bus,
 		Logger:   slog.New(slog.NewJSONHandler(h.logs, nil)),
 		Now:      h.now,
 	})

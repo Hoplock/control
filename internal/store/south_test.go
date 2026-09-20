@@ -339,3 +339,36 @@ func seedSubjectFor(t *testing.T, st *store.Store, id string) {
 		t.Fatalf("seed subject %s: %v", id, err)
 	}
 }
+
+// A sighting recorded without a derived key must not erase the key already on
+// the record.
+//
+// A caller that did not derive one has said nothing about the decision, not
+// that the decision has no key — and blanking it would leave an issued cache
+// hint that no operator can withdraw (PLAN §5.4, migration 0005).
+func TestRecordingAHostKeyNeverErasesTheCacheKey(t *testing.T) {
+	st := storetest.New(t)
+	ctx := t.Context()
+
+	key := store.TargetHostKey{
+		Hostname: "cachekey.example.com", Port: 22, Fingerprint: "SHA256:k",
+		KeyType: "ssh-ed25519", Decision: store.HostKeyAccepted,
+		LastSeenAt: time.Now().UTC(), LastReportedBy: "proxy-1",
+		CacheKey: "hc1:the-issued-key",
+	}
+	if _, _, err := st.TargetHostKeys().Record(ctx, southTenant, key); err != nil {
+		t.Fatalf("first record: %v", err)
+	}
+
+	key.CacheKey = ""
+	got, known, err := st.TargetHostKeys().Record(ctx, southTenant, key)
+	if err != nil {
+		t.Fatalf("second record: %v", err)
+	}
+	if !known {
+		t.Fatal("the same key answered known: false")
+	}
+	if got.CacheKey != "hc1:the-issued-key" {
+		t.Fatalf("cache_key = %q, want the key already on the record", got.CacheKey)
+	}
+}

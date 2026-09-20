@@ -134,9 +134,13 @@ logs:
 
 events:
   proxy_id: proxy-1
-  # The ceiling the suite holds the server to. The mock is configured for a
-  # heartbeat every second; a proxy's staleness detection defaults to 20s, which
-  # is the outer bound of a sane value.
+  # The FALLBACK, not the bound. The mock advertises
+  # `heartbeat_interval_seconds` derived from its own `heartbeat_ms` (rounded
+  # up, so it never claims an interval it does not keep), and the suite grades
+  # that claim: that the mock keeps it, and that it is inside the contract's
+  # 10s ceiling. This key is only reached by a server that advertises nothing,
+  # and it is kept so that a mock which stopped advertising is still graded
+  # rather than becoming ungradeable.
   heartbeat_interval_seconds: 5
   # There is no contract endpoint for publishing either: it is an operator
   # action, and which surface offers it is the implementation's business.

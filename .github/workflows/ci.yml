@@ -243,6 +243,15 @@ jobs:
             dsn: postgres://postgres:postgres@127.0.0.1:5432/hoplock?sslmode=disable
           log:
             level: info
+          # The local publish path the suite drives, on its OWN port. Nothing
+          # on `/v1` publishes an event — the contract says so, because an
+          # event is an operator action and no proxy calls one — so gap
+          # recovery is gradeable only through a path the implementation
+          # exposes outside it (phase 0009). It is off unless configured, and
+          # configuring it is what this leg does.
+          events:
+            publish_listener: 127.0.0.1:8082
+            publish_token: pdpconform-dev-publish-token
           YAML
 
       # Migrations are an explicit command and never run on boot (PLAN §8), so
@@ -283,8 +292,8 @@ jobs:
           fi
 
       # -only names the groups this build serves. It is not a way to make the
-      # run green: the event stream is 0009's and log ingest 0010's, and each
-      # of those phases adds its group here in the PR that serves it.
+      # run green: log ingest is 0010's, and that phase adds its group here in
+      # the PR that serves it.
       #
       # `authorize` covers four groups at once — the envelope, the absent-value
       # defaults, vocabulary negotiation and the device-field namespace — all
@@ -296,7 +305,7 @@ jobs:
             BASE_URL=http://127.0.0.1:8080 \
             TOKEN=default.pdpconform-dev-secret \
             EXPECT=cmd/pdpconform/testdata/control-expectations.yaml \
-            CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid'
+            CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid,revocation'
 
       # The server's own log, so a failure above can be read against what it
       # thought it was doing.

@@ -88,6 +88,17 @@ fleet:
   # user rather than a message to you.
   max_hops: 4
 
+  # How long a proxy may reuse a host-key decision, when one is hinted at all
+  # (PLAN §5.4). Within this window, a target that has rotated its key, been
+  # rebuilt, or been intercepted is reported late by the proxies already
+  # holding the old answer. Clamped by decision.max_cache_ttl, downward only.
+  # Defaults to 5m.
+  #
+  # A hint is withheld entirely unless the asking proxy holds a live event
+  # subscription (M9): a cached allow with no way to withdraw it is a grant
+  # with no revocation, so there is no setting here that turns that rule off.
+  host_key_cache_ttl: 5m
+
 # The south-bound listener's bounds (PLAN M2, M5, phase 0007). Optional; every
 # field has the default shown.
 south:
@@ -191,3 +202,50 @@ decision:
   # decision cached for an hour outlives any reasonable bound on noticing that
   # the stream broke. Defaults to 5m.
   max_cache_ttl: 5m
+
+# The revocation stream (PLAN M9, §4, phase 0009). Optional; every field has
+# the default shown.
+events:
+  # How often a subscription is told the stream is alive — AND what the stream
+  # advertises as the interval it is keeping. One number, two obligations: the
+  # server keeps the interval it advertises, and that interval is within the
+  # contract's ceiling of 10s. They are not configured separately because two
+  # numbers that can drift apart will, and the drift is invisible until a fleet
+  # is already reconnecting.
+  #
+  # A value whose advertisement would exceed 10s is REFUSED when this file
+  # loads, rather than clamped. A server advertising 600s and honestly keeping
+  # to it passes its own claim and takes every proxy in the fleet off cached
+  # decisions, because two consecutive intervals no longer fit inside the
+  # proxy's 20s reconnect timeout. Defaults to 5s.
+  heartbeat_interval: 5s
+
+  # How many published events are kept for a reconnecting subscriber. Past it
+  # the answer is `resync` — correct, but it costs that proxy its entire
+  # decision cache — so size this to cover a reconnect with backoff rather than
+  # an outage. Defaults to 1024.
+  replay_buffer: 1024
+
+  # How far one subscriber may fall behind before it is dropped and left to
+  # reconnect. Dropping is the policy: blocking the publisher would make one
+  # stalled proxy an outage for the whole fleet, and growing the queue would
+  # make it an out-of-memory. A dropped subscriber reconnects into replay or
+  # `resync`, so nothing is silently skipped. Defaults to 256.
+  subscriber_queue: 256
+
+  # The local publish path, `POST /debug/revoke`. EMPTY BY DEFAULT AND NOT
+  # BOUND, which is what you want in a deployment.
+  #
+  # Publishing an event is an operator action, and the contract states that
+  # nothing on `/v1` publishes one — the proxy-facing API would otherwise carry
+  # an endpoint no proxy calls. The north-bound API that will own it is phase
+  # 0014's; until then this is how the conformance suite makes this server emit
+  # an event while a subscriber is away, which is the only way gap recovery is
+  # gradeable at all.
+  #
+  # It is a separate port because the south-bound listener serves the contract
+  # and nothing else (M2), and publish_token is REQUIRED when it is set: what
+  # this publishes is the kill switch, and an unauthenticated one is worse than
+  # none.
+  publish_listener: ""
+  publish_token: ""
