@@ -148,23 +148,35 @@ decision.
   string — is **M22**.
 
   **The rule is about surfaces, not about a count of ports.** Until the
-  north-bound API exists (0014) there is one operator action this server has to
-  be able to take — publishing a revocation event — because gap recovery is not
-  gradeable without it and the contract states outright that nothing on `/v1`
-  publishes one (§4). Phase 0009 serves it from a listener of its own
-  (`events.publish_listener`), **off unless configured** and refusing to bind
-  without a credential of its own. It is not a third surface: it is the
-  north-bound surface's temporary front door, and it is a separate port rather
-  than the north-bound one because 0014 owns that listener's credential model —
-  putting a bearer path on it now would pre-empt that design and leave the port
-  half-real. What M2 forbids still holds without exception: it never shares the
-  south-bound port, chain, or credential, and it publishes only.
+  north-bound API exists (0014) there are two operator actions this server has
+  to be able to take, and the contract states outright that neither is on `/v1`
+  (§4) — because no proxy performs either, so an endpoint for one would be
+  something every Hoplock Control implements and nothing calls:
 
-  **0014 deletes it rather than folding it in.** A finished product has no debug
-  endpoint, so the rule that let this one exist at all (`docs/PROTOCOL.md` §3)
-  required a named successor whose own prompt carries the removal — and 0014's
-  does, file by file, with an acceptance criterion. A supersession that leaves
-  the old path bound has superseded nothing.
+  - **publishing a revocation event**, because gap recovery is not gradeable
+    without it. Phase 0009 serves it from a listener of its own
+    (`events.publish_listener`).
+  - **reading a stored audit record back**, because the priority ack's
+    durability guarantee is otherwise unobservable — a `200` that means "stored"
+    can only be graded by asking for the record straight afterwards. Phase 0010
+    serves it from a listener of its own (`audit.read_listener`), on a third
+    port, because publishing the kill switch and reading everybody's audit
+    records are different privileges and a credential for one is not a
+    credential for the other.
+
+  Both are **off unless configured** and refuse to bind without a credential of
+  their own. Neither is a new surface: each is the north-bound surface's
+  temporary front door, on a separate port rather than the north-bound one
+  because 0014 owns that listener's credential model — putting a bearer path on
+  it now would pre-empt that design and leave the port half-real. What M2
+  forbids still holds without exception: neither shares the south-bound port,
+  chain, or credential.
+
+  **0014 deletes them rather than folding them in.** A finished product has no
+  debug endpoint, so the rule that let these exist at all
+  (`docs/PROTOCOL.md` §3) required a named successor whose own prompt carries
+  the removal — and 0014's does, file by file, with an acceptance criterion. A
+  supersession that leaves the old path bound has superseded nothing.
 - **M3 — Policy is data compiled into a decision program, not an embedded
   general-purpose language.** The policy input vocabulary is closed and known:
   subject, claims, groups, device posture, source network, time, target labels,
@@ -928,7 +940,12 @@ alternative, and it gives up the one-binary deployment for nothing.
   the build if a third function can construct a 401, the other if a handler
   names a status constant.
 - **`internal/audit`** — append-only writer, chain verifier, and query API.
-  Nothing else writes audit rows.
+  Nothing else writes audit rows. One record is stored twice over: `body` holds
+  the canonical JSON the chain hashed, as text rather than jsonb so a verifier
+  re-hashes the stored bytes with nothing in between, and every other column on
+  the row is a derived index recomputable from it. Session capture lives in a
+  table of its own, covered by the chain through a digest inside the hashed
+  body rather than by being in it.
 - **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
 - **`internal/extdefault`** — Control's own side of the extension seam: what
   this repository registers into an `ext.Registry` before the server starts, so
@@ -1550,15 +1567,55 @@ reuses it on, and three consequences this server owns:
 ## 7. Audit, telemetry, and export (M8)
 
 - **Ingest** — idempotent on `record_id`, batch and priority paths, with the
-  priority path durable before it acks (§4).
-- **Storage** — append-only, hash-chained per stream; a verifier can prove no
-  record was altered or removed. Session capture (pty streams) is stored so a
-  session can be replayed, with the size and retention implications made
-  explicit rather than discovered.
-- **Query** — by session, subject, target, decision id, time range, and event
-  type. "Show me every blocked command on `env=prod` last week, and who
-  approved the access that made it possible" is one query joining audit to
-  grants, and it is the demo that sells the product.
+  priority path durable before it acks (§4). Idempotency is the database's: the
+  submitted ids are checked and the survivors inserted under a lock held on the
+  stream, so concurrent writers on different nodes cannot both take a chain
+  position. **A batch is all or nothing.** The contract documents `accepted` as
+  "fewer than sent means the rest were duplicates; the proxy may drop them", so
+  a count short by anything other than duplicates would tell the proxy to
+  discard records this server never stored — a malformed record therefore fails
+  its whole request with a `400` and stores none of it.
+- **The kind enum is closed and an unknown kind is refused**; severity is not,
+  and the asymmetry is deliberate. A severity is a three-value scale a reader
+  can act on without knowing the value; a kind is what every query below filters
+  by, so a kind nobody knows is a record nobody finds. Refusing it is loud — the
+  proxy keeps the record and an operator sees an error — where accepting it is
+  silent. Adding one is an upstream change (M1).
+- **Storage** — append-only, hash-chained per tenant per stream; a verifier can
+  prove no record was altered or removed, and reports the first break with the
+  record, the position and both hashes. A **stream is the submitting proxy**:
+  the unit that already writes in order, so serialising it costs nothing, where
+  one chain per deployment would put the whole fleet behind one lock and one
+  chain per session would make a deleted session undetectable. Session capture
+  (pty streams) is stored in its own table so no query over the records drags a
+  megabyte of terminal output along, and the chain covers it through a digest
+  inside the hashed record.
+- **What the chain does and does not defend against.** It detects anybody who
+  can reach the database but cannot rewrite every later record in the stream: a
+  stray `UPDATE`, an application bug, a restored row, a partially-successful
+  attacker. It does **not** defend against one who can rewrite the whole chain,
+  because the verifier's only input is the database. Closing that needs an
+  anchor published outside this system on a schedule, which is future work and
+  is deliberately not claimed: an audit store that overstates its guarantee is
+  worse than one that states a smaller one, because the overstatement is what
+  somebody builds a compliance claim on.
+- **Redaction is recorded, not silent.** A password-shaped attribute is
+  replaced before anything is hashed, and the key is listed in the record's own
+  `redacted` field — a record carrying a credential is still a record of
+  something that happened, so refusing it would delete the evidence of the bug
+  that produced it, and removing the value without saying so would be a record
+  that lies by omission.
+- **Query** — by session, subject, target, decision id, proxy, time range,
+  kind, severity, event name, grant reference and device field. "Show me every
+  blocked command on `env=prod` last week, and who approved the access that
+  made it possible" is one query joining audit to decisions and to targets —
+  `env=prod` is a label, and labels live on the target rather than on the
+  record — and it is the demo that sells the product. The layer is built here;
+  the HTTP surface over it is 0014's, with one exception: **a record read-back
+  path outside `/v1`**, because nothing on the contract reads a record back and
+  the priority ack's durability guarantee is otherwise unobservable. It is off
+  unless configured, has a credential of its own, sits on its own port, and is
+  deleted by 0014.
 - **Device fields are audit facts.** The ephemeral-account mapping record carries
   the `device_field.<name>` values the session was provisioned with (§5.2),
   because on a device that is one unit partitioned into many the
@@ -1588,6 +1645,19 @@ reuses it on, and three consequences this server owns:
   including `additional_context`, which is a string **or** an object — and never
   parse it into policy: it is what lets an auditor answer "why was this allowed"
   without joining two systems by hand, and M16 is what puts it there.
+- **Retention has to remove a chain's TAIL, never a record out of its middle.**
+  Deleting a record leaves its successor pointing at a hash nothing produces,
+  which is indistinguishable from tampering — the mechanism cannot tell a
+  policy from an attacker, and it must not try. So a retention job (0014) walks
+  a stream from its start, deletes a contiguous prefix, and records the
+  sequence it deleted up to and the hash of the last record it removed;
+  verification then starts from there instead of from 1, and the deleted span
+  is a documented fact rather than a break. Capture bytes are the exception
+  that motivates it: a pty stream dwarfs everything else in the store, so
+  "delete captures older than N days, keep the records" is the first retention
+  rule anybody writes — and it is safe precisely because the record keeps the
+  digest, so what is verifiable afterwards is that the capture is gone rather
+  than that it was changed.
 - **Export** — Splunk / Sentinel / Elastic sinks behind one interface, with
   backpressure and retry. Downstream consumer only (M8).
 - **Redaction** — the initial-auth password never reaches this server and must
@@ -1661,7 +1731,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0007 | South-bound authentication | the south-bound listener and its credential (M22), `/v1/auth/*`, MFA orchestration, host-key reporting (no cache hint until 0009 can withdraw one), `/v1/capabilities/report`, `/v1/uids/lease` and its monotonic cursor |
 | 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
 | 0009 | Revocation & event fan-out | `/v1/proxies/{proxy_id}/events`, event bus, replay, resync, kill switch (M9) |
-| 0010 | Audit ingest & tamper-evident store | batch + priority ingest, hash chain, verifier, query (M8) |
+| 0010 | Audit ingest & tamper-evident store | batch + priority ingest, the per-tenant-per-stream hash chain and its verifier, redaction, the query layer, and the record read-back path 0014 deletes (M8) |
 | 0011 | Identity, users, groups, roles & RBAC | local identity, roles, RBAC, OIDC/SAML federation, claim mapping, SSH CA (M7) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |

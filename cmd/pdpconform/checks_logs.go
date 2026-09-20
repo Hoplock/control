@@ -76,13 +76,25 @@ func (s *Suite) CheckLogs() {
 		c.require(r.has("accepted"), "response omits accepted, which is required")
 		c.require(got.Accepted, "accepted is false on a 200; the ack is what the proxy acts on")
 
-		read, err := s.do(http.MethodGet, e.ReadURL, nil, s.token)
-		c.must(err == nil, "reading back from %s failed: %v", e.ReadURL, err)
-		c.must(read.status == 200, "read path %s answered %d: %s", e.ReadURL, read.status, snippet(read.body))
+		url := strings.ReplaceAll(e.ReadURL, "{record_id}", rec.RecordID)
+		read, err := s.do(http.MethodGet, url, nil, s.readToken(e))
+		c.must(err == nil, "reading back from %s failed: %v", url, err)
+		c.must(read.status == 200, "read path %s answered %d: %s", url, read.status, snippet(read.body))
 		c.require(strings.Contains(string(read.body), rec.RecordID),
 			"record %s was acked and is not in the read path %s straight afterwards; the ack claimed a durability the server did not have",
-			rec.RecordID, e.ReadURL)
+			rec.RecordID, url)
 	})
+}
+
+// readToken is the credential the read path takes. An expectation file that
+// names one is describing a server whose read surface has a credential of its
+// own; one that does not falls back to the suite's token, which is what the
+// proxy mock's unauthenticated hook wants.
+func (s *Suite) readToken(e *LogExpectations) string {
+	if e.ReadToken != "" {
+		return e.ReadToken
+	}
+	return s.token
 }
 
 func (s *Suite) logRecords(n int) []contract.LogRecord {

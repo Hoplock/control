@@ -129,6 +129,10 @@ logs:
   # The mock's read path. There is no contract endpoint for reading a record
   # back — the priority ack means durable, and the only black-box way to grade
   # that is to ask the server for it straight afterwards.
+  #
+  # No `{record_id}` placeholder and no `read_token`: the mock's hook is a
+  # listing and takes the suite's own token, which is what the optional form of
+  # both keys is for.
   read_url: "http://127.0.0.1:8080/debug/logs"
   batch_size: 3
 

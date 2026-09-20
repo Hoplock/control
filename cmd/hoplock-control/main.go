@@ -47,8 +47,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return runMigrate(args[1:], stdout, stderr)
 		case "seed":
 			return runSeed(args[1:], stdout, stderr)
+		case "audit-verify":
+			return runAuditVerify(args[1:], stdout, stderr)
 		default:
-			return fmt.Errorf("unknown subcommand %q (known: migrate, seed)", args[0])
+			return fmt.Errorf("unknown subcommand %q (known: migrate, seed, audit-verify)", args[0])
 		}
 	}
 

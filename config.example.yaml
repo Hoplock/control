@@ -249,3 +249,38 @@ events:
   # none.
   publish_listener: ""
   publish_token: ""
+
+# Log ingest and the audit store (PLAN M8, §7, phase 0010). Optional; every
+# field has the default shown.
+audit:
+  # The bounds on one ingest request. An unbounded ingest path is a
+  # memory-exhaustion surface reachable by any enrolled proxy, and a batch too
+  # large to answer inside the request timeout is a batch the proxy retries
+  # forever. A zero takes the default.
+  #
+  # `max_capture_bytes` is the one with a number behind it rather than a round
+  # guess: a pty stream arrives as raw chunks, one per read off the wire, so a
+  # chunk is bounded by the proxy's own read buffer and 1 MiB is two orders of
+  # magnitude above it. A record past that is not a terminal capture.
+  max_batch_records: 1000
+  max_record_bytes: 65536
+  max_capture_bytes: 1048576
+
+  # The record read-back path, `GET /debug/logs/{record_id}`. EMPTY BY DEFAULT
+  # AND NOT BOUND, which is what you want in a deployment.
+  #
+  # The contract defines no way to read a record back, and that is deliberate
+  # upstream: a proxy writes logs and never queries them, so an operator read
+  # API on `/v1` would be one every Hoplock Control implements and no proxy
+  # calls. The priority ack's durability guarantee — a 200 means the record is
+  # stored — is therefore observable only through a path this server exposes
+  # outside `/v1`, and the conformance suite takes it as an input. The
+  # north-bound audit query API that will own it is phase 0014's, which deletes
+  # this one rather than folding it in.
+  #
+  # It is a separate port from both other listeners (M2), and read_token is
+  # REQUIRED when it is set: audit records are the most sensitive documents
+  # this server holds, and the south-bound proxy token is not the credential
+  # for reading them.
+  read_listener: ""
+  read_token: ""

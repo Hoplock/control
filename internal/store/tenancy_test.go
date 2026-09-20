@@ -186,6 +186,19 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Audit.Get":       func() error { _, err := s.Audit().Get(ctx, "", "r"); return err },
 		"Audit.Chain":     func() error { _, err := s.Audit().Chain(ctx, "", "s", 0, 1); return err },
 		"Audit.ChainHead": func() error { _, err := s.Audit().ChainHead(ctx, "", "s"); return err },
+		"Audit.AppendChain": func() error {
+			_, err := s.Audit().AppendChain(ctx, "", "s", []string{"r"},
+				func(AuditRecord, []string) ([]AuditRecord, error) { return nil, nil })
+			return err
+		},
+		"Audit.Streams": func() error { _, err := s.Audit().Streams(ctx, ""); return err },
+		"Audit.Query":   func() error { _, err := s.Audit().Query(ctx, "", AuditQuery{}); return err },
+		"Audit.BlockedCommands": func() error {
+			_, err := s.Audit().BlockedCommands(ctx, "", BlockedCommandQuery{LabelName: "env"})
+			return err
+		},
+		"Audit.PutCapture": func() error { return s.Audit().PutCapture(ctx, "", "r", []byte("x")) },
+		"Audit.Capture":    func() error { _, err := s.Audit().Capture(ctx, "", "r"); return err },
 		"Grants.Insert": func() error {
 			return s.Grants().Insert(ctx, "", Grant{ID: "g", Origin: GrantOriginManual, ExpiresAt: nowForTest()})
 		},

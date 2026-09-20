@@ -143,6 +143,25 @@ type AuditRepository interface {
 	// ChainHead returns the last record in a stream, which is what the next
 	// record chains onto. A stream with no records is ErrNotFound.
 	ChainHead(ctx context.Context, tenant Tenant, stream string) (AuditRecord, error)
+	// AppendChain appends to one stream under a lock that serialises
+	// appends to it across every node, de-duplicating on record_id first
+	// and handing the chain head to `build` so the caller can position and
+	// hash what survives. It returns how many rows were inserted.
+	AppendChain(ctx context.Context, tenant Tenant, stream string, ids []string,
+		build func(head AuditRecord, fresh []string) ([]AuditRecord, error)) (int, error)
+	// Streams lists the streams a tenant has records in — what a whole
+	// verification walks, and what a departing tenant takes (M18).
+	Streams(ctx context.Context, tenant Tenant) ([]string, error)
+	// Query selects records over the dimensions PLAN §7 names.
+	Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]AuditRecord, error)
+	// BlockedCommands is the showcase join: blocked commands on targets
+	// carrying a label, resolved to the decision that permitted the access.
+	BlockedCommands(ctx context.Context, tenant Tenant, q BlockedCommandQuery) ([]BlockedCommand, error)
+	// PutCapture stores a session capture's bytes; Capture reads them back.
+	// They are a separate table because a pty stream is large and no query
+	// over the records wants to drag it along.
+	PutCapture(ctx context.Context, tenant Tenant, recordID string, bytes []byte) error
+	Capture(ctx context.Context, tenant Tenant, recordID string) ([]byte, error)
 }
 
 // GrantRepository stores JIT access grants (M10).

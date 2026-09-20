@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
@@ -98,11 +99,28 @@ func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *s
 		return err
 	}
 
+	// The audit ingester. It is built with the store directly and holds no
+	// buffer: the priority ack means DURABLE (PLAN §4), so there is nothing
+	// between the request and the commit on either log path (M8).
+	ingest, err := audit.New(audit.Options{
+		Store:  st,
+		Logger: log,
+		Limits: audit.Limits{
+			MaxBatchRecords: cfg.Audit.MaxBatchRecords,
+			MaxRecordBytes:  cfg.Audit.MaxRecordBytes,
+			MaxCaptureBytes: cfg.Audit.MaxCaptureBytes,
+		},
+	})
+	if err != nil {
+		return err
+	}
+
 	handler, err := south.New(south.Options{
 		Identity:       auth,
 		Fleet:          registry,
 		Decision:       decisions,
 		Events:         bus,
+		Logs:           ingest,
 		Logger:         log,
 		MaxBodyBytes:   cfg.South.MaxBodyBytes,
 		RequestTimeout: cfg.South.RequestTimeout,
@@ -126,7 +144,7 @@ func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *s
 		"heartbeat_interval_seconds", bus.AdvertisedHeartbeatSeconds(),
 	)
 
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
 	go func() {
 		err := srv.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
@@ -142,6 +160,20 @@ func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *s
 	if publisher != nil {
 		go func() {
 			err := publisher.ListenAndServe()
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errs <- err
+		}()
+	}
+
+	auditReader, err := startAuditReadListener(cfg, st, log)
+	if err != nil {
+		return err
+	}
+	if auditReader != nil {
+		go func() {
+			err := auditReader.ListenAndServe()
 			if errors.Is(err, http.ErrServerClosed) {
 				err = nil
 			}
@@ -167,6 +199,11 @@ func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *s
 	if publisher != nil {
 		if err := publisher.Shutdown(shutdownCtx); err != nil {
 			log.Warn("the publish listener did not shut down cleanly", "error", err)
+		}
+	}
+	if auditReader != nil {
+		if err := auditReader.Shutdown(shutdownCtx); err != nil {
+			log.Warn("the audit read listener did not shut down cleanly", "error", err)
 		}
 	}
 	if err := bus.Close(shutdownCtx); err != nil {
@@ -203,6 +240,32 @@ func startPublishListener(cfg *config.Config, registry *fleet.Registry, bus *rev
 	return &http.Server{
 		Addr:              cfg.Events.PublishListener,
 		Handler:           ps.handler(),
+		ReadHeaderTimeout: cfg.South.RequestTimeout,
+	}, nil
+}
+
+// startAuditReadListener binds the record read-back path, when one is
+// configured.
+//
+// It returns (nil, nil) when it is not, which is the default: see
+// auditread.go for why an unconfigured deployment has no read port at all,
+// and for the phase that deletes this one.
+func startAuditReadListener(cfg *config.Config, st *store.Store, log *slog.Logger) (*http.Server, error) {
+	if cfg.Audit.ReadListener == "" {
+		return nil, nil
+	}
+	ar, err := newAuditReadServer(audit.NewReader(st), store.Tenant(cfg.Tenant), cfg.Audit.ReadToken)
+	if err != nil {
+		return nil, err
+	}
+	log.Warn("the local audit read listener is enabled",
+		"event", "audit_read_listener_enabled",
+		"address", cfg.Audit.ReadListener,
+		"note", "this is a pre-0014 operator path and serves audit records; do not expose it",
+	)
+	return &http.Server{
+		Addr:              cfg.Audit.ReadListener,
+		Handler:           ar.handler(),
 		ReadHeaderTimeout: cfg.South.RequestTimeout,
 	}, nil
 }

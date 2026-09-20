@@ -38,6 +38,7 @@ var (
 	_ contract.HostKeyReporter    = handlers{}
 	_ contract.CapabilityReporter = handlers{}
 	_ contract.UIDLeaser          = handlers{}
+	_ contract.LogIngester        = handlers{}
 	_ contract.EventPublisher     = handlers{}
 )
 
@@ -49,13 +50,20 @@ func (s *Server) handlers() handlers { return handlers{s: s} }
 // failure path goes through [statusFor] — there is no handler that can choose
 // a status code for itself.
 func (s *Server) endpoint(fn func(context.Context, *http.Request) (any, error)) http.Handler {
+	return s.endpointStatus(http.StatusOK, fn)
+}
+
+// endpointStatus is [Server.endpoint] with a success code other than 200. Only
+// `/v1/logs/batch` uses it, and only because the contract distinguishes
+// "accepted for storage" from "stored".
+func (s *Server) endpointStatus(status int, fn func(context.Context, *http.Request) (any, error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := fn(r.Context(), r)
 		if err != nil {
 			s.writeError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, body)
+		writeJSON(w, status, body)
 	})
 }
 

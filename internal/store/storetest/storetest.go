@@ -22,7 +22,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -297,15 +296,20 @@ func Grant(id, subjectID string, d time.Duration) store.Grant {
 }
 
 // AuditRecord returns an audit record at a position in a stream.
+//
+// It is NOT chained: the hash fields are empty, because a fixture that made up
+// a chain would let a test pass verification against hashes nothing computed.
+// A test that needs a real chain builds one through internal/audit, which is
+// the only thing that may.
 func AuditRecord(recordID, stream string, seq int64) store.AuditRecord {
 	return store.AuditRecord{
 		RecordID:   recordID,
 		Stream:     stream,
 		ChainSeq:   seq,
 		SessionID:  "session-" + stream,
-		Kind:       "session.start",
+		Kind:       "session_start",
 		Severity:   "info",
-		Payload:    json.RawMessage(`{"seeded":true}`),
+		Body:       `{"seeded":true}`,
 		RecordedAt: time.Now().UTC(),
 	}
 }
