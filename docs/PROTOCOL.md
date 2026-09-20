@@ -191,6 +191,32 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
   test style. Add the per-file license header (see `docs/LICENSE-HEADER.md`).
 - **No secrets in code, logs, errors, or fixtures.** Never commit keys, tokens,
   IdP client secrets, or real hostnames. Fixtures are test data.
+- **A debug endpoint may not outlive the phase that needed it.** A `/debug`
+  route, a test hook, a fixture-seeding path — anything a finished product would
+  not ship — may be added to a surface this server binds **only** when all four
+  of these hold, and the fourth is the one that is usually skipped:
+
+  1. **A phase needs it to prove something that cannot be proven otherwise.**
+     "It was convenient" is not a reason; neither is "only we can reach it".
+  2. **It is off unless configured, and it refuses to start without a
+     credential of its own.** Never on the south-bound listener, which serves
+     the contract and nothing else (M2).
+  3. **A production API that supersedes it is named** — either it already
+     exists, or this session adds the prompt for it (Section 6). Not "later",
+     not "0014 will probably want this": a numbered phase, by name.
+  4. **That phase's prompt carries the removal as an obligation**, listing every
+     file, config key, fixture and CI line that goes with it, and an acceptance
+     criterion asserting the endpoint is gone. The session that adds the debug
+     path writes that in, because it is the only session that knows what it
+     added.
+
+  The failure this prevents is not hypothetical and it is not caught by review:
+  a debug path added under a deadline is invisible in every later diff, nobody
+  who reads the code afterwards knows it was meant to be temporary, and it ships.
+  A note in a learnings file is not limb 4 — learnings are read by the next
+  session, and the phase that must delete this one may be five phases away. The
+  obligation goes in **that phase's prompt**, where the session implementing it
+  cannot miss it.
 
 ---
 

@@ -313,6 +313,33 @@ func (s *Suite) checkDelivery() {
 	}
 	readDeadline := fallback + heartbeatSlack
 
+	s.run(groupEvents, "an unknown last_event_id is answered with resync as the first line", func(c *Case) {
+		// The one gap-recovery assertion that needs NO publish path, which
+		// is why it is worth having separately: the contract names
+		// "unknown" alongside "too old" and "no history kept" as the three
+		// ids a server cannot replay from, and all three are answered the
+		// same way — `resync` FIRST, and nothing older beside it.
+		//
+		// An id no server could have minted is the only way to ask this
+		// black-box. It must not be mistaken for an ABSENT id, which means
+		// a fresh subscription and replays nothing: a server that treated
+		// an unrecognised id as absent would resume live delivery over
+		// whatever the proxy had actually missed, which is the silent skip
+		// the whole mechanism exists to prevent.
+		st, _, err := s.subscribe(e.ProxyID, "pdpconform-never-issued-"+s.runID)
+		c.must(err == nil, "subscribe failed: %v", err)
+		defer st.close()
+
+		first, err := st.next(readDeadline)
+		c.must(err == nil, "nothing arrived on the stream: %v", err)
+		c.require(first.Type == contract.EventTypeResync,
+			"the first line was %s (%s), want resync: this id names no position the server has, so it "+
+				"cannot replay from it and must say so rather than resume live delivery",
+			first.Type, first.EventID)
+		c.require(first.EventID != "", "the resync carries no event_id, so the proxy cannot resume from it either")
+		c.note("answered resync as the first line")
+	})
+
 	s.run(groupEvents, "a published event is delivered on an open subscription", func(c *Case) {
 		st, _, err := s.subscribe(e.ProxyID, "")
 		c.must(err == nil, "subscribe failed: %v", err)

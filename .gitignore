@@ -1,5 +1,10 @@
 # Binaries and build output
 /bin/
+# `go build ./cmd/<name>` drops the binary in the working directory, so the
+# main packages are named here rather than discovered after one is committed.
+/hoplock-control
+/pdpconform
+/policyctl
 *.exe
 *.dll
 *.so

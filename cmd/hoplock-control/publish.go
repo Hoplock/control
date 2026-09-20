@@ -31,8 +31,17 @@ import (
 // recovery is gradeable at all only because it exists: the suite has to make
 // this server emit an event while a subscriber is away.
 //
-// Four properties keep it from becoming a back door, and the first two are
-// not conveniences:
+// IT IS SCHEDULED FOR DELETION, AND THAT IS WRITTEN DOWN WHERE THE SESSION
+// THAT MUST DELETE IT WILL SEE IT. `docs/PROTOCOL.md` §3 permits a debug
+// endpoint only when a named production API will supersede it and THAT PHASE'S
+// PROMPT CARRIES THE REMOVAL — a note in a learnings file does not count,
+// because the phase that has to act on it may be five phases away.
+// `prompts/queued/0014-northbound-api-and-policy-lifecycle.md` lists every file,
+// config key, fixture and CI line that goes with this one, and carries an
+// acceptance criterion asserting it is gone.
+//
+// Four properties keep it from becoming a back door meanwhile, and the first
+// two are not conveniences:
 //
 //   - IT IS OFF UNLESS CONFIGURED. `events.publish_listener` is empty by
 //     default, and a deployment that does not set it has no publish port at
@@ -46,7 +55,9 @@ import (
 //   - IT ONLY PUBLISHES. There is no read path, no listing, and no way to ask
 //     it what any proxy holds.
 //
-// When 0014 lands this becomes a thin client of that API, or it goes away.
+// It does not become a thin client of the north-bound API when 0014 lands. It
+// is deleted, and the conformance suite's `events.publish_url` is repointed at
+// the real route.
 
 // publishRequest is the body `POST /debug/revoke` takes.
 //

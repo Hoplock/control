@@ -34,13 +34,17 @@
   says what each prevents.
 - **Publish path** — an input to every later conformance run, and nowhere in the
   contract: `POST /debug/revoke` on `events.publish_listener`, own port, own
-  `events.publish_token`, **unbound unless configured**.
+  `events.publish_token`, **unbound unless configured**. It is **deleted by
+  0014**, not inherited: `docs/PROTOCOL.md` §3 (added here) permits a debug
+  endpoint only against a named successor whose prompt carries the removal, and
+  0014's now lists every file, key and CI line.
 - **Decisions:** M9 implemented. M2 **not amended** — its register row stays
   `live`; the publish listener is recorded inside it as the operator surface's
   temporary front door. §5.4 hints flow; §4 both heartbeat halves.
 - **NEXT session:** cache hints are ON wherever the asking proxy holds a live
   subscription. 0010 owns the audit record of an operator action (logged only
-  here); 0014 replaces `cmd/hoplock-control/publish.go`.
+  here), and owes `logs.read_url` the same PROTOCOL §3 treatment this phase gave
+  `events.publish_url`; 0014 deletes `cmd/hoplock-control/publish.go`.
 
 ## Details
 
@@ -221,7 +225,26 @@ pair that grades nothing.
 publish path on its own listener with its own credential; left empty the suite
 presents the proxy token, which is what the mock needs.
 
-### The publish path, and why it is a third port
+### The publish path, why it is a third port, and when it dies
+
+`docs/PROTOCOL.md` §3 grew a rule in this PR, because this phase is the first
+one to want a debug endpoint on a bound surface and the honest answer to "when
+does it go away" turned out not to be written anywhere a future session would
+look. The rule has four limbs — a phase that genuinely needs it, off-unless-
+configured with its own credential, a **named** production successor, and that
+successor's **prompt** carrying the removal file by file. The fourth is the one
+that is usually skipped, and it is the only one that actually deletes anything:
+a learnings note is read by the next session, while the phase that must delete
+this path is five phases away.
+
+0014's prompt now carries it: `publish.go`, its test, the two config keys and
+their validation, the `config.example.yaml` block, `startPublishListener` and
+its shutdown handling, the CI `events:` block, and the repointing of
+`events.publish_url`/`publish_token` — plus an acceptance criterion asserting
+nothing binds a `/debug/` route. 0010 owes `logs.read_url` the same treatment
+and 0014's prompt names that too.
+
+
 
 The contract states outright that nothing on `/v1` publishes an event, so gap
 recovery is gradeable only through a path the implementation exposes. This one

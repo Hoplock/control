@@ -158,8 +158,13 @@ decision.
   than the north-bound one because 0014 owns that listener's credential model —
   putting a bearer path on it now would pre-empt that design and leave the port
   half-real. What M2 forbids still holds without exception: it never shares the
-  south-bound port, chain, or credential, and it publishes only. It folds into
-  the north-bound listener at 0014.
+  south-bound port, chain, or credential, and it publishes only.
+
+  **0014 deletes it rather than folding it in.** A finished product has no debug
+  endpoint, so the rule that let this one exist at all (`docs/PROTOCOL.md` §3)
+  required a named successor whose own prompt carries the removal — and 0014's
+  does, file by file, with an acceptance criterion. A supersession that leaves
+  the old path bound has superseded nothing.
 - **M3 — Policy is data compiled into a decision program, not an embedded
   general-purpose language.** The policy input vocabulary is closed and known:
   subject, claims, groups, device posture, source network, time, target labels,
