@@ -49,8 +49,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return runSeed(args[1:], stdout, stderr)
 		case "audit-verify":
 			return runAuditVerify(args[1:], stdout, stderr)
+		case "identity":
+			return runIdentity(args[1:], stdout, stderr)
+		case "ca":
+			return runCA(args[1:], stdout, stderr)
 		default:
-			return fmt.Errorf("unknown subcommand %q (known: migrate, seed, audit-verify)", args[0])
+			return fmt.Errorf(
+				"unknown subcommand %q (known: migrate, seed, audit-verify, identity, ca)", args[0])
 		}
 	}
 
@@ -118,7 +123,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	// The south-bound listener is bound; the north-bound one is not (0014).
 	// They are two listeners from here on rather than two fields (M2).
-	if err := serveSouth(ctx, cfg, st, log); err != nil {
+	if err := serve(ctx, cfg, st, log); err != nil {
 		return err
 	}
 

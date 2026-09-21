@@ -28,12 +28,14 @@ import (
 // answer the proxy can classify beats a closed connection it cannot.
 const shutdownGrace = 15 * time.Second
 
-// serveSouth binds the proxy-facing listener and blocks until ctx is done.
+// serve binds both listeners and blocks until ctx is done.
 //
-// The north-bound listener is NOT bound here, and its absence is not an
-// oversight: it is 0014's, and two surfaces that never share a port also never
-// share a bring-up (M2).
-func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *slog.Logger) error {
+// THE TWO SURFACES SHARE NO PORT, NO CHAIN AND NO CREDENTIAL (M2) — and they do
+// share a bring-up, because a process that starts one and not the other is a
+// deployment where half the product is up. The north-bound listener arrives here
+// with 0011 rather than 0014 because this phase is what M2 was waiting for: the
+// credential model. 0014 adds routes to a listener that already authenticates.
+func serve(ctx context.Context, cfg *config.Config, st *store.Store, log *slog.Logger) error {
 	// The event broker is built FIRST, because the fleet registry reads it:
 	// a cache hint is only issued to a proxy holding a live subscription
 	// (M9, PLAN §5.4), and that read is [fleet.SubscriptionState]. Before
@@ -115,6 +117,17 @@ func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *s
 		return err
 	}
 
+	// The audit ingester also carries THIS SERVER'S OWN records — an
+	// authentication outcome, and the break-glass login M7 requires be
+	// flagged in one. They go through the same ingest path a proxy's records
+	// take, on a chain of their own (`audit.StreamControl`): the chain, the
+	// redaction and the idempotency are the parts that must not have a second
+	// implementation.
+	emitter, err := audit.NewEmitter(ingest)
+	if err != nil {
+		return err
+	}
+
 	handler, err := south.New(south.Options{
 		Identity:       auth,
 		Fleet:          registry,
@@ -144,9 +157,31 @@ func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *s
 		"heartbeat_interval_seconds", bus.AdvertisedHeartbeatSeconds(),
 	)
 
-	errs := make(chan error, 3)
+	northSrv, northHandler, err := buildNorth(ctx, cfg, st, emitter, log)
+	if err != nil {
+		return err
+	}
+
+	errs := make(chan error, 4)
 	go func() {
 		err := srv.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		errs <- err
+	}()
+
+	log.Info("north-bound listener starting",
+		"address", cfg.Listeners.North,
+		"routes", len(northHandler.Routes()),
+	)
+	for _, route := range northHandler.Routes() {
+		log.Debug("north-bound route",
+			"method", route.Method, "pattern", route.Pattern,
+			"access", route.Access, "permission", string(route.Permission))
+	}
+	go func() {
+		err := northSrv.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
@@ -205,6 +240,9 @@ func serveSouth(ctx context.Context, cfg *config.Config, st *store.Store, log *s
 		if err := auditReader.Shutdown(shutdownCtx); err != nil {
 			log.Warn("the audit read listener did not shut down cleanly", "error", err)
 		}
+	}
+	if err := northSrv.Shutdown(shutdownCtx); err != nil {
+		log.Warn("the north-bound listener did not shut down cleanly", "error", err)
 	}
 	if err := bus.Close(shutdownCtx); err != nil {
 		log.Warn("the revocation broker did not drain inside the shutdown grace", "error", err)
