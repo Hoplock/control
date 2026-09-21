@@ -57,6 +57,15 @@ type assembled struct {
 	// subject. A subject it does not know contributes no groups and no
 	// claims — see [Service.assemble].
 	subjectKnown bool
+	// mappingVersion and breakGlass are read off the subject row and go
+	// straight into the decision record (M7). They are NOT policy inputs:
+	// the engine's vocabulary is closed (M3) and adding an axis is 0005's to
+	// do, not a side effect of wiring federation. What they are is the two
+	// facts a reader of the record needs in order to know what produced the
+	// attributes it matched on, and whether the credential behind it was a
+	// break-glass one.
+	mappingVersion int
+	breakGlass     bool
 }
 
 // assemble gathers the inputs for one authorize call.
@@ -100,6 +109,8 @@ func (s *Service) assemble(ctx context.Context, tenant store.Tenant, req *contra
 		out.input.Subject.Source = subject.Source
 		out.input.Subject.Groups = subject.Groups
 		out.input.Subject.Claims = subject.Claims
+		out.mappingVersion = subject.MappingVersion
+		out.breakGlass = subject.BreakGlass
 	case store.IsNotFound(err):
 		// A subject this server holds no record of gets NO groups and NO
 		// claims — not the ones the request carries. The request's copy

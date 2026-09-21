@@ -55,6 +55,13 @@ type Submission struct {
 	Records []contract.LogRecord
 	// Priority marks the single-record path, whose ack means durable.
 	Priority bool
+	// Stream overrides the chain the records join. A south-bound submission
+	// leaves it empty, so the stream is the submitting proxy's (see
+	// StreamFor); THIS SERVER'S OWN records — an authentication outcome, a
+	// break-glass login (0011) — name [StreamControl], because they were not
+	// written by a proxy and filing them under "unattributed" would put them
+	// in the same chain as a submission from an unbound token.
+	Stream string
 }
 
 // Receipt is what an ingest produced.
@@ -149,7 +156,10 @@ func (in *Ingester) Ingest(ctx context.Context, sub Submission) (Receipt, error)
 		}
 	}
 
-	stream := StreamFor(sub.ProxyID)
+	stream := sub.Stream
+	if stream == "" {
+		stream = StreamFor(sub.ProxyID)
+	}
 	var written []string
 	stored, err := in.store.Audit().AppendChain(ctx, sub.Tenant, stream, ids,
 		func(head store.AuditRecord, fresh []string) ([]store.AuditRecord, error) {

@@ -42,6 +42,13 @@ import (
 // one head, so every append to it serialises, and one chain for a whole
 // deployment would put every proxy in the fleet behind one lock.
 
+// StreamControl is the chain this server's OWN records join: authentication
+// outcomes, break-glass logins, and anything else Control writes down about
+// itself rather than relays from a proxy (0011). It is a stream of its own so
+// that `hoplock-control audit-verify --stream control` verifies exactly the
+// records nobody outside this process produced.
+const StreamControl = "control"
+
 // StreamFor names the chain a record joins.
 //
 // IT IS THE SUBMITTING PROXY, never anything in the record. The proxy is the

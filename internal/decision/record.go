@@ -83,6 +83,17 @@ type recordedSubject struct {
 	// claims, and a reader has to be able to tell that from a subject that
 	// genuinely has none.
 	Known bool `json:"known"`
+	// MappingVersion names the claim mapping that produced Claims and the
+	// mapped half of Groups (M7, 0011). It is here because "why did Alice
+	// match the `sre` rule" is answered by the mapping as often as by the
+	// rule, so a record that names the rule and not the mapping answers half
+	// the question. Zero means no mapping was involved.
+	MappingVersion int `json:"mapping_version,omitempty"`
+	// BreakGlass reports that this subject's credential is a break-glass one
+	// (M7). It is ASSERTED from the subject row and never inferred from
+	// Source by a reader: a break-glass access that looks like a normal one
+	// is an audit failure, and "local" will one day mean something else.
+	BreakGlass bool `json:"break_glass"`
 }
 
 type recordedTarget struct {
@@ -226,6 +237,9 @@ func newRecordedInputs(in assembled, req *contract.AuthorizeRequest) recordedInp
 			Method: string(in.input.Subject.AuthMethod),
 			MFA:    in.input.Subject.MFA,
 			Known:  in.subjectKnown,
+
+			MappingVersion: in.mappingVersion,
+			BreakGlass:     in.breakGlass,
 		},
 		Target: recordedTarget{
 			Hostname: in.input.Target.Hostname,
