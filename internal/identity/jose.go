@@ -107,18 +107,36 @@ func (k jwk) publicKey() (crypto.PublicKey, error) {
 		if err != nil {
 			return nil, err
 		}
-		x, err := b64uint(k.X)
+		// The coordinates are assembled into an uncompressed point and PARSED
+		// rather than assigned to the key's fields. `ecdsa.ParseUncompressedPublicKey`
+		// does the on-curve check itself, which is the check that matters here —
+		// and writing X and Y directly is deprecated precisely because it can
+		// produce a key that is not on its curve.
+		x, err := base64.RawURLEncoding.DecodeString(k.X)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("identity: the JWKS carries a malformed EC coordinate")
 		}
-		y, err := b64uint(k.Y)
+		y, err := base64.RawURLEncoding.DecodeString(k.Y)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("identity: the JWKS carries a malformed EC coordinate")
 		}
-		if !curve.IsOnCurve(x, y) {
+		size := (curve.Params().BitSize + 7) / 8
+		if len(x) != size || len(y) != size {
+			// JOSE fixes the width: a coordinate shorter than the curve's
+			// field is not a value to left-pad into place, because a key
+			// that arrives the wrong width is a key from something that
+			// does not agree with us about the curve.
+			return nil, fmt.Errorf("identity: the JWKS carries an EC coordinate of the wrong width for its curve")
+		}
+		point := make([]byte, 0, 1+2*size)
+		point = append(point, 4)
+		point = append(point, x...)
+		point = append(point, y...)
+		pub, err := ecdsa.ParseUncompressedPublicKey(curve, point)
+		if err != nil {
 			return nil, fmt.Errorf("identity: the JWKS carries an EC key whose point is not on its curve")
 		}
-		return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil
+		return pub, nil
 	case "OKP":
 		if k.Crv != "Ed25519" {
 			return nil, fmt.Errorf("identity: the JWKS carries an OKP key on an unsupported curve")

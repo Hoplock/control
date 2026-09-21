@@ -31,19 +31,24 @@ func TestEveryPermissionIsHeldBySomeRole(t *testing.T) {
 func TestEveryRoleCanReadWhatItCanChange(t *testing.T) {
 	// A role that can change a thing it cannot read is a role that changes
 	// things blind.
-	pairs := map[identity.Permission]identity.Permission{
-		identity.PermPolicyWrite:   identity.PermPolicyRead,
-		identity.PermPolicyPublish: identity.PermPolicyRead,
-		identity.PermGrantWrite:    identity.PermGrantRead,
-		identity.PermGrantApprove:  identity.PermGrantRead,
-		identity.PermFleetWrite:    identity.PermFleetRead,
-		identity.PermIdentityWrite: identity.PermIdentityRead,
-		identity.PermCARotate:      identity.PermCARead,
+	//
+	// A slice rather than a map keyed by Permission: `exhaustive` checks a
+	// lookup table keyed by an enum for every member, and this table is
+	// deliberately partial — only the write permissions have a read to pair
+	// with (PLAN M13 says why that check is in the set at all).
+	pairs := []struct{ write, read identity.Permission }{
+		{identity.PermPolicyWrite, identity.PermPolicyRead},
+		{identity.PermPolicyPublish, identity.PermPolicyRead},
+		{identity.PermGrantWrite, identity.PermGrantRead},
+		{identity.PermGrantApprove, identity.PermGrantRead},
+		{identity.PermFleetWrite, identity.PermFleetRead},
+		{identity.PermIdentityWrite, identity.PermIdentityRead},
+		{identity.PermCARotate, identity.PermCARead},
 	}
 	for _, role := range identity.AllRoles {
-		for write, read := range pairs {
-			if role.Can(write) && !role.Can(read) {
-				t.Errorf("%s holds %s without %s", role, write, read)
+		for _, pair := range pairs {
+			if role.Can(pair.write) && !role.Can(pair.read) {
+				t.Errorf("%s holds %s without %s", role, pair.write, pair.read)
 			}
 		}
 	}

@@ -276,7 +276,7 @@ func TestAnIdPThatRefusesTheLoginIsADenialAndNotAnOutage(t *testing.T) {
 			"error_description": {"the user said no"},
 		},
 	})
-	be := assertRefusal(t, err, identity.RejectFederationNotAllowed)
+	be := refusalFor(t, err, identity.RejectFederationNotAllowed)
 	// The IdP's own error text is a diagnosis for a log, not a sentence for
 	// this audience.
 	if strings.Contains(be.Message, "the user said no") {
@@ -355,9 +355,21 @@ func TestABrokerRefusesToBuildWithoutTheFieldsItNeeds(t *testing.T) {
 	}
 }
 
-// assertRefusal asserts that err is a deliberate refusal carrying a code, and
-// returns it.
-func assertRefusal(t *testing.T, err error, code string) *identity.BrokerError {
+// assertRefusal asserts that err is a deliberate refusal carrying a code.
+//
+// It returns nothing, and [refusalFor] is the variant that does. Splitting them
+// keeps `errcheck` honest: a *BrokerError satisfies `error`, so a single helper
+// returning one would have every call site that does not need the value
+// discarding an error-typed result — which is exactly the pattern errcheck
+// exists to catch, and which would then have to be silenced everywhere.
+func assertRefusal(t *testing.T, err error, code string) {
+	t.Helper()
+	_ = refusalFor(t, err, code)
+}
+
+// refusalFor asserts the refusal and hands it back, for the tests that check
+// what was disclosed and what was only logged.
+func refusalFor(t *testing.T, err error, code string) *identity.BrokerError {
 	t.Helper()
 	be, ok := identity.BrokerRefusal(err)
 	if !ok {

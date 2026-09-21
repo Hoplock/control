@@ -103,16 +103,16 @@ func runTokenIssue(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "principal %s issued in tenant %s\n", principal.ID, cfg.Tenant)
+	_, _ = fmt.Fprintf(stdout, "principal %s issued in tenant %s\n", principal.ID, cfg.Tenant)
 	for _, t := range principal.ScopedTenants() {
-		fmt.Fprintf(stdout, "  %s: %s\n", t, strings.Join(principal.RolesIn(t).Strings(), ", "))
+		_, _ = fmt.Fprintf(stdout, "  %s: %s\n", t, strings.Join(principal.RolesIn(t).Strings(), ", "))
 	}
 	if *ttl > 0 {
-		fmt.Fprintf(stdout, "  expires in %s\n", *ttl)
+		_, _ = fmt.Fprintf(stdout, "  expires in %s\n", *ttl)
 	}
 	// The one line that matters, and the only place this value will ever
 	// appear.
-	fmt.Fprintf(stdout, "\ntoken (shown once):\n%s\n", cred.String())
+	_, _ = fmt.Fprintf(stdout, "\ntoken (shown once):\n%s\n", cred.String())
 	return nil
 }
 
@@ -205,13 +205,13 @@ func runRoleBind(args []string, stdout, stderr io.Writer) error {
 		if err := st.RoleBindings().Unbind(ctx, tenant, binding); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "removed %s in tenant %s\n", parsed, tenant)
+		_, _ = fmt.Fprintf(stdout, "removed %s in tenant %s\n", parsed, tenant)
 		return nil
 	}
 	if err := st.RoleBindings().Bind(ctx, tenant, binding); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "granted %s in tenant %s\n", parsed, tenant)
+	_, _ = fmt.Fprintf(stdout, "granted %s in tenant %s\n", parsed, tenant)
 	return nil
 }
 
@@ -222,9 +222,9 @@ func runRoleBind(args []string, stdout, stderr io.Writer) error {
 // than rows.
 func runRoleList(stdout io.Writer) error {
 	for _, role := range identity.AllRoles {
-		fmt.Fprintf(stdout, "%s\n", role)
+		_, _ = fmt.Fprintf(stdout, "%s\n", role)
 		for _, p := range role.Permissions() {
-			fmt.Fprintf(stdout, "  %s\n", p)
+			_, _ = fmt.Fprintf(stdout, "  %s\n", p)
 		}
 	}
 	return nil
@@ -312,10 +312,10 @@ func runMappingShow(args []string, stdout, stderr io.Writer) error {
 }
 
 func printMapping(stdout io.Writer, mapping *identity.Mapping, status string) error {
-	fmt.Fprintf(stdout, "claim mapping: %s\n", status)
-	fmt.Fprintf(stdout, "  digest: %s\n", mapping.Digest)
-	fmt.Fprintf(stdout, "  attributes it can produce: %s\n", orNone(mapping.MappedAttributeNames()))
-	fmt.Fprintf(stdout, "  groups it can produce: %s\n", orNone(mapping.MappedGroupNames()))
+	_, _ = fmt.Fprintf(stdout, "claim mapping: %s\n", status)
+	_, _ = fmt.Fprintf(stdout, "  digest: %s\n", mapping.Digest)
+	_, _ = fmt.Fprintf(stdout, "  attributes it can produce: %s\n", orNone(mapping.MappedAttributeNames()))
+	_, _ = fmt.Fprintf(stdout, "  groups it can produce: %s\n", orNone(mapping.MappedGroupNames()))
 	return nil
 }
 
@@ -389,7 +389,7 @@ func runConnectorPut(args []string, stdout, stderr io.Writer) error {
 	if err := st.Connectors().Upsert(context.Background(), tenant, row); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "connector %s (%s) written for tenant %s, enabled=%t\n",
+	_, _ = fmt.Fprintf(stdout, "connector %s (%s) written for tenant %s, enabled=%t\n",
 		*name, *kind, tenant, row.Enabled)
 	return nil
 }
@@ -427,12 +427,12 @@ func runCAShow(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "tenant %s certificate authority\n", tenant)
-	fmt.Fprintf(stdout, "  active key: %s (%s, custodian %s, created %s)\n",
+	_, _ = fmt.Fprintf(stdout, "tenant %s certificate authority\n", tenant)
+	_, _ = fmt.Fprintf(stdout, "  active key: %s (%s, custodian %s, created %s)\n",
 		info.ActiveKeyID, info.Algorithm, info.Custodian, info.CreatedAt.UTC().Format(time.RFC3339))
-	fmt.Fprintf(stdout, "\n# TrustedUserCAKeys — publish ALL of these to every target\n")
+	_, _ = fmt.Fprintf(stdout, "\n# TrustedUserCAKeys — publish ALL of these to every target\n")
 	for _, k := range info.TrustBundle {
-		fmt.Fprintf(stdout, "%s\n", k.PublicKey)
+		_, _ = fmt.Fprintf(stdout, "%s\n", k.PublicKey)
 	}
 	return nil
 }
@@ -458,19 +458,19 @@ func runCARotate(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "tenant %s rotated: %s -> %s\n", tenant, result.PreviousKeyID, result.NewKeyID)
+	_, _ = fmt.Fprintf(stdout, "tenant %s rotated: %s -> %s\n", tenant, result.PreviousKeyID, result.NewKeyID)
 	if *compromise {
-		fmt.Fprintf(stdout, "  the retired key left the trust bundle at %s\n",
+		_, _ = fmt.Fprintf(stdout, "  the retired key left the trust bundle at %s\n",
 			result.TrustedUntil.UTC().Format(time.RFC3339))
-		fmt.Fprintf(stdout, "  %d outstanding certificates were revoked\n", result.RevokedCertificates)
+		_, _ = fmt.Fprintf(stdout, "  %d outstanding certificates were revoked\n", result.RevokedCertificates)
 	} else {
-		fmt.Fprintf(stdout, "  the retired key stays trusted until %s, so certificates it signed keep working\n",
+		_, _ = fmt.Fprintf(stdout, "  the retired key stays trusted until %s, so certificates it signed keep working\n",
 			result.TrustedUntil.UTC().Format(time.RFC3339))
-		fmt.Fprintf(stdout, "  nothing was revoked\n")
+		_, _ = fmt.Fprintf(stdout, "  nothing was revoked\n")
 	}
-	fmt.Fprintf(stdout, "\n# TrustedUserCAKeys — publish ALL of these to every target\n")
+	_, _ = fmt.Fprintf(stdout, "\n# TrustedUserCAKeys — publish ALL of these to every target\n")
 	for _, k := range result.Info.TrustBundle {
-		fmt.Fprintf(stdout, "%s\n", k.PublicKey)
+		_, _ = fmt.Fprintf(stdout, "%s\n", k.PublicKey)
 	}
 	return nil
 }
@@ -540,12 +540,12 @@ func runCAIssue(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "serial %d, key id %s, signed by %s\n", issued.Serial, issued.KeyID, issued.CAKeyID)
-	fmt.Fprintf(stdout, "valid %s .. %s for %s on %s\n",
+	_, _ = fmt.Fprintf(stdout, "serial %d, key id %s, signed by %s\n", issued.Serial, issued.KeyID, issued.CAKeyID)
+	_, _ = fmt.Fprintf(stdout, "valid %s .. %s for %s on %s\n",
 		issued.ValidAfter.UTC().Format(time.RFC3339),
 		issued.ValidBefore.UTC().Format(time.RFC3339),
 		strings.Join(issued.Principals, ","), issued.Target)
-	fmt.Fprintf(stdout, "\n%s\n", issued.Certificate)
+	_, _ = fmt.Fprintf(stdout, "\n%s\n", issued.Certificate)
 	return nil
 }
 
@@ -565,11 +565,11 @@ func runCACertificates(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if len(rows) == 0 {
-		fmt.Fprintf(stdout, "tenant %s has no outstanding certificates\n", tenant)
+		_, _ = fmt.Fprintf(stdout, "tenant %s has no outstanding certificates\n", tenant)
 		return nil
 	}
 	for _, c := range rows {
-		fmt.Fprintf(stdout, "%d\t%s\t%s\t%s\texpires %s\n",
+		_, _ = fmt.Fprintf(stdout, "%d\t%s\t%s\t%s\texpires %s\n",
 			c.Serial, c.SubjectID, strings.Join(c.Principals, ","), c.Target,
 			c.ValidBefore.UTC().Format(time.RFC3339))
 	}

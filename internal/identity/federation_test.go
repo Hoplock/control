@@ -303,14 +303,14 @@ func TestAReplayedCallbackIsRefusedAndSaysSoDifferently(t *testing.T) {
 		t.Fatalf("first completion: %v", err)
 	}
 	_, err = f.federation.Complete(ctx, "tenant-a", "okta", params, "corr-2")
-	replayed := assertRefusal(t, err, identity.RejectFederationState)
+	replayed := refusalFor(t, err, identity.RejectFederationState)
 	if !strings.Contains(replayed.Detail, "already consumed") {
 		t.Errorf("a replay was not told apart from an unknown state: %q", replayed.Detail)
 	}
 
 	_, err = f.federation.Complete(ctx, "tenant-a", "okta",
 		url.Values{"state": {"never-issued"}}, "corr-3")
-	unknown := assertRefusal(t, err, identity.RejectFederationState)
+	unknown := refusalFor(t, err, identity.RejectFederationState)
 	if !strings.Contains(unknown.Detail, "no flow was issued") {
 		t.Errorf("an unknown state was not told apart from a replay: %q", unknown.Detail)
 	}
@@ -345,7 +345,7 @@ func TestACallbackPresentedToTheWrongConnectorIsRefused(t *testing.T) {
 	params := f.idp.login(t, started.RedirectURL)
 
 	_, err = f.federation.Complete(ctx, "tenant-a", "entra", params, "corr-1")
-	be := assertRefusal(t, err, identity.RejectFederationState)
+	be := refusalFor(t, err, identity.RejectFederationState)
 	if !strings.Contains(be.Detail, "okta") {
 		t.Errorf("the refusal does not say which connector the flow belongs to: %q", be.Detail)
 	}
@@ -529,7 +529,7 @@ func TestAWrongBreakGlassPasswordIsRefusedAndRecorded(t *testing.T) {
 	f.seedBreakGlass(t, "tenant-a", "root", "correct horse battery staple")
 
 	_, err := f.federation.LocalLogin(context.Background(), "tenant-a", "root", "wrong", "corr-1")
-	be := assertRefusal(t, err, identity.RejectFederationNotAllowed)
+	be := refusalFor(t, err, identity.RejectFederationNotAllowed)
 	// A login page is told one thing about a wrong login and a wrong password,
 	// on purpose: telling them apart makes this an account oracle.
 	if !strings.Contains(be.Message, "login or password") {
@@ -550,7 +550,7 @@ func TestAnUnknownBreakGlassLoginIsRefusedTheSameWay(t *testing.T) {
 	f.seedBreakGlass(t, "tenant-a", "root", "correct horse battery staple")
 
 	_, err := f.federation.LocalLogin(context.Background(), "tenant-a", "nobody", "x", "corr-1")
-	be := assertRefusal(t, err, identity.RejectFederationNotAllowed)
+	be := refusalFor(t, err, identity.RejectFederationNotAllowed)
 	if !strings.Contains(be.Message, "login or password") {
 		t.Errorf("message: %q", be.Message)
 	}
