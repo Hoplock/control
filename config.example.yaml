@@ -284,3 +284,100 @@ audit:
   # for reading them.
   read_listener: ""
   read_token: ""
+
+# The north-bound listener's own bounds (PLAN M2, phase 0011). Optional; every
+# field has the default shown.
+#
+# It is a section of its own rather than settings shared with `south:` because
+# the two listeners share no middleware and no bounds. A policy bundle (0014) is
+# the largest thing this surface accepts and nothing on the contract is close.
+north:
+  max_body_bytes: 4194304
+  request_timeout: 30s
+
+  # Drops the Secure attribute from the session cookie, for a local development
+  # deployment served over plain HTTP. It is spelled "insecure" so that nobody
+  # sets it by accident; a deployment reachable by anybody else must leave it
+  # false.
+  insecure_cookies: false
+
+# Federation, sessions and the second factor (PLAN M7, §6, phase 0011).
+# Optional; every field has the default shown.
+#
+# NO SECRET IS IN THIS FILE, and that is structural rather than a convention.
+# An IdP client secret is named by an environment variable inside the connector's
+# own stored document, and the MFA service's shared secret is named by
+# `secret_env` below. There is no key here a secret could be written to, so a
+# configuration file that leaks is not a set of federation credentials.
+#
+# Connectors themselves are per tenant and live in the database, not here (M18):
+# two tenants federate with different IdPs and map different claims, so a
+# process-wide connector list would be the retrofit M18 exists to avoid. Use
+# `hoplock-control identity connector-put` to write one.
+identity:
+  # How long a console session lives. Short on purpose: M7's whole point is that
+  # identity is short-lived, and a session outliving the IdP's own view of the
+  # person is what federation exists to remove.
+  session_ttl: 8h
+
+  # How long a started login may take to come back. It bounds the window in
+  # which a stolen `state` is worth anything.
+  flow_ttl: 10m
+
+  # The real out-of-band second factor (PLAN §6). LEFT EMPTY, this deployment has
+  # only `identity.ScriptedMFA` — the deterministic provider the conformance
+  # suite depends on, which is a CI facility and not a second factor: a subject
+  # enrolled with it has one that answers the way its row says it will.
+  #
+  # Setting either URL enables the provider, and both URLs plus `secret_env` are
+  # then required: a half-configured provider is refused rather than partly
+  # wired, because a deployment that set only `begin_url` believes it has a
+  # second factor and would discover otherwise on the first challenge.
+  #
+  # Requests are signed HMAC-SHA256 over the exact body bytes with the secret
+  # `secret_env` names. An unsigned "approve challenge X" is a request anybody on
+  # the network can forge.
+  mfa_push:
+    name: ""
+    begin_url: ""
+    poll_url: ""
+    secret_env: ""
+    timeout: 5s
+
+# The per-tenant SSH certificate authority (PLAN M7, §6, proxy D6a, phase 0011).
+# Optional; every field has the default shown.
+#
+# What it is for: without it, every proxy in the fleet holds a long-lived
+# management credential on disk — a key that opens the estate, on the machine
+# most exposed to it. With it, a proxy holds nothing; it generates a key pair per
+# session, this server signs the public half, and the certificate expires in
+# minutes.
+credential:
+  # Names the environment variable holding the base64-encoded 32-byte key the
+  # CA's private half is encrypted with at rest. WITHOUT IT THERE IS NO
+  # CERTIFICATE AUTHORITY: the software custodian refuses to start rather than
+  # write a CA private key into a database row in the clear, and a deployment
+  # that has not set this simply has no CA until it does. Generate one with
+  # `head -c 32 /dev/urandom | base64`.
+  #
+  # An `ext.KeyStore` extension (an HSM, a cloud KMS) replaces the custodian
+  # entirely and this key stops being read — the seam is the signer, never the
+  # key, so there is no second code path anywhere above it.
+  key_encryption_key_env: ""
+
+  # How long an issued certificate lives, and the ceiling a caller may ask for.
+  # Minutes rather than hours: the shorter and narrower, the less a stolen one is
+  # worth.
+  certificate_validity: 5m
+  max_certificate_validity: 1h
+
+  # How long a retired CA key stays in the trust bundle after a ROUTINE rotation,
+  # so certificates it already signed keep working for their remaining life. It
+  # is longer than `max_certificate_validity` so that no certificate the retired
+  # key signed can outlive the trust in it.
+  #
+  # A COMPROMISE rotation ignores this: the retired key leaves the bundle at the
+  # rotation instant and every outstanding certificate it signed is revoked.
+  # "We rotate" without an answer for outstanding certificates is not a rotation
+  # story, so both answers are here.
+  rotation_overlap: 2h

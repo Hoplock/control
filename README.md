@@ -52,6 +52,11 @@ They never share a listener. A proxy token that could reach a policy-authoring
 endpoint would be an escalation from "may ask about decisions" to "may author
 them" (PLAN M2).
 
+On the north-bound side a **caller never asserts its own tenant** (PLAN M18). A
+session or a token carries the set of tenants it may act in; a tenant named in a
+path, a header or a query is a *selector* within that set, refused before a
+handler runs. With one tenant configured nobody has to name one at all.
+
 ## The contract is upstream
 
 The proxy↔control contract is `api/control.yaml` in the
@@ -119,6 +124,24 @@ Useful targets (`make help` lists them all):
 | `make fmt` / `make tidy` | format sources; reconcile `go.mod`/`go.sum` |
 | `make check` | everything CI runs, in CI's order |
 | `make contract-check` / `contract-sync` / `conform` | the contract workflow above |
+
+The daemon also carries the operator commands the north-bound API does not yet
+cover, and the two bootstrap ones it never will — a deployment with no principals
+has nobody who can call an authenticated route:
+
+```sh
+bin/hoplock-control migrate                        # apply the schema; never on boot
+bin/hoplock-control identity roles                 # the fixed role set and its permissions
+bin/hoplock-control identity token-issue \
+    --name ci --scope 'default=policy-author'      # printed once, stored as a digest
+bin/hoplock-control identity role-bind \
+    --group sre --role fleet-admin
+bin/hoplock-control identity mapping-put --file mapping.yaml [--dry-run]
+bin/hoplock-control identity connector-put --name okta --kind oidc --file okta.json
+bin/hoplock-control ca show                        # the TrustedUserCAKeys to publish
+bin/hoplock-control ca rotate [--compromise]       # routine, or revoke what is outstanding
+bin/hoplock-control audit-verify --tenant default
+```
 
 The `go` directive in `go.mod` is a **floor**, not a preference: CI builds on
 both it and the latest stable release with `GOTOOLCHAIN=local`, so the floor is

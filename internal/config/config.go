@@ -71,6 +71,32 @@ const (
 	// DefaultMFAMaxPolls bounds a challenge's total cost independently of
 	// how fast it is polled.
 	DefaultMFAMaxPolls = 120
+	// DefaultNorthMaxBodyBytes caps a north-bound request body. It is larger
+	// than the south-bound cap because a policy bundle is the largest thing
+	// this surface accepts (0014) and nothing on the contract is close.
+	DefaultNorthMaxBodyBytes int64 = 4 << 20
+	// DefaultNorthRequestTimeout bounds one north-bound request. It is longer
+	// than the south-bound one because nothing is holding a user's handshake
+	// open while a bundle compiles.
+	DefaultNorthRequestTimeout = 30 * time.Second
+	// DefaultSessionTTL is how long a console session lives. Short, because
+	// M7's whole point is that identity is short-lived: a session outliving
+	// the IdP's own view of the person is what federation exists to remove.
+	DefaultSessionTTL = 8 * time.Hour
+	// DefaultFlowTTL is how long a started login may take to come back.
+	DefaultFlowTTL = 10 * time.Minute
+	// DefaultCertificateValidity is how long a brokered target certificate
+	// lives. Minutes: the shorter and narrower, the less a stolen one is
+	// worth (proxy D6a).
+	DefaultCertificateValidity = 5 * time.Minute
+	// DefaultMaxCertificateValidity caps what a caller may ask for. A
+	// certificate good for a day is a long-lived credential with extra steps.
+	DefaultMaxCertificateValidity = time.Hour
+	// DefaultRotationOverlap is how long a retired CA key stays in the trust
+	// bundle after a routine rotation. It is longer than
+	// DefaultMaxCertificateValidity so that no certificate the retired key
+	// signed can outlive the trust in it.
+	DefaultRotationOverlap = 2 * DefaultMaxCertificateValidity
 	// The ephemeral-uid allocation defaults (PLAN §4). The range sits above
 	// every distribution's own UID_MAX, above systemd's dynamic-user range
 	// and at the top of SSSD's default id-mapping range, and below 2^31 so a
@@ -127,16 +153,19 @@ type Config struct {
 	// Tenant names the tenant this deployment operates as (PLAN M12).
 	Tenant string `yaml:"tenant"`
 
-	Listeners ListenersConfig `yaml:"listeners"`
-	Database  DatabaseConfig  `yaml:"database"`
-	Log       LogConfig       `yaml:"log"`
-	Fleet     FleetConfig     `yaml:"fleet"`
-	South     SouthConfig     `yaml:"south"`
-	MFA       MFAConfig       `yaml:"mfa"`
-	UIDs      UIDConfig       `yaml:"uids"`
-	Decision  DecisionConfig  `yaml:"decision"`
-	Events    EventsConfig    `yaml:"events"`
-	Audit     AuditConfig     `yaml:"audit"`
+	Listeners  ListenersConfig  `yaml:"listeners"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Log        LogConfig        `yaml:"log"`
+	Fleet      FleetConfig      `yaml:"fleet"`
+	South      SouthConfig      `yaml:"south"`
+	MFA        MFAConfig        `yaml:"mfa"`
+	UIDs       UIDConfig        `yaml:"uids"`
+	Decision   DecisionConfig   `yaml:"decision"`
+	Events     EventsConfig     `yaml:"events"`
+	Audit      AuditConfig      `yaml:"audit"`
+	North      NorthConfig      `yaml:"north"`
+	Identity   IdentityConfig   `yaml:"identity"`
+	Credential CredentialConfig `yaml:"credential"`
 }
 
 // AuditConfig bounds log ingest and configures the record read-back path
@@ -503,8 +532,168 @@ func (c *Config) applyDefaults() {
 	if c.Events.SubscriberQueue == 0 {
 		c.Events.SubscriberQueue = DefaultSubscriberQueue
 	}
+	if c.North.MaxBodyBytes == 0 {
+		c.North.MaxBodyBytes = DefaultNorthMaxBodyBytes
+	}
+	if c.North.RequestTimeout == 0 {
+		c.North.RequestTimeout = DefaultNorthRequestTimeout
+	}
+	if c.Identity.SessionTTL == 0 {
+		c.Identity.SessionTTL = DefaultSessionTTL
+	}
+	if c.Identity.FlowTTL == 0 {
+		c.Identity.FlowTTL = DefaultFlowTTL
+	}
+	if c.Credential.CertificateValidity == 0 {
+		c.Credential.CertificateValidity = DefaultCertificateValidity
+	}
+	if c.Credential.MaxCertificateValidity == 0 {
+		c.Credential.MaxCertificateValidity = DefaultMaxCertificateValidity
+	}
+	if c.Credential.RotationOverlap == 0 {
+		c.Credential.RotationOverlap = DefaultRotationOverlap
+	}
 	// UIDs.LeaseTerm has no default: zero means "state no term", which is
 	// a real answer rather than an unset field.
+}
+
+// NorthConfig bounds the north-bound listener's chain (0011, M2).
+//
+// It is a section of its own rather than shared with `south:` because the two
+// listeners share no middleware and no bounds: a policy bundle is the largest
+// thing this surface accepts and it is far larger than anything on the contract.
+type NorthConfig struct {
+	// MaxBodyBytes caps a request body.
+	MaxBodyBytes int64 `yaml:"max_body_bytes"`
+	// RequestTimeout bounds a single request.
+	RequestTimeout time.Duration `yaml:"request_timeout"`
+	// InsecureCookies drops the Secure attribute from the session cookie. It
+	// exists for a local development deployment over plain HTTP, and it is
+	// spelled "insecure" so that nobody sets it by accident.
+	InsecureCookies bool `yaml:"insecure_cookies"`
+}
+
+// IdentityConfig configures federation and sessions (0011, M7).
+//
+// NO SECRET IS IN HERE. A connector's client secret is named by an environment
+// variable inside the connector's own stored document, and the MFA provider's
+// shared secret is named by `secret_env` below: a secret in a config struct is a
+// secret in every log line that ever prints one.
+type IdentityConfig struct {
+	// SessionTTL is how long a console session lives.
+	SessionTTL time.Duration `yaml:"session_ttl"`
+	// FlowTTL is how long a started login may take to come back. It bounds
+	// the window in which a stolen `state` is worth anything.
+	FlowTTL time.Duration `yaml:"flow_ttl"`
+	// MFAPush configures the real out-of-band second factor. Left empty, the
+	// deployment has only the deterministic CI provider — which is not a
+	// second factor and says so.
+	MFAPush MFAPushConfig `yaml:"mfa_push"`
+}
+
+// MFAPushConfig points at an out-of-band MFA service.
+type MFAPushConfig struct {
+	// Name is what an enrollment row names. Empty takes the provider's own
+	// default.
+	Name string `yaml:"name"`
+	// BeginURL and PollURL are the service's endpoints. Setting either
+	// enables the provider, so both are then required.
+	BeginURL string `yaml:"begin_url"`
+	PollURL  string `yaml:"poll_url"`
+	// SecretEnv names the environment variable holding the shared secret
+	// requests are signed with.
+	SecretEnv string `yaml:"secret_env"`
+	// Timeout bounds one call to the service.
+	Timeout time.Duration `yaml:"timeout"`
+}
+
+// Enabled reports whether a push provider is configured.
+func (m MFAPushConfig) Enabled() bool { return m.BeginURL != "" || m.PollURL != "" }
+
+// CredentialConfig configures the per-tenant SSH certificate authority (0011,
+// proxy D6a, M7).
+type CredentialConfig struct {
+	// KeyEncryptionKeyEnv names the environment variable holding the
+	// base64-encoded 32-byte key the CA's private half is encrypted with.
+	// WITHOUT IT THERE IS NO CERTIFICATE AUTHORITY: the software custodian
+	// refuses to start rather than write a CA private key into a database row
+	// in the clear, and a deployment that has not set it simply has no CA
+	// until it does.
+	KeyEncryptionKeyEnv string `yaml:"key_encryption_key_env"`
+	// CertificateValidity is how long an issued certificate lives.
+	CertificateValidity time.Duration `yaml:"certificate_validity"`
+	// MaxCertificateValidity lowers (never raises) the ceiling a caller may
+	// ask for.
+	MaxCertificateValidity time.Duration `yaml:"max_certificate_validity"`
+	// RotationOverlap is how long a retired CA key stays in the trust bundle
+	// after a ROUTINE rotation, so certificates it already signed keep
+	// working for their remaining life. A compromise rotation ignores it.
+	RotationOverlap time.Duration `yaml:"rotation_overlap"`
+}
+
+// validate reports the first north-bound setting that cannot be acted on.
+func (n NorthConfig) validate() error {
+	if n.MaxBodyBytes < 0 {
+		return &FieldError{Field: "north.max_body_bytes", Msg: "must not be negative"}
+	}
+	if n.RequestTimeout < 0 {
+		return &FieldError{Field: "north.request_timeout", Msg: "must not be negative"}
+	}
+	return nil
+}
+
+// validate reports the first identity setting that cannot be acted on.
+func (i IdentityConfig) validate() error {
+	if i.SessionTTL < 0 {
+		return &FieldError{Field: "identity.session_ttl", Msg: "must not be negative"}
+	}
+	if i.FlowTTL < 0 {
+		return &FieldError{Field: "identity.flow_ttl", Msg: "must not be negative"}
+	}
+	if !i.MFAPush.Enabled() {
+		return nil
+	}
+	// A HALF-CONFIGURED PROVIDER IS REFUSED rather than partly wired. A
+	// deployment that set `begin_url` and not `poll_url` believes it has a
+	// second factor, and would discover otherwise on the first challenge.
+	if i.MFAPush.BeginURL == "" {
+		return &FieldError{Field: "identity.mfa_push.begin_url", Msg: "is required once a push provider is configured"}
+	}
+	if i.MFAPush.PollURL == "" {
+		return &FieldError{Field: "identity.mfa_push.poll_url", Msg: "is required once a push provider is configured"}
+	}
+	if i.MFAPush.SecretEnv == "" {
+		return &FieldError{
+			Field: "identity.mfa_push.secret_env",
+			Msg:   "is required: an unsigned request to an MFA service is a request anybody on the network can forge",
+		}
+	}
+	if i.MFAPush.Timeout < 0 {
+		return &FieldError{Field: "identity.mfa_push.timeout", Msg: "must not be negative"}
+	}
+	return nil
+}
+
+// validate reports the first certificate-authority setting that cannot be acted
+// on.
+func (c CredentialConfig) validate() error {
+	if c.CertificateValidity < 0 {
+		return &FieldError{Field: "credential.certificate_validity", Msg: "must not be negative"}
+	}
+	if c.MaxCertificateValidity < 0 {
+		return &FieldError{Field: "credential.max_certificate_validity", Msg: "must not be negative"}
+	}
+	if c.RotationOverlap < 0 {
+		return &FieldError{Field: "credential.rotation_overlap", Msg: "must not be negative"}
+	}
+	if c.CertificateValidity > 0 && c.MaxCertificateValidity > 0 &&
+		c.CertificateValidity > c.MaxCertificateValidity {
+		return &FieldError{
+			Field: "credential.certificate_validity",
+			Msg:   "must not exceed credential.max_certificate_validity",
+		}
+	}
+	return nil
 }
 
 // Validate reports the first field that is missing or invalid.
@@ -546,6 +735,15 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Audit.validate(c.Listeners, c.Events); err != nil {
+		return err
+	}
+	if err := c.North.validate(); err != nil {
+		return err
+	}
+	if err := c.Identity.validate(); err != nil {
+		return err
+	}
+	if err := c.Credential.validate(); err != nil {
 		return err
 	}
 	return c.UIDs.validate()

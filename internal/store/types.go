@@ -41,10 +41,24 @@ type Subject struct {
 	Principals []string
 	// Groups are the groups policy matches on (M3).
 	Groups []string
-	// Claims are what the IdP asserted, stored as asserted. Mapping claims
-	// onto policy attributes is explicit and versioned above this layer
-	// (M7) — never by trusting a raw claim name straight from a token.
+	// Claims are the MAPPED policy attributes, not raw IdP claims: 0011
+	// applies the tenant's versioned claim mapping before this row is
+	// written, so nothing an IdP asserted reaches policy without having
+	// been named in that mapping (M7).
 	Claims map[string]string
+	// BreakGlass reports that this subject's local credential is a
+	// break-glass one. It is asserted by whoever creates the subject and is
+	// carried into every decision and audit record the subject touches: a
+	// break-glass login that looks like a normal one is an audit failure
+	// (M7). It is never inferred from Source, because "local" will one day
+	// mean something else.
+	BreakGlass bool
+	// MappingVersion is the claim-mapping version that produced Claims and
+	// the mapped half of Groups; zero when no mapping was involved (a local
+	// subject, or a tenant that federates with nobody). A decision record
+	// names it (M4), so it is read on the hot path — which is why it is a
+	// column on this row rather than a join.
+	MappingVersion int
 	// CreatedAt and UpdatedAt are set by the database.
 	CreatedAt time.Time
 	UpdatedAt time.Time

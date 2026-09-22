@@ -9,7 +9,8 @@ import (
 
 type subjectRepo struct{ s *Store }
 
-const subjectColumns = `subject_id, source, display_name, principals, groups, claims, created_at, updated_at`
+const subjectColumns = `subject_id, source, display_name, principals, groups, claims,
+	break_glass, mapping_version, created_at, updated_at`
 
 func (r subjectRepo) Get(ctx context.Context, tenant Tenant, subjectID string) (Subject, error) {
 	const op = "store.Subjects.Get"
@@ -56,17 +57,21 @@ func (r subjectRepo) Upsert(ctx context.Context, tenant Tenant, s Subject) error
 	defer cancel()
 
 	_, err := r.s.db.Exec(ctx, `
-		INSERT INTO subjects (tenant, subject_id, source, display_name, principals, groups, claims)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO subjects (tenant, subject_id, source, display_name, principals, groups, claims,
+			break_glass, mapping_version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (tenant, subject_id) DO UPDATE SET
 			source       = EXCLUDED.source,
 			display_name = EXCLUDED.display_name,
 			principals   = EXCLUDED.principals,
 			groups       = EXCLUDED.groups,
 			claims       = EXCLUDED.claims,
+			break_glass  = EXCLUDED.break_glass,
+			mapping_version = EXCLUDED.mapping_version,
 			updated_at   = now()`,
 		tenant, s.ID, s.Source, s.DisplayName,
-		nonNilStrings(s.Principals), nonNilStrings(s.Groups), nonNilMap(s.Claims))
+		nonNilStrings(s.Principals), nonNilStrings(s.Groups), nonNilMap(s.Claims),
+		s.BreakGlass, s.MappingVersion)
 	return wrap(op, err)
 }
 
@@ -95,7 +100,7 @@ func (r subjectRepo) Delete(ctx context.Context, tenant Tenant, subjectID string
 func scanSubject(op string, row rowScanner) (Subject, error) {
 	var s Subject
 	err := row.Scan(&s.ID, &s.Source, &s.DisplayName, &s.Principals, &s.Groups,
-		&s.Claims, &s.CreatedAt, &s.UpdatedAt)
+		&s.Claims, &s.BreakGlass, &s.MappingVersion, &s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
 		return Subject{}, wrap(op, err)
 	}

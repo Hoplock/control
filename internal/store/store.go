@@ -273,3 +273,35 @@ func (s *Store) UIDLeases() UIDLeaseRepository { return uidLeaseRepo{s} }
 
 // ProxyTokens returns the proxy channel-credential repository (0007).
 func (s *Store) ProxyTokens() ProxyTokenRepository { return proxyTokenRepo{s} }
+
+// Groups returns the group repository (0011).
+func (s *Store) Groups() GroupRepository { return groupRepo{s} }
+
+// RoleBindings returns the RBAC binding repository (0011).
+func (s *Store) RoleBindings() RoleBindingRepository { return roleBindingRepo{s} }
+
+// Connectors returns the federation connector repository (0011).
+func (s *Store) Connectors() ConnectorRepository { return connectorRepo{s} }
+
+// ClaimMappings returns the versioned claim-mapping repository (0011, M7).
+func (s *Store) ClaimMappings() ClaimMappingRepository { return claimMappingRepo{s} }
+
+// FederatedIdentities returns the IdP-subject join repository (0011).
+func (s *Store) FederatedIdentities() FederatedIdentityRepository {
+	return federatedIdentityRepo{s}
+}
+
+// FlowStates returns the outstanding-login repository (0011).
+func (s *Store) FlowStates() FlowStateRepository { return flowStateRepo{s} }
+
+// NorthPrincipals returns the north-bound credential repository (0011, M18).
+func (s *Store) NorthPrincipals() NorthPrincipalRepository { return northPrincipalRepo{s} }
+
+// CAKeys returns the per-tenant certificate-authority key repository (0011).
+func (s *Store) CAKeys() CAKeyRepository { return caKeyRepo{s} }
+
+// SSHCertificates returns the issued-certificate repository (0011).
+func (s *Store) SSHCertificates() SSHCertificateRepository { return sshCertificateRepo{s} }
+
+// SoftwareKeys returns the default key custodian's repository (0011).
+func (s *Store) SoftwareKeys() SoftwareKeyRepository { return softwareKeyRepo{s} }

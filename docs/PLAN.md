@@ -147,6 +147,19 @@ decision.
   What is *in* the south-bound token — and why it is not merely an opaque
   string — is **M22**.
 
+  **The north-bound listener is bound by 0011, not by 0014.** This plan used to
+  say 0014 owned its bring-up, on the reasoning that 0014 owned its credential
+  model and a bearer path added earlier would pre-empt that design. 0011 is what
+  that was waiting for: it *is* the credential model — an OIDC session or a
+  scoped API token, carrying the set of tenants it may act in, checked by one
+  middleware that resolves exactly one tenant and one permission per request
+  (M18). So the listener comes up with the routes 0011 owns (federation,
+  sessions, the certificate authority's operator surface) and 0014 adds routes
+  to a listener that already authenticates. What M2 forbids is untouched: the
+  two surfaces still share no port, no middleware chain and no credential type,
+  and `TestNoContractRouteIsReachableOnThisListener` is what keeps that true
+  from this side.
+
   **The rule is about surfaces, not about a count of ports.** Until the
   north-bound API exists (0014) there are two operator actions this server has
   to be able to take, and the contract states outright that neither is on `/v1`
@@ -167,10 +180,12 @@ decision.
   Both are **off unless configured** and refuse to bind without a credential of
   their own. Neither is a new surface: each is the north-bound surface's
   temporary front door, on a separate port rather than the north-bound one
-  because 0014 owns that listener's credential model — putting a bearer path on
-  it now would pre-empt that design and leave the port half-real. What M2
-  forbids still holds without exception: neither shares the south-bound port,
-  chain, or credential.
+  because each predates the credential model 0011 landed — a bearer path on the
+  north-bound port before then would have pre-empted that design and left the
+  port half-real. They stay on their own ports now rather than being folded in,
+  because 0014 **deletes** them (below) and moving them twice is two migrations
+  for the same removal. What M2 forbids still holds without exception: neither
+  shares the south-bound port, chain, or credential.
 
   **0014 deletes them rather than folding them in.** A finished product has no
   debug endpoint, so the rule that let these exist at all
@@ -918,19 +933,36 @@ alternative, and it gives up the one-binary deployment for nothing.
   `Registry` is what loads those inputs out of `internal/store` and applies the
   staleness rule. A path is a function of the nodes, the edges, the live relay
   registrations and the clock, and nothing else.
-- **`internal/identity`** — who is asking, and the whole MFA conversation. It
-  resolves an offered key or a password to an identity and owns what the
-  contract makes this server's alone: challenge lifetime, poll-rate
-  enforcement, single use, and expiry as a deny (§6). The factor itself sits
-  behind an `MFAProvider` seam and the identities behind a `Directory` one, so
-  0011's IdP broker is a substitution rather than a rewrite — and what must
-  NOT move behind either seam is anything about the conversation, because that
-  is the same whoever supplies the factor.
+- **`internal/identity`** — who is asking: the south-bound authentication
+  conversation, the IdP brokers, the claim mapping, RBAC's vocabulary, and the
+  north-bound credential model. It resolves an offered key or a password to an
+  identity and owns what the contract makes this server's alone: challenge
+  lifetime, poll-rate enforcement, single use, and expiry as a deny (§6). The
+  factor itself sits behind an `MFAProvider` seam and the identities behind a
+  `Directory` one, and what must NOT move behind either seam is anything about
+  the conversation, because that is the same whoever supplies the factor.
 
   It answers `(Outcome, error)` rather than `(Identity, error)`, and the split
   is M11 made structural: a non-nil error is an OUTAGE with nothing to inspect,
   and a deny is a field on the outcome that only code building one on purpose
   can set. The two cannot be mistaken for each other by a caller in a hurry.
+  `BrokerError` is the same split one layer along, for a login: a refusal
+  carries a code and a message safe to render, and everything else is an outage.
+
+  `Mapping` is the one place an IdP's vocabulary becomes this server's, and it
+  is an allow-list (§6). `Role`, `Permission` and `RoleSet` are the whole of
+  RBAC's vocabulary, as constants rather than rows. `Principal` is what the
+  north-bound middleware puts on a request: its scope map is **unexported**, so
+  the only questions a caller can ask are "may this principal act in tenant T"
+  and "what roles does it hold there" — which is what stops a cross-tenant
+  aggregate route from being easy to write (M18).
+- **`internal/credential`** — the per-tenant SSH certificate authority (proxy
+  D6a, §6). It mints over a public key the proxy generated, so no private key
+  crosses this API; it holds its own through the `ext.KeyStore` seam, so custody
+  can move to an HSM with no second code path; and it says plainly what SSH can
+  and cannot enforce rather than implying a hostname scope that does not exist.
+  `seam.go` is the one file that names what the contract is missing, refuses to
+  put it on the wire, and fails the build when it lands upstream (M1).
 - **`internal/httpapi/south`** — the proxy-facing transport, and the only place
   that speaks both the wire vocabulary and the domain one. It owns the
   middleware chain (correlation ids, the access log that never writes a body, a
@@ -939,6 +971,17 @@ alternative, and it gives up the one-binary deployment for nothing.
   source-level tests keep that structural rather than conventional: one fails
   the build if a third function can construct a 401, the other if a handler
   names a status constant.
+- **`internal/httpapi/north`** — the operator-facing transport, and the place
+  tenancy is resolved (M18). Its **route table is the enforcement point**: every
+  route is registered with an access class and, where it resolves a tenant, one
+  permission, and one middleware authenticates, resolves exactly one tenant from
+  the principal's scope, and checks that permission before a handler runs. A
+  handler reads the tenant from the request context or not at all, and the
+  isolation test enumerates the router rather than a hand-written list — so a
+  route added in a later phase without isolation fails it on the day it is added.
+  Its errors carry a stable code, typed parameters, an English message and the
+  correlation id (M21), which is also why it owns its own 404 and 405 rather than
+  letting `http.ServeMux` answer them in prose.
 - **`internal/audit`** — append-only writer, chain verifier, and query API.
   Nothing else writes audit rows. One record is stored twice over: `body` holds
   the canonical JSON the chain hashed, as text rather than jsonb so a verifier
@@ -1518,10 +1561,80 @@ reuses it on, and three consequences this server owns:
 
 ## 6. Identity, MFA, and credentials
 
-- **Federation (M7).** OIDC and SAML brokers behind one interface. An explicit
-  mapping turns IdP claims and groups into policy attributes; the mapping is
-  versioned, validated, and visible in the decision record, because "why did
-  Alice match the `sre` rule" is answered by the mapping as often as by the rule.
+- **Federation (M7).** OIDC and SAML brokers behind one interface
+  (`identity.Broker`). The two protocols agree on the only thing this server
+  needs — a browser goes somewhere, comes back carrying something, and what it
+  carries names a person — so everything above the seam is written once:
+  the flow row, its single use, the claim mapping, the session. That is what
+  makes the mapping's guarantee provable rather than asserted: there is one
+  place claims become attributes.
+
+  **OIDC** is authorization code + PKCE only, with the ID token verified against
+  the issuer's published keys. The implicit and hybrid flows are not implemented
+  (they put a token in a URL, and therefore in a browser history, a referrer
+  header and a proxy log) and PKCE is not optional. **SAML** is Web SSO,
+  HTTP-Redirect out and HTTP-POST back, with a narrow profile stated rather than
+  configured: no IdP-initiated login, no unsigned assertion under any
+  configuration, and `InResponseTo` checked against the flow this server started.
+  Encrypted assertions are not implemented and are a feature rather than an
+  omission.
+
+  **An explicit mapping** turns IdP claims and groups into policy attributes; it
+  is versioned, validated at authoring time, and named in the decision record,
+  because "why did Alice match the `sre` rule" is answered by the mapping as
+  often as by the rule. It is an **allow-list, not a transform**: a claim it does
+  not name does not become an attribute — not renamed, not passed through, not
+  namespaced — and a claim may not be mapped onto a name this server sets for
+  itself (`chain_hop_proxy_id`, anything under `hoplock.`). Transformation
+  languages are deliberately absent: a mapping language is a policy language,
+  and this product already has one. Multi-IdP federation, complex
+  claim-transformation rules and SCIM provisioning are Enterprise's, behind
+  `ext.IdentitySync`.
+
+  **A flow is a row, not process memory**, and single use — the same two rules
+  the MFA challenges below live by, for the same two reasons: nothing makes a
+  browser's callback land on the node that started the flow, and a replayed
+  callback must be told "spent" rather than "never issued".
+
+  **A claim mapping a tenant has not authored maps nothing.** That is the safe
+  direction: identities arrive with no attributes and no groups, and a policy
+  that grants on attributes grants nothing. A stored mapping that no longer
+  parses is an **outage**, never an empty mapping — falling back would silently
+  strip every attribute in the tenant, which reads as a permissions bug and
+  would be debugged as one.
+
+- **Users, groups, roles and RBAC (M7, M18).** Local users and groups are
+  first-class records, so a deployment works before any IdP is connected and
+  break-glass access exists when the IdP is down. Group membership from either
+  source feeds policy identically — a rule cannot tell where a group came from,
+  which is why the two are merged into one sorted list on the subject row and
+  nothing downstream records which half was which.
+
+  **The role set is fixed and lives in code** (`internal/identity/rbac.go`):
+  auditor, policy-author, grant-admin, fleet-admin, admin, over a closed
+  permission enum. There is no `roles` table, because a role whose permissions
+  are rows is a role whose permissions can be widened by an UPDATE. What *is*
+  data is who holds which role, per tenant: a role granted in tenant A confers
+  nothing in tenant B, including to an administrator, and that is the binding's
+  primary key rather than a filter somebody remembers to apply.
+
+  **RBAC is enforced in one place**: the north-bound route table
+  (`internal/httpapi/north`). Every route is registered with an access class and,
+  where it resolves a tenant, one permission; the middleware authenticates,
+  resolves exactly one tenant from the principal's scope, and checks that
+  permission before a handler runs. A handler is never asked, because M18's
+  failure mode is not a wrong decision in the middleware — it is one handler that
+  read the tenant from the path itself. The console (0016) reaches it through the
+  API, so there is no second enforcement point to keep in step.
+
+- **Break-glass is asserted, never inferred (M7).** A local credential is flagged
+  at the moment it is minted; the flag travels on the principal, is stored on the
+  credential row and on the subject row, and is written into the decision record
+  and the audit record. A reader never has to conclude "break-glass" from
+  `source == local`, because "local" will one day mean something else. The audit
+  record is part of the login rather than a side effect of it: a break-glass
+  login this server cannot write down is one it refuses, since an unrecorded one
+  is worse than one that looks normal.
 - **MFA orchestration.** The contract makes MFA entirely this server's concern:
   the proxy relays and polls. That means owning challenge lifetime, poll
   intervals, replay resistance, and the deny-on-expiry path — none of which is
@@ -1556,11 +1669,32 @@ reuses it on, and three consequences this server owns:
   method. Beyond selecting it, this server is the natural home for the
   credentials themselves: an SSH CA issuing short-lived, narrowly-scoped target
   certificates per session beats a long-lived management certificate sitting on
-  every proxy's disk. That is an **additive** contract change (the proxy's
-  `TargetAuth` object — the entry type of `target_auth_ladder` — is extensible on
-  purpose) and therefore starts in the Hoplock Proxy repository, not here: a new
-  method is vocabulary, so it bumps `policy_version` upstream (§4). This plan
-  records the intent and phase 0011 builds the CA behind it.
+  every proxy's disk.
+
+  **The CA is built** (`internal/credential`): per tenant, keyed through the
+  `ext.KeyStore` seam so that custody can move to an HSM without a second code
+  path, with the software custodian holding its private half as AES-256-GCM
+  ciphertext under a key-encryption key the database never sees. Certificates are
+  minted over a public key **the proxy generated** — no private key ever crosses
+  this API — and are scoped to a principal, a target, a session and a window of
+  minutes. What SSH can enforce is the principal, the window and the critical
+  options; there is no hostname field, so target scoping is enforced at issuance
+  and recorded in `ssh_certificates.target`, which is what makes it auditable.
+
+  **Rotation answers the outstanding-certificate question rather than deferring
+  it.** A routine rotation retires the key into the trust bundle for an overlap
+  longer than the maximum certificate lifetime, so nothing it signed outlives the
+  trust in it and no session drops. A compromise rotation removes it from the
+  bundle at once and revokes every outstanding certificate it signed. "We rotate"
+  without both answers is not a rotation story.
+
+  **It cannot reach a proxy yet, and that is upstream's.** `TargetAuth` is
+  extensible for exactly this — the schema says so outright — but the method value
+  and its parameters are the Hoplock Proxy repository's to define, and `contract/`
+  is vendored read-only here (M1). A new method is vocabulary, so it bumps
+  `policy_version` upstream (§4). `internal/credential/seam.go` names the exact
+  shape, refuses to put it on the wire, and carries the test that fails the build
+  on the day the method lands in the vendored document.
 
 ---
 
@@ -1732,7 +1866,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0008 | South-bound authorize & route | `/v1/authorize`: snapshot assembly, cache hints, latency budget (M5) |
 | 0009 | Revocation & event fan-out | `/v1/proxies/{proxy_id}/events`, event bus, replay, resync, kill switch (M9) |
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, the per-tenant-per-stream hash chain and its verifier, redaction, the query layer, and the record read-back path 0014 deletes (M8) |
-| 0011 | Identity, users, groups, roles & RBAC | local identity, roles, RBAC, OIDC/SAML federation, claim mapping, SSH CA (M7) |
+| 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
 | 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21) |
