@@ -12,7 +12,13 @@
   explanation type), `0006` (the capability query this surface exposes), `0008`
   (decision records), `0010` (audit query layer), `0009` (publishing an operator
   event), `0007` (listener conventions), `0004` (the extension registry this
-  surface exposes).
+  surface exposes). Also open `0006` at "The cross-repo dependency": this phase
+  closes it (see "Fleet configuration becomes deliverable" below).
+- `docs/PLAN.md` §4, **"Configuration distribution: the delivery exists
+  upstream (proxy D18)"**. In the **Hoplock Proxy repository**, read `docs/PLAN.md`
+  **D18** and `api/README.md` "Fleet configuration". D18 is cited in this
+  repository and never restated, and it is the reasoning behind every rule in
+  that section.
 
 ## Objective
 Give humans and CI a surface. This is the phase where the product becomes
@@ -183,6 +189,144 @@ appears in simulation like any other change.
   (PLAN §5.4); an operator who publishes "invalidate everything for Alice" and
   is not told that a target's host key was untouched has been misled by this
   server, and a revocation that silently misses is worse than one that refuses.
+
+### Fleet configuration becomes deliverable (proxy D18, `Hoplock/proxy#65`)
+
+0006 built configuration distribution below the wire: versioned documents,
+composition, rollback, and drift. It left `fleet.ConfigPublisher` a visible
+no-op because the contract had no event that could say "your desired
+configuration moved". It raised the need upstream (`Hoplock/control#27`), and
+the proxy answered it as its phase 0042, merged as **`Hoplock/proxy#65`**:
+contract **`4.2.0`**, `policy_version` **still `4`**, with a new decision,
+**proxy D18**. That PR's `## Cross-repo impact` section put five obligations on
+this repository, and they are this phase's.
+
+**Why here and not in an earlier phase.** This is the first phase where an
+operator can publish a configuration at all. Until the north-bound surface
+exists, `Registry.PublishConfig` has no caller. Wiring the publisher earlier
+would have needed a publish path with no successor to delete it
+(`docs/PROTOCOL.md` §3), and the conformance cases below need a publish hook
+that only this surface can supply. So publishing a document (zone or proxy
+scope), rolling it back, and reading the fleet's configuration state are
+north-bound routes here, gated and audited like every other mutating action
+(Inventory, above). The south-bound half is served in the same PR, because a
+publish that nothing can fetch has delivered nothing.
+
+1. **Re-vendor the contract at `4.2.0`.** Run
+   `make contract-sync REF=48fed4c09f7eaf6810a31a11ee14806b13c57674` (the
+   merge of `Hoplock/proxy#65`), or a later upstream `main`. If you use a later
+   `main`, every contract change between the two is also this phase's to read
+   and state. Never hand-edit `contract/` (M1). `policy_version` does not move.
+   The document gains an event type and two endpoints, so every check keyed on
+   the vocabulary stays green, and the checksum in `contract/UPSTREAM` is what
+   moves. The re-vendor also moves the proxy commit the `conform` CI job builds
+   `cmd/mock-control` from. That is what gives the mock the fetch, the report,
+   and `POST /debug/config`, and the conformance cases below depend on it.
+2. **Wire `fleet.ConfigPublisher` to emit `config_changed` {`version`,
+   `hash`}.** Emit it on the stream 0009 built (`internal/revoke`), one event
+   per affected proxy, naming that proxy's **composed** document. A zone
+   publish that re-materialises twelve proxies is twelve notifications, and a
+   no-op publish that bumps no proxy's version (0006) emits none. The event
+   **names the document and never carries it**, because the stream is
+   replayable and a replayed document is a stale one applied as if current
+   (D18). It is retained for replay like any other event, which is safe because
+   the proxy re-fetches the current document. On the wire `version` is an
+   **opaque string** and `hash` is an opaque content identifier the proxy only
+   compares for equality (the contract's example is `sha256:<hex>`). Render this
+   server's `int64` version and bare hex hash into those strings in **one**
+   place, and use that one place for the event, the fetch, the `ETag`, and
+   parsing the report back. Then the noop's default goes: the Registry is
+   constructed with the real publisher. Rewrite the doc comments on
+   `ConfigPublisher`, `noopConfigPublisher`, `WithConfigPublisher` and the
+   package comment in `internal/fleet/config.go`. They say the seam "cannot be
+   connected to the wire yet", and after this phase that is false.
+
+   A publisher failure must **not** roll back the publish. The desired version
+   is durable and drift is visible, so the proxy catches up on its next stream
+   (re)connect, when it re-fetches anyway (0006's reasoning for the no-op still
+   holds for a transient failure). Surface the failure to the operator on the
+   response rather than swallowing it.
+3. **Serve `GET /v1/proxies/{proxy_id}/config`** on the south-bound listener
+   (0007), authenticated and tenant-resolved exactly as 0009 does
+   `/v1/proxies/{proxy_id}/events`:
+   - `200` with the `ProxyConfigDocument` (`version`, `hash`, `settings`) and
+     `ETag` equal to the `hash` as an entity tag (`"sha256:…"`);
+   - `304` with no body when `If-None-Match` names the hash still desired.
+     Compare it as an entity tag, so quoting is not a mismatch. This is what
+     makes the proxy's fetch on every (re)connect and after `resync` cheap;
+   - `204` when nothing is published for this proxy, in which case the proxy
+     runs on its bootstrap file alone;
+   - `404` with code `not_enrolled` when the registry holds no proxy by this id
+     **in the caller's tenant**. This is a registry fact, not a deny, so it is
+     never `401` (M11). A `401` would also be indistinguishable to the proxy
+     from a rejected token, which is the one case where its subscription stops
+     retrying.
+4. **Record `POST /v1/proxies/{proxy_id}/config/report`, and drive drift and
+   `last_error` from it.** Answer `{"accepted": true}` once the report is
+   durably recorded, and never before. Store what the contract carries:
+   `running_*`, `desired_*`, `state` (`applied`, `pending_restart`, `rejected`,
+   `fetch_failed`), `restart_required`, `last_error`, and `reported_at`. That is
+   a migration (0003's forward-only rules), because 0006's
+   `proxy_config_state` holds only the running version and hash. Drift is then
+   derived from the report, not from `DesiredVersion != RunningVersion`
+   alone. A proxy reporting `pending_restart` has not finished the rollout even
+   though it holds the new document. One reporting `rejected` needs an
+   operator, and the fleet view shows the `last_error` (keys, never values).
+   One reporting `fetch_failed` is retrying. Absent `running_*` means "on its
+   bootstrap file alone", and it is not version zero reported as a number. A
+   `running_version` that does not parse as one of this server's versions is
+   drift, and it is reported as drift, not as a `400`, because the proxy is
+   saying truthfully what it runs. The report is the only proxy→server call
+   that carries this (D18). 0006's `Heartbeat.RunningConfigVersion` has no wire
+   caller. Decide whether it goes or stays as a non-contract input, and say
+   which in your learnings. Two sources for one fact is how the fleet view
+   starts disagreeing with itself.
+5. **Publish only D18's fleet-owned keys.** A setting is fleet-owned only by
+   being listed, and the list is `ProxyConfigDocument.settings` in the
+   vendored `contract/control.yaml`. Everything else is bootstrap-only: what
+   the proxy needs to reach or be recognised by Hoplock Control, any path to
+   host material, any listener, and `control.cache.stale_after`. The proxy
+   rejects a document naming any other key **whole**. So a publish, **at either
+   scope**, that names one is **refused at publish time** with an M21 code
+   naming the key. Staging it would produce a rollout that can only ever
+   report `rejected`. Keys are flat and dotted, which makes 0006's top-level
+   key replacement exactly per-setting replacement. A nested object is not a
+   fleet-owned key and is refused on the same rule. Check each value's shape
+   against the contract's statement (durations as Go duration strings, counts
+   as integers, addresses as strings). The proxy's own validation remains the
+   authority, and a document it rejects anyway arrives as `rejected` on the
+   report, which is item 4's job to show.
+
+   Hold the list in **one** place, and add a test that ties it to the vendored
+   document. Today the list is prose in that schema's `description`, not an
+   enum, so the test reads the backticked keys out of the description. The
+   next `make contract-sync` that adds or removes a fleet-owned key must fail
+   that test rather than slip past it. Whether a key applies live or at restart
+   is the proxy's business, and this server stores neither.
+6. **Grade it in `cmd/pdpconform`** against both this server and the proxy's
+   mock, in the layers 0002 and 0009 established. Contract-level cases:
+   - the fetch with no document published answers `204`;
+   - after a publish, the stream carries `config_changed` whose `version` and
+     `hash` equal what the fetch then serves;
+   - the fetch answers `200` with `ETag` equal to the body's `hash`;
+   - the same fetch with that `ETag` as `If-None-Match` answers `304` with no
+     body;
+   - an id the server has not enrolled answers `404` with the code
+     `not_enrolled`, and never `401`;
+   - the report answers `200 {"accepted": true}`.
+
+   Publishing is not on the contract, so the suite takes it as an input the
+   way it takes `events.publish_url`, `publish_body` and `publish_token`.
+   Suggested keys are `config.publish_url`, `config.publish_body` and
+   `config.publish_token`. They point at the mock's `POST /debug/config` in
+   `mock-expectations.yaml` and at this phase's north-bound publish route in
+   `control-expectations.yaml`. Grade what the server answers, never the
+   literals: `version` and `hash` are opaque, and the mock's are not ours.
+   `mock-fixtures.yaml` gains the mock's `fleet_config` block (`enrolled` so
+   that `404` is reachable, and no `document`, so the run starts on `204`).
+   Update `cmd/pdpconform/README.md`'s key table to match. This server adds
+   **no** `/debug/` route for any of it. The acceptance criterion below that no
+   Go file binds one covers this too.
 
 ### Delete the two debug paths this phase supersedes
 
@@ -381,10 +525,29 @@ phases earlier, not discovered there.
   both, because the failure is an operator believing a withdrawal covered
   something it could not touch.
 
+- **Fleet configuration is delivered, end to end in-process** (proxy D18). With
+  the contract re-vendored at `4.2.0` and `policy_version` unchanged at `4`, a
+  zone publish emits exactly one `config_changed` per re-materialised proxy,
+  naming its composed document. A no-op publish emits none. The fetch answers
+  `200`+`ETag`, `304` on the held hash, `204` with nothing published, and
+  `404 not_enrolled` for an unknown id or an id in another tenant. Assert that
+  last case explicitly, because it is the tenancy leak on this route. A report
+  of each `state` shows in the fleet view as that state, with `last_error` for
+  `rejected` and `fetch_failed`, and a `pending_restart` proxy is **not**
+  counted as caught up. A publish naming a bootstrap-only key, a key the
+  contract does not list, or a nested object is refused at publish time naming
+  the key. The test tying the fleet-owned list to `contract/control.yaml` fails
+  when the two disagree: prove it, don't assume it. `make conform` passes with
+  the configuration cases against this server **and** against the proxy's mock.
+
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0014-northbound-api-and-policy-lifecycle-learnings.md`. Summary
 block MUST give the route table with required roles, the bundle lifecycle states,
 the simulation API and its purity requirements, the `explain` response shape, and
-the `policyctl` command set. Phase 0012 adds routes to this surface and phase
+the `policyctl` command set. It must also give the fleet-configuration delivery:
+the contract commit re-vendored, how `int64` versions and hashes render onto the
+wire, where the fleet-owned key list lives and what ties it to the contract, the
+report's storage and how drift is derived from it, the fate of
+`Heartbeat.RunningConfigVersion`, and the conformance keys added. Phase 0012 adds routes to this surface and phase
 0017 drives it end to end.

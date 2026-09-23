@@ -33,7 +33,11 @@
   needs an event type `hoplock/proxy` does not have. **Already raised and
   queued** as proxy phase **0042** (`Hoplock/proxy#61`) — do not re-raise it;
   check whether it has merged, and if it has, vendor the contract and wire
-  `fleet.ConfigPublisher`. Details.
+  `fleet.ConfigPublisher`. Details. **Update (sync for `Hoplock/proxy#65`):
+  merged, as contract `4.2.0` and proxy D18.** The shape differs from the sketch
+  below: the event has `version` (an opaque string) and `hash`, and there is a
+  fetch endpoint and a report endpoint. Phase **0014** owns the wiring. Read
+  its prompt and PLAN §4, "Configuration distribution", not the sketch.
 - **Gotcha:** a config document is stored as **text, not jsonb** — jsonb
   re-renders bytes and the hash beside it would stop matching.
 
