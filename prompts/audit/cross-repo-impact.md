@@ -218,7 +218,10 @@ document is what is true now. Check this repository's prompts against the
   (§4, 0002, 0018). Are they current, and is each stated where the phase that
   owns it can see it? Note that `info.version` does **not** only ever rise —
   `#53` moved it `4.3.0` → `4.0.0` and `#56` then moved it to `4.1.0` — so a
-  check that assumes monotonicity is itself a finding. Note too that the
+  check that assumes monotonicity is itself a finding. Nor does it name one
+  document. `#66` moved it back to `4.3.0`, so two different contracts have
+  carried that number, and text or a check that identifies a vendored document
+  by its version string is a finding too. Note too that the
   vendored copy may sit legitimately **behind** upstream: a sync vendors nothing
   (§3.1), so it records the obligation and the phase that owns it runs
   `make contract-sync`. A gap between `contract/UPSTREAM` and upstream `main` is

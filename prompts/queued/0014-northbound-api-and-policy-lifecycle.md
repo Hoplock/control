@@ -19,6 +19,15 @@
   **D18** and `api/README.md` "Fleet configuration". D18 is cited in this
   repository and never restated, and it is the reasoning behind every rule in
   that section.
+- `docs/PLAN.md` **§7** from "The enforcement rung is an audit fact" to the end
+  of that list, and §5.2's `algorithm_profile` bullet, for what
+  `Hoplock/proxy#66` changed on the records this store ingests. Also open
+  `0010`'s learnings at "The rung in force, and the two attribute names" and
+  "The two device events": #66 overturns parts of both (see "The records the
+  proxy emits since proxy phase 0043" below). In the **Hoplock Proxy
+  repository**, read `docs/PLAN.md` §7 at "The record says what the proxy
+  actually did (phase 0043)" and `api/README.md` "Algorithm profile". They are
+  cited here and never restated.
 
 ## Objective
 Give humans and CI a surface. This is the phase where the product becomes
@@ -212,16 +221,29 @@ north-bound routes here, gated and audited like every other mutating action
 (Inventory, above). The south-bound half is served in the same PR, because a
 publish that nothing can fetch has delivered nothing.
 
-1. **Re-vendor the contract at `4.2.0`.** Run
-   `make contract-sync REF=48fed4c09f7eaf6810a31a11ee14806b13c57674` (the
-   merge of `Hoplock/proxy#65`), or a later upstream `main`. If you use a later
-   `main`, every contract change between the two is also this phase's to read
-   and state. Never hand-edit `contract/` (M1). `policy_version` does not move.
-   The document gains an event type and two endpoints, so every check keyed on
-   the vocabulary stays green, and the checksum in `contract/UPSTREAM` is what
-   moves. The re-vendor also moves the proxy commit the `conform` CI job builds
-   `cmd/mock-control` from. That is what gives the mock the fetch, the report,
-   and `POST /debug/config`, and the conformance cases below depend on it.
+1. **Re-vendor the contract at `4.3.0`.** Run
+   `make contract-sync REF=07a5a401c9f9d81fb591d225b04d5826c7599478` (the
+   merge of `Hoplock/proxy#66`, which sits on top of `#65`), or a later
+   upstream `main`. If you use a later `main`, every contract change between
+   the two is also this phase's to read and state. Never hand-edit `contract/`
+   (M1). `policy_version` does not move: it stays **`4`** through both PRs.
+   `#65` adds an event type and two endpoints (`4.2.0`). `#66` adds no field,
+   no endpoint and no enum value (`4.3.0`). It changes descriptions only:
+   `algorithm_profile: default` now means the SSH library's **secure set**, a
+   tightening the document announces as a **break** beside `params.username`;
+   the profile applies to every connection a route causes to its target; and
+   the `target_auth_ladder` text now names the audit fields `credential_method`
+   and `credential_rung` (counting from 1) where it used to publish
+   `target_auth_*` (0-based). So every check keyed on the vocabulary stays
+   green, and the checksum in `contract/UPSTREAM` is what moves. Note that
+   `4.3.0` is a number the document has carried before: `#53` moved it
+   **down** from `4.3.0` to `4.0.0`. A version string therefore does not
+   identify a document, and nothing here may use one to. The checksum does
+   (0002, 0018). The re-vendor also moves the proxy commit the `conform` CI
+   job builds `cmd/mock-control` from. That is what gives the mock the fetch,
+   the report, and `POST /debug/config`, and the conformance cases below
+   depend on it.
+   `#66` changes none of the mock's handlers.
 2. **Wire `fleet.ConfigPublisher` to emit `config_changed` {`version`,
    `hash`}.** Emit it on the stream 0009 built (`internal/revoke`), one event
    per affected proxy, naming that proxy's **composed** document. A zone
@@ -383,6 +405,134 @@ publish that nothing can fetch has delivered nothing.
    Update `cmd/pdpconform/README.md`'s key table to match. This server adds
    **no** `/debug/` route for any of it. The acceptance criterion below that no
    Go file binds one covers this too.
+
+### The records the proxy emits since proxy phase 0043 (`Hoplock/proxy#66`)
+
+0010 built the audit store and raised three shapes upstream
+(`Hoplock/control#32`): `algorithm_profile` on the record, the
+`device.config.change` event, and one name for the credential method and its
+rung. The proxy answered as its phase 0043, merged as **`Hoplock/proxy#66`**.
+That PR's `## Cross-repo impact` section puts the obligations below on this
+repository, and they are this phase's for two reasons. This is the phase that
+serves the audit query (above), and every query below is one that surface
+exposes. And from this phase on the north-bound field names are a
+compatibility promise (M19), so they have to be right before they ship. None
+of it is a contract change, because `LogRecord.attributes` is an open string
+map. The only `contract/` change is the text item 1 re-vendors.
+
+1. **Ingest a sweep's change record, which belongs to no session.** When the
+   proxy's device reaper removes an orphan, it emits `device.config.change`
+   with `kind: provisioning` and **`session_id: ""`**. A sweep is somebody
+   else's leftover, and naming the session that triggered it would attribute
+   the removal to the wrong person. Today `audit.Parse` refuses an empty
+   `session_id` for every kind except `error` (`internal/audit/record.go`), and
+   a batch is all or nothing (PLAN §7). So one such record fails its whole
+   batch with a `400`. **This stops that proxy's audit delivery entirely.** The
+   proxy treats a `400` like any other delivery failure: it spills the batch to
+   its disk buffer and retries the oldest buffered segment until the server
+   takes it. While anything is buffered, every later record joins the back of
+   that queue, **priority records included** (upstream
+   `internal/logging/shipper.go`, `sendBatch`/`sendPriority`/`drainBuffer`).
+   So the first orphan a device sweep removed would stall the mapping events
+   behind it indefinitely. The buffer has no size bound of its own, so it
+   would grow on the proxy's disk until a write failed and records started
+   being dropped. The stall itself is the proxy's to fix, and it is raised
+   upstream in the `## Upstream request` of the PR that added this item
+   (`Hoplock/control#39`). The request asks for a bounded buffer that evicts
+   the oldest records, and for a refused record that no longer blocks the
+   ones behind it. Neither answer removes this item. Once the proxy stops
+   retrying, a refused sweep record is not late but **lost**, so this server
+   must still accept it.
+
+   The rule is that a record may lack a session only when nobody was present
+   for it. That covers `error` records (a sweep failure) and a sweep's
+   `device.config.change`. Widen the exemption to exactly that event under
+   `provisioning`, and say why in the code comment, as the `error` case already
+   does. Every other record still needs a `session_id`. An unknown shape stays
+   loud on purpose (PLAN §7, the kind rule), and any other session-less record
+   the proxy adds later will arrive through a sync that names it. An empty
+   session id is **not a session**, either: the by-session lookup and
+   `explain` must refuse `""` rather than return every sweep record in the
+   tenant.
+2. **Index `device.config.change`, the drift feed.** It is one record per
+   configuration change the proxy made on a device. `kind: provisioning`,
+   `severity: info`, and it arrives on the **batch** path. Never expect it on
+   the priority path. Its attributes are
+   `platform`, `device_change_op` (`create` | `modify` | `delete`),
+   `target_account` (the object's name), `device_object_kind` (present only
+   when the object is not an administrator, so absent means administrator),
+   and the route's `device_field.<name>` values. The record's `target` is the
+   device. A session's changes carry its session id and its device fields. A
+   sweep's carry neither, because a sweep has no route. There is no credential
+   material: installing a credential is a `modify` of the administrator, and
+   what was installed is not named. `Reader.DeviceConfigChanges` exists (0010)
+   and filters on the `event` column only. Give it the filters a drift
+   reconciliation asks with: the device (`target`), the object
+   (`target_account`, `device_object_kind`) and the operation. Return those as
+   fields of the row, not as an attribute map the caller has to parse. Whether
+   they become derived columns (a forward-only migration, 0003) or an indexed
+   query over `attributes` is your decision, and your learnings say which.
+   Rewrite the comment on `EventDeviceConfigChange` that says the proxy does
+   not emit it yet. Exporting the feed to a customer's SIEM is Enterprise's
+   (its E7). Making it queryable here is what that export reads.
+3. **`algorithm_profile` is always present on a target-leg record.** The proxy
+   stamps the profile **in force** on the session's `provisioning` record and
+   on the `device.account.mapping` event, and it stamps **`default` too**. So
+   an absent profile never means `default`. It means the record is not about a
+   target leg (a hop, or a failure before provisioning). Keep an absent
+   profile as empty in the store, never backfilled to `default`, and never read
+   it as a weakening. The weakening query is then one filter: the profile is
+   present and is not `default`. Serve it: "which sessions ran on a legacy
+   profile, against which targets" is how an operator learns a route runs on
+   SHA-1 from the record rather than by reading policy, which is the promise
+   the contract makes.
+4. **One name per field: `credential_method` and `credential_rung`, counting
+   from 1.** Those are the only names the proxy emits, and a test upstream
+   holds that. The `target_auth_*` pair (0-based) came from the proxy's own
+   contract text, which published it by mistake, and `#66` corrects that text
+   (item 1). So drop `AttrTargetAuthMethod`, `AttrTargetAuthRung` and the
+   read of two names (`firstOf` in `internal/audit/record.go`). Then rename
+   the audit fields still named after that pair: the columns, in a new
+   forward-only migration (0003), plus
+   `store.AuditRecord.TargetAuthMethod`/`TargetAuthRung`, the query layer, and
+   the doc comments that call the rung 0-based. The north-bound surface then
+   exposes one spelling, the proxy's. The contract's own `target_auth_ladder`
+   and `contract.TargetAuthMethod` (the ladder entry's `method`) are wire
+   names, not audit fields, and they stay. Keep the value exactly as it arrived,
+   counting from 1: every projection must be recomputable from the hashed
+   body (0010), so a converted value in the column would disagree with the
+   record it came from. **The degradation query is wrong today because of
+   this.** `Reader.DegradedCredentials` keeps rows whose rung is `> 0`, and
+   every rung a real proxy sends is `>= 1`, so it reports every session as
+   degraded. The first choice is rung `1`, and a degraded credential is rung
+   `> 1`. No stored row needs rewriting, because no producer has ever sent
+   anything but `credential_rung` counting from 1. Say that in your learnings
+   so the next reader does not go looking for a data migration.
+5. **Tell a policy author what `default` no longer reaches, and how to find
+   it.** `algorithm_profile: default` is now the SSH library's **secure set**.
+   It offers no SHA-1 key exchange, no `hmac-sha1-96`, and no `ssh-rsa` or
+   `ssh-dss` host key. `legacy-rsa-sha1` adds `ssh-rsa`. `legacy-device` adds
+   that plus the SHA-1 key exchanges, the CBC ciphers, `hmac-sha1-96` and
+   `ssh-dss` host keys. The contract's `algorithm_profile` description is the
+   authority, so cite it; never copy its algorithm lists into code here,
+   because upstream pins them with a test and a copy would drift. So a device
+   that speaks **only** SHA-1 key exchange, `ssh-rsa` or `ssh-dss` stops
+   connecting under `default` and needs a legacy profile. The proxy reports
+   each such target as **`target.algorithm_policy_unmet`**: an `error` record
+   at `warn`, on the batch path, with `algorithm_profile`, `target_addr`,
+   `algorithm_axis` (`key_exchange`, `host_key`, `cipher`, `mac`,
+   `compression`) and `target_algorithms_offered` (comma-separated). The user
+   is told only that it is an outage. Two things, then:
+   - **Findable.** The audit surface lists the targets that have reported it,
+     with the axis, what the target offered, the profile it failed under, and
+     when. That list is what an operator reads to choose a route's profile.
+   - **Shown at authoring time**, on M17's terms (above). If the store holds a
+     `target.algorithm_policy_unmet` for a target a candidate route reaches,
+     under the same profile the route names, the satisfiability report warns.
+     The warning names the target, the axis, what the target offered, and when
+     it was seen. It warns and never refuses: the record is a past observation,
+     and the device may have been upgraded since. Match the record to the
+     target the way the showcase join already matches a record to one (0010).
 
 ### Delete the two debug paths this phase supersedes
 
@@ -582,7 +732,7 @@ phases earlier, not discovered there.
   something it could not touch.
 
 - **Fleet configuration is delivered, end to end in-process** (proxy D18). With
-  the contract re-vendored at `4.2.0` and `policy_version` unchanged at `4`, a
+  the contract re-vendored at `4.3.0` and `policy_version` unchanged at `4`, a
   zone publish emits exactly one `config_changed` per re-materialised proxy,
   naming its composed document. A no-op publish emits none. The fetch answers
   `200`+`ETag`, `304` on the held hash, `204` with nothing published, and
@@ -605,6 +755,26 @@ phases earlier, not discovered there.
   the key. The test tying the fleet-owned list to `contract/control.yaml` fails
   when the two disagree: prove it, don't assume it. `make conform` passes with
   the configuration cases against this server **and** against the proxy's mock.
+- **The records proxy phase 0043 emits are stored and answered for**
+  (`Hoplock/proxy#66`). A batch mixing session records with a sweep's
+  `device.config.change` (`session_id: ""`) is accepted and stores every
+  record. A session-less `provisioning` record with any other event, and a
+  session-less record of any kind but `error` or `provisioning`, still fail
+  their batch. The by-session lookup refuses `""`. The
+  drift-feed query filters by device, object and operation, and returns a
+  sweep's change with no session and no device fields. The weakening query
+  returns a record under `legacy-device` and **not** one under `default`, nor
+  one with no profile. Assert those two negatives, because reading absence as
+  `default`, or `default` as a weakening, are the plausible bugs. The
+  degradation query returns a record with `credential_rung` `2` and not one
+  with `1`, nor one with no rung. A record carrying only `target_auth_rung`
+  projects no rung, and neither `target_auth_method` nor `target_auth_rung`
+  (nor a Go field named after either) is left in `internal/` or on the
+  north-bound surface outside merged migrations. A candidate route naming
+  `default` for a target with a stored `target.algorithm_policy_unmet` under
+  `default` publishes **with a warning** naming the target, the axis and what
+  it offered. The same route naming `legacy-device` gets no warning from that
+  record.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
@@ -615,5 +785,9 @@ the `policyctl` command set. It must also give the fleet-configuration delivery:
 the contract commit re-vendored, how `int64` versions and hashes render onto the
 wire, where the fleet-owned key list lives and what ties it to the contract, the
 report's storage and how drift is derived from it, the fate of
-`Heartbeat.RunningConfigVersion`, and the conformance keys added. Phase 0012 adds routes to this surface and phase
-0017 drives it end to end.
+`Heartbeat.RunningConfigVersion`, and the conformance keys added. And it must
+give what `Hoplock/proxy#66` changed here: which records may lack a session,
+the credential columns' names and the degradation threshold, the drift feed's
+filters and where they are stored, the weakening query, and where the
+algorithm-policy warning reads its evidence. Phase 0012 adds routes to this
+surface and phase 0017 drives it end to end.

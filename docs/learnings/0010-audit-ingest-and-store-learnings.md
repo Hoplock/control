@@ -39,7 +39,11 @@
   stream, never a record out of its middle — see PLAN §7 and 0014's prompt.
 - **Upstream request raised** (see the PR): `algorithm_profile` on records, the
   `device.config.change` event, and the `target_auth_*`/`credential_*` naming
-  split. Both names are read here; nothing is blocked.
+  split. Both names are read here; nothing is blocked. **Update (sync for
+  `Hoplock/proxy#66`): answered and merged.** `credential_*` (counting from 1)
+  is the only spelling, so `DegradedCredentials`' `> 0` is wrong, and a sweep's
+  change record has no session id. Phase **0014** owns all of it. Read its
+  prompt, not the Details below.
 - **NEXT session:** the read listener (`audit.read_listener`) is a debug path
   0014 must delete — its prompt now names every file, key and CI line.
 
@@ -172,6 +176,14 @@ as a bool also leaves it NULL rather than defaulting either way.
 `target_auth_rung` is nullable for the same reason: rung `0` is "the method
 policy preferred" and is a different fact from "no rung stated".
 
+**Superseded by `Hoplock/proxy#66` (merged).** The plan's names came from the
+proxy's own contract text, which published `target_auth_*` (0-based) while its
+code emitted `credential_*` counting from **1**. `#66` corrected the text and
+kept the code. So the stored rung was always 1-based, the preferred method is
+rung `1`, and the `> 0` in `DegradedCredentials` returns every session. 0014
+drops the second name and fixes the threshold (its prompt, "The records the
+proxy emits since proxy phase 0043").
+
 ### The two device events
 
 Neither has a `kind` of its own — the contract's kind enum is closed and both
@@ -185,7 +197,10 @@ distinguishes them, which is why it is an indexed column:
   says it should ("emit the device configuration-change event as a distinct,
   queryable audit kind"); the schema, the column, the index and
   `Reader.DeviceConfigChanges` are here, and the name is in the upstream
-  request. Nothing else is blocked by it.
+  request. Nothing else is blocked by it. **Update: `Hoplock/proxy#66`
+  (merged) emits it**, `info` on the batch path, and a sweep's change carries
+  `session_id: ""`, which `Parse` refuses today. 0014 owns both the ingest rule
+  and the query filters.
 
 ### Why the read-back path exists at all, and what deletes it
 

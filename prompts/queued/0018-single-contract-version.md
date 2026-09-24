@@ -83,9 +83,10 @@ this phase installs is **loud** rather than lenient.
   `contract/control.yaml` rather than from this line, which is only as current as
   the last sync — and it is **already behind**: phase 0009 vendored `4.1.0`
   (`Hoplock/proxy#56`), upstream `Hoplock/proxy#65` (merged) moved it to
-  `4.2.0` for fleet configuration (proxy D18), and phase 0014 re-vendors.
-  Expect at least `4.2.0` by the time this phase runs, with `policy_version`
-  still `4`, and read the file.
+  `4.2.0` for fleet configuration (proxy D18), `Hoplock/proxy#66` (merged)
+  moved it to `4.3.0` for the `default` algorithm-profile tightening, and phase
+  0014 re-vendors. Expect at least `4.3.0` by the time this phase runs, with
+  `policy_version` still `4`, and read the file.
 
   The contract's "Versioning" section is where the independence is stated:
   `policy_version` **governs `/v1/authorize` and nothing else**, that being the
@@ -106,8 +107,13 @@ this phase installs is **loud** rather than lenient.
     type moved the document to `4.2.0` and left `policy_version` at `4`;
   - **a tightening** — making an existing parameter required adds no field and
     changes no field's meaning, so it is not expressible through the version at
-    all and is announced as a break instead (`params.username`, required on
-    every credential method, is the one in force).
+    all and is announced as a break instead. Two are in force.
+    `params.username` is required on every credential method. And since
+    `Hoplock/proxy#66`, `algorithm_profile: default` means the SSH library's
+    secure set, so a target that speaks only SHA-1 key exchange, `ssh-rsa` or
+    `ssh-dss` needs a legacy profile. `#66` moved the document to `4.3.0` and
+    left `policy_version` at `4`, because no field changed meaning to a parser.
+    The break bites at the target's handshake, not at decoding.
 
   The third cuts the opposite way from the first two and matters here just as
   much: one supported `policy_version` is **not** a promise that the answerable
@@ -118,7 +124,11 @@ this phase installs is **loud** rather than lenient.
   `4.3.0` → `4.0.0`, and `#56` moved it back up to `4.1.0`; `policy_version`
   stood still at `4` through both. A check that couples the two, or that assumes
   monotonicity, would have failed each of those syncs rather than catching
-  anything.
+  anything. Nor does a version string name one document. `#66` moved it to
+  `4.3.0`, a number the document had already carried before `#53`, so
+  `4.3.0` now names two different contracts. Whatever this phase derives from
+  `info.version`, it must never use that string to identify which document is
+  vendored. That is the checksum's job (0002).
 - No other literal version anywhere in the tree — code, fixtures, deployment
   manifests, or seed data. Add a check that keeps it that way and name it in your
   learnings.
@@ -240,9 +250,10 @@ version support back needs the argument, not just the conclusion.
   vendors nothing; those are that repository's own numbered phases"
   (`docs/CROSS-REPO-PROTOCOL.md` §3.1) — so the `make contract-sync` run belongs
   to the phase that first needs the new shape. For `#56` that was **0009**; for
-  `#65` it is **0014**, where the obligation is written down. This line previously read "that is a downstream
-  sync, not a phase", which is the opposite of what §3.1 says and would have left
-  the re-vendor owned by nobody.
+  `#65` and `#66` it is **0014**, where the obligation is written down. This
+  line previously read "that is a downstream sync, not a phase", which is the
+  opposite of what §3.1 says and would have left the re-vendor owned by
+  nobody.
 
   Note that when upstream bumps the version, this phase's single constant plus
   its failing test is exactly what makes that vendoring visible instead of

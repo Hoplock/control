@@ -179,6 +179,13 @@ The contract's enum is `default | legacy-rsa-sha1 | legacy-device`, every
 non-default value is documented as a weakening, and absent means `default`. So a
 policy can say *this route may use SHA-1* and cannot say *this route must
 negotiate a hybrid post-quantum key exchange*. The asymmetry is the finding.
+`Hoplock/proxy#66` (merged) narrowed where the bottom is without changing
+that. `default` is now the SSH library's secure set, so no SHA-1 key exchange
+and no `ssh-rsa` or `ssh-dss` host key without a legacy profile. It is still
+a preset that can only be weakened, and it names no key exchange a route must
+negotiate. A target the route's profile cannot reach is reported as
+`target.algorithm_policy_unmet` (PLAN §7). Read it as the existing record of
+an unmet algorithm policy, not as a floor.
 
 This phase **must not** close it locally: a new enum value or a new route field
 is contract vocabulary, it bumps `policy_version`, and the proxy decodes the

@@ -1076,13 +1076,16 @@ Six obligations are easy to miss and are graded by the conformance suite:
   **The current vocabulary is `4`**, exported upstream as
   `control.PolicyVersion`: the two enforcement axes and the session bounds
   (§5.2). The vendored document is `4.1.0` (`Hoplock/proxy#56`, vendored by
-  phase 0009); upstream is already at `4.2.0` (`Hoplock/proxy#65`, merged — fleet
-  configuration, proxy D18), which **0014** re-vendors. The vocabulary stands
-  still at `4` through both. That the document moved while the vocabulary did not
-  is the normal case rather than an anomaly — the number governs `/v1/authorize`
-  and nothing else, `#56` added a field to the event stream, and `#65` added an
-  event type and two endpoints. Read both numbers out of `contract/control.yaml`,
-  never from this line (0018).
+  phase 0009). Upstream is already at `4.3.0`, and **0014** re-vendors it:
+  `Hoplock/proxy#65` (merged) made it `4.2.0` for fleet configuration (proxy
+  D18), and `Hoplock/proxy#66` (merged) made it `4.3.0` for the `default`
+  algorithm-profile tightening. The vocabulary stands still at `4` through all
+  three. That the document moved while the vocabulary did not is the normal
+  case rather than an anomaly. The number governs `/v1/authorize` and nothing
+  else: `#56` added a field to the event stream, `#65` added an event type and
+  two endpoints, and `#66` changed what an existing value means at the
+  target's handshake. Read both numbers out of `contract/control.yaml`, never
+  from this line (0018).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -1114,15 +1117,24 @@ Six obligations are easy to miss and are graded by the conformance suite:
     contract announces it as a break instead. There is therefore no version at
     which omitting it is correct and nothing here may offer one — 0005 rejects
     it at authoring time, 0008 before the response is written, 0002 grades it.
+    The contract carries a second break since `Hoplock/proxy#66`:
+    `algorithm_profile: default` now means the SSH library's secure set
+    (§5.2). No parser sees a difference, so it bites at the target's handshake
+    rather than at the authorize call, and nothing on this side can refuse it
+    early. What this side owes is guidance to the policy author (§5.2).
 
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
   `policy_version` (0002, 0018). Nor may it assume the document version only
   rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
   `Hoplock/proxy#56` then moved it up to `4.1.0` for a field on the event
-  stream, and `Hoplock/proxy#65` to `4.2.0` for a new event type and two new
-  endpoints — the vocabulary stood still at `4` through all three, which is the
-  whole point. `#65` is also the contract's own proof that a new event **type**
-  needs no bump: "a proxy ignores a type it does not recognise" was already in
+  stream, `Hoplock/proxy#65` to `4.2.0` for a new event type and two new
+  endpoints, and `Hoplock/proxy#66` to `4.3.0` for a tightening — the
+  vocabulary stood still at `4` through all four, which is the whole point.
+  `#66` also shows that a version string does not name a document: `4.3.0` is
+  the number `#53` moved the document down *from*, so two different contracts
+  have now carried it. The checksum is what identifies the vendored copy.
+  `#65` is also the contract's own proof that a new event **type** needs no
+  bump: "a proxy ignores a type it does not recognise" was already in
   `RevocationEvent.type`, and it is what licenses `config_changed`.
 
   **One live vocabulary, and removing versions is not removing versioning.**
@@ -1404,16 +1416,29 @@ the connection's lifetime (proxy D2):
   accept, with a one-entry ladder meaning "this method or nothing". Every entry
   names the account it will log in as: `username` is **required on every method
   the contract defines** — `ephemeral-user`, `ephemeral-account`, `static-key`
-  and `brokered-key` alike, the contract's one tightening (§4) — and it is never
-  derived from the identity's `login`, which is a client-typed string. A route
-  that omits it is refused by the proxy at the first authorize call rather than
-  served, so the check belongs at authoring time (0005) and again before the
-  response is written (0008);
+  and `brokered-key` alike, one of the contract's two tightenings (§4) — and
+  it is never derived from the identity's `login`, which is a client-typed
+  string. A route that omits it is refused by the proxy at the first authorize
+  call rather than served, so the check belongs at authoring time (0005) and
+  again before the response is written (0008);
 - **device platform and expiry posture** on `ephemeral-account` routes (proxy
-  D13), and a **per-route algorithm profile** (`algorithm_profile`) where the
-  target speaks something `x/crypto` does not enable by default — a named preset
-  (`default`, `legacy-rsa-sha1`, `legacy-device`), absent ⇒ `default`, and
-  anything else a deliberate weakening that carries its own audit record (§7);
+  D13), and a **per-route algorithm profile** (`algorithm_profile`), a named
+  preset (`default`, `legacy-rsa-sha1`, `legacy-device`), absent ⇒ `default`,
+  and anything else a deliberate weakening. The proxy applies it to **every**
+  connection the route causes to the target: the session leg, the provisioning
+  login, a device driver's CLI, and the teardown and orphan sweeps after them.
+  **`default` is the SSH library's secure set** (`Hoplock/proxy#66`). It offers
+  no SHA-1 key exchange, no `hmac-sha1-96`, and no `ssh-rsa` or `ssh-dss` host
+  key. `legacy-rsa-sha1` adds `ssh-rsa`. `legacy-device` adds that plus the
+  SHA-1 key exchanges, CBC ciphers, `hmac-sha1-96` and `ssh-dss` host keys. The
+  contract's description is the authority for those lists, and nothing here
+  copies them. So the guidance a policy author needs, and 0014's authoring
+  surface gives, is this: a device that speaks **only** SHA-1 key exchange,
+  `ssh-rsa` or `ssh-dss` does not connect under `default` and needs a legacy
+  profile. The proxy reports each such target as
+  `target.algorithm_policy_unmet`, naming the axis and what the target offered
+  (§7). That record is how an operator finds which routes need one. The
+  profile in force is on the record either way (§7);
 - **additional device fields** on those same routes — the open
   `device_field.<name>` namespace that sits beside the five
   `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
@@ -1759,6 +1784,14 @@ reuses it on, and three consequences this server owns:
   a count short by anything other than duplicates would tell the proxy to
   discard records this server never stored — a malformed record therefore fails
   its whole request with a `400` and stores none of it.
+- **A record belongs to a session unless nobody was present for it.** Two
+  kinds of record arrive with `session_id: ""`: an `error` record for a sweep
+  failure, and a sweep's `device.config.change` (a sweep belongs to nobody's
+  session). Both are stored as belonging to no session, and `""` is never
+  looked up as a session. Refusing either would fail its batch, and the proxy
+  retries the oldest segment of its disk buffer until the server takes it. So
+  all of that proxy's delivery, priority records included, would stall behind
+  one record. 0010 accepts the first. **0014** widens the rule to the second.
 - **The kind enum is closed and an unknown kind is refused**; severity is not,
   and the asymmetry is deliberate. A severity is a three-value scale a reader
   can act on without knowing the value; a kind is what every query below filters
@@ -1817,13 +1850,39 @@ reuses it on, and three consequences this server owns:
   a different rung than the policy asked for must say so: a ladder degrades and a
   rung can be unavailable, and a record repeating the request would be a record
   that lies. The same holds for the credential method (proxy D14), which puts two
-  more fields on the record: `target_auth_method` and `target_auth_rung`, the
-  **0-based index** of the satisfied entry into `target_auth_ladder`. Beside them
-  sits `algorithm_profile` (§5.2), because anything but `default` is a deliberate
-  weakening of the proxy→target leg. All three are **audit facts and never
-  user-facing ones** — the single place §4.3's disclosure rule does not apply,
-  because the rung in force is information about the estate rather than about the
-  user's own request.
+  more fields on the record: `credential_method` and `credential_rung`, the
+  satisfied entry's position in `target_auth_ladder` **counting from 1**. A
+  degraded credential is therefore rung `> 1`. These are the only names the
+  proxy emits (`Hoplock/proxy#66`), and 0014 makes them the only names this
+  store reads. 0010 also read a `target_auth_*` pair (0-based), which the
+  proxy's own contract text had published by mistake and `#66` corrected.
+  Beside them sits `algorithm_profile` (§5.2), the profile **in force** on the
+  target leg, because anything but `default` is a deliberate weakening of the
+  proxy→target leg. The proxy stamps it on the session's `provisioning` record
+  and on the `device.account.mapping` event **always, `default` included**. So
+  an absent profile means the record is not about a target leg (a hop, or a
+  failure before provisioning), never `default`, and a weakening is a query
+  over one field. All three are **audit facts and never user-facing ones** —
+  the single place §4.3's disclosure rule does not apply, because the rung in
+  force is information about the estate rather than about the user's own
+  request.
+- **Every change the proxy makes on a device is a record.**
+  `device.config.change` is `kind: provisioning`, `severity: info`, and it
+  arrives on the **batch** path, one record per change: `platform`,
+  `device_change_op` (`create`, `modify` or `delete`), the object as
+  `target_account` plus `device_object_kind` when it is not an administrator,
+  the route's `device_field.<name>` values, and the session id if there is
+  one. A sweep's change carries no session id and no device fields, because a
+  sweep has no route. It is the drift reconciliation feed: a
+  customer's configuration monitoring sees every one of these changes, and this
+  store is what lets a SIEM explain them (Enterprise E7 exports it). It is
+  indexed by device, object and operation (0014).
+- **A target the route's profile cannot reach is a record, not a mystery.**
+  `target.algorithm_policy_unmet` is an `error` record at `warn` naming
+  `algorithm_profile`, `target_addr`, `algorithm_axis` and
+  `target_algorithms_offered`. The user is told only that it is an outage. It
+  is how an operator finds the devices the secure `default` no longer reaches
+  (§5.2), and 0014 shows it to the policy author as a warning.
 - **Grant context rides every record for a session** (`grant_context`),
   copied through by the proxy as opaque data. Store it as it arrives —
   including `additional_context`, which is a string **or** an object — and never
@@ -1919,7 +1978,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
-| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.2.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys |
+| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.3.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — a sweep's session-less change record accepted, the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
 | 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
