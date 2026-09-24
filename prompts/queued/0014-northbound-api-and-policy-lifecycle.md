@@ -241,11 +241,36 @@ publish that nothing can fetch has delivered nothing.
    package comment in `internal/fleet/config.go`. They say the seam "cannot be
    connected to the wire yet", and after this phase that is false.
 
-   A publisher failure must **not** roll back the publish. The desired version
-   is durable and drift is visible, so the proxy catches up on its next stream
-   (re)connect, when it re-fetches anyway (0006's reasoning for the no-op still
-   holds for a transient failure). Surface the failure to the operator on the
-   response rather than swallowing it.
+   A publisher failure must **not** roll back the publish, because the desired
+   version is durable. But **"the proxy catches up on its next reconnect" is
+   not a delivery guarantee.** The proxy has **no periodic fetch**. Upstream
+   `ConfigSync.Run` wakes only on a notification, a stream (re)connect or
+   `resync`, or a retry timer that is armed only after a *failed fetch*. So a
+   notification lost while the stream stays healthy leaves that proxy on the
+   old document until something makes it reconnect, and that can be hours. A
+   successful fetch returning `304` does not arm anything either. Close the gap
+   on this side, with one of these:
+   - **Retained before acknowledged.** The publish is not acknowledged until
+     the `config_changed` is in the stream's replay log. Then a subscriber
+     that misses it live receives it on replay, or gets `resync`, which also
+     makes it fetch. This means designing for the moment between the desired
+     version committing and the event being appended: a crash there must not
+     leave a committed version that nothing will ever announce. Two ways to do
+     that are to re-announce every proxy whose desired version is newer than
+     its last announced one at startup, or to write an outbox row in the same
+     transaction.
+   - **Retried.** Keep an "announced" marker per proxy, and re-emit until it
+     is confirmed. The report is what confirms it: its `desired_hash` equals
+     the hash announced.
+
+   Either way the property is the same, and it is the one to test: after a
+   publish, every live subscriber whose document changed learns about it
+   without reconnecting, even when the first emit failed. Report the failure
+   to the operator on the response as well. Do not swallow it and do not rely
+   on it alone, because it describes the attempt, not delivery. The in-memory
+   ring 0009 built is emptied by a restart, and it is not shared across nodes
+   (0009's learnings, "Multi-node"). Say which of the two approaches you chose,
+   and how it survives a restart.
 3. **Serve `GET /v1/proxies/{proxy_id}/config`** on the south-bound listener
    (0007), authenticated and tenant-resolved exactly as 0009 does
    `/v1/proxies/{proxy_id}/events`:
@@ -263,7 +288,23 @@ publish that nothing can fetch has delivered nothing.
      retrying.
 4. **Record `POST /v1/proxies/{proxy_id}/config/report`, and drive drift and
    `last_error` from it.** Answer `{"accepted": true}` once the report is
-   durably recorded, and never before. Store what the contract carries:
+   durably recorded, and never before. **Reports repeat, and storing them
+   must be idempotent.** The proxy reports after **every** sync (upstream
+   `SyncOnce` ends in `report` whatever the outcome). That includes each
+   stream (re)connect, each `resync`, each failed-fetch retry every 30s, and
+   each `304`. Most reports this server receives are therefore identical to
+   the previous one from the same proxy. An unchanged report updates only the
+   "last reported" time. It is **not** a fleet event: it writes no audit
+   record, no state-transition history, and no drift-changed notification,
+   and it does not count as a rollout step. Otherwise every reconnect storm
+   becomes a flood of apparent configuration activity. Decide "unchanged" from
+   the substantive fields (`running_*`, `desired_*`, `state`, the *set* in
+   `restart_required`, `last_error`), **not** from `reported_at`: the proxy
+   resets that each time it re-evaluates a document, so identical content can
+   arrive with a new timestamp. Ordering needs a rule too. A report whose
+   `reported_at` is older than the one stored must not overwrite it, because
+   two reports in flight can arrive out of order. Store what the contract
+   carries:
    `running_*`, `desired_*`, `state` (`applied`, `pending_restart`, `rejected`,
    `fetch_failed`), `restart_required`, `last_error`, and `reported_at`. That is
    a migration (0003's forward-only rules), because 0006's
@@ -300,9 +341,17 @@ publish that nothing can fetch has delivered nothing.
    Hold the list in **one** place, and add a test that ties it to the vendored
    document. Today the list is prose in that schema's `description`, not an
    enum, so the test reads the backticked keys out of the description. The
-   next `make contract-sync` that adds or removes a fleet-owned key must fail
-   that test rather than slip past it. Whether a key applies live or at restart
-   is the proxy's business, and this server stores neither.
+   match must be **strict**. The same description backticks *values* such as
+   `"30s"` and `"5m"` (the duration examples), so a loose "anything in
+   backticks" match picks up non-keys. Match only dotted keys, something like
+   `` `([a-z_]+(?:\.[a-z_]+)+)` ``, and assert the count of keys the extraction
+   finds. Against `Hoplock/proxy#65`'s text that pattern extracts exactly
+   **17** keys, which is D18's count, and none of the values. A description
+   reworded into a shape the pattern misses then fails the test rather than
+   producing an empty list that trivially agrees. The next
+   `make contract-sync` that adds or removes a fleet-owned key must fail that
+   test rather than slip past it. Whether a key applies live or at restart is
+   the proxy's business, and this server stores neither.
 6. **Grade it in `cmd/pdpconform`** against both this server and the proxy's
    mock, in the layers 0002 and 0009 established. Contract-level cases:
    - the fetch with no document published answers `204`;
@@ -313,7 +362,14 @@ publish that nothing can fetch has delivered nothing.
      body;
    - an id the server has not enrolled answers `404` with the code
      `not_enrolled`, and never `401`;
-   - the report answers `200 {"accepted": true}`.
+   - the report answers `200 {"accepted": true}`. The report the suite sends
+     must be **valid**: `state` is one of the four enum values, and
+     `reported_at` is present (both are `required` in the contract). The mock's
+     handler answers `400` without them, and a case sending a bare `{}` would
+     fail against the mock for reasons that have nothing to do with the
+     server under test. Also send the same report twice and require `200`
+     both times. A server that rejects the repeat breaks the proxy's report
+     after every sync.
 
    Publishing is not on the contract, so the suite takes it as an input the
    way it takes `events.publish_url`, `publish_body` and `publish_token`.
@@ -534,7 +590,17 @@ phases earlier, not discovered there.
   last case explicitly, because it is the tenancy leak on this route. A report
   of each `state` shows in the fleet view as that state, with `last_error` for
   `rejected` and `fetch_failed`, and a `pending_restart` proxy is **not**
-  counted as caught up. A publish naming a bootstrap-only key, a key the
+  counted as caught up. **Delivery without reconnect:** with the first
+  `config_changed` emit made to fail, a subscribed proxy whose stream stays up
+  still learns about the new document (through the replay log or through
+  retry, per item 2), and this survives a server restart between commit and
+  emit. **Idempotent reports:** a hundred identical reports leave one stored
+  state and zero audit records or fleet events beyond the first. A report
+  with a newer `reported_at` and identical content is still "unchanged". An
+  out-of-order older report does not overwrite a newer one. The key-list
+  test's pattern ignores the backticked duration values in the description,
+  and fails when the extraction finds the wrong number of keys. A publish
+  naming a bootstrap-only key, a key the
   contract does not list, or a nested object is refused at publish time naming
   the key. The test tying the fleet-owned list to `contract/control.yaml` fails
   when the two disagree: prove it, don't assume it. `make conform` passes with
