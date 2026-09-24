@@ -109,7 +109,25 @@ Each scenario is a product claim, proven across both components:
 - **JIT**: a denied user requests access, an approver approves, the next
   connection succeeds, and after expiry it is denied again.
 - **Audit**: the showcase query returns the blocked commands with the identity,
-  route, decision, and grant behind them.
+  route, decision, and grant behind them. Also assert that the fields this
+  store indexes carry the names the real proxy emits (`Hoplock/proxy#66`,
+  indexed by 0014). An `ephemeral-user` session's `provisioning` record is
+  stored with `algorithm_profile` `default`, its `credential_method`, and,
+  where the route carries a ladder, `credential_rung` counting from 1. So a
+  session on the first-choice rung stores `1`, and the degradation query does
+  not return it. The two components once spelled these fields differently
+  while each one's own tests passed (0010's learnings). This topology is the
+  one place that disagreement can fail a test.
+- **The default algorithm profile is the secure set** (`Hoplock/proxy#66`).
+  A route that names no profile no longer reaches a target speaking only SHA-1
+  key exchange, `ssh-rsa` or `ssh-dss`. So build every target in this topology
+  from an image that offers a modern key exchange and host key, or name the
+  legacy profile the route needs. Otherwise the scenarios above fail as
+  outages that have nothing to do with what they test. The proxy proves the
+  legacy profiles itself: its e2e drives a `legacy-device` route, and its
+  in-process handshake tests cover each stranded case and the
+  `target.algorithm_policy_unmet` record. So this suite does not stand up a
+  legacy target to prove either again.
 
 ### CI
 - A job that builds both images, brings the topology up, runs the suite, tears
