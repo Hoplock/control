@@ -86,6 +86,22 @@ Each scenario is a product claim, proven across both components:
   `brokered-key` session over the same topology still succeeds. The proxy fails
   closed here by design, and a suite that never exercises it would let us ship a
   server that silently refuses every ephemeral route in a fleet.
+- **Fleet configuration round trip** (proxy D18; wired by 0014). Publish a zone
+  document through the north-bound API and assert on what the real proxy
+  **reports**, not on the publish response. A document changing only a live
+  setting is reported `applied`, with `running_*` equal to what was published.
+  One changing a startup-only setting is reported `pending_restart`, with
+  `restart_required` naming it. It is **not** shown as caught up in the fleet
+  view, and it becomes `applied` after that proxy restarts. A proxy that could
+  not be reached when the change was published fetches it on its next stream
+  connect. Test that by stopping the proxy, publishing, starting it again, and
+  asserting it reports the new document with no second publish. Throughout, a
+  session opened in the middle of the rollout succeeds, because configuration
+  is not on the data path. Publishing a bootstrap-only key must be impossible
+  from the north-bound API (0014 refuses it), so the `rejected` path is proved
+  by the proxy's own e2e and is not re-proved here. Use values equal to the
+  proxies' bootstrap values, as the proxy's own scenario does, so the rest of
+  the suite is unaffected.
 - **Revocation**: an operator kills a live session; the user is told why, and it
   ends. A cached decision is invalidated and the next connection is re-decided.
 - **Cache + revocation interaction**: with the event stream unhealthy, this

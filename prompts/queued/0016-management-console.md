@@ -39,7 +39,12 @@ is written so that half can fail a review rather than merely disappoint one.
   the API forbids is a second, unaudited authorisation system.
 - Screens, in priority order:
   1. **Fleet** — proxies, zones, health, last heartbeat, contract version, which
-     have live relay registrations (0006).
+     have live relay registrations (0006), and each proxy's configuration state
+     as the proxy **reported** it (0014, proxy D18): desired and running
+     version, and `applied`, `pending_restart` (with the settings that are
+     waiting on a restart), `rejected` or `fetch_failed` (with `last_error`). A
+     proxy that has never reported is shown as its own state, never as
+     `applied`.
   2. **Explain** — a session or decision id in, the whole story out: identity,
      matched rule, mapping version, grant, obligations, route and hops. Deep
      links from the audit view.

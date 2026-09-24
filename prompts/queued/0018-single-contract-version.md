@@ -81,9 +81,11 @@ this phase installs is **loud** rather than lenient.
   document version and the negotiated vocabulary (`policy_version`, `4`) move
   independently upstream, and this phase does not couple them. Read each out of
   `contract/control.yaml` rather than from this line, which is only as current as
-  the last sync — and it is **already behind**: the copy on disk says `4.0.0`,
-  upstream `Hoplock/proxy#56` (merged) moved it to `4.1.0`, and phase 0009
-  re-vendors. Expect `4.1.0` by the time this phase runs, and read the file.
+  the last sync — and it is **already behind**: phase 0009 vendored `4.1.0`
+  (`Hoplock/proxy#56`), upstream `Hoplock/proxy#65` (merged) moved it to
+  `4.2.0` for fleet configuration (proxy D18), and phase 0014 re-vendors.
+  Expect at least `4.2.0` by the time this phase runs, with `policy_version`
+  still `4`, and read the file.
 
   The contract's "Versioning" section is where the independence is stated:
   `policy_version` **governs `/v1/authorize` and nothing else**, that being the
@@ -98,7 +100,10 @@ this phase installs is **loud** rather than lenient.
     `4`, precisely because the number governs `/v1/authorize` and nothing else.
     A check that had coupled the two would have failed that sync;
   - **a whole new endpoint** — `POST /v1/uids/lease`, which is outside the
-    number entirely because the number gates a vocabulary, not a surface;
+    number entirely because the number gates a vocabulary, not a surface.
+    `Hoplock/proxy#65` is the live case: `GET /v1/proxies/{proxy_id}/config`,
+    `POST /v1/proxies/{proxy_id}/config/report` and the `config_changed` event
+    type moved the document to `4.2.0` and left `policy_version` at `4`;
   - **a tightening** — making an existing parameter required adds no field and
     changes no field's meaning, so it is not expressible through the version at
     all and is announced as a break instead (`params.username`, required on
@@ -234,8 +239,8 @@ version support back needs the argument, not just the conclusion.
   says what is now true and **vendors nothing** — "it implements, enforces, and
   vendors nothing; those are that repository's own numbered phases"
   (`docs/CROSS-REPO-PROTOCOL.md` §3.1) — so the `make contract-sync` run belongs
-  to the phase that first needs the new shape. For `#56` that is **0009**, where
-  the obligation is written down. This line previously read "that is a downstream
+  to the phase that first needs the new shape. For `#56` that was **0009**; for
+  `#65` it is **0014**, where the obligation is written down. This line previously read "that is a downstream
   sync, not a phase", which is the opposite of what §3.1 says and would have left
   the re-vendor owned by nobody.
 

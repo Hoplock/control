@@ -275,8 +275,10 @@ path on it now would pre-empt that design.
 
 `fleet.ConfigPublisher` is still **unwired**, and that is not this phase
 shirking it: the blocker is that `RevocationEvent.type` enumerates no
-configuration event, which is an upstream change (PLAN §4, "Configuration
-distribution has no event type yet"). 0009 built the channel such an event would
+configuration event, which is an upstream change (PLAN §4, then headed
+"Configuration distribution has no event type yet". Since the sync for
+`Hoplock/proxy#65` it is "Configuration distribution: the delivery exists
+upstream (proxy D18)", and 0014 wires the publisher). 0009 built the channel such an event would
 travel on; it cannot invent the event. The PLAN line that said "0009 implements
 it" was wrong and has been corrected in place.
 

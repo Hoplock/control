@@ -908,7 +908,10 @@ alternative, and it gives up the one-binary deployment for nothing.
   reports `/v1/capabilities/report` accumulates), and **configuration
   distribution** — a versioned document per zone and per proxy, composed into one
   effective document per proxy, with rollback and with drift between desired and
-  running visible rather than derived.
+  running visible rather than derived. The running side is what the proxy says
+  on `POST /v1/proxies/{proxy_id}/config/report`, and the only keys a document
+  may carry are the ones proxy D18 makes fleet-owned (§4, "Configuration
+  distribution").
 
   And it owns **everything a proxy reports about a target**, which is the same
   rule stated from the other side: the capability store above, the **host-key
@@ -1034,7 +1037,9 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/uids/lease` | Grant a proxy an **exclusive block of ephemeral uids for one target** out of a per-target allocation cursor that **only ever advances**; `409` when the cursor has reached the top of the range |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
 | `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
-| `GET /v1/proxies/{proxy_id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` |
+| `GET /v1/proxies/{proxy_id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` — and `config_changed`, which names a proxy's desired configuration document without carrying it (proxy D18) |
+| `GET /v1/proxies/{proxy_id}/config` | Serve the proxy's **current** desired configuration document: `200` with the document and its `hash` as the `ETag`, `304` when `If-None-Match` names the hash still desired, `204` when nothing is published for it, `404` `not_enrolled` for an id the registry does not hold (proxy D18) |
+| `POST /v1/proxies/{proxy_id}/config/report` | Record which document the proxy is **running** and what became of the desired one (`state`, `restart_required`, `last_error`); answer `accepted`. This is the running side of drift (proxy D18) |
 
 Six obligations are easy to miss and are graded by the conformance suite:
 
@@ -1071,11 +1076,13 @@ Six obligations are easy to miss and are graded by the conformance suite:
   **The current vocabulary is `4`**, exported upstream as
   `control.PolicyVersion`: the two enforcement axes and the session bounds
   (§5.2). The vendored document is `4.1.0` (`Hoplock/proxy#56`, vendored by
-  phase 0009) and the vocabulary stands still at `4`. That the document moved
-  while the vocabulary did not is the normal case rather than an anomaly — the
-  number governs `/v1/authorize` and nothing else, and `#56` added a field to the
-  event stream. Read both numbers out of `contract/control.yaml`, never from this
-  line (0018).
+  phase 0009); upstream is already at `4.2.0` (`Hoplock/proxy#65`, merged — fleet
+  configuration, proxy D18), which **0014** re-vendors. The vocabulary stands
+  still at `4` through both. That the document moved while the vocabulary did not
+  is the normal case rather than an anomaly — the number governs `/v1/authorize`
+  and nothing else, `#56` added a field to the event stream, and `#65` added an
+  event type and two endpoints. Read both numbers out of `contract/control.yaml`,
+  never from this line (0018).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -1112,8 +1119,11 @@ Six obligations are easy to miss and are graded by the conformance suite:
   `policy_version` (0002, 0018). Nor may it assume the document version only
   rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
   `Hoplock/proxy#56` then moved it up to `4.1.0` for a field on the event
-  stream — the vocabulary stood still at `4` through both, which is the whole
-  point.
+  stream, and `Hoplock/proxy#65` to `4.2.0` for a new event type and two new
+  endpoints — the vocabulary stood still at `4` through all three, which is the
+  whole point. `#65` is also the contract's own proof that a new event **type**
+  needs no bump: "a proxy ignores a type it does not recognise" was already in
+  `RevocationEvent.type`, and it is what licenses `config_changed`.
 
   **One live vocabulary, and removing versions is not removing versioning.**
   Upstream `Hoplock/proxy#53` (merged) collapsed the contract: it deleted the
@@ -1275,43 +1285,83 @@ Six obligations are easy to miss and are graded by the conformance suite:
 
   Phases: 0007 and 0008 respectively; 0017 proves the pair against a real proxy.
 
-### Configuration distribution has no event type yet
+### Configuration distribution: the delivery exists upstream (proxy D18)
 
-An operator configures a fleet rather than N files (M6, phase 0006): which zones
-a proxy serves, its relay registrations, its contract expectations, its log
-shipping cadence. Delivery **reuses the event stream** rather than inventing a
-second channel, because proxies already hold one outbound subscription and must
-not need a second inbound path — the same reasoning that made the revocation
-stream outbound in the first place (proxy §6.4).
+An operator configures a fleet rather than N files (M6, phase 0006). Delivery
+**reuses the event stream** rather than inventing a second channel, because
+proxies already hold one outbound subscription and must not need a second
+inbound path — the same reasoning that made the revocation stream outbound in
+the first place (proxy §6.4).
 
-**The stream cannot carry it today.** `RevocationEvent.type` enumerates
-`session_kill`, `cache_invalidate`, `heartbeat` and `resync`, and none of them
-can say "your desired configuration moved". The contract is owned upstream and
-vendored read-only (M1), so the missing piece is a change in `hoplock/proxy`: an
-event type (or a field on the heartbeat event) naming the proxy's desired config
-version and hash, which the proxy answers by fetching and then reporting what it
-is running. That is normal work in the upstream repository with its own prompt
-and its own review, not a shape to approximate here
-(`docs/CROSS-REPO-PROTOCOL.md` §3.2).
+**How it got here.** When 0006 was built, `RevocationEvent.type` could not say
+"your desired configuration moved", and the contract is owned upstream and
+vendored read-only (M1). So 0006 built everything below the wire, left
+`fleet.ConfigPublisher` a visible no-op, and raised the need upstream
+(`docs/CROSS-REPO-PROTOCOL.md` §3.2, `Hoplock/control#27`). The proxy answered
+it as its phase 0042, merged as **`Hoplock/proxy#65`** (contract **`4.2.0`**,
+`policy_version` still `4`), with a new decision, **proxy D18**. That upstream
+change is what this section now describes. The vendored `contract/` is still
+`4.1.0` until **0014** re-vendors it, and until then the publisher stays a
+no-op and a publish stages and shows as drift.
 
-**It is raised and queued upstream as proxy phase 0042**, which also settles the
-three questions this side could not: how the document is fetched (not inline on
-the event — the stream is replayable, so an inline document would be replayed as
-if current), how a proxy reports the version it is running, and which settings are
-fleet-owned at all rather than bootstrap. When it merges, the work here is to
-re-vendor the contract and wire `fleet.ConfigPublisher`; until then a publish
-stages and shows as drift.
+**What is now true, and what it obliges here.** Cite proxy D18 for the
+reasoning. Do not restate it. The wire has three parts, and this server owes
+the server half of each:
 
-What is built here in the meantime is everything below the wire, and the gap is
-**visible rather than assumed**: the desired version is durable, the composed
-document is stored, the publisher seam (`fleet.ConfigPublisher`) is a no-op
-until the event exists — 0009 built the stream it would travel on and left this
-seam unwired, because the missing piece is an event TYPE the contract does not
-enumerate rather than a channel to carry it — and a proxy that has not caught up
-shows as drift in the fleet view and in the API rather than being taken for
-current. Inventing the event type locally is the failure M1 exists to prevent —
-it would make CI green here while the two components silently disagreed about
-what a config event is.
+- **`config_changed` names the document and never carries it.** The event has
+  `version` and `hash`, and nothing else. The stream is replayable from a
+  `last_event_id`, and a document carried on it would be replayed, which means
+  a stale configuration applied as if it were current. `fleet.ConfigPublisher`
+  therefore emits a notification per affected proxy, naming that proxy's
+  composed document, on the stream 0009 built. On the wire, `version` is an
+  **opaque string** and `hash` is an opaque content identifier the proxy only
+  ever compares for equality (the contract's example is `sha256:<hex>`). This
+  server's `int64` version and bare hex hash are rendered into those strings.
+  The strings are not a second numbering.
+- **`GET /v1/proxies/{proxy_id}/config` serves the document desired *now*.**
+  It returns `200` with the `ProxyConfigDocument` and its `hash` as the `ETag`.
+  It returns `304` with no body when `If-None-Match` names the hash still
+  desired, which is what makes a replayed notification, and the fetch the proxy
+  makes on every stream (re)connect and after `resync`, cost at most a `304`. It
+  returns `204` when nothing is published for the proxy, and the proxy then
+  runs on its bootstrap file. It returns `404` with the code `not_enrolled` for
+  an id the registry does not hold. That is a registry fact and not a deny, so
+  it is never `401` (M11).
+- **`POST /v1/proxies/{proxy_id}/config/report` is the running side of
+  drift.** It is the only proxy→server call that carries what a proxy runs. A
+  document is reported running (`running_version`/`running_hash`) only when
+  **every** setting in it is in force. `state` is `applied`,
+  `pending_restart` (with `restart_required` naming the startup-only settings
+  holding it back, and *nothing* in it applied), `rejected`, or `fetch_failed`,
+  and the last two come with a `last_error` that names keys and never values.
+  Drift and the fleet view's error are driven from this report. A desired
+  version compared against a heartbeat number is not enough, because
+  `pending_restart` and `rejected` are distinct states and an operator must see
+  them.
+
+**Only fleet-owned settings may be published.** D18 draws the line: a setting
+stays bootstrap-only if the proxy needs it to reach Hoplock Control or to be
+recognised by it, if it names material on the host, if it binds a listener, or
+if it is the proxy's own judgement of whether it can still hear Control
+(`control.cache.stale_after`). A setting is **fleet-owned only by being
+listed**. The list is `ProxyConfigDocument.settings` in the vendored
+`contract/control.yaml`, keyed by dotted bootstrap key. Read it there and do
+not copy it here, because a second copy drifts. A document naming any other
+key is **rejected whole** by the proxy, so a publish that names one is refused
+**at publish time**, naming the key. Accepting it would stage a rollout that
+could only ever be reported `rejected`. Composition's top-level key replacement
+(0006) is exactly per-setting replacement over those flat dotted keys.
+
+**A bad document never takes a proxy out of service**, and configuration is not
+on the data path (D18). Nothing on this server's side of the delivery may end a
+session, refuse a connection, or touch a cached decision. `config_changed`
+shares the stream with revocations, but it is not a revocation.
+
+**Publishing is not on the contract**, for the same reason reading a log back
+is not (§4, above): an operator's publish is not proxy-facing. It is this
+server's own north-bound action (0014). The conformance suite takes it as an
+input, as it does `events.publish_url`, and the proxy's `cmd/mock-control`
+`POST /debug/config` is the reference shape.
 
 ---
 
@@ -1869,7 +1919,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
-| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21) |
+| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.2.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
 | 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
