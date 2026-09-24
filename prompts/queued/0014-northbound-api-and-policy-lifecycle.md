@@ -436,7 +436,13 @@ map. The only `contract/` change is the text item 1 re-vendors.
    So the first orphan a device sweep removed would stall the mapping events
    behind it indefinitely. The buffer has no size bound of its own, so it
    would grow on the proxy's disk until a write failed and records started
-   being dropped.
+   being dropped. The stall itself is the proxy's to fix, and it is raised
+   upstream in the `## Upstream request` of the PR that added this item
+   (`Hoplock/control#39`). The request asks for a bounded buffer that evicts
+   the oldest records, and for a refused record that no longer blocks the
+   ones behind it. Neither answer removes this item. Once the proxy stops
+   retrying, a refused sweep record is not late but **lost**, so this server
+   must still accept it.
 
    The rule is that a record may lack a session only when nobody was present
    for it. That covers `error` records (a sweep failure) and a sweep's
