@@ -221,7 +221,12 @@ document is what is true now. Check this repository's prompts against the
   check that assumes monotonicity is itself a finding. Nor does it name one
   document. `#66` moved it back to `4.3.0`, so two different contracts have
   carried that number, and text or a check that identifies a vendored document
-  by its version string is a finding too. Note too that the
+  by its version string is a finding too. And `policy_version` is not fixed
+  either. `#68` moved it `4` → `5` for a new `target_auth_ladder[].method`
+  value, the first move since the collapse, because an unknown enum value
+  refuses the whole authorize response exactly as an unknown field does. Two
+  things are findings: text that gives `4` as upstream's vocabulary, and a
+  check that assumes only a new field can move it. Note too that the
   vendored copy may sit legitimately **behind** upstream: a sync vendors nothing
   (§3.1), so it records the obligation and the phase that owns it runs
   `make contract-sync`. A gap between `contract/UPSTREAM` and upstream `main` is

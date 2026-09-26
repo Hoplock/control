@@ -118,7 +118,10 @@ settle:
   so a `KeyAlgorithmMLDSA65` member would be an enum value the CA could generate
   and never sign a certificate with. Adding it would be this repository
   inventing vocabulary for a format it does not own — the same mistake, in a
-  different direction, that `internal/credential/seam.go` exists to avoid.
+  different direction, that 0011's `brokered-certificate` seam was built to
+  avoid. That seam refused to put a method on the wire until upstream defined
+  one. When upstream did (`Hoplock/proxy#68`), the shape was not the one 0011
+  had guessed, which is the argument for not guessing.
   **Write the check that will tell the next session when this changes** (below).
 
 ### 3. Say what is already adequate, once, where a reader will find it
@@ -149,11 +152,13 @@ register's `Rendered in` column requires (PROTOCOL §3).
   same client succeeds. Both directions, because a knob that cannot be observed to
   do anything is a knob nobody should trust.
 - **A tripwire for the SSH certificate gap**, in `internal/credential`, in the
-  shape `TestTheBrokeredCertificateMethodIsNotYetInTheContract` already
-  established (0011): assert that `x/crypto/ssh`'s certificate algorithms contain
-  no post-quantum signature algorithm, and fail with a message naming what to do
-  when one appears. The point is that the next session learns by the build going
-  red rather than by reading this prompt.
+  shape 0011's brokered-certificate tripwire established. That is a test that
+  fails the build on the day an upstream fact changes, and names what to do.
+  0014 changes that test to pin the method's shape once `Hoplock/proxy#68` is
+  vendored, so copy the pattern and not the name. Assert that `x/crypto/ssh`'s
+  certificate algorithms contain no post-quantum signature algorithm, and fail
+  with a message naming what to do when one appears. The point is that the next
+  session learns by the build going red rather than by reading this prompt.
 - Extend 0017's scenario suite and `deploy/` topology so the topology runs with
   TLS configured on both listeners, and the suite asserts the posture rather than
   assuming it.
