@@ -28,11 +28,12 @@
   crosses. Routine rotation keeps the retired key trusted for `rotation_overlap`
   (> max validity) and revokes nothing; `Compromise: true` drops it from the
   bundle at once and revokes every outstanding certificate.
-- **CROSS-REPO (upstream, blocking):** `hoplock/proxy` must add
-  `TargetAuth.method = "brokered-certificate"` (params `username` required,
-  `certificate`, `certificate_serial`, `ca_public_keys`) **and** a south-bound
-  signing endpoint over a proxy-generated public key. Seam + tripwire:
-  `internal/credential/seam.go`.
+- **CROSS-REPO (upstream):** asked `hoplock/proxy` for a `brokered-certificate`
+  method and a signing endpoint. Seam + tripwire: `internal/credential/seam.go`.
+  **Update (sync for `Hoplock/proxy#68`): answered and merged, in another
+  shape.** The entry carries only `username`/`key_type`/`lifetime_seconds`. The
+  certificate and serial come from `POST /v1/credentials/certificate`, and
+  `policy_version` is `5`. Phase **0014** owns it: read its prompt, not Details.
 - **Decisions:** none added/withdrawn; register unchanged. **M2 revised in
   place** — the north-bound listener is bound by 0011, not 0014; §3 and §6 too.
 - **NEXT SESSION:** north-bound routes go in `north.routes()` with an access
@@ -231,6 +232,14 @@ and no authority — both are overridden, or a test could only assert expiry by
 sleeping.
 
 ### CROSS-REPO DEPENDENCY: the exact contract change `hoplock/proxy` needs
+
+**Superseded by `Hoplock/proxy#68` (merged).** Upstream added the method and
+the endpoint, but not in the shape below. The certificate, its serial and the
+CA bundle are **not** route parameters. The entry rides a cacheable decision,
+so they come back per session from `POST /v1/credentials/certificate`, and the
+entry carries only `username`, `key_type` and `lifetime_seconds`. The method
+moved `policy_version` to `5`. What follows is the request as it was made.
+Build against phase 0014's prompt, at "Brokered certificates reach a proxy".
 
 **Nothing brokered can reach a proxy until this lands.** `internal/credential/seam.go`
 carries the shape, refuses to put it on the wire

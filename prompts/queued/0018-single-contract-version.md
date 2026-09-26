@@ -78,15 +78,18 @@ this phase installs is **loud** rather than lenient.
   loudly and a human decides what to do — which is the point at which supporting
   a second version would become a deliberate decision rather than an accident.
 - Note that these are two different numbers and both are single-valued here: the
-  document version and the negotiated vocabulary (`policy_version`, `4`) move
+  document version and the negotiated vocabulary (`policy_version`, `5` since
+  `Hoplock/proxy#68`) move
   independently upstream, and this phase does not couple them. Read each out of
   `contract/control.yaml` rather than from this line, which is only as current as
   the last sync — and it is **already behind**: phase 0009 vendored `4.1.0`
   (`Hoplock/proxy#56`), upstream `Hoplock/proxy#65` (merged) moved it to
   `4.2.0` for fleet configuration (proxy D18), `Hoplock/proxy#66` (merged)
-  moved it to `4.3.0` for the `default` algorithm-profile tightening, and phase
-  0014 re-vendors. Expect at least `4.3.0` by the time this phase runs, with
-  `policy_version` still `4`, and read the file.
+  moved it to `4.3.0` for the `default` algorithm-profile tightening,
+  `Hoplock/proxy#68` (merged) moved it to `4.4.0` for the
+  `brokered-certificate` method and moved `policy_version` from `4` to `5`,
+  and phase 0014 re-vendors. Expect at least `4.4.0` by the time this phase
+  runs, with `policy_version` at least `5`, and read the file.
 
   The contract's "Versioning" section is where the independence is stated:
   `policy_version` **governs `/v1/authorize` and nothing else**, that being the
@@ -119,6 +122,14 @@ this phase installs is **loud** rather than lenient.
   much: one supported `policy_version` is **not** a promise that the answerable
   shapes stand still. So the test this phase installs keys off the vendored
   document and never off the number.
+
+  And one kind of change moves **both** numbers: a new enum value inside the
+  authorize response. An unknown `target_auth_ladder[].method` refuses the
+  whole response, so a method is vocabulary exactly as a field is.
+  `Hoplock/proxy#68` added `brokered-certificate` and moved `policy_version`
+  from `4` to `5`. The endpoint it added, `POST /v1/credentials/certificate`,
+  is the second kind above and moved nothing. A check that assumes only a new
+  field moves the number would have been wrong about that sync too.
 
   And the document version does not only ever rise. `#53` moved it **down**,
   `4.3.0` → `4.0.0`, and `#56` moved it back up to `4.1.0`; `policy_version`
@@ -160,6 +171,16 @@ this phase installs is **loud** rather than lenient.
 - The version-aware half of 0008's assembly goes: one assembly mode, no per-field
   "introduced in" table, no downgrade path. If 0008 built one, remove it and say
   so; if it did not, say that instead.
+- **0014 gives that gate its first live case, and it has to go carefully.** A
+  response whose ladder names `brokered-certificate` needs vocabulary `5`
+  (`requiredVersion`, `internal/decision/vocabulary.go`, following
+  `Hoplock/proxy#68`). So a proxy declaring `4` is refused those routes and
+  served the rest. That tier refuses rather than thins, so it is not a
+  thinning path. Folding it into this phase's single-version refusal is safe
+  only because that refusal is stricter. Whatever you do with it, a proxy
+  declaring `4` must never be sent the method: it would refuse the whole
+  response over an unknown `method` value, and the user would see an outage.
+  Keep a test that says so.
 
 ### The conformance suite keeps its teeth, and gains one (0002)
 
@@ -174,8 +195,11 @@ best-effort.
 **Where these assertions live matters, and getting it wrong will break CI.**
 0002 runs the same suite against Hoplock Proxy's `cmd/mock-control`, which
 implements the contract's multi-version behaviour correctly and would fail a
-universal "always refuse" assertion. The single-version expectation is a fact
-about *this server*, not about the contract, so it belongs in this server's
+universal "always refuse" assertion. That behaviour is live, not theoretical.
+Since `Hoplock/proxy#68` the mock tiers two vocabularies, a baseline `4` and
+`5` for `brokered-certificate`. So it answers a proxy declaring `4` with a
+`200` on every route that names no certificate. The single-version expectation
+is a fact about *this server*, not about the contract, so it belongs in this server's
 expectation file. The shared, contract-level assertion stays what it always was:
 a thinned answer that drops a restriction is a failure, and a refusal naming the
 mismatch is a pass. Keep the two layers distinct and say in your learnings which
@@ -250,7 +274,7 @@ version support back needs the argument, not just the conclusion.
   vendors nothing; those are that repository's own numbered phases"
   (`docs/CROSS-REPO-PROTOCOL.md` §3.1) — so the `make contract-sync` run belongs
   to the phase that first needs the new shape. For `#56` that was **0009**; for
-  `#65` and `#66` it is **0014**, where the obligation is written down. This
+  `#65`, `#66` and `#68` it is **0014**, where the obligation is written down. This
   line previously read "that is a downstream sync, not a phase", which is the
   opposite of what §3.1 says and would have left the re-vendor owned by
   nobody.

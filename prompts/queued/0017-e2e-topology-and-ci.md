@@ -37,6 +37,9 @@ what is left.
    session.
 5. **target** — `sshd` with the provisioning account for `ephemeral-user` and a
    plain pre-existing account standing in for an appliance (`brokered-key`).
+   It also has an account that trusts this server's tenant CA through
+   `TrustedUserCAKeys`, for `brokered-certificate` (`Hoplock/proxy#68`; wired
+   by 0014). The bundle to install is what `hoplock-control ca show` prints.
 6. **client** — runs the scenario SSH clients.
 
 ### Scenario suite
@@ -64,7 +67,8 @@ Each scenario is a product claim, proven across both components:
 - **Both filtering tiers**: a filtered-exec policy lets `sh -c '<denied>'`
   through (the guardrail's honest limit) while restricted exec denies it. The
   audit record names which tier decided.
-- **Both credential methods**: `ephemeral-user` creates and removes the target
+- **`ephemeral-user` and `brokered-key`** (`brokered-certificate` has a
+  scenario of its own, below): `ephemeral-user` creates and removes the target
   user; `brokered-key` leaves the appliance-like target unmodified. The
   `brokered-key` route in the fixture bundle **names the standing account** in
   `username` — required on every credential method the contract defines —
@@ -86,6 +90,23 @@ Each scenario is a product claim, proven across both components:
   `brokered-key` session over the same topology still succeeds. The proxy fails
   closed here by design, and a suite that never exercises it would let us ship a
   server that silently refuses every ephemeral route in a fleet.
+- **A brokered certificate, minted for one session** (`Hoplock/proxy#68`;
+  wired by 0014). A route whose ladder names `brokered-certificate` logs the
+  user into the CA-trusting account with a certificate this server signed for
+  that session, and the target is left unmodified. The session's
+  `provisioning` record stores `credential_certificate_serial`, and that serial
+  resolves to the `ssh_certificates` row minted for the session. Two sessions
+  served by one **cached** decision present two different serials. Assert that
+  on the serials the records carry, not on the authorize calls.
+
+  **A failed issuance is an outage, and never a walk down the ladder.** Take a
+  route whose ladder is `brokered-certificate` then `brokered-key`. Cache its
+  decision, then stop this server: the proxy still holds the decision and
+  cannot get a certificate. The user is told it is an outage, and no
+  `brokered-key` session is opened. That is the case the rule exists for, a
+  weaker standing credential offered exactly when Control cannot say
+  otherwise. The proxy's own e2e and mock prove that it refuses a malformed,
+  expired or over-long certificate, so this suite does not prove that again.
 - **Fleet configuration round trip** (proxy D18; wired by 0014). Publish a zone
   document through the north-bound API and assert on what the real proxy
   **reports**, not on the publish response. A document changing only a live
@@ -193,8 +214,8 @@ Each scenario is a product claim, proven across both components:
 - The deny scenario resolves end to end: the user's vague message, the session
   id, and `explain` naming the exact rule.
 - The outage scenario proves a stopped server is never reported as a denial.
-- No ephemeral users or keys leak after the suite; the appliance-like target is
-  byte-identical afterwards.
+- No ephemeral users or keys leak after the suite; the appliance-like target and
+  the CA-trusting account are byte-identical afterwards.
 - **No uid is ever issued twice across the whole suite run**, restarts of either
   component included — collect every `ephemeral-user` uid the run produces and
   assert the set is strictly increasing per target, not merely distinct.

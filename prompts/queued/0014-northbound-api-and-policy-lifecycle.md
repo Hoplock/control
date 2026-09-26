@@ -28,6 +28,17 @@
   repository**, read `docs/PLAN.md` §7 at "The record says what the proxy
   actually did (phase 0043)" and `api/README.md` "Algorithm profile". They are
   cited here and never restated.
+- `docs/PLAN.md` §4 at **"A certificate is minted per session, never carried
+  on a decision"** and the vocabulary note under "Answer within the vocabulary
+  the proxy declared"; §5.2's credential-ladder bullet; **§6 "Credential
+  brokerage (proxy D6a)"**; §7 at "A brokered certificate is recorded by its
+  serial"; and **M5**, **M11** and **M22**. Together they cover what
+  `Hoplock/proxy#68` changed (see "Brokered certificates reach a proxy"
+  below). Open `0011`'s learnings at "CROSS-REPO DEPENDENCY" only to see what
+  was asked for. Upstream answered in a different shape, and this prompt
+  states the shape to build. In the **Hoplock Proxy repository**, read
+  `docs/PLAN.md` §5.4 and **D6a**, and `api/README.md` "Brokered
+  certificates". They are cited here and never restated.
 
 ## Objective
 Give humans and CI a surface. This is the phase where the product becomes
@@ -221,21 +232,31 @@ north-bound routes here, gated and audited like every other mutating action
 (Inventory, above). The south-bound half is served in the same PR, because a
 publish that nothing can fetch has delivered nothing.
 
-1. **Re-vendor the contract at `4.3.0`.** Run
-   `make contract-sync REF=07a5a401c9f9d81fb591d225b04d5826c7599478` (the
-   merge of `Hoplock/proxy#66`, which sits on top of `#65`), or a later
-   upstream `main`. If you use a later `main`, every contract change between
-   the two is also this phase's to read and state. Never hand-edit `contract/`
-   (M1). `policy_version` does not move: it stays **`4`** through both PRs.
-   `#65` adds an event type and two endpoints (`4.2.0`). `#66` adds no field,
+1. **Re-vendor the contract at `4.4.0`.** Run
+   `make contract-sync REF=4582c391a8a21338434997341b6c06a5c187fc0a` (the
+   merge of `Hoplock/proxy#68`, which sits on top of `#66` and `#65`), or a
+   later upstream `main`. If you use a later `main`, every contract change
+   between the two is also this phase's to read and state. Never hand-edit
+   `contract/` (M1). At that ref, `api/control.yaml` has the sha256
+   `c5321fb505ce2e052f3ae91148c8291496658d9a6db178d01050dd50998b0cf1`, which
+   is what `contract/UPSTREAM` should then record. Three upstream PRs arrive
+   together, and only the last one moves `policy_version`. `#65` adds an event
+   type and two endpoints (`4.2.0`). `#66` adds no field,
    no endpoint and no enum value (`4.3.0`). It changes descriptions only:
    `algorithm_profile: default` now means the SSH library's **secure set**, a
    tightening the document announces as a **break** beside `params.username`;
    the profile applies to every connection a route causes to its target; and
    the `target_auth_ladder` text now names the audit fields `credential_method`
    and `credential_rung` (counting from 1) where it used to publish
-   `target_auth_*` (0-based). So every check keyed on the vocabulary stays
-   green, and the checksum in `contract/UPSTREAM` is what moves. Note that
+   `target_auth_*` (0-based). `#68` adds the `brokered-certificate` method and
+   `POST /v1/credentials/certificate` (`4.4.0`). The method moves
+   `policy_version` from **`4`** to **`5`**, because an unknown `method` value
+   refuses the whole authorize response exactly as an unknown field does. So
+   this re-vendor changes more than the checksum in `contract/UPSTREAM`.
+   `internal/contract`'s enum test fails on the new `TargetAuth.method` value
+   until it has a constant. Its path test fails on the new path until that has
+   one, as it does on `#65`'s two. "Brokered certificates reach a proxy",
+   below, is what makes both pass honestly. Note that
    `4.3.0` is a number the document has carried before: `#53` moved it
    **down** from `4.3.0` to `4.0.0`. A version string therefore does not
    identify a document, and nothing here may use one to. The checksum does
@@ -243,7 +264,10 @@ publish that nothing can fetch has delivered nothing.
    job builds `cmd/mock-control` from. That is what gives the mock the fetch,
    the report, and `POST /debug/config`, and the conformance cases below
    depend on it.
-   `#66` changes none of the mock's handlers.
+   `#66` changes none of the mock's handlers. `#68` adds the mock's issuance
+   handler and its `certificate_authority` fixture block. It also adds a
+   second vocabulary tier to the mock, so a proxy declaring `4` is refused
+   only the routes that name the method.
 2. **Wire `fleet.ConfigPublisher` to emit `config_changed` {`version`,
    `hash`}.** Emit it on the stream 0009 built (`internal/revoke`), one event
    per affected proxy, naming that proxy's **composed** document. A zone
@@ -534,6 +558,258 @@ map. The only `contract/` change is the text item 1 re-vendors.
      and the device may have been upgraded since. Match the record to the
      target the way the showcase join already matches a record to one (0010).
 
+### Brokered certificates reach a proxy (proxy phase 0044, `Hoplock/proxy#68`)
+
+0011 built the per-tenant SSH certificate authority and could not reach a
+proxy with it, because the contract had no method that could name a
+certificate. So 0011 left the authority behind `internal/credential/seam.go`,
+which refuses on purpose and carries a tripwire, and raised the need upstream
+(`Hoplock/control#35`). The proxy answered as its phase 0044, merged as
+**`Hoplock/proxy#68`**: contract **`4.4.0`**, `policy_version` **`5`**. There
+is no new decision, because the method is what proxy **D6a** already
+promised: a Control that mints credentials arrives as another method. That
+PR's `## Cross-repo impact` section puts six obligations on this repository,
+and they are this phase's. The re-vendor is the first of them (item 1 of the
+fleet-configuration list above). The other five, and the grading, follow.
+
+They are this phase's because the re-vendor brings the method in whether
+anything here is ready for it or not. So the phase that runs
+`make contract-sync` is the phase that has to make it true. A method that
+bundles can name with nothing behind it to issue certificates would be a route
+every proxy fails as an outage.
+
+**Upstream did not take the shape 0011 asked for, so read this part twice.**
+0011 asked for the certificate, its serial and the CA bundle as parameters on
+the ladder entry. `seam.go` and 0011's learnings both still describe that
+shape. But the entry rides the authorize decision, which is cacheable and
+served to every connection it covers. A certificate on it would be replayed
+past its own expiry, which is the argument PLAN §4 already makes for keeping
+the uid floor off it. The certificate also cannot exist yet at that point,
+because it is signed over a key the proxy generates after the route is
+decided. So the entry carries **policy**, and a new endpoint returns the
+**artifacts**, once per session. The reasoning is proxy PLAN §5.4's: cite it,
+and do not restate it.
+
+1. **Vocabulary `5`, and the method is never sent to a proxy that declared
+   less.** The re-vendor adds `brokered-certificate` to `TargetAuth.method`.
+   Declare `contract.TargetAuthBrokeredCertificate`, with `Provisions()`
+   answering `false` as its own case, and the path constant beside the
+   others. The proxy creates nothing on the target, so a route that names
+   only this method can reach only an **attested** rung (PLAN §5.2). Add the
+   method to the policy model too: `model.CredentialMethod`,
+   `credentialMethods`, and its own `Provisions()` case. Also add it to the
+   contract list in `internal/policy/model/contract_agreement_test.go`. That
+   test lists the contract's constants by hand, so a constant added on one
+   side only still passes it, and it leaves the method silently unauthorable.
+   The build having an issuer is a capability question M17 already asks.
+   A proxy built without one skips the rung (proxy §5.4), and the pre-publish
+   query checks a ladder entry's method against the proxy's declared
+   `Capabilities.CredentialMethods` (0006).
+
+   Then move `contract.PolicyVersion` to **`5`** in this phase. No test ties
+   the constant to the document until 0018, so nothing forces the move, and
+   that is the danger. Left at `4`, this server would hand a proxy that
+   declared `4` an entry it refuses the whole response over, which reaches the
+   user as an outage. The gate for this is already built, in
+   `internal/decision/vocabulary.go`. `requiredVersion` gains its first real
+   case: it answers `5` for a response whose ladder names
+   `brokered-certificate` at any rung, and a named baseline `4` otherwise.
+   `checkVersion` then refuses such a response to a proxy that declared `4`,
+   with the existing `5xx` naming both numbers, and never with a `401` (M11).
+   So a proxy one revision behind still gets
+   every route it can read, which is what the mock does (`baselineVocabulary`
+   `4` and `vocabularyBrokeredCertificate` `5` in its `vocabularyVersion`).
+   Keep the baseline a constant of its own rather than `PolicyVersion - 1`.
+   The next revision will move `PolicyVersion` again, and this method's tier
+   must not move with it. The refusal is per route, and it is whole. Take a
+   proxy declaring `4` for a route whose ladder is `brokered-certificate` then
+   `brokered-key`. It is refused. It is never answered with the second rung
+   alone, because dropping a rung the policy wrote is the thinned answer PLAN
+   §4 forbids.
+2. **The ladder entry is policy: `username`, `key_type`, `lifetime_seconds`,
+   and nothing else.** `username` is required, as on every method (PLAN
+   §5.2). `key_type` is the algorithm of the key pair the proxy generates for
+   the session (`ed25519` by default, or `rsa`). `lifetime_seconds` is an
+   **upper bound** on the certificate's validity. Absent, `key_type` leaves the
+   proxy's default, and `lifetime_seconds` leaves this server's own lifetime.
+   **`certificate`, `certificate_serial` and `ca_public_keys` are never
+   parameters.** A proxy that implements the method refuses a parameter it
+   does not know, before it generates anything, so an entry carrying any of
+   the three fails the session closed.
+
+   Two renderers exist today, and only one may survive. The decision path
+   renders every entry in `internal/decision/snapshot.go` (`credentialEntry`)
+   from the policy model, and it already writes exactly those three names
+   when they are set. `credential.LadderEntry` in `seam.go` is called by
+   nothing, and it renders the shape upstream refused. Keep one and delete
+   the other. If `LadderEntry` survives, it takes no `Issued` and no trust
+   bundle, because nothing it renders comes from an issuance, and the
+   decision path is what calls it.
+
+   The compiler has to let an author write the two optional names.
+   `checkParamScope` (`internal/policy/compile/compile.go`) permits
+   `key_type` on `ephemeral-user` only, and `lifetime_seconds` on
+   `ephemeral-user` and `ephemeral-account` only. Both gain the new method,
+   and the doc comments on `model.CredentialEntry` that name those methods
+   change with them. Nothing in a bundle can spell the three artifacts, and
+   that must stay true. An **applied** enforcement rung on a route whose every
+   entry is `brokered-certificate` is refused at authoring time, as it is on
+   `brokered-key`. The compiler keys that check off `Provisions()`, so item
+   1's `false` is what makes it hold. Test it anyway.
+
+   **Change the tripwire. Do not delete it.**
+   `TestTheBrokeredCertificateMethodIsNotYetInTheContract`
+   (`internal/credential/ca_test.go`) is the signal 0011 left for this
+   phase. Do not just remove the refusal it guards. The body behind the
+   refusal renders all three artifacts, so un-refusing it puts upstream's
+   rejected shape on the wire. Change the test to pin the new shape instead.
+   A rendered `brokered-certificate` entry names the method and carries
+   `username`. It carries no parameter outside `username`, `key_type` and
+   `lifetime_seconds`. The test fails, naming the parameter, if
+   `certificate`, `certificate_serial` or `ca_public_keys` appears. Rename it
+   to what it now asserts. `TestALadderEntryStillRequiresAUsername` keeps
+   holding, and `ErrMethodNotInContract` goes. `seam.go` exists to name what
+   the contract is missing, and after this phase nothing is missing. Fold what
+   survives into the package, and rewrite the comments that describe the gap:
+   `seam.go`'s header and the "WHAT TRAVELS" note at the top of `ca.go`. PLAN
+   §3 and §6 describe the seam too, so revise them in this PR.
+3. **Serve `POST /v1/credentials/certificate` over `credential.CA.Issue`,
+   which replaces the seam's refusal.** Put it on the south-bound listener
+   (0007). Authenticate it and resolve its tenant from the proxy's credential,
+   exactly as every contract route does (M22). The request is
+   `{session_id, decision_id, target, username, public_key}`, of which only
+   `session_id` and `public_key` are required. The answer is
+   `{certificate, serial, valid_before, ca_public_keys}`, of which only the
+   last is optional. The contract's `CertificateRequest` and
+   `CertificateResponse` are the authority on both. `Issue` was built for this
+   call and already does most of it. What the handler owes:
+   - **Sign exactly the submitted key, as a user certificate.** `public_key`
+     is in `authorized_keys` form. One that does not parse, or that is itself
+     a certificate, is a `400`. `Issue` already refuses the second case and
+     already sets `ssh.UserCert`. The principal is the route's `username` and
+     nothing else. The subject is the decision's. The session is the one the
+     request names, and that is what `ssh_certificates.session_id` records.
+   - **Bind it to a decision this server made.** Every authorize answer this
+     server gives carries a `decision_id` (M4), and the contract lets a server
+     that requires one refuse a call without it, so require it. Read the
+     decision from the store, in the caller's tenant, and cross-check it
+     before signing:
+     - the decision allowed;
+     - its snapshot's ladder names `brokered-certificate`;
+     - `target` equals the target that answer named;
+     - `username` equals that entry's `username`.
+
+     A call that fails any of these is a `401`. The mock's codes for it are
+     `unknown_decision` and `decision_mismatch`, and the mock is the
+     reference behaviour.
+     Do **not** require the request's `session_id` to equal the stored
+     decision's. A cached decision serves many sessions, and each of them asks
+     for its own certificate citing the same `decision_id`. You also decide
+     whether issuance must come from the proxy the decision was made for (its
+     `proxy_id`, M22). Say which in your learnings.
+   - **Every such `401` is a refusal to mint, and never a failure (M11).** A
+     store error while reading the decision, or while writing the
+     certificate's row, is a `5xx`. The proxy treats every non-`200` from this
+     endpoint as an outage and never as a second denial, because the session
+     was already authorized. That is the contract's one stated exception to
+     "`401` is a deny". It changes what the proxy does with the answer, not
+     what this server may send. In `internal/httpapi/south`,
+     `TestOnlyOneFunctionCanProduceA401` allows two deniers, and its comment
+     says that adding one is a decision. This is one. A refusal to mint is
+     neither the user's credential being refused nor the proxy's token, so by
+     that comment's own reasoning it gets a third denier rather than reusing
+     `deny`.
+   - **Bound it by `lifetime_seconds`, and never let it run forever.** The
+     certificate lives for the CA's own validity
+     (`credential.certificate_validity`), shortened to the route's
+     `lifetime_seconds` when that is less. It is never lengthened to it: the
+     route states an upper bound, not a request. `IssueRequest.ValidFor` is a
+     request honoured up to `max_certificate_validity`. So passing the route's
+     bound straight in lengthens every certificate whose bound exceeds the
+     default. `Issue` always sets `ValidBefore`, and it must keep doing so. A
+     certificate with no expiry is not a per-session credential, and the
+     proxy refuses one.
+   - **`valid_before` is the certificate's own instant, to the second.** The
+     proxy refuses a response whose `valid_before` differs from the
+     certificate's. `Issued.ValidBefore` keeps the sub-second part that the
+     certificate's own field truncates. So render `valid_before` from the
+     certificate, or truncate before formatting it as RFC 3339.
+   - **`serial` is a decimal string, and never a JSON number**
+     (`^[0-9]{1,20}$`). An SSH serial is a `uint64`, and JSON numbers are not
+     safely integral above 2^53. Render it with `strconv` in one place, and
+     never "fix" the type.
+   - **`503` when there is no authority.** There are two cases: a tenant with
+     no CA (`credential.ErrNoCA`), and a deployment that configured none (no
+     `credential.key_encryption_key_env`). 0011's north-bound surface already
+     answers the second with `503 ca_not_configured`. It is an operator's fix,
+     so it is not a deny and not a `500`. `statusFor` is the only place a
+     status is chosen, and it has no `503` today, so add the class there.
+   - **`ca_public_keys`, if you send it, is the tenant's current trust
+     bundle** (`Describe`), read per call so that a rotation reaches the proxy
+     fresh. The proxy decodes it, carries it, and acts on none of it.
+     Publishing trust to a target is a provisioning act, and this method
+     performs none (proxy §5.4).
+4. **The serial comes back on a record, and it is the join key.** The proxy
+   stamps the serial it was issued as **`credential_certificate_serial`** on
+   the session's `provisioning` record, the one that names
+   `credential_method`. That record is `info` and arrives on the **batch**
+   path (proxy PLAN §7). The contract's own text calls it the session's
+   "authorize record". The proxy's code and its 0044 learnings put it on the
+   provisioning record instead, because the authorize record is written
+   before issuance. So key off the record that names `credential_method`,
+   not off the word. `LogRecord.attributes` is an open map, so ingest needs no
+   change to accept the field. What is owed is the join the serial exists
+   for. The audit surface this phase serves must answer two questions: which
+   certificate did this session present, and which session presented this
+   certificate. `ssh_certificates` keeps the serial per tenant as an integer,
+   and the record carries a decimal string. Parse it in one place as an
+   unsigned integer, and never through a float. If you index it as a derived
+   column (a forward-only migration, 0003), it must be recomputable from the
+   hashed body like every other derived column (0010). The certificate itself
+   is never on a record, and nothing here may put it there.
+5. **One issuance per session, and nothing answers one from memory.** Every
+   call signs the key it was sent, under a new serial, and writes its own
+   row. Nothing memoises an issuance:
+   - not by `decision_id`, because a decision reused across connections cites
+     the same one from each;
+   - not by `session_id`;
+   - not by key.
+
+   The contract makes one call per session the proxy's rule, and upstream
+   enforces it in its types: its caching client implements no issuer. This
+   side's half is never to be the cache. The authorize decision stays
+   cacheable, because the entry carries only policy, and PLAN §5.4's hint
+   rules apply to it unchanged. A certificate is the one thing no hint may
+   cover.
+6. **Grade it in `cmd/pdpconform`**, against both this server and the proxy's
+   mock (M1), in the layers 0002 established. Contract-level cases:
+   - a route whose ladder names `brokered-certificate`, declared at `5`, is
+     answered with an entry that carries `username` and no name outside the
+     three policy ones;
+   - the same route declared at `4` is refused with a `5xx` and the envelope.
+     It is never a `401`, and never a `200` with the rung dropped;
+   - an issuance citing that decision, with a fresh key, answers `200` with a
+     certificate that parses as a **user** certificate over **that** key.
+     `serial` is a decimal string equal to the certificate's own serial.
+     `valid_before` equals the certificate's own instant and is in the
+     future. When the route sets `lifetime_seconds`, `valid_before` is no
+     later than that bound from now, allowing the proxy's 30 seconds of clock
+     skew;
+   - two issuances citing one decision, with two keys, answer two serials;
+   - an issuance citing a `decision_id` the server never made answers `401`,
+     and never `200`.
+
+   The mock needs a `certificate_authority` block in `mock-fixtures.yaml`,
+   naming an ed25519 private key in OpenSSH format that the `conform` job
+   generates. Without one, every issuance answers `503`, and the mock refuses
+   a key of any other type at startup. It also needs a route whose ladder
+   names the method. `routes[].certificate_fault` is the mock's own, and it
+   stays out of the suite's fixtures unless a case needs it. The `503` case
+   needs a server with no authority, so grade it where a fixture can provide
+   one, which is this server's expectations with a tenant that has no CA. Do
+   not grade it at the contract level. Update `cmd/pdpconform/README.md`'s key
+   table.
+
 ### Delete the two debug paths this phase supersedes
 
 `docs/PROTOCOL.md` §3 lets a phase add a debug endpoint only when a named
@@ -660,6 +936,13 @@ phases earlier, not discovered there.
 - JIT requests and approvals (0012), though `explain` must be ready to name a
   grant.
 - SIEM export (0014).
+- Revoking a brokered certificate mid-session. The revocation stream's
+  `session_kill` already ends the session. A certificate revocation event, or
+  a revocation-list check on the session path, would be a later phase if
+  upstream queues one (proxy §5.4). The CA's own rotation and revocation
+  (0011) do not change.
+- Publishing the CA's trust bundle to a target. `ca_public_keys` is carried by
+  the proxy and acted on by nothing.
 
 ## Acceptance criteria
 - Role enforcement is tested per route, including an auditor token being refused
@@ -732,8 +1015,8 @@ phases earlier, not discovered there.
   something it could not touch.
 
 - **Fleet configuration is delivered, end to end in-process** (proxy D18). With
-  the contract re-vendored at `4.3.0` and `policy_version` unchanged at `4`, a
-  zone publish emits exactly one `config_changed` per re-materialised proxy,
+  the contract re-vendored (item 1), a zone publish emits exactly one
+  `config_changed` per re-materialised proxy,
   naming its composed document. A no-op publish emits none. The fetch answers
   `200`+`ETag`, `304` on the held hash, `204` with nothing published, and
   `404 not_enrolled` for an unknown id or an id in another tenant. Assert that
@@ -775,6 +1058,37 @@ phases earlier, not discovered there.
   `default` publishes **with a warning** naming the target, the axis and what
   it offered. The same route naming `legacy-device` gets no warning from that
   record.
+- **Brokered certificates reach a proxy** (`Hoplock/proxy#68`). With the
+  contract re-vendored at `4.4.0`, `contract.PolicyVersion` is `5`. A route
+  naming `brokered-certificate` at any rung is refused to a proxy declaring
+  `4`, with a `5xx` naming both numbers, while a route without it is answered
+  to that proxy unchanged. Assert both.
+
+  The rendered entry carries `username`, and at most `key_type` and
+  `lifetime_seconds` besides. The changed tripwire fails when `certificate`,
+  `certificate_serial` or `ca_public_keys` appears: prove it by making it
+  fail once. The policy model and the contract agree member for member. An
+  applied rung on a route whose only method is `brokered-certificate` is
+  refused at authoring time.
+
+  An issuance returns a user certificate over exactly the submitted key, with
+  the route's `username` as its only principal. `serial` is a decimal string
+  equal to the certificate's own serial, and `valid_before` equals the
+  certificate's own instant, to the second. The lifetime is the shorter of
+  the route's bound and the CA's own validity. Assert that a route bound above
+  the CA default does **not** lengthen it.
+
+  Each of these answers `401`, through the new denier: a `decision_id` this
+  server never made, a decision that denied, one naming no certificate rung,
+  and a `target` or `username` the decision did not name. A tenant with no
+  authority answers `503`. A store failure answers `5xx`, never `401`.
+
+  Two issuances citing one cached decision produce two certificates, two
+  serials and two rows. A stored `provisioning` record's
+  `credential_certificate_serial` resolves to the row minted for that
+  session, and the row resolves back to the record. `make conform` passes
+  with the certificate cases against this server **and** against the proxy's
+  mock.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
@@ -789,5 +1103,15 @@ report's storage and how drift is derived from it, the fate of
 give what `Hoplock/proxy#66` changed here: which records may lack a session,
 the credential columns' names and the degradation threshold, the drift feed's
 filters and where they are stored, the weakening query, and where the
-algorithm-policy warning reads its evidence. Phase 0012 adds routes to this
-surface and phase 0017 drives it end to end.
+algorithm-policy warning reads its evidence. And it must give what
+`Hoplock/proxy#68` changed here:
+
+- where the vocabulary tier lives and what it refuses;
+- which renderer produces a `brokered-certificate` entry, and what the
+  tripwire now pins;
+- the issuance route's status codes, and the denier its `401` goes through;
+- whether issuance is bound to the proxy the decision was made for;
+- how a certificate's lifetime is computed;
+- how a record's serial joins its certificate row.
+
+Phase 0012 adds routes to this surface and phase 0017 drives it end to end.

@@ -964,8 +964,12 @@ alternative, and it gives up the one-binary deployment for nothing.
   crosses this API; it holds its own through the `ext.KeyStore` seam, so custody
   can move to an HSM with no second code path; and it says plainly what SSH can
   and cannot enforce rather than implying a hostname scope that does not exist.
-  `seam.go` is the one file that names what the contract is missing, refuses to
-  put it on the wire, and fails the build when it lands upstream (M1).
+  It reaches a proxy through the `brokered-certificate` method and
+  `POST /v1/credentials/certificate` (§4, §6). Upstream defined both in
+  `Hoplock/proxy#68`, and **0014** vendors and serves them. Until then,
+  `seam.go` refuses to put the method on the wire (M1). Its tripwire pins the
+  shape 0011 asked for rather than the one upstream chose, so 0014 changes
+  both.
 - **`internal/httpapi/south`** — the proxy-facing transport, and the only place
   that speaks both the wire vocabulary and the domain one. It owns the
   middleware chain (correlation ids, the access log that never writes a body, a
@@ -1035,13 +1039,14 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision, plus an optional cache hint (§5.4) that lets the proxy stop re-reporting that exact key |
 | `POST /v1/capabilities/report` | Record the enforcement rungs one **target** can take, as the proxy found them by probing it; answer `accepted` and, optionally, when to report next |
 | `POST /v1/uids/lease` | Grant a proxy an **exclusive block of ephemeral uids for one target** out of a per-target allocation cursor that **only ever advances**; `409` when the cursor has reached the top of the range |
+| `POST /v1/credentials/certificate` | Sign the public key a proxy generated for **one session**, as a user certificate bound to a decision this server made, for a route whose ladder names `brokered-certificate`; `401` when it will not mint for that decision, `503` when the tenant has no authority (§6; `Hoplock/proxy#68`, served by 0014) |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
 | `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
 | `GET /v1/proxies/{proxy_id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` — and `config_changed`, which names a proxy's desired configuration document without carrying it (proxy D18) |
 | `GET /v1/proxies/{proxy_id}/config` | Serve the proxy's **current** desired configuration document: `200` with the document and its `hash` as the `ETag`, `304` when `If-None-Match` names the hash still desired, `204` when nothing is published for it, `404` `not_enrolled` for an id the registry does not hold (proxy D18) |
 | `POST /v1/proxies/{proxy_id}/config/report` | Record which document the proxy is **running** and what became of the desired one (`state`, `restart_required`, `last_error`); answer `accepted`. This is the running side of drift (proxy D18) |
 
-Six obligations are easy to miss and are graded by the conformance suite:
+Seven obligations are easy to miss and are graded by the conformance suite:
 
 - **The priority ack means durable.** The proxy acts on a critical security
   event knowing this server recorded it. Acking before the write lands turns
@@ -1073,19 +1078,24 @@ Six obligations are easy to miss and are graded by the conformance suite:
   sending fields that will be refused — the proxy's mock does exactly this and
   is the reference behaviour.
 
-  **The current vocabulary is `4`**, exported upstream as
-  `control.PolicyVersion`: the two enforcement axes and the session bounds
-  (§5.2). The vendored document is `4.1.0` (`Hoplock/proxy#56`, vendored by
-  phase 0009). Upstream is already at `4.3.0`, and **0014** re-vendors it:
-  `Hoplock/proxy#65` (merged) made it `4.2.0` for fleet configuration (proxy
-  D18), and `Hoplock/proxy#66` (merged) made it `4.3.0` for the `default`
-  algorithm-profile tightening. The vocabulary stands still at `4` through all
-  three. That the document moved while the vocabulary did not is the normal
-  case rather than an anomaly. The number governs `/v1/authorize` and nothing
-  else: `#56` added a field to the event stream, `#65` added an event type and
-  two endpoints, and `#66` changed what an existing value means at the
-  target's handshake. Read both numbers out of `contract/control.yaml`, never
-  from this line (0018).
+  **The vendored vocabulary is `4`; upstream's is `5`.** Vocabulary `4` is the
+  two enforcement axes and the session bounds (§5.2), and the vendored
+  document states it (`4.1.0`, `Hoplock/proxy#56`, vendored by phase 0009).
+  Upstream is at `4.4.0`, and **0014** re-vendors it. `Hoplock/proxy#65`
+  (merged) made it `4.2.0` for fleet configuration (proxy D18).
+  `Hoplock/proxy#66` (merged) made it `4.3.0` for the `default`
+  algorithm-profile tightening. `Hoplock/proxy#68` (merged) made it `4.4.0`
+  for the `brokered-certificate` credential method (§6), and it moved the
+  vocabulary to **`5`**, which upstream exports as `control.PolicyVersion`.
+  The vocabulary stood still at `4` through the first three PRs. That the
+  document moved while the vocabulary did not is the normal case rather than
+  an anomaly. The number governs `/v1/authorize` and nothing else: `#56` added
+  a field to the event stream, `#65` added an event type and two endpoints,
+  and `#66` changed what an existing value means at the target's handshake.
+  `#68` moved it because a new **enum value** inside the authorize response is
+  vocabulary exactly as a field is. The endpoint `#68` added moved nothing
+  (below). Read both numbers out of `contract/control.yaml`, never from this
+  line (0018).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -1123,6 +1133,19 @@ Six obligations are easy to miss and are graded by the conformance suite:
     rather than at the authorize call, and nothing on this side can refuse it
     early. What this side owes is guidance to the policy author (§5.2).
 
+  **A fourth kind moves both numbers, and it is the kind the mechanism exists
+  for.** A new enum value inside the authorize response is vocabulary. An
+  unknown `target_auth_ladder[].method` refuses the whole response rather than
+  being skipped as a rung, so a proxy that does not know a method must never
+  be sent it. `#68`'s `brokered-certificate` is the live case: it moved
+  `policy_version` from `4` to `5`. The gate 0008 built is where it is tiered
+  (`requiredVersion`, `internal/decision/vocabulary.go`). From 0014 on, it
+  answers `5` for a response whose ladder names the method and a baseline `4`
+  otherwise. So a proxy declaring `4` is refused those routes with the `5xx`
+  above and served the rest unchanged, which is what the proxy's mock does too.
+  Dropping the rung and answering the remainder would be the thinned answer
+  this obligation exists to forbid.
+
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
   `policy_version` (0002, 0018). Nor may it assume the document version only
   rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
@@ -1130,6 +1153,8 @@ Six obligations are easy to miss and are graded by the conformance suite:
   stream, `Hoplock/proxy#65` to `4.2.0` for a new event type and two new
   endpoints, and `Hoplock/proxy#66` to `4.3.0` for a tightening — the
   vocabulary stood still at `4` through all four, which is the whole point.
+  `Hoplock/proxy#68` then moved both, to `4.4.0` and vocabulary `5`, for a new
+  method. It is the first vocabulary move since the collapse.
   `#66` also shows that a version string does not name a document: `4.3.0` is
   the number `#53` moved the document down *from*, so two different contracts
   have now carried it. The checksum is what identifies the vendored copy.
@@ -1149,7 +1174,9 @@ Six obligations are easy to miss and are graded by the conformance suite:
   the wire, still required, still honoured; the MUST-NOT-answer-above rule still
   stands; the `5xx` for a proxy this server cannot serve still stands. The
   mechanism is what carries the **next** vocabulary, and a revision now *replaces*
-  the current one rather than running beside it. A session that reads "one
+  the current one rather than running beside it. `#68` is the first revision it
+  has carried. The contract states vocabulary `5` in the present tense, and the
+  tier above is the server's half of the replacement. A session that reads "one
   vocabulary" as "there is nothing to negotiate" would delete the only thing
   standing between a fleet mid-upgrade and a silently widened session; 0018
   narrows what this server *supports* to one value and explicitly may not remove
@@ -1296,6 +1323,60 @@ Six obligations are easy to miss and are graded by the conformance suite:
   accept from a caller. The authority on a leg is the previous hop's key, above.
 
   Phases: 0007 and 0008 respectively; 0017 proves the pair against a real proxy.
+- **A certificate is minted per session, never carried on a decision.**
+  Upstream `Hoplock/proxy#68` (merged) answered 0011's request for a way to
+  reach a proxy with the certificate authority (§6). The shape it chose is the
+  one to build against.
+  The route names **`brokered-certificate`**, and its ladder entry carries
+  **policy only**: `username`, `key_type` and `lifetime_seconds`. Once per
+  session, the proxy generates a key pair and sends the public half to
+  **`POST /v1/credentials/certificate`**. This server answers with the
+  **artifacts**: the certificate, its serial and, optionally, the CA bundle.
+
+  The artifacts are kept off the entry for the reason the uid floor is kept
+  off it (above). The decision is cacheable and served to every connection it
+  covers, so a certificate on it would be presented past its own expiry. The
+  certificate is also signed over a key that does not exist yet when the route
+  is decided. Proxy PLAN §5.4 holds the reasoning, and this plan cites it.
+
+  What this server owes, all of it built by 0014:
+
+  - **Sign exactly the submitted key, as a user certificate**, with the
+    route's `username` as its principal.
+  - **Bind it to a decision this server made.** Cross-check `decision_id`,
+    `target` and `username` against the stored decision before signing. The
+    request is cross-checked, never trusted.
+  - **Bound its life by `lifetime_seconds`, and never let it run forever.**
+    The bound is an upper one: this server may shorten it and may never widen
+    it.
+  - **Give `valid_before` as the certificate's own instant**, to the second.
+  - **Send `serial` as a decimal string**, because a `uint64` does not survive
+    a JSON number.
+  - **Answer `503` when the tenant has no authority.**
+  - **Issue once per session, and never answer from memory.** A decision
+    reused across connections still produces one certificate per session.
+
+  The proxy stamps the serial on the session's `provisioning` record as
+  `credential_certificate_serial`. That is the join to `ssh_certificates`
+  (§7).
+
+  **Every non-`200` here is an outage to the proxy, a `401` included.** The
+  session was already authorized, so a refusal to mint is not a second
+  denial, and the proxy never walks on to a weaker rung (proxy D14). This is
+  the contract's one stated exception to "`401` is a deny". It changes what
+  the proxy does with the answer, not what this server may send. M11 binds
+  unchanged: every `401` here is a deliberate refusal to mint, and a failure
+  is a `5xx`.
+
+  **The call is off the decision path (M5) but on the session's setup path.**
+  It comes after the route is decided and before the target leg is dialled.
+  Unlike the lease, it is made once per session rather than once per block.
+  It also writes the certificate's row before answering, so a slow answer is
+  a slow login.
+
+  **The method moved the vocabulary, and the endpoint moved nothing.** A proxy
+  that declared `4` must never be sent the method (the fourth kind of change,
+  above).
 
 ### Configuration distribution: the delivery exists upstream (proxy D18)
 
@@ -1415,12 +1496,17 @@ the connection's lifetime (proxy D2):
   ladder** since proxy D14, so the PDP states its preference *and* what it will
   accept, with a one-entry ladder meaning "this method or nothing". Every entry
   names the account it will log in as: `username` is **required on every method
-  the contract defines** — `ephemeral-user`, `ephemeral-account`, `static-key`
-  and `brokered-key` alike, one of the contract's two tightenings (§4) — and
-  it is never derived from the identity's `login`, which is a client-typed
-  string. A route that omits it is refused by the proxy at the first authorize
+  the contract defines**, one of the contract's two tightenings (§4). That
+  covers `ephemeral-user`, `ephemeral-account`, `static-key` and `brokered-key`,
+  and `brokered-certificate` too since `Hoplock/proxy#68` (vocabulary `5`,
+  vendored by 0014). It is never derived from the identity's `login`, which is
+  a client-typed string. A route that omits it is refused by the proxy at the first authorize
   call rather than served, so the check belongs at authoring time (0005) and
-  again before the response is written (0008);
+  again before the response is written (0008). A `brokered-certificate` entry
+  carries **policy only**: `username`, `key_type`, and `lifetime_seconds`, the
+  last an upper bound on the certificate's life. It never carries the
+  certificate, its serial or the CA bundle. Those come back per session from
+  `POST /v1/credentials/certificate` (§4, §6);
 - **device platform and expiry posture** on `ephemeral-account` routes (proxy
   D13), and a **per-route algorithm profile** (`algorithm_profile`), a named
   preset (`default`, `legacy-rsa-sha1`, `legacy-device`), absent ⇒ `default`,
@@ -1482,8 +1568,10 @@ the connection's lifetime (proxy D2):
     do. An *attested* rung (`platform-attested`, either axis) is one the target
     enforces already, configured by somebody who is not this product; the proxy
     applies nothing and records who says so. So **an applied rung must never be
-    chosen for a route whose every ladder entry is `brokered-key` or
-    `static-key`** — the proxy refuses that response outright, and a policy that
+    chosen for a route whose every ladder entry is `brokered-key`,
+    `brokered-certificate` or `static-key`**, since none of the three
+    administers the account (proxy §5.4). The proxy refuses that response
+    outright, and a policy that
     can only fail at connect time fails in front of a user. An **attested** rung
     on such a route is fine, and it is the enforcement claim the appliance estate
     actually carries: "none available" is the answer this vocabulary exists to
@@ -1763,13 +1851,25 @@ reuses it on, and three consequences this server owns:
   bundle at once and revokes every outstanding certificate it signed. "We rotate"
   without both answers is not a rotation story.
 
-  **It cannot reach a proxy yet, and that is upstream's.** `TargetAuth` is
-  extensible for exactly this — the schema says so outright — but the method value
-  and its parameters are the Hoplock Proxy repository's to define, and `contract/`
-  is vendored read-only here (M1). A new method is vocabulary, so it bumps
-  `policy_version` upstream (§4). `internal/credential/seam.go` names the exact
-  shape, refuses to put it on the wire, and carries the test that fails the build
-  on the day the method lands in the vendored document.
+  **It reaches a proxy through `brokered-certificate`, in the shape upstream
+  chose rather than the one 0011 asked for.** `TargetAuth` is extensible for
+  exactly this. But a method value and its parameters are the Hoplock Proxy
+  repository's to define, and `contract/` is vendored read-only here (M1). So
+  0011 built the authority behind `internal/credential/seam.go`, which
+  refuses to put a method on the wire and carries a tripwire, and raised the
+  need upstream. `Hoplock/proxy#68` (merged, contract `4.4.0`) answered it.
+  The method is vocabulary, so it moved `policy_version` to `5` (§4). Its
+  ladder entry carries policy, and the certificate comes back per session from
+  `POST /v1/credentials/certificate`, signed by `CA.Issue` over the key the
+  proxy just generated (§4).
+
+  0011 had asked for the certificate, its serial and the bundle as route
+  parameters. Upstream refused that, because the entry rides a cacheable
+  decision (proxy PLAN §5.4). So the shape in `seam.go`, in its tripwire and
+  in 0011's learnings will never exist. **0014** re-vendors the contract, tiers
+  the method at vocabulary `5`, changes the tripwire to pin the policy-only
+  entry, and serves the endpoint. Until it does, a route that wants a brokered
+  certificate names `ephemeral-user` or `brokered-key`, as 0011 said.
 
 ---
 
@@ -1866,6 +1966,16 @@ reuses it on, and three consequences this server owns:
   the single place §4.3's disclosure rule does not apply, because the rung in
   force is information about the estate rather than about the user's own
   request.
+- **A brokered certificate is recorded by its serial, never by its bytes.** A
+  `brokered-certificate` session's `provisioning` record (the one naming
+  `credential_method`) also carries **`credential_certificate_serial`**. That
+  is the decimal serial this server issued (`Hoplock/proxy#68`). It is `info`
+  and arrives on the batch path. It joins a session to the row
+  `ssh_certificates` keeps for the certificate the session presented, and 0014
+  makes that join answerable. The contract's own text says the serial goes on
+  the "authorize record". The proxy writes it on the provisioning record,
+  because the authorize record is written before issuance. The certificate and
+  the session key are never on any record.
 - **Every change the proxy makes on a device is a record.**
   `device.config.change` is `kind: provisioning`, `severity: info`, and it
   arrives on the **batch** path, one record per change: `platform`,
@@ -1978,7 +2088,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
-| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.3.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — a sweep's session-less change record accepted, the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning |
+| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.4.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — a sweep's session-less change record accepted, the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
 | 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
@@ -2077,6 +2187,12 @@ prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 > What it does own is the decision that a mismatch is a **loud refusal** rather
 > than a thinned answer, and the documents that still describe a mid-upgrade
 > fleet (§4 above among them).
+>
+> 0014's tier for `brokered-certificate` (§4, `Hoplock/proxy#68`) is not new
+> machinery. It is one case in the gate 0008 already built for the next
+> vocabulary, and it refuses rather than thins. 0018 may fold it into the
+> single-version refusal, because that refusal is stricter. What 0018 may not
+> do is let a proxy that declared `4` be sent the method.
 
 ---
 
