@@ -518,13 +518,24 @@ decision.
 
   - **Per proxy** — `AuthorizeRequest.capabilities`, the rungs a *build*
     implements, declared beside `policy_version` on the same pattern as the
-    enrolled credential methods. Absent declares nothing.
+    enrolled credential methods. Absent declares nothing. It also declares the
+    `algorithm_floor` levels the build enforces, each with the key exchanges
+    that level accepts **in that build** (`algorithm_floors`), and every
+    algorithm the build can offer on the proxy→target leg, per axis
+    (`algorithms`; both `Hoplock/proxy#69`). Only a level the asking proxy
+    declared may be sent to it (§4). During a rolling upgrade two builds may
+    accept different exchanges for one level, so the declaration is per-build
+    truth and a fleet view shows it as such.
   - **Per target** — `POST /v1/capabilities/report` (§4), the rungs one *target*
     can take, discovered by probing it after login. Authorize happens before the
     proxy has ever touched the target, so a first-ever connection has nothing to
     put on the request; the report is how that fact arrives at all. The server
     owns the freshness of its own record and says so with
-    `report_after_seconds` — a proxy may re-observe sooner, never later.
+    `report_after_seconds` — a proxy may re-observe sooner, never later. The
+    same endpoint carries a second observation with a date of its own: the
+    target's **key-exchange level** (`kex`), which the proxy makes on every
+    handshake and for every credential method. The two observations are merged
+    by presence, and each is replaced only by a report that carries it (§4).
 
   The two are ANDed, and the fail-safe direction is the one that matters: a
   capability record that is stale, undated, or absent provides nothing that has to
@@ -905,7 +916,9 @@ alternative, and it gives up the one-binary deployment for nothing.
   It also owns the two things that hang off the same rows, because both are
   properties of a proxy rather than of a policy: the **capability store** both
   sources write to (M17 — the proxy build's declared set, and the per-target
-  reports `/v1/capabilities/report` accumulates), and **configuration
+  reports `/v1/capabilities/report` accumulates, whose rung and key-exchange
+  observations are stored side by side and replaced independently), and
+  **configuration
   distribution** — a versioned document per zone and per proxy, composed into one
   effective document per proxy, with rollback and with drift between desired and
   running visible rather than derived. The running side is what the proxy says
@@ -1037,7 +1050,7 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/auth/mfa/poll` | Resolve an outstanding challenge; deny on expiry or unknown token |
 | `POST /v1/authorize` | Evaluate policy **for the asking hop** (`conn.proxy_id` + `conn.hop_trail`); return `401` or the whole-connection snapshot + `decision_id` (+ optional cache hint) |
 | `POST /v1/hostkeys/report` | Record a reported target host key and answer with the trust decision, plus an optional cache hint (§5.4) that lets the proxy stop re-reporting that exact key |
-| `POST /v1/capabilities/report` | Record the enforcement rungs one **target** can take, as the proxy found them by probing it; answer `accepted` and, optionally, when to report next |
+| `POST /v1/capabilities/report` | Record what the proxy observed of one **target**: the enforcement rungs it can take (dated by `observed_at`), its key-exchange level (`kex`, `Hoplock/proxy#69`), or both. Replace each stored observation only with one the report carries; answer `accepted` and, optionally, when to report next |
 | `POST /v1/uids/lease` | Grant a proxy an **exclusive block of ephemeral uids for one target** out of a per-target allocation cursor that **only ever advances**; `409` when the cursor has reached the top of the range |
 | `POST /v1/credentials/certificate` | Sign the public key a proxy generated for **one session**, as a user certificate bound to a decision this server made, for a route whose ladder names `brokered-certificate`; `401` when it will not mint for that decision, `503` when the tenant has no authority (§6; `Hoplock/proxy#68`, served by 0014) |
 | `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
@@ -1078,24 +1091,29 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   sending fields that will be refused — the proxy's mock does exactly this and
   is the reference behaviour.
 
-  **The vendored vocabulary is `4`; upstream's is `5`.** Vocabulary `4` is the
+  **The vendored vocabulary is `4`; upstream's is `6`.** Vocabulary `4` is the
   two enforcement axes and the session bounds (§5.2), and the vendored
   document states it (`4.1.0`, `Hoplock/proxy#56`, vendored by phase 0009).
-  Upstream is at `4.4.0`, and **0014** re-vendors it. `Hoplock/proxy#65`
+  Upstream is at `4.5.0`, and **0014** re-vendors it. `Hoplock/proxy#65`
   (merged) made it `4.2.0` for fleet configuration (proxy D18).
   `Hoplock/proxy#66` (merged) made it `4.3.0` for the `default`
   algorithm-profile tightening. `Hoplock/proxy#68` (merged) made it `4.4.0`
   for the `brokered-certificate` credential method (§6), and it moved the
-  vocabulary to **`5`**, which upstream exports as `control.PolicyVersion`.
+  vocabulary to `5`. `Hoplock/proxy#69` (merged) made it `4.5.0` for the
+  algorithm floor and bans (§5.2), and it moved the vocabulary to **`6`**,
+  which upstream exports as `control.PolicyVersion`.
   The vocabulary stood still at `4` through the first three PRs. That the
   document moved while the vocabulary did not is the normal case rather than
   an anomaly. The number governs `/v1/authorize` and nothing else: `#56` added
   a field to the event stream, `#65` added an event type and two endpoints,
   and `#66` changed what an existing value means at the target's handshake.
   `#68` moved it because a new **enum value** inside the authorize response is
-  vocabulary exactly as a field is. The endpoint `#68` added moved nothing
-  (below). Read both numbers out of `contract/control.yaml`, never from this
-  line (0018).
+  vocabulary exactly as a field is, and `#69` because it added two **fields**
+  to that response, `algorithm_floor` and `algorithm_bans`. The endpoint `#68`
+  added moved nothing (below). Neither did what `#69` added to the request's
+  `capabilities` and to the capability report, because the number does not
+  govern either. Read both numbers out of `contract/control.yaml`, never from
+  this line (0018).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -1134,17 +1152,30 @@ Seven obligations are easy to miss and are graded by the conformance suite:
     early. What this side owes is guidance to the policy author (§5.2).
 
   **A fourth kind moves both numbers, and it is the kind the mechanism exists
-  for.** A new enum value inside the authorize response is vocabulary. An
-  unknown `target_auth_ladder[].method` refuses the whole response rather than
-  being skipped as a rung, so a proxy that does not know a method must never
-  be sent it. `#68`'s `brokered-certificate` is the live case: it moved
-  `policy_version` from `4` to `5`. The gate 0008 built is where it is tiered
-  (`requiredVersion`, `internal/decision/vocabulary.go`). From 0014 on, it
-  answers `5` for a response whose ladder names the method and a baseline `4`
-  otherwise. So a proxy declaring `4` is refused those routes with the `5xx`
-  above and served the rest unchanged, which is what the proxy's mock does too.
-  Dropping the rung and answering the remainder would be the thinned answer
-  this obligation exists to forbid.
+  for.** A new field or a new enum value inside the authorize response is
+  vocabulary. An unknown `target_auth_ladder[].method` refuses the whole
+  response rather than being skipped as a rung, so a proxy that does not know
+  a method must never be sent it. `#68`'s `brokered-certificate` is the live
+  case for a value: it moved `policy_version` from `4` to `5`. `#69`'s
+  `algorithm_floor` and `algorithm_bans` are the live case for fields: they
+  moved it from `5` to `6` in one revision. The gate 0008 built is where each
+  is tiered (`requiredVersion`, `internal/decision/vocabulary.go`). From 0014
+  on, it answers `6` for a response carrying a floor or a ban, `5` for one
+  whose ladder names the method, and a baseline `4` otherwise. So a proxy is
+  refused exactly the routes it cannot read, with the `5xx` above, and served
+  the rest unchanged, which is what the proxy's mock does too. Dropping the
+  rung, the floor or the ban and answering the remainder would be the thinned
+  answer this obligation exists to forbid.
+
+  **The floor has a per-level form of the same rule, and it is a capability
+  rather than a version.** This server MUST NOT send an `algorithm_floor`
+  level that the asking proxy did not declare in
+  `capabilities.algorithm_floors`, and an absent declaration declares none.
+  The rule covers a level added in a later build, which the number alone
+  cannot: a proxy at vocabulary `6` may enforce fewer levels than the contract
+  names. A route whose level the proxy did not declare is refused as a rung
+  the build cannot provide is refused (M17, §5.2). The floor is never stripped
+  to make the route fit.
 
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
   `policy_version` (0002, 0018). Nor may it assume the document version only
@@ -1155,6 +1186,8 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   vocabulary stood still at `4` through all four, which is the whole point.
   `Hoplock/proxy#68` then moved both, to `4.4.0` and vocabulary `5`, for a new
   method. It is the first vocabulary move since the collapse.
+  `Hoplock/proxy#69` moved both again, to `4.5.0` and vocabulary `6`, for two
+  new fields.
   `#66` also shows that a version string does not name a document: `4.3.0` is
   the number `#53` moved the document down *from*, so two different contracts
   have now carried it. The checksum is what identifies the vendored copy.
@@ -1174,9 +1207,10 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   the wire, still required, still honoured; the MUST-NOT-answer-above rule still
   stands; the `5xx` for a proxy this server cannot serve still stands. The
   mechanism is what carries the **next** vocabulary, and a revision now *replaces*
-  the current one rather than running beside it. `#68` is the first revision it
-  has carried. The contract states vocabulary `5` in the present tense, and the
-  tier above is the server's half of the replacement. A session that reads "one
+  the current one rather than running beside it. `#68` and `#69` are the
+  revisions it has carried so far. The contract states vocabulary `6` in the
+  present tense, and the tiers above are the server's half of the replacement.
+  A session that reads "one
   vocabulary" as "there is nothing to negotiate" would delete the only thing
   standing between a fleet mid-upgrade and a silently widened session; 0018
   narrows what this server *supports* to one value and explicitly may not remove
@@ -1210,8 +1244,31 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   proxy-side defaults and an attested rung), and the proxy re-checks the rung
   against the live target when it provisions. So the worst a stale record can
   cause is a refused session — never a session running below the rung its own
-  audit record claims. A record with no `observed_at` is treated as stale, because
-  a capability with no date has no shelf life.
+  audit record claims. A stored record with no `observed_at` is treated as
+  stale, because a capability with no date has no shelf life.
+
+  **One endpoint carries two observations, each with its own date, and they are
+  merged rather than clobbered** (`Hoplock/proxy#69`). Beside the rungs
+  (`execution`, `reach` and `detail`, dated by `observed_at`), a report may
+  carry the target's **key-exchange observation**, `kex` {`floor_met`,
+  `negotiated`, `offered`, `observed_at`}. `floor_met` is the highest
+  `algorithm_floor` level the target was seen to meet, or `none`. The proxy
+  makes the observation on every handshake, for every credential method, and
+  sends it as a report of its own, off the session path, only when it holds no
+  fresh one or when `floor_met` changed. A report carries the rung observation
+  exactly when it carries `observed_at`, and the key-exchange observation
+  exactly when it carries `kex`. This server replaces each stored observation
+  only with one the report carries. So a key-exchange report, which has no
+  rungs in it, never reads as "this target can take no enforcement rungs", and
+  a rung report never erases a target's key-exchange level. A report with
+  rungs or `detail` and no `observed_at` is refused with `400`, because an
+  undated observation cannot be placed against the one this server holds, and
+  so is a report that carries neither observation. The key-exchange
+  observation grants nothing either. The handshake re-checks the floor every
+  time, so a stale observation costs a refused session and never a session
+  below its floor. It is what lets an author see, before raising a route's
+  floor, which targets the raise would break (0014 serves that preview, and
+  0016 renders it).
 
 - **The uid allocation cursor only ever advances, and nothing is ever
   reclaimed.** The non-reuse floor under an `ephemeral-user` account's uid lives
@@ -1260,6 +1317,10 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   lease is exempt for one reason only — it is **exclusive**, so replaying it
   grants the same block to the same proxy, and replay is harmless rather than
   merely unlikely.
+
+  None of this is about `algorithm_floor` (§5.2), which shares only the word.
+  That floor is authored policy rather than a high-water mark, so it rides the
+  cacheable decision on purpose (§5.4).
 
   The operational consequence of not implementing the endpoint is stated rather
   than discovered: **a Control that does not serve it refuses every
@@ -1524,8 +1585,51 @@ the connection's lifetime (proxy D2):
   profile. The proxy reports each such target as
   `target.algorithm_policy_unmet`, naming the axis and what the target offered
   (§7). That record is how an operator finds which routes need one. The
-  profile in force is on the record either way (§7);
-- **additional device fields** on those same routes — the open
+  profile in force is on the record either way (§7).
+
+  **Two siblings of the profile narrow the same leg** (`Hoplock/proxy#69`,
+  vocabulary `6`). They reach every connection the profile reaches, and they
+  are siblings rather than values inside it because a route may want `default`
+  *and* a minimum. The profile is the one way to **widen** the leg, and these
+  are the two ways to **narrow** it: a list may narrow a route, never widen it.
+
+  `algorithm_floor` is a minimum key exchange on an **ordered ladder**,
+  `modern-kex` < `pq-hybrid-kex`, compared by rank; absent means no floor. Each
+  level accepts a subset of what the level below it accepts, and that nesting
+  is the contract's rule for adding a level. A regime whose accepted set does
+  not nest (FIPS is the example) is not a level. **`pq-hybrid-kex` is ML-KEM-768
+  hybrid, `mlkem768x25519-sha256`, and not `sntrup761x25519-sha512`**: the
+  proxy's SSH library does not implement sntrup761, so a target offering only
+  that hybrid does not meet the level, and in practice the level needs OpenSSH
+  9.9 or later on the target. Which exchanges a level accepts in a given build
+  is what that build declares (M17), and no list of them is kept here. A floor
+  the target cannot meet fails the session as an outage and leaves
+  `target.algorithm_policy_unmet` (§7). The proxy refuses `legacy-device` with
+  any floor, because that profile widens the very axis the floor narrows, and
+  accepts `legacy-rsa-sha1` with a floor, because that profile changes only
+  signatures. This server sends a level only to a proxy that declared it (§4).
+
+  `algorithm_bans` names SSH identifiers the proxy must not offer, per route and
+  per axis (`key_exchanges`, `ciphers`, `macs`, `host_keys`, `public_key_auth`).
+  Bans are applied **last**, after the profile and the floor, and subtracted
+  from what the route would otherwise offer, so a ban always wins and never
+  adds. `curve25519-sha256` and `curve25519-sha256@libssh.org` are one exchange,
+  and a ban on either removes both. A ban "everywhere" is this server putting
+  it on every route; no proxy setting can lift one. The proxy refuses, as a
+  contract violation this server must not send, a ban that leaves an axis
+  nothing to offer, one that removes every exchange the route's floor accepts,
+  and an empty or repeated identifier. It accepts a name its build cannot
+  offer, because that ban is already satisfied, and records it as unmatched. So
+  a typo is caught by a warning against what the fleet declares it can offer
+  (M17), never by a refusal. Refusing exactly what the proxy refuses needs one
+  fact the wire does not carry: what each profile offers, per axis, in each
+  build. A ban that empties a non-key-exchange axis only under `default` or
+  `legacy-rsa-sha1` therefore cannot be judged here. That case is a named
+  cross-repo dependency (0014), and nothing here approximates it with a copied
+  list. The emergency runbook for an advisory is a ban, then `cache_invalidate`
+  with `all`, then `session_kill` for the running sessions found by what they
+  negotiated (§7, 0014, 0016);
+- **additional device fields** on `ephemeral-account` routes — the open
   `device_field.<name>` namespace that sits beside the five
   `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
   target: a FortiGate running virtual domains is one unit partitioned into many,
@@ -1666,6 +1770,15 @@ disqualifies both responses this hint rides on, for the same reason and not
 because of anything specific to authorize. The test is cacheability, not
 endpoint: if a value is only safe when it is fresh, it does not belong on
 anything this section governs.
+
+`algorithm_floor` (§5.2) is not a monotonic floor, and it rides the decision on
+purpose. It is policy, fixed when a rule is authored, rather than a mark that
+advances with use. So a replayed decision carries exactly the floor that was in
+force when it was taken ("a replayed floor is the same floor", in the
+contract's words). Raising a floor is a policy change like tightening any other
+restriction on the snapshot, and it reaches cached decisions the same way:
+through the hint's lifetime, or at once through `cache_invalidate`. That is why
+`cache_invalidate` is the emergency runbook's second step (§5.2).
 
 **The same hint rides on two responses**: `/v1/authorize` and
 `POST /v1/hostkeys/report`. It is the same object under the same rules — one opaque server key, a
@@ -1987,12 +2100,45 @@ reuses it on, and three consequences this server owns:
   customer's configuration monitoring sees every one of these changes, and this
   store is what lets a SIEM explain them (Enterprise E7 exports it). It is
   indexed by device, object and operation (0014).
-- **A target the route's profile cannot reach is a record, not a mystery.**
-  `target.algorithm_policy_unmet` is an `error` record at `warn` naming
-  `algorithm_profile`, `target_addr`, `algorithm_axis` and
-  `target_algorithms_offered`. The user is told only that it is an outage. It
-  is how an operator finds the devices the secure `default` no longer reaches
-  (§5.2), and 0014 shows it to the policy author as a warning.
+- **A target the route's algorithm policy cannot reach is a record, not a
+  mystery.** `target.algorithm_policy_unmet` is an `error` record at `warn`, on
+  the batch path. It names the policy in force (`algorithm_profile`,
+  `algorithm_floor` when there is one, and `algorithm_bans.<axis>` for each
+  banned axis), `target_addr`, `algorithm_axis`, `algorithm_policy_cause` and
+  `target_algorithms_offered`. The axis is `key_exchange`, `host_key`,
+  `cipher`, `mac` or `compression`, or `public_key_auth` when the policy left
+  the proxy's own key no signature algorithm the target accepts. The cause
+  (`profile`, `floor` or `ban`) is the step of the expansion that removed the
+  last algorithm the target offered on that axis, which says what to change.
+  `target_algorithms_offered` is absent on `public_key_auth`, because the
+  proxy's SSH library does not report the target's list there. The user is
+  told only that it is an outage. It is how an operator finds the devices the
+  secure `default` no longer reaches and the targets a floor or a ban has
+  stranded (§5.2), and 0014 shows it to the policy author as a warning.
+- **What the leg negotiated is a record, beside the policy it was dialled
+  under** (`Hoplock/proxy#69`). Every session whose target leg came up has one
+  `target.algorithms_negotiated` record: `kind: provisioning`, `info`, on the
+  batch path, floor or no floor. It carries `target_kex_algorithm`,
+  `target_host_key_algorithm`, `target_cipher_out`/`_in` and
+  `target_mac_out`/`_in`, where out is proxy→target and a MAC is omitted in a
+  direction whose cipher is AEAD. It also carries
+  `target_public_key_algorithms_offered`, which names what the proxy
+  **offered**, because the SSH library does not report which algorithm
+  authentication used. The key exchange is `target_kex_algorithm`, not the
+  `kex_algorithm` this repository once asked for: a record can describe three
+  SSH legs, and every proxy→target fact carries the `target_` prefix. The
+  device account-mapping event carries `target_kex_algorithm` too, from the
+  driver's own privileged connection. The policy in force is stamped on every
+  record that names the profile: the `provisioning` record, the mapping event,
+  this record and the unmet record above. `algorithm_floor` is **omitted when
+  there is none**, so absent means no floor, never an unknown one.
+  `algorithm_bans.<axis>` is one attribute per banned axis, sorted and
+  comma-joined, so "sessions under a ban on X" is a filter rather than a
+  substring search. `algorithm_bans_unmatched` (`<axis>:<name>`,
+  comma-joined, on the `provisioning` record) names the bans that build could
+  never offer. These records are the only per-session proof that a floor or a
+  ban held, and they are how the emergency runbook finds the sessions to end
+  (0014).
 - **Grant context rides every record for a session** (`grant_context`),
   copied through by the proxy as opaque data. Store it as it arrives —
   including `additional_context`, which is a string **or** an object — and never
@@ -2088,12 +2234,12 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
-| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.4.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — a sweep's session-less change record accepted, the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row |
+| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.5.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — a sweep's session-less change record accepted, the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, a named cross-repo dependency where the wire cannot say what a profile offers, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
-| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21) |
+| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
-| 0019 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13) |
+| 0019 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
 
 > **Audits are not in this table, and not in the queue.**
 > `prompts/audit/` holds prompts that run repeatedly against the whole
@@ -2188,11 +2334,13 @@ prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 > than a thinned answer, and the documents that still describe a mid-upgrade
 > fleet (§4 above among them).
 >
-> 0014's tier for `brokered-certificate` (§4, `Hoplock/proxy#68`) is not new
-> machinery. It is one case in the gate 0008 already built for the next
-> vocabulary, and it refuses rather than thins. 0018 may fold it into the
-> single-version refusal, because that refusal is stricter. What 0018 may not
-> do is let a proxy that declared `4` be sent the method.
+> 0014's tiers (§4) are not new machinery: `5` for `brokered-certificate`
+> (`Hoplock/proxy#68`) and `6` for a floor or a ban (`Hoplock/proxy#69`). They
+> are cases in the gate 0008 already built for the next vocabulary, and they
+> refuse rather than thin. 0018 may fold them into the single-version refusal,
+> because that refusal is stricter. What 0018 may not do is let a proxy be sent
+> vocabulary above what it declared. Nor may it fold in the per-level floor
+> rule, which is a capability (M17) rather than a version.
 
 ---
 

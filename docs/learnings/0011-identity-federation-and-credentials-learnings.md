@@ -33,7 +33,8 @@
   **Update (sync for `Hoplock/proxy#68`): answered and merged, in another
   shape.** The entry carries only `username`/`key_type`/`lifetime_seconds`. The
   certificate and serial come from `POST /v1/credentials/certificate`, and
-  `policy_version` is `5`. Phase **0014** owns it: read its prompt, not Details.
+  the method needs `policy_version` `5`. Phase **0014** owns it: read its
+  prompt, not Details.
 - **Decisions:** none added/withdrawn; register unchanged. **M2 revised in
   place** — the north-bound listener is bound by 0011, not 0014; §3 and §6 too.
 - **NEXT SESSION:** north-bound routes go in `north.routes()` with an access

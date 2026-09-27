@@ -136,7 +136,12 @@ Each scenario is a product claim, proven across both components:
   stored with `algorithm_profile` `default`, its `credential_method`, and,
   where the route carries a ladder, `credential_rung` counting from 1. So a
   session on the first-choice rung stores `1`, and the degradation query does
-  not return it. The two components once spelled these fields differently
+  not return it. Its `target.algorithms_negotiated` record (`Hoplock/proxy#69`,
+  ingested by 0014) is stored with `target_kex_algorithm`, never
+  `kex_algorithm`, and the by-value query finds the session by it. Its target
+  ends up holding both observations the real proxy reports, the probe's rungs
+  and the separate key-exchange report, and neither overwrites the other.
+  The two components once spelled these fields differently
   while each one's own tests passed (0010's learnings). This topology is the
   one place that disagreement can fail a test.
 - **The default algorithm profile is the secure set** (`Hoplock/proxy#66`).
@@ -148,7 +153,12 @@ Each scenario is a product claim, proven across both components:
   legacy profiles itself: its e2e drives a `legacy-device` route, and its
   in-process handshake tests cover each stranded case and the
   `target.algorithm_policy_unmet` record. So this suite does not stand up a
-  legacy target to prove either again.
+  legacy target to prove either again. Floors and bans are the same
+  (`Hoplock/proxy#69`): the proxy's own e2e proves them, and 0019 extends this
+  suite with the post-quantum floor's scenarios. So build the main target from
+  an image whose OpenSSH is 9.9 or later, which offers
+  `mlkem768x25519-sha256`. The proxy's own target image, `debian:stable-slim`,
+  currently does.
 
 ### CI
 - A job that builds both images, brings the topology up, runs the suite, tears
