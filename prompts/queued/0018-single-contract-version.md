@@ -78,8 +78,8 @@ this phase installs is **loud** rather than lenient.
   loudly and a human decides what to do — which is the point at which supporting
   a second version would become a deliberate decision rather than an accident.
 - Note that these are two different numbers and both are single-valued here: the
-  document version and the negotiated vocabulary (`policy_version`, `5` since
-  `Hoplock/proxy#68`) move
+  document version and the negotiated vocabulary (`policy_version`, `6` since
+  `Hoplock/proxy#69`) move
   independently upstream, and this phase does not couple them. Read each out of
   `contract/control.yaml` rather than from this line, which is only as current as
   the last sync — and it is **already behind**: phase 0009 vendored `4.1.0`
@@ -88,8 +88,10 @@ this phase installs is **loud** rather than lenient.
   moved it to `4.3.0` for the `default` algorithm-profile tightening,
   `Hoplock/proxy#68` (merged) moved it to `4.4.0` for the
   `brokered-certificate` method and moved `policy_version` from `4` to `5`,
-  and phase 0014 re-vendors. Expect at least `4.4.0` by the time this phase
-  runs, with `policy_version` at least `5`, and read the file.
+  `Hoplock/proxy#69` (merged) moved it to `4.5.0` for the algorithm floor and
+  bans and moved `policy_version` from `5` to `6`, and phase 0014 re-vendors.
+  Expect at least `4.5.0` by the time this phase runs, with `policy_version`
+  at least `6`, and read the file.
 
   The contract's "Versioning" section is where the independence is stated:
   `policy_version` **governs `/v1/authorize` and nothing else**, that being the
@@ -130,6 +132,11 @@ this phase installs is **loud** rather than lenient.
   from `4` to `5`. The endpoint it added, `POST /v1/credentials/certificate`,
   is the second kind above and moved nothing. A check that assumes only a new
   field moves the number would have been wrong about that sync too.
+  `Hoplock/proxy#69` then added two fields to the response, `algorithm_floor`
+  and `algorithm_bans`, and moved the number from `5` to `6`. It also added
+  `capabilities.algorithm_floors` and `capabilities.algorithms` to the request
+  and `kex` to the capability report, and those moved `info.version` only,
+  because the number governs the response and nothing else.
 
   And the document version does not only ever rise. `#53` moved it **down**,
   `4.3.0` → `4.0.0`, and `#56` moved it back up to `4.1.0`; `policy_version`
@@ -171,16 +178,19 @@ this phase installs is **loud** rather than lenient.
 - The version-aware half of 0008's assembly goes: one assembly mode, no per-field
   "introduced in" table, no downgrade path. If 0008 built one, remove it and say
   so; if it did not, say that instead.
-- **0014 gives that gate its first live case, and it has to go carefully.** A
-  response whose ladder names `brokered-certificate` needs vocabulary `5`
+- **0014 gives that gate its first live cases, and it has to go carefully.** A
+  response whose ladder names `brokered-certificate` needs vocabulary `5`, and
+  one carrying `algorithm_floor` or `algorithm_bans` needs `6`
   (`requiredVersion`, `internal/decision/vocabulary.go`, following
-  `Hoplock/proxy#68`). So a proxy declaring `4` is refused those routes and
-  served the rest. That tier refuses rather than thins, so it is not a
-  thinning path. Folding it into this phase's single-version refusal is safe
-  only because that refusal is stricter. Whatever you do with it, a proxy
-  declaring `4` must never be sent the method: it would refuse the whole
-  response over an unknown `method` value, and the user would see an outage.
-  Keep a test that says so.
+  `Hoplock/proxy#68` and `Hoplock/proxy#69`). So a proxy declaring `4` is
+  refused the routes that need either tier, a proxy declaring `5` is refused
+  the floor and ban routes, and each is served the rest. Those tiers refuse
+  rather than thin, so neither is a thinning path. Folding them into this
+  phase's single-version refusal is safe only because that refusal is
+  stricter. Whatever you do with them, a proxy must never be sent vocabulary
+  above what it declared. It would refuse the whole response over an unknown
+  `method` value or an unknown field, and the user would see an outage. Keep a
+  test that says so.
 
 ### The conformance suite keeps its teeth, and gains one (0002)
 
@@ -196,9 +206,12 @@ best-effort.
 0002 runs the same suite against Hoplock Proxy's `cmd/mock-control`, which
 implements the contract's multi-version behaviour correctly and would fail a
 universal "always refuse" assertion. That behaviour is live, not theoretical.
-Since `Hoplock/proxy#68` the mock tiers two vocabularies, a baseline `4` and
-`5` for `brokered-certificate`. So it answers a proxy declaring `4` with a
-`200` on every route that names no certificate. The single-version expectation
+Since `Hoplock/proxy#69` the mock tiers three vocabularies: a baseline `4`,
+`5` for `brokered-certificate`, and `6` (`vocabularyAlgorithmFloor`) for a
+floor or a ban. So it answers a proxy declaring `4` with a `200` on every
+route that needs neither tier. It also answers `500` to a route naming a floor
+level that the request's `capabilities.algorithm_floors` does not declare,
+whatever version was declared. The single-version expectation
 is a fact about *this server*, not about the contract, so it belongs in this server's
 expectation file. The shared, contract-level assertion stays what it always was:
 a thinned answer that drops a restriction is a failure, and a refusal naming the
@@ -263,6 +276,15 @@ version support back needs the argument, not just the conclusion.
   rung rather than an error. Collapsing "one version" into "one known set of
   fields" would break every customer-written driver (proxy D13) and is the most
   likely way to get this phase wrong.
+- **It may not fold the per-level floor rule into the version.** This server
+  must not send an `algorithm_floor` level that the asking proxy did not declare
+  in `capabilities.algorithm_floors` (`Hoplock/proxy#69`, 0014). A proxy
+  declaring the one supported version may still enforce fewer levels than the
+  contract names, for example a build from before a level was added. So the
+  refusal for an undeclared level is a **capability** shortfall (M17), checked
+  beside the rungs, and not a version mismatch. It stays when the version
+  matches, and it must not be reworded as a version error, because an operator
+  reading it has to look at that proxy's build rather than at the rollout.
 - **It may not delete the negotiation tests**, only re-aim them (above).
 
 ## Out of scope
@@ -274,7 +296,8 @@ version support back needs the argument, not just the conclusion.
   vendors nothing; those are that repository's own numbered phases"
   (`docs/CROSS-REPO-PROTOCOL.md` §3.1) — so the `make contract-sync` run belongs
   to the phase that first needs the new shape. For `#56` that was **0009**; for
-  `#65`, `#66` and `#68` it is **0014**, where the obligation is written down. This
+  `#65`, `#66`, `#68` and `#69` it is **0014**, where the obligation is written
+  down. This
   line previously read "that is a downstream sync, not a phase", which is the
   opposite of what §3.1 says and would have left the re-vendor owned by
   nobody.

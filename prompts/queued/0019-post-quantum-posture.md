@@ -11,17 +11,21 @@
   **M15** (`ext/` is what Enterprise imports), **M5** (the decision path's
   latency budget), **§4** (the south-bound contract, including
   `algorithm_profile` and its absent-value discipline), **§5.2** (the snapshot's
-  output vocabulary, where `AlgorithmProfile` lives), **§6** (the SSH CA and its
-  rotation story), **§8** (cross-cutting conventions: config, CI) and **§9**
-  (test topology).
+  output vocabulary, where `AlgorithmProfile` lives and where `algorithm_floor`
+  now sits beside it), **§6** (the SSH CA and its rotation story), **§7** (at
+  "What the leg negotiated is a record"), **§8** (cross-cutting conventions:
+  config, CI) and **§9** (test topology).
 - `docs/learnings/` — read summaries; open **`0011`** (the CA, `ext.KeyStore`
   custody, the JOSE subset and *why the algorithm comes from the key*), **`0008`**
   (how `algorithm_profile` reaches the snapshot), **`0010`** (the audit record's
-  derived columns, including `algorithm_profile`), and **`0017`** (the topology
-  and scenario suite this phase extends).
-- `contract/control.yaml` — **`algorithm_profile` only** (its enum, its
-  absent-value rule, and the sentence saying anything other than `default` is a
-  weakening). You do not need the rest of the document.
+  derived columns, including `algorithm_profile`), **`0017`** (the topology
+  and scenario suite this phase extends), and **`0014`** (how `algorithm_floor`
+  is authored and served, and where the negotiated-algorithm records and each
+  target's key-exchange observation are stored).
+- `contract/control.yaml` — **`algorithm_profile` and `algorithm_floor` only**
+  (their enums, their absent-value rules, the sentence saying anything other
+  than `default` is a weakening, and the floor's levels), plus
+  `KexObservation`. You do not need the rest of the document.
 
 > **This phase runs after 0017 on purpose.** It touches both listeners, and the
 > listeners stop moving only once 0014 has replaced the two temporary operator
@@ -44,11 +48,13 @@ Two framings to hold onto, because they decide almost every judgement call below
   worth forging while the thing it signs is still trusted, and this product
   already issues target certificates that live for **five minutes** (0011). The
   work with real urgency is therefore transport, not signing.
-- **This phase states and asserts; it does not invent contract vocabulary.** The
-  one thing Control cannot fix from here is that `algorithm_profile` can only
-  *weaken* a route's algorithms and has no way to express a *floor*. That is the
-  proxy's vocabulary (M1) and it is raised as an upstream request, not
-  approximated. See "Cross-repo dependency".
+- **This phase states and asserts; it does not invent contract vocabulary.**
+  `algorithm_profile` can only *weaken* a route's algorithms. The floor this
+  phase needed for the proxy→target leg was the proxy's vocabulary to add (M1),
+  so it was raised upstream rather than approximated. Upstream has answered:
+  `algorithm_floor` exists (`Hoplock/proxy#69`), and 0014 vendors it and makes
+  it authorable. So this phase wires it rather than working around it. See
+  "The algorithm floor has landed upstream".
 
 ## In scope
 
@@ -121,7 +127,8 @@ settle:
   different direction, that 0011's `brokered-certificate` seam was built to
   avoid. That seam refused to put a method on the wire until upstream defined
   one. When upstream did (`Hoplock/proxy#68`), the shape was not the one 0011
-  had guessed, which is the argument for not guessing.
+  had guessed, which is the argument for not guessing. `Hoplock/proxy#69` then
+  did the same to the floor this phase asked for (below).
   **Write the check that will tell the next session when this changes** (below).
 
 ### 3. Say what is already adequate, once, where a reader will find it
@@ -161,16 +168,50 @@ register's `Rendered in` column requires (PROTOCOL §3).
   session learns by the build going red rather than by reading this prompt.
 - Extend 0017's scenario suite and `deploy/` topology so the topology runs with
   TLS configured on both listeners, and the suite asserts the posture rather than
-  assuming it.
+  assuming it. The floor scenarios of item 6 go in the same suite.
 - `govulncheck` already gates every PR (0017); nothing new is needed there.
 
+### 6. Assert the proxy→target floor end to end (`Hoplock/proxy#69`)
+0014 makes `algorithm_floor` authorable and serves it. This phase proves its
+post-quantum level against a real proxy and a real target, on 0017's topology,
+because only there do "decides" and "enforces" meet:
+
+- A route whose floor is `pq-hybrid-kex` succeeds against a target whose
+  OpenSSH is 9.9 or later. Its `target.algorithms_negotiated` record stores
+  `target_kex_algorithm: mlkem768x25519-sha256` beside `algorithm_floor:
+  pq-hybrid-kex`. Assert on the stored record, not on the authorize answer,
+  because the record is the only per-session proof that the floor held (PLAN
+  §7).
+- The same floor fails as an **outage**, never a deny, against a target that
+  offers no ML-KEM-768 hybrid. The user is given the session id, and the store
+  holds a `target.algorithm_policy_unmet` whose `algorithm_axis` is
+  `key_exchange` and whose `algorithm_policy_cause` is `floor`. The proxy's own
+  topology builds that target cheaply: a second `sshd` on the same host whose
+  `KexAlgorithms` name no hybrid (upstream `deploy/target/entrypoint.sh`). Also
+  prove the sntrup761 case: a listener whose only hybrid is
+  `sntrup761x25519-sha512@openssh.com`, which is how OpenSSH 9.0 to 9.8 behave.
+  It fails the floor too, and that is the assertion that nothing here treats
+  sntrup761 as meeting the level.
+- The target's key-exchange observation reaches the store as a report of its
+  own, and the target's rung observation is unchanged by it (0014, item 5 of
+  "Algorithm floor and bans reach a proxy").
+- Say where the proxy→target posture is read. For this server's own listeners
+  the startup log states it (item 1). For the proxy→target leg it is per route
+  and per session: the floor in force, as policy states it, and the negotiated
+  exchange, as each session's record proves it. Name where an operator reads
+  each (0014's query, 0016's views). Add no configuration knob for it here: a
+  floor is route policy, not a property of this server's listeners.
+
 ## Out of scope
-- **Editing `contract/`** (M1) — and in particular inventing an
-  `algorithm_profile` value or a route field for an algorithm floor. That is the
-  cross-repo dependency below.
-- **The proxy→target SSH leg.** Which key exchange a proxy negotiates with a
-  target is `hoplock/proxy`'s code. This phase may *record and assert* what the
-  proxy reports; it may not configure it.
+- **Editing `contract/`** (M1). The floor this phase needed exists now
+  (`Hoplock/proxy#69`, vendored by 0014), so there is nothing left to invent.
+- **Authoring the floor, and anything about bans.** 0014 makes
+  `algorithm_floor` and `algorithm_bans` authorable, validates them and serves
+  them. This phase asserts the floor end to end (item 6).
+- **Configuring the proxy→target SSH leg.** Which key exchange a proxy offers
+  and negotiates is `hoplock/proxy`'s code, and the route's floor is the policy
+  this server states. This phase *records and asserts* what the proxy reports,
+  and configures nothing on the proxy.
 - **mTLS as a south-bound credential** (M2, M22, 0007) — see the note in item 1.
 - **A post-quantum signature anywhere**, for the reason in item 2.
 - Post-quantum for federation (OIDC/SAML): the brokers verify what an IdP signed,
@@ -178,29 +219,43 @@ register's `Rendered in` column requires (PROTOCOL §3).
   algorithm member and a branch, and the rule that makes that safe — *the
   algorithm comes from the key, never from the token* — is already in place.
 
-## Cross-repo dependency (upstream, `hoplock/proxy`)
-**`algorithm_profile` can only weaken, and there is no way to state a floor.**
-The contract's enum is `default | legacy-rsa-sha1 | legacy-device`, every
-non-default value is documented as a weakening, and absent means `default`. So a
-policy can say *this route may use SHA-1* and cannot say *this route must
-negotiate a hybrid post-quantum key exchange*. The asymmetry is the finding.
-`Hoplock/proxy#66` (merged) narrowed where the bottom is without changing
-that. `default` is now the SSH library's secure set, so no SHA-1 key exchange
-and no `ssh-rsa` or `ssh-dss` host key without a legacy profile. It is still
-a preset that can only be weakened, and it names no key exchange a route must
-negotiate. A target the route's profile cannot reach is reported as
-`target.algorithm_policy_unmet` (PLAN §7). Read it as the existing record of
-an unmet algorithm policy, not as a floor.
+## The algorithm floor has landed upstream: wire it, do not work around it
+**What was missing.** `algorithm_profile` can only weaken. Its enum is
+`default | legacy-rsa-sha1 | legacy-device`, every non-default value is a
+weakening, and absent means `default`. So a policy could say *this route may
+use SHA-1* and could not say *this route must negotiate a hybrid post-quantum
+key exchange*. `Hoplock/proxy#66` narrowed where the bottom is, making
+`default` the SSH library's secure set, without adding a floor. The PR that
+queued this phase raised the floor upstream (`Hoplock/control#36`,
+`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 
-This phase **must not** close it locally: a new enum value or a new route field
-is contract vocabulary, it bumps `policy_version`, and the proxy decodes the
-authorize response strictly and fails a session closed on anything it does not
-recognise — so an invented value reaches a user as an outage. Build the seam,
-name the gap, and leave the wire alone. The request is raised by the PR that adds
-this prompt (`docs/CROSS-REPO-PROTOCOL.md` §3.2, §4.2); if it has landed
-upstream and been synced by the time this phase runs, the vendored contract will
-carry it and this section becomes the thing to wire up instead of the thing to
-work around — check `contract/control.yaml` before assuming either.
+**What landed.** `Hoplock/proxy#69` (merged) added `algorithm_floor`, a
+sibling of the profile on the authorize response, and moved `policy_version`
+to `6`. 0014 re-vendors it and makes it authorable, so check that
+`contract/control.yaml` carries it before you start. Three things differ from
+what `#36` asked for, and `#36`'s PR body is wrong about all three. Build
+against this list, not against that body:
+
+- **`pq-hybrid-kex` is `mlkem768x25519-sha256`, and not
+  `sntrup761x25519-sha512`.** `#36` promised either one. The proxy's SSH
+  library does not implement sntrup761, so a target whose only hybrid is
+  sntrup761 does not meet the level. That is OpenSSH 9.0 to 9.8's default, a
+  large installed base. In practice the level needs OpenSSH 9.9 or later on
+  the target, or device firmware offering ML-KEM-768 hybrid. No text, log line
+  or test here may promise "either". If a later proxy build gains sntrup761,
+  that build declares it for the level. This server reads a level's members
+  from what each build declares (PLAN M17), never from a list of its own.
+- **The floor is an ordered ladder, `modern-kex` < `pq-hybrid-kex`, compared
+  by rank**, not the single value `#36` sketched. Nesting is the rule for
+  adding a level: every exchange a level accepts is accepted by every level
+  below it. A regime that does not nest (FIPS is the example) is not a level.
+- **The negotiated exchange is recorded as `target_kex_algorithm`**, on
+  `target.algorithms_negotiated`, not as the `kex_algorithm` `#36` asked for
+  (PLAN §7).
+
+The proxy refuses `legacy-device` with any floor and accepts `legacy-rsa-sha1`
+with one. A floor the target cannot meet fails the session as an outage (PLAN
+§5.2). 0014 owns all of that on this side. This phase's part is item 6.
 
 ## Acceptance criteria
 - Both listeners serve TLS when configured and plaintext when not, and a
@@ -221,6 +276,12 @@ work around — check `contract/control.yaml` before assuming either.
   subsection on what is already adequate.
 - 0017's topology runs with TLS on both listeners and its suite asserts the
   posture.
+- A `pq-hybrid-kex` route to a target on OpenSSH 9.9 or later stores
+  `target_kex_algorithm: mlkem768x25519-sha256` beside the floor in force. The
+  same floor fails as an outage, and stores a `target.algorithm_policy_unmet`
+  with cause `floor`, against a target with no hybrid and against one whose
+  only hybrid is sntrup761. All three are asserted on stored records in 0017's
+  topology.
 - **No change to `contract/`**, and `make contract-check` passes.
 
 ## Definition of Done & hand-off
@@ -228,6 +289,8 @@ Per `docs/PROTOCOL.md`. Move to `implemented/`; add
 `docs/learnings/0019-post-quantum-posture-learnings.md`. The summary block MUST
 give: the config keys added, the default posture and the one knob that changes
 it, the decision's `M` id, the `ext/` behaviour change and why it is safe, and —
-as its own line — **whether the algorithm-floor vocabulary has landed upstream**,
-because that decides whether the next phase to touch routing has a floor to
-honour or a gap to keep working around.
+as its own line — **what the floor scenarios proved against the real proxy**:
+the target images, their OpenSSH versions, and the exchange each one recorded.
+The floor has landed upstream (`Hoplock/proxy#69`, vendored by 0014). So the
+next phase to touch routing has a floor to honour, and what it needs from here
+is evidence of what holds on the wire.

@@ -15,6 +15,12 @@
 - `docs/learnings/` — read summaries; open `0014` (**the API this consumes** —
   every route and its required role), `0011` (RBAC), `0010` (audit query),
   `0006` (proxy health).
+- `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
+  algorithm bullet (the floor and the bans), and **M17**, for what
+  `Hoplock/proxy#69` added and 0014 serves: the impact preview, the fleet
+  coverage view and the emergency runbook (below). In the **Hoplock Proxy
+  repository**, `api/README.md` "Banned algorithms" states the runbook. It is
+  cited here and never restated.
 
 ## Objective
 Give Hoplock Control an operator console. A self-hosted deployment should be
@@ -44,7 +50,13 @@ is written so that half can fail a review rather than merely disappoint one.
      version, and `applied`, `pending_restart` (with the settings that are
      waiting on a restart), `rejected` or `fetch_failed` (with `last_error`). A
      proxy that has never reported is shown as its own state, never as
-     `applied`.
+     `applied`. **Algorithm-floor coverage** too (`Hoplock/proxy#69`): which
+     `algorithm_floor` levels each proxy's build declares, with the key
+     exchanges each level accepts **in that build**, as 0014 serves them. During
+     a rolling upgrade two builds may accept different exchanges for one level.
+     Show that as *in progress* (M19), never as a fault, and name the proxies
+     that cannot enforce a level yet. A proxy that has declared nothing is
+     `Not reported`, never "no floor".
   2. **Explain** — a session or decision id in, the whole story out: identity,
      matched rule, mapping version, grant, obligations, route and hops. Deep
      links from the audit view.
@@ -52,11 +64,34 @@ is written so that half can fail a review rather than merely disappoint one.
      command view; session replay for recorded sessions.
   4. **Policy** — bundle versions, diff, validation errors inline against the
      source, **simulate** a candidate against recorded traffic, activate,
-     roll back.
+     roll back. **Before a route's `algorithm_floor` is raised, preview the
+     impact** (`Hoplock/proxy#69`, 0014's satisfiability report). Show the
+     targets the raise would break, with the level each was seen to meet, what
+     it negotiated or offered, and when. Show targets with no observation, or a
+     stale one, as `Not reported`, never as meeting the floor. Show the proxies
+     that cannot enforce the level yet. It warns and never blocks, because
+     the observation is a past fact about a target that may have been upgraded
+     since. The same view explains why `pq-hybrid-kex` needs OpenSSH 9.9 or
+     later on the target, and it never promises sntrup761. A ban that names
+     something no proxy declared, or whose effect the wire cannot judge, is a
+     warning the author reads and may override (0014).
   5. **Inventory** — targets and labels, identities, groups, roles, grants.
   6. **Extensions** — which `ext` points have an implementation registered
      (0004). An operator debugging behaviour must be able to see that Enterprise
      is in play.
+  7. **Emergency runbook** — the workflow for the day an advisory lands
+     (`Hoplock/proxy#69`; upstream's `api/README.md` states the steps). It walks
+     an operator through three steps, each one a call 0014 serves and audits:
+     add the ban to the affected routes and activate it; send
+     `cache_invalidate` with `all`, because a cached decision keeps the old
+     policy until its hint runs out; then find the running sessions by what
+     they negotiated (for example every open session whose
+     `target_cipher_out` is the banned cipher) and end them with `session_kill`.
+     The `reason` is shown to the user, so the workflow asks for it and shows
+     it before sending. Each step is a destructive action and confirms as one.
+     Each shows what the call reported covering, and the workflow never skips
+     the second step, because a ban that stops at activation reaches only new
+     decisions.
 - **Auth**: OIDC for humans, the same session the API issues. No separate login.
 - Build: assets built and checked in, or built in CI with a reproducible step;
   `make build` must work on a machine with no Node installed. Say which you
@@ -192,6 +227,14 @@ becomes a test that runs today.
 - No API route is reachable from the console that RBAC would deny.
 - The console degrades honestly when an extension point is absent: an Enterprise
   feature that is not installed is not shown as broken.
+- The floor's impact preview names a target whose observed level is below a
+  candidate floor, shows a target with no observation or a stale one as `Not
+  reported`, and names a proxy that cannot enforce the level. The fleet view
+  shows each proxy's declared levels per build. Assert each against a seeded
+  fixture.
+- The emergency runbook drives 0014's three calls in order, shows the kill
+  `reason` before sending it, and cannot finish without the `cache_invalidate`
+  step. An end-to-end test walks it.
 
 **Design** — each of these fails the build, not the reviewer's patience:
 - The token lint passes: no colour, font size or radius outside the token file.
