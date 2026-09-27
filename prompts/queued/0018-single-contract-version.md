@@ -89,9 +89,11 @@ this phase installs is **loud** rather than lenient.
   `Hoplock/proxy#68` (merged) moved it to `4.4.0` for the
   `brokered-certificate` method and moved `policy_version` from `4` to `5`,
   `Hoplock/proxy#69` (merged) moved it to `4.5.0` for the algorithm floor and
-  bans and moved `policy_version` from `5` to `6`, and phase 0014 re-vendors.
-  Expect at least `4.5.0` by the time this phase runs, with `policy_version`
-  at least `6`, and read the file.
+  bans and moved `policy_version` from `5` to `6`, `Hoplock/proxy#71`
+  (merged) moved it to `4.6.0` for what a `400` from a log endpoint costs and
+  for `session_id: ""` on any kind and left `policy_version` at `6`, and phase
+  0014 re-vendors. Expect at least `4.6.0` by the time this phase runs, with
+  `policy_version` at least `6`, and read the file.
 
   The contract's "Versioning" section is where the independence is stated:
   `policy_version` **governs `/v1/authorize` and nothing else**, that being the
@@ -119,6 +121,11 @@ this phase installs is **loud** rather than lenient.
     `ssh-dss` needs a legacy profile. `#66` moved the document to `4.3.0` and
     left `policy_version` at `4`, because no field changed meaning to a parser.
     The break bites at the target's handshake, not at decoding.
+    `Hoplock/proxy#71` is a tightening in the other direction, on the
+    **server** and on the log endpoints. A server MUST accept `session_id: ""`
+    on any kind, and it may answer `400` only for a record it will never store.
+    It moved the document to `4.6.0` and left `policy_version` at `6`, because
+    nothing on the authorize response changed.
 
   The third cuts the opposite way from the first two and matters here just as
   much: one supported `policy_version` is **not** a promise that the answerable
@@ -296,8 +303,8 @@ version support back needs the argument, not just the conclusion.
   vendors nothing; those are that repository's own numbered phases"
   (`docs/CROSS-REPO-PROTOCOL.md` §3.1) — so the `make contract-sync` run belongs
   to the phase that first needs the new shape. For `#56` that was **0009**; for
-  `#65`, `#66`, `#68` and `#69` it is **0014**, where the obligation is written
-  down. This
+  `#65`, `#66`, `#68`, `#69` and `#71` it is **0014**, where the obligation is
+  written down. This
   line previously read "that is a downstream sync, not a phase", which is the
   opposite of what §3.1 says and would have left the re-vendor owned by
   nobody.

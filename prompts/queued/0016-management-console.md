@@ -21,6 +21,12 @@
   coverage view and the emergency runbook (below). In the **Hoplock Proxy
   repository**, `api/README.md` "Banned algorithms" states the runbook. It is
   cited here and never restated.
+- `docs/PLAN.md` §7 at "A gap in a proxy's stream is a record, and it is not a
+  break in the chain", and **M11**, for what `Hoplock/proxy#71` added and 0014
+  serves: the `logging.gap` records that say where a proxy's stream has a
+  hole, and why (the audit view, below). In the **Hoplock Proxy repository**,
+  `api/README.md` "When records do not arrive" specifies the record. It is
+  cited here and never restated.
 
 ## Objective
 Give Hoplock Control an operator console. A self-hosted deployment should be
@@ -61,7 +67,30 @@ is written so that half can fail a review rather than merely disappoint one.
      matched rule, mapping version, grant, obligations, route and hops. Deep
      links from the audit view.
   3. **Audit** — query by subject, target, time, kind, severity; the blocked-
-     command view; session replay for recorded sessions.
+     command view; session replay for recorded sessions. **Where a proxy's
+     stream has a hole, and why** (`Hoplock/proxy#71`, served by 0014). A
+     `logging.gap` is shown at its **span**, from `gap_first_at` to
+     `gap_last_at`, and never at its own timestamp, which is often after the
+     session ended. Show how many records are missing, their kinds, and how
+     many were critical. A gap that hid something critical is marked as
+     critical. Show the two causes as different facts:
+     - **`evicted`**: this server never received the records. The proxy was
+       cut off from it for longer than its disk window could hold. That is
+       outage-class, and it reads as one (M11).
+     - **`refused`**: this server received the records and refused them
+       itself. Show its own answer (`refusal_code`, `refusal_message`) and the
+       refused record ids. It is neither a deny nor an outage, and it must not
+       read as either. DESIGN.md §6 has no state for it yet, so decide one in
+       DESIGN.md in this PR (M20).
+
+     A session with a hole is the **partial** state (DESIGN.md §7): some data
+     and a named gap, never an error page, and never shown as complete. Where
+     a session has two reports of one cause, show their sum. Replay over a
+     span that a gap covers shows the hole, and never splices the capture on
+     either side together. A gap is never rendered as tampering, and a stream
+     whose chain verifies is never rendered as "nothing missing" (PLAN §7).
+     Gaps that belong to no session appear in a per-proxy view of the stream,
+     placed by span.
   4. **Policy** — bundle versions, diff, validation errors inline against the
      source, **simulate** a candidate against recorded traffic, activate,
      roll back. **Before a route's `algorithm_floor` is raised, preview the
@@ -235,6 +264,12 @@ becomes a test that runs today.
 - The emergency runbook drives 0014's three calls in order, shows the kill
   `reason` before sending it, and cannot finish without the `cache_invalidate`
   step. An end-to-end test walks it.
+- Against a seeded fixture, the audit view shows an `evicted` gap and a
+  `refused` gap in one session's timeline at their spans, as different states,
+  and neither of them as denied. It shows two reports of one cause summed. It
+  shows the session as partial rather than complete. And replay across the gap
+  shows the hole. A session-less gap appears in the per-proxy view. Assert
+  each.
 
 **Design** — each of these fails the build, not the reviewer's patience:
 - The token lint passes: no colour, font size or radius outside the token file.

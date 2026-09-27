@@ -51,6 +51,14 @@
   cannot meet the algorithm policy" and "Capability advertisement" (the
   per-target key-exchange bullet and "Merge, don't clobber"). They are cited
   here and never restated.
+- `docs/PLAN.md` **§7** from "A `400` costs exactly the refused record" to "A
+  gap in a proxy's stream is a record", and §4's two log endpoint rows, for
+  what `Hoplock/proxy#71` changed (item 1 of the `#66` list, and "What a proxy
+  could not deliver", below). Also **M8** and **M11**. In the **Hoplock Proxy
+  repository**, read `docs/PLAN.md` **D8** (as its phase 0046 amended it) and §7
+  at "What the pipeline could not deliver is a record: `logging.gap`", and
+  `api/README.md` "When records do not arrive". They are cited here and never
+  restated.
 
 ## Objective
 Give humans and CI a surface. This is the phase where the product becomes
@@ -244,17 +252,17 @@ north-bound routes here, gated and audited like every other mutating action
 (Inventory, above). The south-bound half is served in the same PR, because a
 publish that nothing can fetch has delivered nothing.
 
-1. **Re-vendor the contract at `4.5.0`.** Run
-   `make contract-sync REF=2eee2e7852d6979d8929cb48247a2fb5961d2494` (the
-   merge of `Hoplock/proxy#69`, which sits on top of `#68`, `#66` and `#65`),
-   or a later upstream `main`. If you use a later `main`, every contract change
-   between the two is also this phase's to read and state. Never hand-edit
-   `contract/` (M1). At that ref, `api/control.yaml` has the sha256
-   `2f496019fa376d07522d0caf9718e999669586c52828f52a2f0f87a291249464`, which
-   is what `contract/UPSTREAM` should then record. Four upstream PRs arrive
-   together, and the last two each move `policy_version`. `#65` adds an event
-   type and two endpoints (`4.2.0`). `#66` adds no field,
-   no endpoint and no enum value (`4.3.0`). It changes descriptions only:
+1. **Re-vendor the contract at `4.6.0`.** Run
+   `make contract-sync REF=e47306053bb67907b5c246a1c1feb1098e6b8d3c` (the
+   merge of `Hoplock/proxy#71`, which sits on top of `#69`, `#68`, `#66` and
+   `#65`), or a later upstream `main`. If you use a later `main`, every
+   contract change between the two is also this phase's to read and state.
+   Never hand-edit `contract/` (M1). At that ref, `api/control.yaml` has the
+   sha256 `ecf20719b326c27eeaa7f1745555e2500d33b20ca6796cd37e7a272716cf8c4a`,
+   which is what `contract/UPSTREAM` should then record. Five upstream PRs
+   arrive together. `#68` and `#69` each move `policy_version`, and `#71` does
+   not. `#65` adds an event type and two endpoints (`4.2.0`). `#66` adds no
+   field, no endpoint and no enum value (`4.3.0`). It changes descriptions only:
    `algorithm_profile: default` now means the SSH library's **secure set**, a
    tightening the document announces as a **break** beside `params.username`;
    the profile applies to every connection a route causes to its target; and
@@ -270,8 +278,15 @@ publish that nothing can fetch has delivered nothing.
    `capabilities.algorithms` to the authorize request, and a key-exchange
    observation, `kex`, to `TargetCapabilities`, which stops requiring
    `observed_at`. None of those three moves the number, which governs the
-   response only, and `#69` adds no path. So this re-vendor changes more than
-   the checksum in `contract/UPSTREAM`.
+   response only, and `#69` adds no path. `#71` adds no field, no path and no
+   enum value (`4.6.0`). It changes what the two log endpoints' answers mean. A
+   `400` refuses the whole request, and the proxy sets the refused record
+   aside rather than retrying it. A `413` from anything in the path is handled
+   the same way. And `LogRecord.session_id: ""` means no session, which a
+   server MUST accept on any kind. The two `400` responses are now described
+   inline rather than through the shared `BadRequest`, still as an
+   `ErrorResponse`. So this re-vendor changes more than the checksum in
+   `contract/UPSTREAM`.
    `internal/contract`'s enum test fails on the new `TargetAuth.method` value
    until it has a constant. Its path test fails on the new path until that has
    one, as it does on `#65`'s two. "Brokered certificates reach a proxy",
@@ -298,7 +313,13 @@ publish that nothing can fetch has delivered nothing.
    `500` to a route naming a floor level that the request's
    `capabilities.algorithm_floors` does not declare. It validates a capability
    report as the contract says, merges the two observations by presence, and
-   shows what it holds at `GET /debug/capabilities`, a mock-only path.
+   shows what it holds at `GET /debug/capabilities`, a mock-only path. `#71`
+   makes the mock accept `session_id: ""` on both log endpoints for every kind.
+   It refused `""` on both before, so item 3 of "What a proxy could not
+   deliver" (below) passes against the mock only after this re-vendor. It also
+   adds `POST /debug/logs/refuse`, a mock-only hook that refuses matching
+   records whole with `400 invalid_record`, and `POST /debug/reset` now clears
+   it.
 2. **Wire `fleet.ConfigPublisher` to emit `config_changed` {`version`,
    `hash`}.** Emit it on the stream 0009 built (`internal/revoke`), one event
    per affected proxy, naming that proxy's **composed** document. A zone
@@ -475,40 +496,65 @@ compatibility promise (M19), so they have to be right before they ship. None
 of it is a contract change, because `LogRecord.attributes` is an open string
 map. The only `contract/` change is the text item 1 re-vendors.
 
-1. **Ingest a sweep's change record, which belongs to no session.** When the
-   proxy's device reaper removes an orphan, it emits `device.config.change`
-   with `kind: provisioning` and **`session_id: ""`**. A sweep is somebody
-   else's leftover, and naming the session that triggered it would attribute
-   the removal to the wrong person. Today `audit.Parse` refuses an empty
-   `session_id` for every kind except `error` (`internal/audit/record.go`), and
-   a batch is all or nothing (PLAN §7). So one such record fails its whole
-   batch with a `400`. **This stops that proxy's audit delivery entirely.** The
-   proxy treats a `400` like any other delivery failure: it spills the batch to
-   its disk buffer and retries the oldest buffered segment until the server
-   takes it. While anything is buffered, every later record joins the back of
-   that queue, **priority records included** (upstream
-   `internal/logging/shipper.go`, `sendBatch`/`sendPriority`/`drainBuffer`).
-   So the first orphan a device sweep removed would stall the mapping events
-   behind it indefinitely. The buffer has no size bound of its own, so it
-   would grow on the proxy's disk until a write failed and records started
-   being dropped. The stall itself is the proxy's to fix, and it is raised
-   upstream in the `## Upstream request` of the PR that added this item
-   (`Hoplock/control#39`). The request asks for a bounded buffer that evicts
-   the oldest records, and for a refused record that no longer blocks the
-   ones behind it. Neither answer removes this item. Once the proxy stops
-   retrying, a refused sweep record is not late but **lost**, so this server
-   must still accept it.
+1. **Accept a record that belongs to no session, whatever its kind.** Since
+   `Hoplock/proxy#71` this is the contract's rule and not an exemption of this
+   server's: `session_id: ""` means the record belongs to NO session, and a
+   server MUST accept it on any `kind` (`LogRecord.session_id` in the
+   re-vendored document). The proxy sends three such records today (PLAN §7):
+   - an orphan sweep's **`device.config.change`**: `provisioning`, `info`,
+     batch path. A sweep removes somebody else's leftover, and naming the
+     session that triggered it would attribute the removal to the wrong
+     person;
+   - the sweep's own failure, **`device.account.sweep_failed`**:
+     **`policy_decision`, `critical`, on the priority path**. It is not an
+     `error` record, whatever the comment in `Parse` says;
+   - a **`logging.gap`** reporting on records that belonged to no session
+     (item 1 of "What a proxy could not deliver", below).
 
-   The rule is that a record may lack a session only when nobody was present
-   for it. That covers `error` records (a sweep failure) and a sweep's
-   `device.config.change`. Widen the exemption to exactly that event under
-   `provisioning`, and say why in the code comment, as the `error` case already
-   does. Every other record still needs a `session_id`. An unknown shape stays
-   loud on purpose (PLAN §7, the kind rule), and any other session-less record
-   the proxy adds later will arrive through a sync that names it. An empty
-   session id is **not a session**, either: the by-session lookup and
-   `explain` must refuse `""` rather than return every sweep record in the
-   tenant.
+   **Today `audit.Parse` refuses two of the three** (`internal/audit/record.go`).
+   It accepts `""` on `error` alone. So the sweep failure is refused on the
+   priority path, and a batch carrying the sweep's change fails whole (PLAN §7:
+   a batch is all or nothing). What that refusal costs changed with `#71`. The
+   proxy no longer retries a refused request. It halves the batch to isolate
+   the refused record, delivers everything else, and **sets the refused record
+   aside**: never resent, kept only until its disk window evicts it, and
+   reported in a `logging.gap` (proxy D8 as its phase 0046 amended it). So
+   nothing stalls behind it any more, and the refused record is **lost** to
+   this store rather than late. For the sweep failure that is the one record
+   that says a privileged administrator was left standing on a device (proxy
+   D13). Until this phase ships, it reaches this store only as the critical
+   `logging.gap` that reports it.
+
+   So do not widen the exemption by one more event. **Drop the requirement it
+   is an exemption from.** `Parse` accepts `""` on every kind in the
+   contract's closed list, and every other check on a record stays as it is.
+   A kind outside that list is still refused (PLAN §7, the kind rule). An
+   empty session id is **not a session**, either. Store the record as
+   belonging to no session, and make the by-session lookup and `explain`
+   refuse `""` rather than return every session-less record in the tenant.
+
+   Two tests in `internal/audit/record_test.go` pin the old rule, and they
+   change with it rather than being defended.
+   `TestParseRefusesWhatItCannotClassify` has a `"no session id"` case, which
+   expects a session-less `command` record to be refused as malformed. Remove
+   it: the contract now requires the opposite.
+   `TestAnErrorRecordMayHaveNoSession` becomes a test over every kind in
+   `Kinds`, the sweep failure's shape among them.
+
+   Rewrite the comments that describe the old costs, in the same change:
+   - the `Parse` case that exempts `error`. It goes with the requirement, and
+     any comment left in its place cites the contract's rule, which covers
+     every kind;
+   - the doc comment on `Kinds`, which says that refusing an unknown kind "is
+     loud: the proxy keeps the record in its disk buffer and an operator sees
+     an error". The proxy no longer keeps it. A refusal costs the record, and
+     "loud" now means the `logging.gap` that reports it (PLAN §7);
+   - the doc comment on `Limits` and the `audit:` block of
+     `config.example.yaml`, which say that a batch too large to answer inside
+     the request timeout is one the proxy "retries forever". A timeout is still
+     retried, and the proxy's drain waits behind that batch until its window
+     evicts it, which it never does for a pinned session. The bound is as
+     necessary as it was. Only "forever" is wrong.
 2. **Index `device.config.change`, the drift feed.** It is one record per
    configuration change the proxy made on a device. `kind: provisioning`,
    `severity: info`, and it arrives on the **batch** path. Never expect it on
@@ -1149,6 +1195,126 @@ declarations, and a per-target key-exchange report. Each is below.
    `algorithm_bans` in `mock-fixtures.yaml`, under the fixture keys in item 1
    of the fleet list. Update `cmd/pdpconform/README.md`'s key table.
 
+### What a proxy could not deliver (proxy phase 0046, `Hoplock/proxy#71`)
+
+This repository's sync for `#66` found that one record this server refused
+stopped all of a proxy's delivery. The proxy retried a refused batch forever,
+every later record queued behind it (priority records included), and nothing
+bounded its disk. That sync raised it upstream (`Hoplock/control#39`). The
+proxy answered as its phase 0046, merged as **`Hoplock/proxy#71`**: contract
+**`4.6.0`** and `policy_version` **still `6`**. It adds no proxy decision,
+because it amends **proxy D8** in place. Its disk buffer is now bounded, a
+record this server refuses is set aside rather than retried, and the proxy
+reports both kinds of loss as a `logging.gap` record. That PR's
+`## Cross-repo impact` section puts five obligations on this repository. Item
+1 of the fleet list above is the re-vendor. Item 1 of the `#66` list above is
+the `""` rule, rewritten. PLAN §7 now says what a gap in a proxy's stream is,
+and 0016 shows it. The items below are the rest.
+
+They are this phase's for the reason the `#66` items are. This is the phase
+that serves the audit query, and from this phase on the north-bound names are
+a compatibility promise (M19). None of it is a contract change here.
+`logging.gap` arrives under a kind this server already accepts (`error`), and
+its keys ride `LogRecord.attributes`, an open map.
+
+1. **Store and index `logging.gap` by session, by cause and by span.** It is
+   `kind: error` with `event: logging.gap`. Its severity is `critical` when
+   anything it reports was critical and `warn` otherwise, so it arrives on
+   either path. `audit.Parse` already accepts it: `error` is a known kind, and
+   its `session_id` is the affected session's, or `""` for records that
+   belonged to none (item 1 of the `#66` list). What is owed is the query
+   surface, and **every key in upstream `api/README.md`, "When records do not
+   arrive", is query surface**: `gap_cause` (`evicted` | `refused`),
+   `gap_records`, `gap_bytes`, `gap_first_at` and `gap_last_at`, `gap_kinds`
+   (sorted, comma-joined), `gap_critical`, and, for a refusal,
+   `gap_record_ids` (comma-joined, at most 64), `gap_record_ids_truncated`,
+   `refusal_code` and `refusal_message`. Cite that section for what each
+   means, and do not restate it. The audit surface must answer:
+   - **By session.** A session's query returns its gaps beside its records,
+     both causes. Its loss per cause is the **sum** over its reports. A
+     session can carry more than one report of one cause, because the proxy
+     never rewrites a report once it has sent it (this server de-duplicates on
+     `record_id`), and each report counts records no other one counts (PLAN
+     §7). So never keep one report per session and cause, and never read the
+     latest as the total.
+   - **By cause.** `evicted` means this server never received the records.
+     `refused` means it received them and refused them itself. They are
+     different findings for different people. The first is an outage longer
+     than a proxy's window. The second is a defect, either in a proxy's
+     records or in this server's validation.
+   - **By span.** Return the gaps that overlap a time range, in one proxy's
+     stream or across the tenant. The span runs from `gap_first_at` to
+     `gap_last_at`, the missing records' own timestamps (RFC 3339 UTC, to the
+     nanosecond). It is never the gap record's `timestamp`. That is when the
+     proxy wrote the report, which is often after `session_end`.
+   - **By record and by content.** Find the refusal that named a given
+     `record_id`, so that an operator holding an id from a proxy's set-aside
+     area finds this server's answer to it. Filter by `gap_kinds` and by
+     `gap_critical` too. "Which sessions lost a `command` record" and "which
+     gaps hid something critical" are the questions an auditor asks first.
+
+   Whether these become derived columns (a forward-only migration, 0003) or
+   indexed queries over `attributes` is your decision, and your learnings say
+   which. Either way every projection must be recomputable from the hashed
+   body (0010). **Never refuse a gap record over its gap keys.** A gap record
+   this server refuses is set aside and reported by nothing, because a gap
+   record never begets another. A strict parser would therefore turn the
+   report of a loss into a silent loss. Read the keys leniently: one that is
+   absent or does not parse projects nothing, and the record is stored as it
+   arrived. The proxy itself omits `gap_first_at` and `gap_last_at` when no
+   missing record carried a timestamp (its `internal/logging/gap.go`), so
+   absent is not malformed there. Serve these facts read-only for the
+   console's audit view (0016).
+2. **A `400` only for a record this server will never store.** The
+   re-vendored contract says what a `400` from either log endpoint costs, and
+   it is no longer latency (PLAN §7). The proxy halves the batch until it has
+   isolated the refused records, delivers the rest, and sets each refused
+   record aside for good. So a `400` for a condition that passes costs the
+   proxy the records rather than their latency, and the contract forbids it.
+   Go through every path that ends in `invalid` on the two log endpoints
+   (`logIngestError` and `decode` in `internal/httpapi/south`, and `Ingest` and
+   `Parse` in `internal/audit`) and sort each into one of three:
+   - **A record this server will never store**: malformed, or naming a tenant
+     its proxy is not enrolled in. `400` is right. The message should name
+     the record by its index and `record_id`, as the contract asks, because
+     the proxy copies it verbatim into `refusal_message` and an operator reads
+     it there. `MalformedError` already does. `TenantMismatchError` names the
+     `record_id` alone.
+   - **A request bound that halving cures**: more than `max_batch_records`, or
+     a body over `south.max_body_bytes`. `400` is acceptable here, because the
+     halving delivers every record and sets none aside. But it costs requests,
+     and with both sides' defaults it is not rare. A full batch of a busy
+     session's capture is 64 records of up to 32 KiB each (the proxy's
+     `logging.batch_size` and `logging.max_payload_bytes`). Base64-encoded,
+     that is about 2.7 MiB of JSON against a 1 MiB limit, whose doc comment
+     says every south-bound payload is a small JSON object. Every such batch
+     takes seven requests to land instead of one. Decide whether the log
+     endpoints keep that limit, and say which in your learnings. Before `#71`
+     the same `400` stopped that proxy's delivery outright.
+   - **Anything else**: a timeout, a store failure, overload. That is a `5xx`,
+     which the proxy retries, and never a `400`. `statusFor` already answers
+     an unclassified error with a `500`. Keep it that way, and add a test that
+     a store failure on each endpoint is never a `400`.
+3. **Grade it in `cmd/pdpconform`**, against both this server and the proxy's
+   mock (M1), in the layers 0002 established. Contract-level cases:
+   - a batch of session-less records, one of each kind in the contract's list,
+     answers `202` with `accepted` equal to the count;
+   - a session-less `critical` record on the priority path answers `200` with
+     `accepted: true`. Give it the sweep failure's own shape:
+     `policy_decision`, `event: device.account.sweep_failed`, and no
+     `subject` or `login`;
+   - a `logging.gap` record, shaped as the proxy renders one, is accepted on
+     the path its severity picks.
+
+   The mock refused `""` on both endpoints before `#71`, so these cases pass
+   against it only once item 1 of the fleet list has moved the proxy commit
+   the `conform` job builds it from. The `400` side is not a contract-level
+   case. Making a server refuse a record on demand needs a hook, and the
+   mock's `POST /debug/logs/refuse` is the mock's own: this server has no
+   such path and adds none. So grade "a refusal stores none of the request"
+   in this server's own tests, where it already holds (0010). Update
+   `cmd/pdpconform/README.md`'s key table if a case needs a key.
+
 ### Delete the two debug paths this phase supersedes
 
 `docs/PROTOCOL.md` §3 lets a phase add a debug endpoint only when a named
@@ -1290,6 +1456,12 @@ phases earlier, not discovered there.
   `legacy-rsa-sha1` only. The wire cannot say what a profile offers until
   upstream answers the request named in item 4 of "Algorithm floor and bans
   reach a proxy".
+- Recovering a record a proxy set aside. Upstream names replaying its
+  set-aside area as a follow-up and has queued none, and nothing on the
+  contract asks a proxy for one. A `refused` gap is reported here, and it is
+  never retried from here.
+- The console's view of a gap in a proxy's stream (0016). This phase serves
+  its data.
 
 ## Acceptance criteria
 - Role enforcement is tested per route, including an auditor token being refused
@@ -1388,9 +1560,12 @@ phases earlier, not discovered there.
 - **The records proxy phase 0043 emits are stored and answered for**
   (`Hoplock/proxy#66`). A batch mixing session records with a sweep's
   `device.config.change` (`session_id: ""`) is accepted and stores every
-  record. A session-less `provisioning` record with any other event, and a
-  session-less record of any kind but `error` or `provisioning`, still fail
-  their batch. The by-session lookup refuses `""`. The
+  record. A session-less record of **every** kind in the contract's list is
+  accepted, on the batch path and on the priority path (`Hoplock/proxy#71`).
+  Assert the sweep failure by name, `policy_decision` at `critical` on the
+  priority path, because it is the record today's `Parse` refuses. A
+  session-less record of a kind outside the list still fails its batch, as
+  any unknown kind does. The by-session lookup and `explain` refuse `""`. The
   drift-feed query filters by device, object and operation, and returns a
   sweep's change with no session and no device fields. The weakening query
   returns a record under `legacy-device` and **not** one under `default`, nor
@@ -1437,7 +1612,7 @@ phases earlier, not discovered there.
   with the certificate cases against this server **and** against the proxy's
   mock.
 - **The algorithm floor and bans reach a proxy** (`Hoplock/proxy#69`). With
-  the contract re-vendored at `4.5.0`, `contract.PolicyVersion` is `6`. A route
+  the contract re-vendored at `4.6.0`, `contract.PolicyVersion` is `6`. A route
   carrying a floor or a ban is refused to a proxy declaring `5`, with a `5xx`
   naming both numbers. A route naming only `brokered-certificate` is still
   answered to that proxy, and a route with neither is answered unchanged.
@@ -1473,6 +1648,20 @@ phases earlier, not discovered there.
   `cache_invalidate` with `all`, and `session_kill` for the sessions the
   by-value query returned. `make conform` passes with the floor, ban and report
   cases against this server **and** against the proxy's mock.
+- **What a proxy could not deliver is findable** (`Hoplock/proxy#71`). A
+  stored `logging.gap` is returned by its session's query, by `gap_cause`, by
+  a span that overlaps a queried range (and not by its own `timestamp`), by a
+  `record_id` named in `gap_record_ids`, and by `gap_kinds` and
+  `gap_critical`. A session-less one is returned by the span and proxy
+  queries and never by a lookup of `""`. Store two reports of one cause for
+  one session, and assert that both return and that the session's loss is
+  their sum. Keeping only the latest is the plausible bug. A gap record with
+  no span, or with a gap key that does not parse, is stored and projects
+  nothing for that key. It is never refused. Every `400` either log endpoint
+  can produce is a record this server will never store or a request bound
+  that halving cures, and the learnings list them. A store failure on each
+  endpoint answers `5xx`, never `400`. `make conform` passes with the
+  session-less cases against this server **and** against the proxy's mock.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
@@ -1484,7 +1673,8 @@ the contract commit re-vendored, how `int64` versions and hashes render onto the
 wire, where the fleet-owned key list lives and what ties it to the contract, the
 report's storage and how drift is derived from it, the fate of
 `Heartbeat.RunningConfigVersion`, and the conformance keys added. And it must
-give what `Hoplock/proxy#66` changed here: which records may lack a session,
+give what `Hoplock/proxy#66` changed here: which records may lack a session
+(every kind, since `Hoplock/proxy#71`),
 the credential columns' names and the degradation threshold, the drift feed's
 filters and where they are stored, the weakening query, and where the
 algorithm-policy warning reads its evidence. And it must give what
@@ -1511,5 +1701,15 @@ And it must give what `Hoplock/proxy#69` changed here:
 - how per-proxy declarations are recorded within M5;
 - the negotiated-record queries, and where they are stored;
 - the routes behind each runbook step.
+
+And it must give what `Hoplock/proxy#71` changed here:
+
+- that `""` is accepted on every kind, and where it is refused as a session
+  lookup;
+- where `logging.gap` is stored and indexed, and how a session's loss is
+  summed across its reports;
+- every `400` the two log endpoints can answer, and which of the two
+  sanctioned kinds each one is;
+- what you decided about the log endpoints' body limit.
 
 Phase 0012 adds routes to this surface and phase 0017 drives it end to end.
