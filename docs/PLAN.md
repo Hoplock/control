@@ -1053,8 +1053,8 @@ calls, and the conformance suite is the definition of "implements":
 | `POST /v1/capabilities/report` | Record what the proxy observed of one **target**: the enforcement rungs it can take (dated by `observed_at`), its key-exchange level (`kex`, `Hoplock/proxy#69`), or both. Replace each stored observation only with one the report carries; answer `accepted` and, optionally, when to report next |
 | `POST /v1/uids/lease` | Grant a proxy an **exclusive block of ephemeral uids for one target** out of a per-target allocation cursor that **only ever advances**; `409` when the cursor has reached the top of the range |
 | `POST /v1/credentials/certificate` | Sign the public key a proxy generated for **one session**, as a user certificate bound to a decision this server made, for a route whose ladder names `brokered-certificate`; `401` when it will not mint for that decision, `503` when the tenant has no authority (§6; `Hoplock/proxy#68`, served by 0014) |
-| `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202` |
-| `POST /v1/logs/priority` | Single critical record, durable before the ack; `200` |
+| `POST /v1/logs/batch` | Idempotent bulk ingest into the audit store; `202`. A `400` refuses the whole request and stores none of it, and it costs the proxy the refused record, which it sets aside and reports in a `logging.gap` rather than retrying (§7, `Hoplock/proxy#71`). `session_id: ""` is accepted on any kind |
+| `POST /v1/logs/priority` | Single critical record, durable before the ack; `200`. A `400` costs the proxy that record, set aside and reported, as on the batch path |
 | `GET /v1/proxies/{proxy_id}/events` | Long-lived NDJSON revocation stream with heartbeats, replay, and `resync` — and `config_changed`, which names a proxy's desired configuration document without carrying it (proxy D18) |
 | `GET /v1/proxies/{proxy_id}/config` | Serve the proxy's **current** desired configuration document: `200` with the document and its `hash` as the `ETag`, `304` when `If-None-Match` names the hash still desired, `204` when nothing is published for it, `404` `not_enrolled` for an id the registry does not hold (proxy D18) |
 | `POST /v1/proxies/{proxy_id}/config/report` | Record which document the proxy is **running** and what became of the desired one (`state`, `restart_required`, `last_error`); answer `accepted`. This is the running side of drift (proxy D18) |
@@ -1094,19 +1094,22 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   **The vendored vocabulary is `4`; upstream's is `6`.** Vocabulary `4` is the
   two enforcement axes and the session bounds (§5.2), and the vendored
   document states it (`4.1.0`, `Hoplock/proxy#56`, vendored by phase 0009).
-  Upstream is at `4.5.0`, and **0014** re-vendors it. `Hoplock/proxy#65`
+  Upstream is at `4.6.0`, and **0014** re-vendors it. `Hoplock/proxy#65`
   (merged) made it `4.2.0` for fleet configuration (proxy D18).
   `Hoplock/proxy#66` (merged) made it `4.3.0` for the `default`
   algorithm-profile tightening. `Hoplock/proxy#68` (merged) made it `4.4.0`
   for the `brokered-certificate` credential method (§6), and it moved the
   vocabulary to `5`. `Hoplock/proxy#69` (merged) made it `4.5.0` for the
   algorithm floor and bans (§5.2), and it moved the vocabulary to **`6`**,
-  which upstream exports as `control.PolicyVersion`.
-  The vocabulary stood still at `4` through the first three PRs. That the
-  document moved while the vocabulary did not is the normal case rather than
-  an anomaly. The number governs `/v1/authorize` and nothing else: `#56` added
-  a field to the event stream, `#65` added an event type and two endpoints,
-  and `#66` changed what an existing value means at the target's handshake.
+  which upstream exports as `control.PolicyVersion`. `Hoplock/proxy#71`
+  (merged) made it `4.6.0` for what a `400` from a log endpoint costs and for
+  `session_id: ""` on any kind (§7), and left the vocabulary at `6`.
+  The vocabulary stood still at `4` through the first three PRs, and at `6`
+  through `#71`. That the document moved while the vocabulary did not is the
+  normal case rather than an anomaly. The number governs `/v1/authorize` and
+  nothing else: `#56` added a field to the event stream, `#65` added an event
+  type and two endpoints, `#66` changed what an existing value means at the
+  target's handshake, and `#71` changed what the log endpoints' answers mean.
   `#68` moved it because a new **enum value** inside the authorize response is
   vocabulary exactly as a field is, and `#69` because it added two **fields**
   to that response, `algorithm_floor` and `algorithm_bans`. The endpoint `#68`
@@ -1150,6 +1153,11 @@ Seven obligations are easy to miss and are graded by the conformance suite:
     (§5.2). No parser sees a difference, so it bites at the target's handshake
     rather than at the authorize call, and nothing on this side can refuse it
     early. What this side owes is guidance to the policy author (§5.2).
+    `Hoplock/proxy#71` is a tightening of the other kind, on this server and
+    on the log endpoints. A server MUST accept `session_id: ""` on any kind,
+    and it may answer `400` only for a record it will never store, because the
+    proxy now sets a refused record aside rather than retrying it (§7). No
+    field changed on the authorize response, so the vocabulary did not move.
 
   **A fourth kind moves both numbers, and it is the kind the mechanism exists
   for.** A new field or a new enum value inside the authorize response is
@@ -1187,7 +1195,8 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   `Hoplock/proxy#68` then moved both, to `4.4.0` and vocabulary `5`, for a new
   method. It is the first vocabulary move since the collapse.
   `Hoplock/proxy#69` moved both again, to `4.5.0` and vocabulary `6`, for two
-  new fields.
+  new fields. `Hoplock/proxy#71` moved only the document, to `4.6.0`, for the
+  log endpoints.
   `#66` also shows that a version string does not name a document: `4.3.0` is
   the number `#53` moved the document down *from*, so two different contracts
   have now carried it. The checksum is what identifies the vendored copy.
@@ -1997,20 +2006,103 @@ reuses it on, and three consequences this server owns:
   a count short by anything other than duplicates would tell the proxy to
   discard records this server never stored — a malformed record therefore fails
   its whole request with a `400` and stores none of it.
-- **A record belongs to a session unless nobody was present for it.** Two
-  kinds of record arrive with `session_id: ""`: an `error` record for a sweep
-  failure, and a sweep's `device.config.change` (a sweep belongs to nobody's
-  session). Both are stored as belonging to no session, and `""` is never
-  looked up as a session. Refusing either would fail its batch, and the proxy
-  retries the oldest segment of its disk buffer until the server takes it. So
-  all of that proxy's delivery, priority records included, would stall behind
-  one record. 0010 accepts the first. **0014** widens the rule to the second.
+- **A `400` costs exactly the refused record** (the contract since
+  `Hoplock/proxy#71`; proxy D8 as its phase 0046 amended it). The proxy isolates
+  what this server refuses by resending halves of the batch, delivers the rest,
+  and **sets aside** each record refused on its own. It never resends one, keeps
+  it on its disk only until its window evicts it (first of all classes), and
+  reports it in a `logging.gap` record (below). So a refusal never holds up the
+  records behind it, and it is never a delay: a refused record is **lost to this
+  store**. Every other failure is retried. That puts one rule on this server:
+  answer `400` only for a record it will never store (malformed, or naming a
+  tenant its proxy is not enrolled in), or for a request bound that halving
+  cures (more than `audit.max_batch_records`, or a body over
+  `south.max_body_bytes`). Never answer it for a condition that passes. A
+  timeout, a store failure or overload is a `5xx`, which costs the proxy
+  latency and not records. M11 already forbids answering any of them with a
+  `401`.
+- **A record may belong to no session, and accepting it is the contract's rule**
+  (`Hoplock/proxy#71`). `session_id: ""` means the record belongs to NO
+  session, and a server MUST accept it on any `kind`. Three records arrive that
+  way today. The first is an orphan sweep's `device.config.change`
+  (`provisioning`, batch path), because a sweep belongs to nobody's session. The
+  second is the sweep's own failure, `device.account.sweep_failed`. It is
+  **`kind: policy_decision`, `severity: critical`, on the priority path**, and
+  never an `error` record. The third is a `logging.gap` reporting on either
+  (below). All three are stored as belonging to no session, and `""` is never
+  looked up as a session. The by-session lookup and `explain` refuse it rather
+  than return every session-less record in the tenant. The reason to accept
+  is what a refusal costs (above). The proxy would set the sweep failure aside
+  and never deliver it. That record is the only one that says a privileged
+  administrator was left standing on a device (proxy D13), so refusing it loses
+  it, and it is not merely late. 0010 accepts `""` on `error` alone, so until
+  **0014** accepts it on every kind, the sweep failure and the sweep's change
+  are refused, and each reaches this store only as the `logging.gap` reporting
+  it (critical, for the failure).
 - **The kind enum is closed and an unknown kind is refused**; severity is not,
   and the asymmetry is deliberate. A severity is a three-value scale a reader
   can act on without knowing the value; a kind is what every query below filters
-  by, so a kind nobody knows is a record nobody finds. Refusing it is loud — the
-  proxy keeps the record and an operator sees an error — where accepting it is
-  silent. Adding one is an upstream change (M1).
+  by, so a kind nobody knows is a record nobody finds. **Refusing it is loud,
+  and "loud" means one record.** The refused record is set aside on the proxy
+  and lost to this store (above). What arrives in its place is a `logging.gap`
+  with `gap_cause: refused`. The gap names the record (`gap_record_ids`), its
+  kind (`gap_kinds`) and this server's own answer (`refusal_code` and
+  `refusal_message`, whose text names the kind). It sits in the session's own
+  timeline, `critical` when the refused record was. That is the trade, taken
+  knowingly. Accepting would keep the record where no query looks, and nothing
+  would say so. Refusing loses the record, and the gap says so and names the
+  kind. An unknown kind means the proxy runs a contract this server has not
+  vendored yet, so the fix is a re-vendor and never a local addition: adding a
+  kind is an upstream change (M1).
+- **A gap in a proxy's stream is a record, and it is not a break in the chain**
+  (proxy D8 as its phase 0046 amended it; `Hoplock/proxy#71`). A proxy loses a
+  record to this server in exactly two ways, and it reports both in a
+  **`logging.gap`** record: `kind: error`, `event: logging.gap`, one per
+  affected session and cause. It carries that session's `session_id` (`""` for
+  records that belonged to none) and the `subject`, `login` and `target` of the
+  first missing record that had them. It is `critical` when anything missing was
+  critical, because a blocked command absent from this store is itself a
+  security fact, and `warn` otherwise. Its severity picks its path, as it does
+  for any record. The two causes:
+  - **`evicted`: this server never received the records.** The proxy's disk
+    buffer is bounded by a window of bytes (`logging.buffer_max_bytes`,
+    bootstrap, default 1 GiB). An outage past the window evicts whole files,
+    oldest first within each class: records this server refused, then stream
+    capture, then other batch records, then priority records. The records of a
+    **pinned** session are never evicted. A session is pinned when its route
+    carries `require_session_capture` (§5.2), or when its device account can be
+    attributed only by its account-mapping event (proxy §5.3). The report
+    arrives once delivery resumes, after the records that survived.
+  - **`refused`: this server received the records and refused them itself**,
+    with a `400` (above). The report is sent when the refusal happens. It names
+    the refused records (`gap_record_ids`, at most 64, with
+    `gap_record_ids_truncated` past that) and repeats this server's own
+    `ErrorResponse` (`refusal_code`, `refusal_message`). The proxy keeps a
+    refused record only up to its window and evicts it first of all classes.
+    What it holds is kept for an operator, and it is not a queue that will be
+    replayed: upstream names replaying it as a follow-up and has queued none,
+    so nothing here may count on it.
+
+  Both causes carry `gap_records`, `gap_bytes` (their size on the proxy's
+  disk), `gap_kinds`, `gap_critical`, and the span, `gap_first_at` and
+  `gap_last_at`. The span runs from the earliest to the latest `timestamp` among
+  the missing records, RFC 3339 UTC to the nanosecond. Every key is query
+  surface. Upstream `api/README.md`, "When records do not arrive", is the
+  specification, and it is cited here, never restated. **A session can carry
+  more than one report of one cause.** The proxy folds later losses into a
+  report only until it first sends it. After that it never changes the report
+  under its `record_id`, because this server de-duplicates on it, and the next
+  loss starts another report. The reports count disjoint records, so a
+  session's loss is their **sum**, never the latest report. A report's
+  `timestamp` is when the proxy wrote it, not when the hole was. It arrives
+  after the records around the hole, often after `session_end`, so a timeline
+  places a gap **by its span**. **The chain says nothing about a record that
+  never arrived.** It proves that what this server stored was not altered or
+  removed. A gap is the proxy's own statement of what this server never stored.
+  So a stream that verifies is not proof that nothing was lost, and a gap is not
+  tampering: `audit-verify` reports a break, and the gap records report a hole.
+  **0014** stores and indexes the gap records by session, `gap_cause` and span,
+  and **0016** shows them.
 - **Storage** — append-only, hash-chained per tenant per stream; a verifier can
   prove no record was altered or removed, and reports the first break with the
   record, the position and both hashes. A **stream is the submitting proxy**:
@@ -2234,9 +2326,9 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
-| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.5.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — a sweep's session-less change record accepted, the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, a named cross-repo dependency where the wire cannot say what a profile offers, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable |
+| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.6.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, a named cross-repo dependency where the wire cannot say what a profile offers, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
-| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`) |
+| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 | 0019 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |

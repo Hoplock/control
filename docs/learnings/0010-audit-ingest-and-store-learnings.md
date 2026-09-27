@@ -42,8 +42,9 @@
   split. Both names are read here; nothing is blocked. **Update (sync for
   `Hoplock/proxy#66`): answered and merged.** `credential_*` (counting from 1)
   is the only spelling, so `DegradedCredentials`' `> 0` is wrong, and a sweep's
-  change record has no session id. Phase **0014** owns all of it. Read its
-  prompt, not the Details below.
+  change record has no session id. Since `Hoplock/proxy#71` a record of **any**
+  kind may have none, and a refused record is lost, not retried (PLAN §7).
+  Phase **0014** owns all of it. Read its prompt, not the Details below.
 - **NEXT session:** the read listener (`audit.read_listener`) is a debug path
   0014 must delete — its prompt now names every file, key and CI line.
 

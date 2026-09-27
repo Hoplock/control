@@ -2,8 +2,9 @@
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
-- `docs/PLAN.md` — especially **§9 (test topology)** and the learnings summaries
-  from **all** prior phases.
+- `docs/PLAN.md` — especially **§9 (test topology)**, §7 at "A gap in a
+  proxy's stream is a record" (for the refused-gap assertion under Audit,
+  below), and the learnings summaries from **all** prior phases.
 - `docs/learnings/` — read every summary; open the ones whose setup you must
   wire (esp. `0002` conformance, `0006` fleet enrollment, `0008` authorize,
   `0009` events, `0010` audit assertions, `0012` grants).
@@ -143,7 +144,14 @@ Each scenario is a product claim, proven across both components:
   and the separate key-exchange report, and neither overwrites the other.
   The two components once spelled these fields differently
   while each one's own tests passed (0010's learnings). This topology is the
-  one place that disagreement can fail a test.
+  one place that disagreement can fail a test. **It can also hide one since
+  `Hoplock/proxy#71`.** A record this server refuses no longer stalls the
+  proxy's delivery. The proxy sets it aside, reports it in a `logging.gap`, and
+  delivers everything around it, so every assertion above can pass while a
+  record the real proxy emits is refused. So end the suite by asserting that
+  the store holds no `logging.gap` with `gap_cause: refused`. Any such gap is
+  exactly that disagreement, and its `refusal_message` names the record (PLAN
+  §7).
 - **The default algorithm profile is the secure set** (`Hoplock/proxy#66`).
   A route that names no profile no longer reaches a target speaking only SHA-1
   key exchange, `ssh-rsa` or `ssh-dss`. So build every target in this topology
@@ -226,6 +234,8 @@ Each scenario is a product claim, proven across both components:
 - The outage scenario proves a stopped server is never reported as a denial.
 - No ephemeral users or keys leak after the suite; the appliance-like target and
   the CA-trusting account are byte-identical afterwards.
+- After the whole suite the store holds no `logging.gap` with `gap_cause:
+  refused`: nothing the real proxy emitted was refused by this server.
 - **No uid is ever issued twice across the whole suite run**, restarts of either
   component included — collect every `ephemeral-user` uid the run produces and
   assert the set is strictly increasing per target, not merely distinct.
