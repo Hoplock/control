@@ -51,6 +51,16 @@
   cannot meet the algorithm policy" and "Capability advertisement" (the
   per-target key-exchange bullet and "Merge, don't clobber"). They are cited
   here and never restated.
+- `docs/PLAN.md` §5.2's algorithm bullet from "Refusing exactly what the proxy
+  refuses", §4 at "The floor has a per-level form of the same rule" and "A ban
+  has the same per-proxy form" beneath it, and **M5** and **M17**, for what
+  `Hoplock/proxy#72` changed (items 1, 2, 4 and 6 of "Algorithm floor and bans
+  reach a proxy", below). In the **Hoplock Proxy
+  repository**, read `docs/PLAN.md` §4.2 at "As declared (phase 0047)", and
+  `api/README.md` "Capability advertisement" (the per-proxy bullet, which
+  states the rule that judges a ban, curve25519 step included) and the
+  `capabilities.algorithm_profiles` row of "Absent-value defaults, in one
+  table". They are cited here and never restated.
 - `docs/PLAN.md` **§7** from "A `400` costs exactly the refused record" to "A
   gap in a proxy's stream is a record", and §4's two log endpoint rows, for
   what `Hoplock/proxy#71` changed (item 1 of the `#66` list, and "What a proxy
@@ -252,16 +262,17 @@ north-bound routes here, gated and audited like every other mutating action
 (Inventory, above). The south-bound half is served in the same PR, because a
 publish that nothing can fetch has delivered nothing.
 
-1. **Re-vendor the contract at `4.6.0`.** Run
-   `make contract-sync REF=e47306053bb67907b5c246a1c1feb1098e6b8d3c` (the
-   merge of `Hoplock/proxy#71`, which sits on top of `#69`, `#68`, `#66` and
-   `#65`), or a later upstream `main`. If you use a later `main`, every
-   contract change between the two is also this phase's to read and state.
-   Never hand-edit `contract/` (M1). At that ref, `api/control.yaml` has the
-   sha256 `ecf20719b326c27eeaa7f1745555e2500d33b20ca6796cd37e7a272716cf8c4a`,
-   which is what `contract/UPSTREAM` should then record. Five upstream PRs
-   arrive together. `#68` and `#69` each move `policy_version`, and `#71` does
-   not. `#65` adds an event type and two endpoints (`4.2.0`). `#66` adds no
+1. **Re-vendor the contract at `4.7.0`.** Run
+   `make contract-sync REF=976faaa865cc4aa6692f21a6a277b212411c05ac` (the
+   merge of `Hoplock/proxy#72`, which sits on top of `#71`, `#69`, `#68`,
+   `#66` and `#65`), or a later upstream `main`. If you use a later `main`,
+   every contract change between the two is also this phase's to read and
+   state. Never hand-edit `contract/` (M1). At that ref, `api/control.yaml`
+   has the sha256
+   `30c0609d5aa8274833f8d35abf4f64e0203cbfe160f5d6db4396f656196a9074`, which
+   is what `contract/UPSTREAM` should then record. Six upstream PRs arrive
+   together. `#68` and `#69` each move `policy_version`, and `#71` and `#72`
+   do not. `#65` adds an event type and two endpoints (`4.2.0`). `#66` adds no
    field, no endpoint and no enum value (`4.3.0`). It changes descriptions only:
    `algorithm_profile: default` now means the SSH library's **secure set**, a
    tightening the document announces as a **break** beside `params.username`;
@@ -285,18 +296,23 @@ publish that nothing can fetch has delivered nothing.
    the same way. And `LogRecord.session_id: ""` means no session, which a
    server MUST accept on any kind. The two `400` responses are now described
    inline rather than through the shared `BadRequest`, still as an
-   `ErrorResponse`. So this re-vendor changes more than the checksum in
-   `contract/UPSTREAM`.
+   `ErrorResponse`. `#72` adds one field to the authorize **request**,
+   `capabilities.algorithm_profiles`, and its item schema,
+   `AlgorithmProfileCapability` (`4.7.0`). It is request data, so it does not
+   move `policy_version`, and it adds no path. Its only enum is that schema's
+   `profile`, which lists the same three names as `algorithm_profile`. So this
+   re-vendor changes more than the checksum in `contract/UPSTREAM`.
    `internal/contract`'s enum test fails on the new `TargetAuth.method` value
    until it has a constant. Its path test fails on the new path until that has
    one, as it does on `#65`'s two. "Brokered certificates reach a proxy",
    below, is what makes both pass honestly. **The enum test does not fail on
-   `#69`'s three new enums, and that is the trap.** `TestEnumsMatchContract`
-   walks a hand-written list of schema and property pairs, so
-   `AuthorizeResponse.algorithm_floor`, `AlgorithmFloorCapability.level` and
-   `KexObservation.floor_met` pass it until somebody adds their cases. Add
-   them, with constants, in this phase ("Algorithm floor and bans reach a
-   proxy", below). Note that
+   the four new enums `#69` and `#72` add, and that is the trap.**
+   `TestEnumsMatchContract` walks a hand-written list of schema and property
+   pairs, so `AuthorizeResponse.algorithm_floor`,
+   `AlgorithmFloorCapability.level`, `KexObservation.floor_met` and
+   `AlgorithmProfileCapability.profile` pass it until somebody adds their
+   cases. Add them, with constants, in this phase ("Algorithm floor and bans
+   reach a proxy", below). Note that
    `4.3.0` is a number the document has carried before: `#53` moved it
    **down** from `4.3.0` to `4.0.0`. A version string therefore does not
    identify a document, and nothing here may use one to. The checksum does
@@ -319,7 +335,10 @@ publish that nothing can fetch has delivered nothing.
    deliver" (below) passes against the mock only after this re-vendor. It also
    adds `POST /debug/logs/refuse`, a mock-only hook that refuses matching
    records whole with `400 invalid_record`, and `POST /debug/reset` now clears
-   it.
+   it. `#72` changes none of the mock's handlers. The mock decodes the request
+   strictly into upstream's own types, which gained the field, so it accepts
+   `capabilities.algorithm_profiles` and judges no ban against it: it answers
+   a request that carries the declaration exactly as one that does not.
 2. **Wire `fleet.ConfigPublisher` to emit `config_changed` {`version`,
    `hash`}.** Emit it on the stream 0009 built (`internal/revoke`), one event
    per affected proxy, naming that proxy's **composed** document. A zone
@@ -938,6 +957,21 @@ states the shape to build:
 Upstream also added three things `#36` never asked for: bans, per-build
 declarations, and a per-target key-exchange report. Each is below.
 
+**`Hoplock/proxy#72` closed the one gap `#69` left, and its obligations are
+folded into the items below.** This repository's sync for `#69` found that the
+wire could not say what each profile offers per axis, so a ban that empties an
+axis could not always be judged here. That sync raised the declaration
+upstream (`Hoplock/control#41`). The proxy answered as its phase 0047, merged
+as **`Hoplock/proxy#72`**: contract **`4.7.0`**, `policy_version` **still
+`6`**, and no new proxy decision. Each proxy now declares
+`capabilities.algorithm_profiles`: every profile its build accepts, with what
+that profile offers per axis before any floor or ban. That PR's
+`## Cross-repo impact` section puts six obligations on this repository. They
+land where the work already is: the re-vendor in item 1 of the fleet list, the
+contract types in item 1 below, `Declares()` and the per-proxy record in item
+2, the judgement and what the author sees in item 4, and the console's facts in
+item 6. PLAN §5.2 records the dependency as met.
+
 1. **Vocabulary `6`: a floor or a ban is never served to a proxy that declared
    less, and never stripped to fit.** `requiredVersion` answers `6` for a
    response carrying `algorithm_floor` or a non-empty `algorithm_bans`, above
@@ -950,31 +984,56 @@ declarations, and a per-target key-exchange report. Each is below.
    is non-empty. An object whose lists are all empty means "nothing banned" to a
    proxy that knows the field, and it is an unknown field, refused whole, to one
    that does not. Declare the contract types this needs in `internal/contract`:
-   the floor's two levels, the bans object, the request's two declarations and
-   the report's `kex`. Add the three enum cases item 1 of the fleet list names
-   to `TestEnumsMatchContract`, `floor_met`'s third value `none` included.
+   the floor's two levels, the bans object, the request's three declarations
+   (`algorithm_floors`, `algorithm_profiles` with its
+   `AlgorithmProfileCapability` entries, and `algorithms`) and the report's
+   `kex`. Add the four enum cases item 1 of the fleet list names to
+   `TestEnumsMatchContract`, `floor_met`'s third value `none` included.
+   `AlgorithmProfileCapability.profile` reuses the `AlgorithmProfile`
+   constants and still gets a case of its own, because two schemas carrying
+   one enum are two places it can drift. **Get the declarations' key names
+   right, because nothing here fails if they are wrong.** The south-bound
+   `decode` accepts unknown fields. So a declaration whose key this server
+   spells differently is dropped without an error, and every ban judgement in
+   item 4 then reads "unknown". Test that a request body shaped as upstream
+   renders it (every axis key present, as the schema's `required` says)
+   decodes into non-empty lists. Build it from a JSON fixture, not from a
+   value built with this repository's own types.
 2. **A level is sent only to a proxy that declared it.** `ProxyCapabilities`
-   gains `algorithm_floors` (a `level` with its `key_exchanges`) and
-   `algorithms` (one list per axis). A route's `algorithm_floor` may be sent
-   only to a proxy whose request declares that level in
-   `capabilities.algorithm_floors`. An absent declaration declares none, so no
-   floor may be sent to that proxy at all. Check it in `checkCapabilities`
-   (`internal/decision/capability.go`), beside the rung checks, with the same
-   refusal: a `CapabilityError` and a `5xx`. It is never a `401`, and the floor
-   is never stripped to fit. The mock answers `500`. The check runs per request
-   against the proxy that asked, which on a chained route means each hop for its
-   own leg, exactly as the rungs are checked. `ProxyCapabilities.Declares()`
-   looks only at rungs today, so decide whether a floor-only declaration counts,
-   and say which in your learnings.
+   gains `algorithm_floors` (a `level` with its `key_exchanges`),
+   `algorithm_profiles` (a `profile` with one list per axis,
+   `Hoplock/proxy#72`) and `algorithms` (one list per axis). A route's
+   `algorithm_floor` may be sent only to a proxy whose request declares that
+   level in `capabilities.algorithm_floors`. An absent declaration declares
+   none, so no floor may be sent to that proxy at all. Check it in
+   `checkCapabilities` (`internal/decision/capability.go`), beside the rung
+   checks, with the same refusal: a `CapabilityError` and a `5xx`. It is never
+   a `401`, and the floor is never stripped to fit. The mock answers `500`.
+   The check runs per request against the proxy that asked, which on a chained
+   route means each hop for its own leg, exactly as the rungs are checked.
+   `ProxyCapabilities.Declares()` looks only at rungs today, so decide whether
+   a floor-only declaration counts, and say which in your learnings. A
+   declaration that carries only `algorithm_profiles` raises the same question
+   (`Hoplock/proxy#72`). Answer it the same way as the floor-only one, and say
+   that you did: both are a declaration that names no rung, so the reason is
+   the same.
 
-   Each declared level's `key_exchanges` is per-build truth. During a rolling
-   upgrade two builds may accept different exchanges for one level, and the
-   fleet view shows that (item 6, 0016). `algorithms` is every identifier a
-   build can offer, per axis, under any profile or level (item 4 uses it).
-   Both arrive on every authorize request and nowhere else in the contract, so
-   a fleet view needs them recorded per proxy. That is a write the decision
-   path causes, and M5 bounds the decision path. Decide how to record them
-   within that budget, and say how in your learnings.
+   Each declared level's `key_exchanges` is per-build truth, and so is each
+   declared profile's offer. During a rolling upgrade two builds may accept
+   different exchanges for one level, or offer different lists under one
+   profile, and the fleet view shows that (item 6, 0016). `algorithm_profiles`
+   is what each profile offers per axis before any floor or ban, with both
+   curve25519 spellings listed wherever either is offered, and item 4 judges
+   bans against it. `algorithms` is every identifier a build can offer, per
+   axis, under any profile or level, and it is the union of the profile lists.
+   Item 4's typo warning uses it. All three arrive on every authorize request
+   and nowhere else in the contract, so they have to be recorded per proxy.
+   Record `algorithm_profiles` beside `algorithm_floors`, as one declaration.
+   Item 4's publish-time judgement reads it whether or not a screen shows it,
+   and the fleet view shows it too (item 6, 0016). That is a write the decision
+   path causes, and M5 bounds the decision path. The three change together,
+   and only when a proxy's build does. Decide how to record them within that
+   budget, and say how in your learnings.
 3. **The floor is a ranked ladder, authored beside the profile.** Add
    `algorithm_floor` to the policy model and the compiler beside
    `algorithm_profile`, and render it in the snapshot
@@ -1008,14 +1067,11 @@ declarations, and a per-target key-exchange report. Each is below.
 
    **Refuse what the proxy refuses, and no more.** The proxy refuses each of
    these as a contract violation, which this server must not send:
-   - an empty identifier, or the same identifier twice on one axis. Refuse both
-     at authoring time;
-   - a ban that removes every key exchange the route's floor accepts. Judge it
-     against what each proxy declares for that level (item 2). Under a floor,
-     the key-exchange offer is exactly the level's set, so this also covers
-     emptying the key-exchange axis under a floor;
-   - a ban that leaves an axis nothing to offer. This server can judge only
-     part of that (below).
+   - an empty identifier, or the same identifier twice on one axis. No build
+     accepts either, so refuse both at authoring time;
+   - a ban that removes every key exchange the route's floor accepts, or that
+     leaves any other axis nothing to offer. Both depend on the build, so both
+     are judged per proxy (below).
 
    Do **not** refuse a name that no build implements. The proxy accepts it,
    because banning what it never offers is already satisfied, and it records the
@@ -1026,40 +1082,85 @@ declarations, and a per-target key-exchange report. Each is below.
    working ban. The author may override the warning, on the same terms as the
    interpreter warning above.
 
-   **An emptied axis is a named cross-repo dependency. Build around it, and do
-   not approximate it.** Whether a ban leaves an axis nothing to offer depends
-   on what the route's profile offers on that axis in that build. The wire does
-   not carry that per profile. It gives this server three facts, and each
-   settles part of the question:
-   - `algorithm_floors` gives each level's key exchanges per build, and
-     `modern-kex`'s set is exactly what `default` and `legacy-rsa-sha1` offer on
-     the key-exchange axis. So that axis can be judged for every profile, for a
-     build that declares `modern-kex`.
-   - `capabilities.algorithms` is the union across every profile and level.
-     Each profile only adds to the one before it, and a floor only narrows, so
-     that union is exactly `legacy-device`'s offer. So every axis can be judged
-     for a `legacy-device` route.
-   - A ban that removes the whole union on an axis empties that axis under every
-     profile.
+   **An emptied axis is judged from each proxy's own declaration
+   (`Hoplock/proxy#72`).** Whether a ban leaves an axis nothing to offer
+   depends on what the route's profile and floor offer in the build that
+   enforces it. Each proxy declares both on every request: `algorithm_profiles`
+   for each profile's offer per axis, and `algorithm_floors` for each level's
+   key exchanges (item 2). Upstream `api/README.md` states the rule that
+   composes them, once, in "Capability advertisement", and an upstream test
+   proves that the rule agrees with the proxy's own refusal, axis for axis.
+   Apply it to one proxy's declared lists at a time. Cite it, and do not
+   restate it. Three parts of it are where an implementation goes wrong:
+   - **The curve25519 step.** The declared lists carry both spellings of
+     `curve25519-sha256`, and the two are one exchange. So plain set
+     subtraction under-refuses. A ban naming one spelling plus every other
+     exchange the route offers leaves the other spelling, and the proxy is left
+     with nothing. That is exactly the outage this check exists to prevent, so
+     test that case by name.
+   - **Every profile is judged from its own entry, `legacy-device` included.**
+     `algorithms` is the union of the profile lists, because a floor only
+     narrows, but nothing here reads a profile's offer from that union. Reading
+     `legacy-device`'s offer off the union was this item's stand-in for a
+     declaration the wire did not carry, and the declaration replaces it.
+     `algorithms` stays the source of the typo warning above, and of nothing
+     else.
+   - **A route that names no profile is judged from the `default` entry**,
+     because absent means `default` (PLAN §5.2).
 
-   What is left cannot be judged here: a ban that empties `ciphers`, `macs`,
-   `host_keys` or `public_key_auth` under `default` or `legacy-rsa-sha1` only.
-   Do not close that gap by copying the profile lists into code, which item 5
-   of the `#66` list forbids because upstream pins them per build and a copy
-   drifts. Do not derive them from the contract's prose either: it names the
-   legacy additions only in part. Put the check behind one seam, named for the
-   missing declaration (each build's offer per profile and per axis). The seam
-   answers what the wire can answer today and "unknown" for the rest. An
-   unknown is never a refusal, because that would refuse more than the proxy
-   does. It is never a silent pass either. Report it on the publish-time report
-   at a severity you choose, naming the axis, the profile, and why it could not
-   be judged: if the ban does empty the axis, the proxy refuses that route at
-   connect time, as an outage. The sync that wrote this item raised the
-   declaration upstream under `## Upstream request`
-   (`docs/CROSS-REPO-PROTOCOL.md` §3.2). Check the vendored contract first. If
-   the declaration has landed and been synced, wire it in place of "unknown".
-   If it has not, name it in your learnings summary as an open cross-repo
-   dependency, citing that request, and do not raise it again.
+   **"Unknown" is left for one case only.** The proxy's declaration omits the
+   route's profile, or omits `algorithm_profiles` altogether, as a build from
+   before `Hoplock/proxy#72` does. The contract says that absence is never
+   proof either way. So an unknown is never a refusal, because that would
+   refuse more than the proxy does, and it is never a silent pass. Report it on
+   the publish-time report at a severity you choose, naming the proxy, the
+   profile and the axis. If the ban does empty the axis on that build, the
+   proxy refuses the route at connect time, as an outage. **Never copy a
+   profile's lists into code, and never derive them from the contract's
+   prose** (item 5 of the `#66` list). Upstream derives the declaration from
+   the expansion every connection dials with, so it cannot describe anything
+   that build does not offer, and a copy here would drift the day a build
+   changes. The judgement reads the lists from a declaration, or it does not
+   judge.
+
+   **Refuse exactly what each proxy refuses, per proxy.** Declarations are per
+   build. During a rolling upgrade one ban can empty an axis on one build and
+   not on another, and a proxy whose own declaration shows the axis emptied
+   refuses that route. Two places act on that:
+   - **The decision path refuses the route to exactly those proxies.** Judge
+     the route's bans against the declaration on the request, in
+     `checkCapabilities`, beside the floor-level check (item 2) and with the
+     same refusal: a `CapabilityError` and a `5xx`. It is never a `401` (M11),
+     and the ban is never stripped to fit, because a dropped ban is a dropped
+     restriction (PLAN §4). A proxy whose lists leave every axis something to
+     offer is answered as usual. A request whose declaration omits the route's
+     profile, or omits `algorithm_profiles`, is answered as authored, because
+     this server cannot tell that the proxy refuses it and the proxy's own
+     check remains the backstop. The judgement is a computation over the
+     request and the compiled route, with no read, so it fits M5.
+   - **The author sees a per-build finding, not a refusal.** That is decided
+     under M17, and PLAN §5.2 records it. The publish-time report judges each
+     candidate route against the latest recorded declaration of every proxy
+     that would enforce it (item 2). For each proxy whose declaration shows an
+     axis emptied, it names the proxy, the route, the axis, the profile and the
+     floor, and what that build offers on the axis. It also says that authorize
+     will refuse the route on that proxy. It is a warning the author may
+     override, on the same terms as the interpreter warning above. It stays a
+     warning even when every proxy that would enforce the route shows the axis
+     emptied, just as a rung no proxy provides is reported rather than refused
+     (M17, above).
+
+   Why a finding and not a refusal. Under M17 a publish is refused only for
+   what is wrong whatever the fleet runs, which is why the two identifier rules
+   above are compiler errors. Whether a ban empties an axis is a fact about a
+   build, which is the capability shortfall M17 reports. The copy a publish
+   reads is each proxy's latest recorded declaration, a readiness signal,
+   while the copy on each request is the authority, and the decision path
+   checks that one. And a ban is the first step of the emergency runbook (item
+   8). Refusing it because one build cannot take it would leave the vulnerable
+   algorithm on every build that can. A per-build finding lets the ban reach
+   those builds and fails the route closed on the rest, where it is an outage
+   and never a widening.
 5. **The key-exchange observation is merged beside the rungs, never over
    them.** **This is broken today, and the re-vendor makes the break
    reachable.** `ReportCapabilities` (`internal/httpapi/south/handlers.go`)
@@ -1115,8 +1216,10 @@ declarations, and a per-target key-exchange report. Each is below.
 
    Serve the same facts read-only for the console (0016): the stored
    observation per target, and each proxy's latest declaration with every
-   level's key exchanges for its build. The `#66` warning above, from unmet
-   records under the same profile, stays as it is and now reads the cause.
+   level's key exchanges and every profile's offer per axis for its build
+   (`Hoplock/proxy#72`). Item 4's per-build findings reach the console on the
+   same report as the rest. The `#66` warning above, from unmet records under
+   the same profile, stays as it is and now reads the cause.
 7. **Store the records under the proxy's names.** `LogRecord.attributes` is an
    open map, so none of this is a contract change. From this phase on, though,
    the north-bound names are a compatibility promise (M19), so they have to be
@@ -1185,15 +1288,22 @@ declarations, and a per-target key-exchange report. Each is below.
      refused with a `5xx`, never answered without the floor;
    - a route with a ban, declared at `5`, is refused with a `5xx`. Declared at
      `6`, it is answered with the ban exactly as authored;
+   - the same request with `capabilities.algorithm_profiles` added
+     (`Hoplock/proxy#72`), for a route whose ban leaves every axis of the
+     declared lists something to offer, is answered exactly as it was without
+     the declaration, and never with a `400`;
    - a capability report carrying only `kex` answers `200 {"accepted": true}`.
      A report with rungs and no `observed_at`, one carrying neither
      observation, and one whose `kex` lacks `floor_met` each answer `400`.
 
    The merge itself, where a key-exchange report leaves the stored rungs
    intact, is not observable through the contract, so grade it in this server's
-   own tests. The mock needs routes naming `algorithm_floor` and
-   `algorithm_bans` in `mock-fixtures.yaml`, under the fixture keys in item 1
-   of the fleet list. Update `cmd/pdpconform/README.md`'s key table.
+   own tests. Item 4's per-proxy refusal is not a contract-level case either.
+   The mock judges no ban against the declaration, so it answers a route this
+   server must refuse. Grade that refusal in this server's own tests. The mock
+   needs routes naming `algorithm_floor` and `algorithm_bans` in
+   `mock-fixtures.yaml`, under the fixture keys in item 1 of the fleet list.
+   Update `cmd/pdpconform/README.md`'s key table.
 
 ### What a proxy could not deliver (proxy phase 0046, `Hoplock/proxy#71`)
 
@@ -1452,10 +1562,11 @@ phases earlier, not discovered there.
   workflow (0016). This phase serves their data and every step of the runbook.
 - Asserting a `pq-hybrid-kex` floor end to end against a real proxy and target
   (0019, on 0017's topology).
-- Judging a ban that empties a non-key-exchange axis under `default` or
-  `legacy-rsa-sha1` only. The wire cannot say what a profile offers until
-  upstream answers the request named in item 4 of "Algorithm floor and bans
-  reach a proxy".
+- Judging a ban for a proxy whose declaration omits the route's profile, or
+  omits `algorithm_profiles`. That is "unknown" by the contract's own
+  absent-value rule (item 4 of "Algorithm floor and bans reach a proxy"), and
+  only a declaration may settle it: never a copied list, and never one
+  profile's offer read off another's or off the union.
 - Recovering a record a proxy set aside. Upstream names replaying its
   set-aside area as a follow-up and has queued none, and nothing on the
   contract asks a proxy for one. A `refused` gap is reported here, and it is
@@ -1611,25 +1722,43 @@ phases earlier, not discovered there.
   session, and the row resolves back to the record. `make conform` passes
   with the certificate cases against this server **and** against the proxy's
   mock.
-- **The algorithm floor and bans reach a proxy** (`Hoplock/proxy#69`). With
-  the contract re-vendored at `4.6.0`, `contract.PolicyVersion` is `6`. A route
-  carrying a floor or a ban is refused to a proxy declaring `5`, with a `5xx`
-  naming both numbers. A route naming only `brokered-certificate` is still
-  answered to that proxy, and a route with neither is answered unchanged.
-  Assert all three. A floor level the asking proxy did not declare, or any
-  level when `capabilities` is absent, is refused with a `5xx` and never sent
-  stripped. The enum test covers `AuthorizeResponse.algorithm_floor`,
-  `AlgorithmFloorCapability.level` and `KexObservation.floor_met`: prove it by
-  removing a constant once.
+- **The algorithm floor and bans reach a proxy** (`Hoplock/proxy#69`,
+  `Hoplock/proxy#72`). With the contract re-vendored at `4.7.0`,
+  `contract.PolicyVersion` is `6`. A route carrying a floor or a ban is
+  refused to a proxy declaring `5`, with a `5xx` naming both numbers. A route
+  naming only `brokered-certificate` is still answered to that proxy, and a
+  route with neither is answered unchanged. Assert all three. A floor level
+  the asking proxy did not declare, or any level when `capabilities` is
+  absent, is refused with a `5xx` and never sent stripped. The enum test
+  covers `AuthorizeResponse.algorithm_floor`, `AlgorithmFloorCapability.level`,
+  `KexObservation.floor_met` and `AlgorithmProfileCapability.profile`: prove
+  it by removing a constant once.
+  A request body shaped as upstream renders the declarations decodes into
+  non-empty lists.
 
   The compiler refuses `legacy-device` with any floor and accepts
   `legacy-rsa-sha1` and `default` with one. Assert the acceptances as well as
-  the refusal. An empty or repeated ban identifier is refused at authoring time,
-  and so is a ban that removes every exchange a declared level accepts,
-  including through the `curve25519-sha256@libssh.org` spelling. A banned name
-  no proxy declared publishes with an overridable warning and is never refused.
-  A ban whose emptying the wire cannot judge is reported as such, and is
-  neither refused nor passed in silence.
+  the refusal. An empty or repeated ban identifier is refused at authoring
+  time. A banned name no proxy declared publishes with an overridable warning
+  and is never refused.
+
+  An emptied axis is judged per proxy, from its declaration. Take three bans
+  that leave an axis of one proxy's declared lists empty: a `ciphers` ban under
+  `default`, a key-exchange ban that removes every exchange a declared level
+  accepts, and a ban naming one curve25519 spelling plus every other exchange
+  the route offers. Assert the curve25519 case by name, because plain set
+  subtraction accepts it. For each, authorize answers that proxy with a `5xx`,
+  never a `401` and never with the ban stripped, while a proxy whose
+  declaration leaves the axis something to offer is answered with the ban. The
+  publish-time report names each such proxy and axis as a per-build finding
+  the author may override, and the publish succeeds. A route that names no
+  profile is judged from the `default` entry. Prove that the judgement reads
+  the declaration and no copied list. Start from one fixture declaration: a
+  copy offering one cipher fewer under `default` turns an accepted route into
+  a refused one, and a copy offering one more turns a refused route into an
+  accepted one. A declaration that omits the route's profile, or omits
+  `algorithm_profiles`, is reported as unknown at publish time and answered as
+  authored on the decision path. It is neither refused nor passed in silence.
 
   A key-exchange report leaves a fresh stored rung observation fresh: a route
   naming an applied rung on that target is still answered after the report.
@@ -1688,17 +1817,19 @@ algorithm-policy warning reads its evidence. And it must give what
 - how a certificate's lifetime is computed;
 - how a record's serial joins its certificate row.
 
-And it must give what `Hoplock/proxy#69` changed here:
+And it must give what `Hoplock/proxy#69` and `Hoplock/proxy#72` changed here:
 
 - the tiers `requiredVersion` answers, and where each constant lives;
-- where the per-level declaration is checked, and whether a floor-only
-  declaration counts for `Declares()`;
+- where the per-level declaration is checked, and the one answer `Declares()`
+  gives for a floor-only and for a profiles-only declaration;
 - how floors and bans are authored, including a fleet-wide ban;
-- which ban refusals are exact, and the state of the emptied-axis dependency:
-  still open, citing the request, or answered and wired;
+- where an emptied axis is judged from the declared lists: the per-proxy
+  refusal on the decision path, the per-build finding at publish time, and
+  the cases still reported as unknown;
 - how the two target observations are stored and merged, and the key the
   key-exchange observation is stored under;
-- how per-proxy declarations are recorded within M5;
+- how per-proxy declarations, `algorithm_profiles` among them, are recorded
+  within M5;
 - the negotiated-record queries, and where they are stored;
 - the routes behind each runbook step.
 

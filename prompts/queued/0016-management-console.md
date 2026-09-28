@@ -18,9 +18,11 @@
 - `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
   algorithm bullet (the floor and the bans), and **M17**, for what
   `Hoplock/proxy#69` added and 0014 serves: the impact preview, the fleet
-  coverage view and the emergency runbook (below). In the **Hoplock Proxy
-  repository**, `api/README.md` "Banned algorithms" states the runbook. It is
-  cited here and never restated.
+  coverage view and the emergency runbook (below). The same bullet, from
+  "Refusing exactly what the proxy refuses", covers what `Hoplock/proxy#72`
+  added: what each build's profiles offer, and a ban's per-build finding. In
+  the **Hoplock Proxy repository**, `api/README.md` "Banned algorithms" states
+  the runbook. It is cited here and never restated.
 - `docs/PLAN.md` §7 at "A gap in a proxy's stream is a record, and it is not a
   break in the chain", and **M11**, for what `Hoplock/proxy#71` added and 0014
   serves: the `logging.gap` records that say where a proxy's stream has a
@@ -62,7 +64,11 @@ is written so that half can fail a review rather than merely disappoint one.
      a rolling upgrade two builds may accept different exchanges for one level.
      Show that as *in progress* (M19), never as a fault, and name the proxies
      that cannot enforce a level yet. A proxy that has declared nothing is
-     `Not reported`, never "no floor".
+     `Not reported`, never "no floor". Beside the levels, show what each
+     profile the build accepts offers per axis, before any floor or ban
+     (`Hoplock/proxy#72`, as 0014 serves it), so an operator reading a ban's
+     per-build finding can see what that build offers. A proxy whose build
+     declared no profiles is `Not reported`, never "offers nothing".
   2. **Explain** — a session or decision id in, the whole story out: identity,
      matched rule, mapping version, grant, obligations, route and hops. Deep
      links from the audit view.
@@ -102,8 +108,14 @@ is written so that half can fail a review rather than merely disappoint one.
      the observation is a past fact about a target that may have been upgraded
      since. The same view explains why `pq-hybrid-kex` needs OpenSSH 9.9 or
      later on the target, and it never promises sntrup761. A ban that names
-     something no proxy declared, or whose effect the wire cannot judge, is a
-     warning the author reads and may override (0014).
+     something no proxy declared is a warning the author reads and may
+     override (0014). So is a ban that leaves an axis empty on some proxies'
+     builds (`Hoplock/proxy#72`). Show it per build: the proxies that will
+     refuse the route, the axis, and what each of those builds offers there.
+     Show a rolling upgrade's disagreement as *in progress* (M19), never as a
+     fault. It warns and never blocks, even when every proxy would refuse the
+     route. A proxy whose build declared no offer for the route's profile is
+     shown as not judged, never as fine.
   5. **Inventory** — targets and labels, identities, groups, roles, grants.
   6. **Extensions** — which `ext` points have an implementation registered
      (0004). An operator debugging behaviour must be able to see that Enterprise
@@ -259,8 +271,10 @@ becomes a test that runs today.
 - The floor's impact preview names a target whose observed level is below a
   candidate floor, shows a target with no observation or a stale one as `Not
   reported`, and names a proxy that cannot enforce the level. The fleet view
-  shows each proxy's declared levels per build. Assert each against a seeded
-  fixture.
+  shows each proxy's declared levels and profile offers per build. A ban that
+  empties an axis on one of two seeded builds is shown as a per-build warning
+  naming that proxy, and it does not block the publish. Assert each against a
+  seeded fixture.
 - The emergency runbook drives 0014's three calls in order, shows the kill
   `reason` before sending it, and cannot finish without the `cache_invalidate`
   step. An end-to-end test walks it.
