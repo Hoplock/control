@@ -91,9 +91,11 @@ this phase installs is **loud** rather than lenient.
   `Hoplock/proxy#69` (merged) moved it to `4.5.0` for the algorithm floor and
   bans and moved `policy_version` from `5` to `6`, `Hoplock/proxy#71`
   (merged) moved it to `4.6.0` for what a `400` from a log endpoint costs and
-  for `session_id: ""` on any kind and left `policy_version` at `6`, and phase
-  0014 re-vendors. Expect at least `4.6.0` by the time this phase runs, with
-  `policy_version` at least `6`, and read the file.
+  for `session_id: ""` on any kind and left `policy_version` at `6`,
+  `Hoplock/proxy#72` (merged) moved it to `4.7.0` for
+  `capabilities.algorithm_profiles` on the request and left `policy_version`
+  at `6`, and phase 0014 re-vendors. Expect at least `4.7.0` by the time this
+  phase runs, with `policy_version` at least `6`, and read the file.
 
   The contract's "Versioning" section is where the independence is stated:
   `policy_version` **governs `/v1/authorize` and nothing else**, that being the
@@ -144,6 +146,9 @@ this phase installs is **loud** rather than lenient.
   `capabilities.algorithm_floors` and `capabilities.algorithms` to the request
   and `kex` to the capability report, and those moved `info.version` only,
   because the number governs the response and nothing else.
+  `Hoplock/proxy#72` then added `capabilities.algorithm_profiles` to the
+  request, which moved the document to `4.7.0` and left the number at `6`, for
+  the same reason.
 
   And the document version does not only ever rise. `#53` moved it **down**,
   `4.3.0` → `4.0.0`, and `#56` moved it back up to `4.1.0`; `policy_version`
@@ -291,7 +296,11 @@ version support back needs the argument, not just the conclusion.
   refusal for an undeclared level is a **capability** shortfall (M17), checked
   beside the rungs, and not a version mismatch. It stays when the version
   matches, and it must not be reworded as a version error, because an operator
-  reading it has to look at that proxy's build rather than at the rollout.
+  reading it has to look at that proxy's build rather than at the rollout. The
+  same holds for the per-proxy ban refusal (`Hoplock/proxy#72`, 0014): a route
+  whose bans leave an axis of the asking proxy's declared lists empty is
+  refused to that proxy as a capability shortfall, whatever version it
+  declared.
 - **It may not delete the negotiation tests**, only re-aim them (above).
 
 ## Out of scope

@@ -4,7 +4,9 @@
 - `docs/PROTOCOL.md` — session workflow.
 - `docs/PLAN.md` — especially **§9 (test topology)**, §7 at "A gap in a
   proxy's stream is a record" (for the refused-gap assertion under Audit,
-  below), and the learnings summaries from **all** prior phases.
+  below), **M17** and §5.2's algorithm bullet from "Refusing exactly what the
+  proxy refuses" (for the recorded declaration, below), and the learnings
+  summaries from **all** prior phases.
 - `docs/learnings/` — read every summary; open the ones whose setup you must
   wire (esp. `0002` conformance, `0006` fleet enrollment, `0008` authorize,
   `0009` events, `0010` audit assertions, `0012` grants).
@@ -166,7 +168,12 @@ Each scenario is a product claim, proven across both components:
   suite with the post-quantum floor's scenarios. So build the main target from
   an image whose OpenSSH is 9.9 or later, which offers
   `mlkem768x25519-sha256`. The proxy's own target image, `debian:stable-slim`,
-  currently does.
+  currently does. One fact about bans only this topology can check
+  (`Hoplock/proxy#72`, judged by 0014): the declaration this server records
+  for the real proxy (`capabilities.algorithm_profiles`) names every profile
+  the proxy accepts, each with every axis non-empty. Assert it. This server's decoder ignores a key it does not
+  know, so a misspelled key would turn every ban judgement into "unknown"
+  while each component's own tests passed.
 
 ### CI
 - A job that builds both images, brings the topology up, runs the suite, tears
@@ -236,6 +243,8 @@ Each scenario is a product claim, proven across both components:
   the CA-trusting account are byte-identical afterwards.
 - After the whole suite the store holds no `logging.gap` with `gap_cause:
   refused`: nothing the real proxy emitted was refused by this server.
+- The declaration this server recorded for the real proxy names every profile
+  that proxy accepts, each with every axis non-empty (`Hoplock/proxy#72`).
 - **No uid is ever issued twice across the whole suite run**, restarts of either
   component included — collect every `ephemeral-user` uid the run produces and
   assert the set is strictly increasing per target, not merely distinct.

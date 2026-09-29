@@ -522,10 +522,14 @@ decision.
     `algorithm_floor` levels the build enforces, each with the key exchanges
     that level accepts **in that build** (`algorithm_floors`), and every
     algorithm the build can offer on the proxy→target leg, per axis
-    (`algorithms`; both `Hoplock/proxy#69`). Only a level the asking proxy
-    declared may be sent to it (§4). During a rolling upgrade two builds may
-    accept different exchanges for one level, so the declaration is per-build
-    truth and a fleet view shows it as such.
+    (`algorithms`; both `Hoplock/proxy#69`). And it declares what each
+    `algorithm_profile` the build accepts offers per axis, before any floor or
+    ban (`algorithm_profiles`, `Hoplock/proxy#72`). Only a level the asking
+    proxy declared may be sent to it, and a route whose bans leave an axis of
+    the asking proxy's declared lists empty is refused to that proxy (§4,
+    §5.2). During a rolling upgrade two builds may accept different exchanges
+    for one level, or offer different lists under one profile, so the
+    declaration is per-build truth and a fleet view shows it as such.
   - **Per target** — `POST /v1/capabilities/report` (§4), the rungs one *target*
     can take, discovered by probing it after login. Authorize happens before the
     proxy has ever touched the target, so a first-ever connection has nothing to
@@ -1094,7 +1098,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   **The vendored vocabulary is `4`; upstream's is `6`.** Vocabulary `4` is the
   two enforcement axes and the session bounds (§5.2), and the vendored
   document states it (`4.1.0`, `Hoplock/proxy#56`, vendored by phase 0009).
-  Upstream is at `4.6.0`, and **0014** re-vendors it. `Hoplock/proxy#65`
+  Upstream is at `4.7.0`, and **0014** re-vendors it. `Hoplock/proxy#65`
   (merged) made it `4.2.0` for fleet configuration (proxy D18).
   `Hoplock/proxy#66` (merged) made it `4.3.0` for the `default`
   algorithm-profile tightening. `Hoplock/proxy#68` (merged) made it `4.4.0`
@@ -1104,19 +1108,23 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   which upstream exports as `control.PolicyVersion`. `Hoplock/proxy#71`
   (merged) made it `4.6.0` for what a `400` from a log endpoint costs and for
   `session_id: ""` on any kind (§7), and left the vocabulary at `6`.
+  `Hoplock/proxy#72` (merged) made it `4.7.0` for
+  `capabilities.algorithm_profiles`, what each profile offers per build (§5.2,
+  M17), and left the vocabulary at `6`.
   The vocabulary stood still at `4` through the first three PRs, and at `6`
-  through `#71`. That the document moved while the vocabulary did not is the
-  normal case rather than an anomaly. The number governs `/v1/authorize` and
-  nothing else: `#56` added a field to the event stream, `#65` added an event
-  type and two endpoints, `#66` changed what an existing value means at the
-  target's handshake, and `#71` changed what the log endpoints' answers mean.
+  through `#71` and `#72`. That the document moved while the vocabulary did
+  not is the normal case rather than an anomaly. The number governs
+  `/v1/authorize` and nothing else: `#56` added a field to the event stream,
+  `#65` added an event type and two endpoints, `#66` changed what an existing
+  value means at the target's handshake, and `#71` changed what the log
+  endpoints' answers mean.
   `#68` moved it because a new **enum value** inside the authorize response is
   vocabulary exactly as a field is, and `#69` because it added two **fields**
   to that response, `algorithm_floor` and `algorithm_bans`. The endpoint `#68`
-  added moved nothing (below). Neither did what `#69` added to the request's
-  `capabilities` and to the capability report, because the number does not
-  govern either. Read both numbers out of `contract/control.yaml`, never from
-  this line (0018).
+  added moved nothing (below). Neither did what `#69` and `#72` added to the
+  request's `capabilities`, nor what `#69` added to the capability report,
+  because the number governs none of it. Read both numbers out of
+  `contract/control.yaml`, never from this line (0018).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -1185,6 +1193,15 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   the build cannot provide is refused (M17, §5.2). The floor is never stripped
   to make the route fit.
 
+  **A ban has the same per-proxy form** (`Hoplock/proxy#72`). The proxy
+  refuses a route whose bans leave an axis nothing to offer, judged on its own
+  build's lists, and it declares those lists on every request
+  (`capabilities.algorithm_profiles` beside `algorithm_floors`). So this server
+  judges a route's bans against the asking proxy's declaration and refuses the
+  route to exactly the proxies on which an axis would be left empty, as a
+  capability shortfall (M17, §5.2). The ban is never stripped to make the
+  route fit.
+
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
   `policy_version` (0002, 0018). Nor may it assume the document version only
   rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
@@ -1196,7 +1213,8 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   method. It is the first vocabulary move since the collapse.
   `Hoplock/proxy#69` moved both again, to `4.5.0` and vocabulary `6`, for two
   new fields. `Hoplock/proxy#71` moved only the document, to `4.6.0`, for the
-  log endpoints.
+  log endpoints, and `Hoplock/proxy#72` only the document again, to `4.7.0`,
+  for a declaration on the request.
   `#66` also shows that a version string does not name a document: `4.3.0` is
   the number `#53` moved the document down *from*, so two different contracts
   have now carried it. The checksum is what identifies the vendored copy.
@@ -1630,14 +1648,26 @@ the connection's lifetime (proxy D2):
   and an empty or repeated identifier. It accepts a name its build cannot
   offer, because that ban is already satisfied, and records it as unmatched. So
   a typo is caught by a warning against what the fleet declares it can offer
-  (M17), never by a refusal. Refusing exactly what the proxy refuses needs one
-  fact the wire does not carry: what each profile offers, per axis, in each
-  build. A ban that empties a non-key-exchange axis only under `default` or
-  `legacy-rsa-sha1` therefore cannot be judged here. That case is a named
-  cross-repo dependency (0014), and nothing here approximates it with a copied
-  list. The emergency runbook for an advisory is a ban, then `cache_invalidate`
-  with `all`, then `session_kill` for the running sessions found by what they
-  negotiated (§7, 0014, 0016);
+  (M17), never by a refusal. Refusing exactly what the proxy refuses needs what
+  each profile offers, per axis, in each build. Since `Hoplock/proxy#72` each
+  proxy declares it (`capabilities.algorithm_profiles`, beside
+  `algorithm_floors`), which met the named cross-repo dependency 0014 carried
+  (raised in `Hoplock/control#41`). A ban is judged against one proxy's
+  declared lists by the rule the contract states once (upstream
+  `api/README.md`, "Capability advertisement"), including its step that the
+  two curve25519 spellings are one exchange. Nothing here copies a list, and
+  `legacy-device` is judged from its own entry rather than from the union in
+  `algorithms`. The lists are per build, so the answer is too. Authorize
+  refuses the route to each proxy whose own declaration shows an axis emptied
+  (§4), and **the author sees a per-build finding at publish time, not a
+  refusal**. That follows M17's line between a shortfall of the fleet and an
+  error in the policy. And a ban is the first step of the runbook below, so it
+  must reach every build that can enforce it while the route fails closed on
+  the builds that cannot. A proxy whose declaration omits the route's profile,
+  or omits `algorithm_profiles`, cannot be judged, and that is reported as
+  unknown, never as proof either way (0014). The emergency runbook for an
+  advisory is a ban, then `cache_invalidate` with `all`, then `session_kill`
+  for the running sessions found by what they negotiated (§7, 0014, 0016);
 - **additional device fields** on `ephemeral-account` routes — the open
   `device_field.<name>` namespace that sits beside the five
   `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
@@ -2326,9 +2356,9 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
 | 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
-| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.6.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, a named cross-repo dependency where the wire cannot say what a profile offers, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |
+| 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.7.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, an emptied axis judged per proxy from what each build declares its profiles offer (`Hoplock/proxy#72`, which met the cross-repo dependency `Hoplock/control#41` raised) and shown to the author as a per-build finding, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
-| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
+| 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's per-build finding (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 | 0019 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
@@ -2432,7 +2462,8 @@ prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 > refuse rather than thin. 0018 may fold them into the single-version refusal,
 > because that refusal is stricter. What 0018 may not do is let a proxy be sent
 > vocabulary above what it declared. Nor may it fold in the per-level floor
-> rule, which is a capability (M17) rather than a version.
+> rule or the per-proxy ban refusal (`Hoplock/proxy#72`), each a capability
+> (M17) rather than a version.
 
 ---
 
