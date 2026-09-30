@@ -44,6 +44,19 @@ func New(o Options) (*Ingester, error) {
 	return &Ingester{store: o.Store, limits: o.Limits.orDefaults(), log: log}, nil
 }
 
+// within returns this ingester writing inside an open transaction.
+//
+// It exists for THIS SERVER'S OWN records of an act that is itself a write —
+// a grant created or revoked (0012). The chain append reuses the caller's
+// transaction (`store.Store.inTx`), so the act and the record of it commit
+// together or not at all: an act this server could not write down never
+// happened, and a record of an act that rolled back does not exist.
+func (in *Ingester) within(tx *store.Store) *Ingester {
+	c := *in
+	c.store = tx
+	return &c
+}
+
 // Submission is one ingest request: the records, and who submitted them.
 //
 // THE TENANT COMES FROM THE PROXY'S ENROLLED IDENTITY and never from a record

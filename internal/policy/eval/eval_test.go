@@ -487,6 +487,103 @@ rules:
 	}
 }
 
+// TestTheEngineHasNoBranchOnGrantOrigin (M10, 0012): an administrator's grant,
+// a workflow's and an external system's are the same object to the engine. The
+// same scenario under each produces the same decision — effect, rule, snapshot
+// and explanation — and the ONLY thing that differs is the origin the record
+// names, because "explain why" has to be able to say where access came from.
+//
+// A rule may still constrain origin (`grant.origins`), and the second half of
+// this test shows that is the one way origin can change an answer: an author
+// wrote it, visibly, in the bundle — never a branch in the engine.
+func TestTheEngineHasNoBranchOnGrantOrigin(t *testing.T) {
+	const src = `
+schema_version: 1
+tenant: acme
+rules:
+  - id: jit-dba
+    effect: allow
+    match:
+      grant: {required: true, scopes: [prod-dba]}
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+      max_session_duration: 8h
+  - id: external-only
+    effect: allow
+    match:
+      grant: {required: true, scopes: [scan-window], origins: [external]}
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+`
+	prog := mustProgram(t, src)
+	now := at(t, "2026-09-30T10:00:00Z")
+	input := func(origin model.GrantOrigin, scope string) model.Input {
+		return model.Input{
+			Now:     now,
+			Subject: model.Subject{ID: "alice"},
+			Target:  model.Target{Hostname: "db01.example.com", Labels: map[string]string{"env": "prod"}},
+			Grants: []model.Grant{{
+				ID: "g-1", Subject: "alice", Origin: origin,
+				Scope: model.GrantScope{
+					Name: scope, Targets: []string{"*.example.com"}, Labels: map[string]string{"env": "prod"},
+				},
+				NotBefore: now.Add(-time.Minute),
+				ExpiresAt: now.Add(30 * time.Minute),
+			}},
+		}
+	}
+
+	origins := []model.GrantOrigin{model.GrantOriginAdministrator, model.GrantOriginWorkflow, model.GrantOriginExternal}
+	type answer struct {
+		Snapshot *model.Snapshot
+		Why      eval.Explanation
+	}
+	var first answer
+	for i, origin := range origins {
+		snap, why := eval.Evaluate(prog, input(origin, "prod-dba"))
+		if snap == nil {
+			t.Fatalf("%s: a grant with no origin constraint in its rule was denied: %+v", origin, why)
+		}
+		if snap.GrantContext == nil || snap.GrantContext.Origin != origin {
+			t.Fatalf("%s: the snapshot does not name the grant's own origin: %+v", origin, snap.GrantContext)
+		}
+		// Normalise the one field that is SUPPOSED to differ, then demand
+		// everything else be identical.
+		snap.GrantContext.Origin = ""
+		for j := range why.Terms {
+			if why.Terms[j].Term == "origin" {
+				if why.Terms[j].Value != string(origin) {
+					t.Errorf("%s: the origin term says %q", origin, why.Terms[j].Value)
+				}
+				why.Terms[j].Value = ""
+			}
+		}
+		got := answer{Snapshot: snap, Why: why}
+		if i == 0 {
+			first = got
+			continue
+		}
+		a, _ := json.Marshal(first)
+		b, _ := json.Marshal(got)
+		if string(a) != string(b) {
+			t.Errorf("the engine answered differently for origin %s than for %s:\n%s\n%s",
+				origin, origins[0], a, b)
+		}
+	}
+
+	// The one way origin changes an answer is a rule that names it.
+	for _, origin := range origins {
+		snap, _ := eval.Evaluate(prog, input(origin, "scan-window"))
+		if allowed := snap != nil; allowed != (origin == model.GrantOriginExternal) {
+			t.Errorf("origin %s under a rule constraining origins to external: allowed = %v", origin, allowed)
+		}
+	}
+}
+
 // TestDeterminism: the same inputs produce byte-identical snapshots and
 // explanations. Maps are involved on every side of this — claims, labels,
 // posture, device fields — and Go randomises their iteration, so this is the

@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/policy/model"
@@ -66,6 +67,12 @@ type assembled struct {
 	// break-glass one.
 	mappingVersion int
 	breakGlass     bool
+	// grants are the live grant rows the engine's grant input was made from.
+	// The record renders them rather than the engine's copy because a
+	// record also names what the engine does not read — who created a grant
+	// and why — and a record that has to be joined to the grant table to
+	// say so is only as durable as that table (M4).
+	grants []store.Grant
 }
 
 // assemble gathers the inputs for one authorize call.
@@ -141,69 +148,17 @@ func (s *Service) assemble(ctx context.Context, tenant store.Tenant, req *contra
 		return assembled{}, err
 	}
 
+	// Live grants are read at THIS call's instant, and that read is the whole
+	// of expiry (M10, 0012): a grant whose window has closed is not returned,
+	// whether or not anything has run since it closed.
 	grants, err := s.store.Grants().ListLive(ctx, tenant, req.Identity.Subject, now)
 	if err != nil {
 		return assembled{}, err
 	}
-	out.input.Grants = liveGrants(grants)
+	out.grants = grants
+	out.input.Grants = access.PolicyGrants(grants)
 
 	return out, nil
-}
-
-// liveGrants converts stored grants into the engine's input vocabulary.
-//
-// The store's grant is deliberately thinner than the engine's: 0012 owns the
-// scope model and 0013 the external context (M16), so what is mapped here is
-// what the columns actually hold. A field this server does not have is left
-// zero rather than guessed, because a guessed scope is a grant covering more
-// than anybody authored.
-func liveGrants(rows []store.Grant) []model.Grant {
-	if len(rows) == 0 {
-		return nil
-	}
-	out := make([]model.Grant, 0, len(rows))
-	for _, g := range rows {
-		grant := model.Grant{
-			ID:         g.ID,
-			Subject:    g.SubjectID,
-			Origin:     grantOrigin(g.Origin),
-			Scope:      model.GrantScope{Name: g.Scope},
-			NotBefore:  g.NotBefore,
-			ExpiresAt:  g.ExpiresAt,
-			RequestRef: g.ApprovalRef,
-		}
-		if g.ExternalRef != "" {
-			// The reference without the system it belongs to is what the
-			// column holds today. 0013 widens it; inventing a system name
-			// here would put a value in an audit record that no external
-			// system ever asserted.
-			grant.External = &model.ExternalReference{Reference: g.ExternalRef}
-		}
-		out = append(out, grant)
-	}
-	return out
-}
-
-// grantOrigin maps the stored origin onto the engine's.
-//
-// The two vocabularies do not spell the first one the same way — the column
-// says `manual` and a rule matches on `administrator` — so this is a mapping
-// and never a cast. A cast would compile, produce an origin no rule can match,
-// and silently stop every `grant.origins` constraint from ever firing.
-func grantOrigin(o store.GrantOrigin) model.GrantOrigin {
-	switch o {
-	case store.GrantOriginManual:
-		return model.GrantOriginAdministrator
-	case store.GrantOriginWorkflow:
-		return model.GrantOriginWorkflow
-	case store.GrantOriginExternal:
-		return model.GrantOriginExternal
-	default:
-		// An origin this build does not know is left unset rather than
-		// passed through: a rule constraining origins must not be
-		// satisfied by a value neither side understands.
-		return ""
-	}
 }
 
 // authMethod maps the wire's authentication method onto the engine's.
