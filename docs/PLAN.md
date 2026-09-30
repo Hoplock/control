@@ -154,8 +154,9 @@ decision.
   scoped API token, carrying the set of tenants it may act in, checked by one
   middleware that resolves exactly one tenant and one permission per request
   (M18). So the listener comes up with the routes 0011 owns (federation,
-  sessions, the certificate authority's operator surface) and 0014 adds routes
-  to a listener that already authenticates. What M2 forbids is untouched: the
+  sessions, the certificate authority's operator surface), 0012 adds the grant
+  routes, and 0014 adds the rest of the surface to a listener that already
+  authenticates. What M2 forbids is untouched: the
   two surfaces still share no port, no middleware chain and no credential type,
   and `TestNoContractRouteIsReachableOnThisListener` is what keeps that true
   from this side.
@@ -298,12 +299,29 @@ decision.
   stream existed, both responses that carry a hint answered without one.
 - **M10 — JIT grants are policy inputs, not a bolt-on.** "Developer requests 30
   minutes on prod, on-call approves, access disappears afterwards" is modelled as
-  a first-class **grant** object — subject, scope, expiry, approvers, and the
-  request that produced it — and the decision engine reads grants as another
-  input. Not a special case bypassing the engine: a special case would be
-  invisible to simulation and to "explain why", the two features that make the
-  rest of the policy story credible. Approval notifications go out through a
-  notifier interface (Slack, Teams, webhook, email) that has no other job.
+  a first-class **grant** object — subject; a scope, which is the name a rule
+  matches with `grant.scopes` and a target, label and zone selector; a window;
+  who created it and why; the approvers and the request that produced it — and
+  the decision engine reads grants as another input. Not a special case
+  bypassing the engine: a special case would be invisible to simulation and to
+  "explain why", the two features that make the rest of the policy story
+  credible.
+
+  **Expiry is a predicate, not a job.** A grant is live exactly while the
+  decision's own time input falls inside its window and it has not been revoked,
+  so nothing has to run for one to expire and no stuck sweeper can leave
+  production access standing. Revocation is the one state a clock cannot
+  produce, so it is the only one stored; revoking a grant ends the sessions it
+  backed with a `session_kill` whose reason the holder is shown (M9). Creating
+  or revoking one is audited with its actor in the transaction that does it.
+
+  **Governance is a seam, not a fork (M15).** Control alone lets an authorised
+  administrator create a grant directly, which is a complete just-in-time story.
+  With an approval workflow registered (`ext.GrantWorkflow`, Enterprise E8), an
+  administrator's grant is a *request* the workflow decides: requests live apart
+  from grants, so a pending one is never a decision input, and a workflow's "no"
+  creates nothing. Notifications go out through a notifier interface (Slack,
+  Teams, email) that has no other job, beside Control's own webhook.
 
   A grant's **origin varies and is recorded**: an administrator created it by
   hand, an approval workflow produced it (Enterprise E8), or an external system
@@ -862,7 +880,8 @@ control/
 │   ├── revoke/             # event bus, subscriptions, replay buffer (M9)
 │   ├── audit/              # ingest, hash chain, query, retention (M8)
 │   ├── export/             # SIEM sinks (Splunk/Sentinel/Elastic)
-│   ├── access/             # JIT requests, approvals, grants, notifiers (M10)
+│   ├── access/             # time-boxed grants, workflow requests, revocation (M10)
+│   ├── notify/             # operator notifications: the webhook, registered notifiers (M15)
 │   ├── extdefault/         # Control's own implementations behind the ext/ seam (M15)
 │   ├── instance/           # deployment identity, supervisory registration (M19)
 │   └── httpapi/
@@ -1014,6 +1033,19 @@ alternative, and it gives up the one-binary deployment for nothing.
   table of its own, covered by the chain through a digest inside the hashed
   body rather than by being in it.
 - **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
+- **`internal/access`** — grants: create, read and revoke them, and the requests
+  a registered approval workflow decides (M10). It is the only writer of
+  `grants` and `grant_requests`, and it owns the one translation of a grant into
+  the engine's input (`PolicyGrants`), which has no branch on origin. Every act
+  is audited through `audit.Emitter` inside the act's own transaction.
+  Revocation publishes through `internal/revoke` twice: once at once, and once
+  more after one decision budget, so a session whose authorize raced the
+  revocation is ended as well.
+- **`internal/notify`** — Control's outbound webhook and every registered
+  `ext.Notifier`, with one queue and worker per destination: nothing waits on a
+  notification and nothing fails because of one. It is Control's core answer at
+  the Notifier seam (M15), so a registered notifier adds a channel beside the
+  webhook rather than replacing it.
 - **`internal/extdefault`** — Control's own side of the extension seam: what
   this repository registers into an `ext.Registry` before the server starts, so
   a deployment with no Hoplock Enterprise present is a complete product rather
@@ -2354,7 +2386,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0009 | Revocation & event fan-out | `/v1/proxies/{proxy_id}/events`, event bus, replay, resync, kill switch (M9) |
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, the per-tenant-per-stream hash chain and its verifier, redaction, the query layer, and the record read-back path 0014 deletes (M8) |
 | 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
-| 0012 | Access grants | manual time-boxed grants; `ext.GrantWorkflow` seam for Enterprise (M10) |
+| 0012 | Access grants | time-boxed grants as policy inputs whose expiry is the decision's own clock; create, list, inspect and revoke on the north-bound API under `grant:write`/`grant:read`; revocation that ends the sessions a grant backed with the reason shown; every act audited with its actor; `ext.GrantWorkflow` routing — requests, polling, the grant a workflow approves; Control's outbound webhook notifier (M10, M15) |
 | 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
 | 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.7.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, an emptied axis judged per proxy from what each build declares its profiles offer (`Hoplock/proxy#72`, which met the cross-repo dependency `Hoplock/control#41` raised) and shown to the author as a per-build finding, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |

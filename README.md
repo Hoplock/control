@@ -44,7 +44,7 @@ imports Control as a library and implements the interfaces in
 |  | South-bound | North-bound |
 | --- | --- | --- |
 | Who calls it | Hoplock Proxy instances | operators, CI, the console |
-| What for | authenticate, authorize + route, host keys, log ingest, revocation stream, config distribution | policy authoring and simulation, "explain this decision", inventory, audit query, fleet health |
+| What for | authenticate, authorize + route, host keys, log ingest, revocation stream, config distribution | policy authoring and simulation, "explain this decision", time-boxed grants, inventory, audit query, fleet health |
 | Auth | bearer token → mTLS | OIDC (humans) + scoped API tokens (automation) |
 | Constraint | a user's SSH handshake is held open while it answers | interactive latency, rich responses |
 

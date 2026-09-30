@@ -100,6 +100,16 @@ assertion. This is the security-critical component of the phase:
 - The result is a **grant** (M10, 0012) carrying origin `external`, the provider
   name, and the external reference — indistinguishable to the engine from an
   administrator's grant, exactly as E8 requires of approval workflows.
+  The object is already shaped for it (0012, migration `0008`): `origin
+  'external'`, `external_system`, `external_ref`, `external_window_start`/`_end`
+  and `external_additional_kind`/`external_additional` (a JSON string or object,
+  kept as the text that arrived), all read into the engine by
+  `access.PolicyGrant`. Create it through `internal/access` — add the external
+  path there beside `Service.Create` — so it is audited in its own transaction
+  (`access.Recorder`) and announced like every other grant; writing the row
+  directly skips both. 0012's
+  `TestAnAdministratorsGrantAndAnExternalOneDecideIdentically` is the
+  equivalence test to extend rather than restate.
 
 ### 3. The probe path and its budget
 
