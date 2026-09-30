@@ -340,8 +340,13 @@ func TestGrantsLiveWindow(t *testing.T) {
 	}
 
 	revokedAt := now.Add(time.Minute)
-	if err := st.Grants().Revoke(ctx, tenantA, "g-live", revokedAt); err != nil {
-		t.Fatalf("Revoke: %v", err)
+	first := store.GrantRevocation{
+		At:     revokedAt,
+		By:     store.GrantActor{Subject: "carol", Principal: "p-carol"},
+		Reason: "access withdrawn by the security team",
+	}
+	if revoked, err := st.Grants().Revoke(ctx, tenantA, "g-live", first); err != nil || !revoked {
+		t.Fatalf("Revoke: revoked=%v, %v", revoked, err)
 	}
 	live, err = st.Grants().ListLive(ctx, tenantA, "alice", now.Add(2*time.Minute))
 	if err != nil {
@@ -352,9 +357,17 @@ func TestGrantsLiveWindow(t *testing.T) {
 	}
 
 	// An auditor asks when access stopped; the second answer is not more
-	// true than the first.
-	if err := st.Grants().Revoke(ctx, tenantA, "g-live", now.Add(time.Hour)); err != nil {
+	// true than the first — not its time, not who, not why.
+	revoked, err := st.Grants().Revoke(ctx, tenantA, "g-live", store.GrantRevocation{
+		At:     now.Add(time.Hour),
+		By:     store.GrantActor{Subject: "dave", Principal: "p-dave"},
+		Reason: "a second opinion",
+	})
+	if err != nil {
 		t.Fatalf("second Revoke: %v", err)
+	}
+	if revoked {
+		t.Error("a second Revoke reported that it revoked the grant")
 	}
 	got, err := st.Grants().Get(ctx, tenantA, "g-live")
 	if err != nil {
@@ -363,8 +376,12 @@ func TestGrantsLiveWindow(t *testing.T) {
 	if !got.RevokedAt.Equal(revokedAt.Truncate(time.Microsecond)) {
 		t.Errorf("RevokedAt = %v, want the first revocation at %v", got.RevokedAt, revokedAt)
 	}
+	if got.RevokedBy != first.By || got.RevokeReason != first.Reason {
+		t.Errorf("revoked by %+v for %q, want the first revocation's %+v for %q",
+			got.RevokedBy, got.RevokeReason, first.By, first.Reason)
+	}
 
-	if err := st.Grants().Revoke(ctx, tenantA, "absent", now); !store.IsNotFound(err) {
+	if _, err := st.Grants().Revoke(ctx, tenantA, "absent", store.GrantRevocation{At: now}); !store.IsNotFound(err) {
 		t.Errorf("Revoke of an absent grant: %v, want ErrNotFound", err)
 	}
 }

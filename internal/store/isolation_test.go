@@ -31,9 +31,12 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 				storetest.Target(string(tenant)+"-only", string(tenant)+".example",
 					map[string]string{"env": string(tenant)}),
 			},
-			Proxies:    []store.Proxy{storetest.Proxy(string(tenant)+"-only", "zone-a")},
-			Bundles:    []store.PolicyBundle{storetest.Bundle(1, true)},
-			Grants:     []store.Grant{storetest.Grant(string(tenant)+"-only", string(tenant)+"-only", time.Hour)},
+			Proxies: []store.Proxy{storetest.Proxy(string(tenant)+"-only", "zone-a")},
+			Bundles: []store.PolicyBundle{storetest.Bundle(1, true)},
+			Grants:  []store.Grant{storetest.Grant(string(tenant)+"-only", string(tenant)+"-only", time.Hour)},
+			GrantRequests: []store.GrantRequest{
+				storetest.GrantRequest(string(tenant)+"-only", string(tenant)+"-only", time.Hour),
+			},
 			UIDCursors: []storetest.UIDCursorFixture{{TargetID: string(tenant) + "-only", First: 100000, RangeEnd: 200000}},
 			Audit: []store.AuditRecord{
 				storetest.AuditRecord(string(tenant)+"-only", "session", 1),
@@ -45,6 +48,10 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 			TargetID:     string(tenant) + "-only",
 			InputsDigest: "x",
 			Snapshot:     json.RawMessage(`{}`),
+			Effect:       store.DecisionEffectAllow,
+			ProxyID:      string(tenant) + "-only",
+			SessionID:    string(tenant) + "-only",
+			GrantID:      string(tenant) + "-only",
 		}); err != nil {
 			t.Fatalf("seed decision for %s: %v", tenant, err)
 		}
@@ -74,7 +81,16 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 		"Proxies.RecordHealth": func() error {
 			return st.Proxies().RecordHealth(ctx, tenantA, store.ProxyHealthReport{ProxyID: bOnly, At: now})
 		},
-		"Grants.Revoke":   func() error { return st.Grants().Revoke(ctx, tenantA, bOnly, now) },
+		"Grants.Revoke": func() error {
+			_, err := st.Grants().Revoke(ctx, tenantA, bOnly, store.GrantRevocation{At: now, Reason: "isolation"})
+			return err
+		},
+		"GrantRequests.Get": func() error { _, err := st.GrantRequests().Get(ctx, tenantA, bOnly); return err },
+		"GrantRequests.Resolve": func() error {
+			return st.GrantRequests().Resolve(ctx, tenantA, bOnly, store.GrantRequestResolution{
+				State: store.GrantRequestDenied, At: now,
+			})
+		},
 		"Subjects.Delete": func() error { return st.Subjects().Delete(ctx, tenantA, bOnly) },
 		"Targets.Delete":  func() error { return st.Targets().Delete(ctx, tenantA, bOnly) },
 		"Proxies.Delete":  func() error { return st.Proxies().Delete(ctx, tenantA, bOnly) },
@@ -103,6 +119,22 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 			got, err := st.Decisions().ListBySubject(ctx, tenantA, bOnly, 0)
 			return len(got), err
 		},
+		"Decisions.ListByGrant": func() (int, error) {
+			got, err := st.Decisions().ListByGrant(ctx, tenantA, bOnly, 0)
+			return len(got), err
+		},
+		"Decisions.SessionsByGrant": func() (int, error) {
+			got, _, err := st.Decisions().SessionsByGrant(ctx, tenantA, bOnly, 10)
+			return len(got), err
+		},
+		"Grants.List": func() (int, error) {
+			got, err := st.Grants().List(ctx, tenantA, store.GrantQuery{SubjectID: bOnly})
+			return len(got), err
+		},
+		"GrantRequests.ListPending": func() (int, error) {
+			got, err := st.GrantRequests().ListPending(ctx, tenantA, 0)
+			return len(got) - 1, err // A's own request is expected
+		},
 		"Audit.Chain": func() (int, error) {
 			got, err := st.Audit().Chain(ctx, tenantA, "session", 0, 0)
 			return len(got) - 1, err // A's own record is expected
@@ -126,6 +158,9 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 	}
 	if got, err := st.Grants().ListLive(ctx, tenantB, bOnly, now); err != nil || len(got) != 1 {
 		t.Errorf("tenant B's grant is no longer live after tenant A's Revoke: %d, %v", len(got), err)
+	}
+	if req, err := st.GrantRequests().Get(ctx, tenantB, bOnly); err != nil || req.State != store.GrantRequestPending {
+		t.Errorf("tenant B's request after tenant A tried to resolve it: %+v, %v", req.State, err)
 	}
 	cursor, err := st.UIDCursors().Get(ctx, tenantB, bOnly)
 	if err != nil {

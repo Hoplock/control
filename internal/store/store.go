@@ -224,6 +224,9 @@ func (s *Store) Audit() AuditRepository { return auditRepo{s} }
 // Grants returns the grant repository.
 func (s *Store) Grants() GrantRepository { return grantRepo{s} }
 
+// GrantRequests returns the workflow request repository (0012).
+func (s *Store) GrantRequests() GrantRequestRepository { return grantRequestRepo{s} }
+
 // UIDCursors returns the uid allocation cursor repository.
 func (s *Store) UIDCursors() UIDCursorRepository { return uidRepo{s} }
 
