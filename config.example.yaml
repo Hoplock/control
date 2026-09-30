@@ -381,3 +381,45 @@ credential:
   # "We rotate" without an answer for outstanding certificates is not a rotation
   # story, so both answers are here.
   rotation_overlap: 2h
+
+# Just-in-time access grants (PLAN M10, phase 0012). Optional; every field has
+# the default shown.
+#
+# A grant is a policy input — "alice gets prod-dba on the database hosts for 30
+# minutes" — created, listed and revoked on the north-bound API
+# (`/api/v1/tenants/{tenant}/grants`). There is deliberately NO setting for
+# cleaning up expired grants: a grant is live exactly while the decision's own
+# instant falls inside its window, so nothing has to run for one to expire, and
+# no stuck job can leave production access standing.
+grants:
+  # The longest window a grant may have. A request for more is refused, naming
+  # this limit. It is a ceiling on a typo as much as a policy: a week is a long
+  # time-box, ten years is standing access nobody will remember to revoke.
+  max_duration: 168h
+
+  # How often requests pending in a registered Hoplock Enterprise approval
+  # workflow (ext.GrantWorkflow) are asked about. Unused without one: Control
+  # alone creates an administrator's grant directly.
+  workflow_poll_interval: 15s
+
+# Control's outbound webhook — its own answer at the notifier seam
+# (ext.Notifier, PLAN M15). Optional. Every notification (`grant.created`,
+# `grant.revoked`, `grant.requested`, `grant.request_closed`, ...) is POSTed as
+# JSON: codes and attributes, never a rendered sentence. Delivery is best
+# effort, retried, and never gates access.
+#
+# LEFT EMPTY, notifications go only to the notifiers a host binary registered,
+# and a deployment with neither is told so at start-up.
+notify:
+  # https, or http to a loopback host only; never with credentials in it.
+  webhook_url: ""
+
+  # Names the environment variable holding the key every request is signed
+  # with. The signature is the `X-Hoplock-Signature` header,
+  # `v1=<hex HMAC-SHA256(key, X-Hoplock-Timestamp + "." + body)>`: a receiver
+  # recomputes it, and refuses a timestamp too old to be fresh. Unsigned
+  # requests are sent only when this is empty, and the start-up log says so.
+  webhook_secret_env: ""
+
+  # One delivery attempt's bound.
+  webhook_timeout: 5s

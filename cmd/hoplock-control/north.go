@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/extdefault"
@@ -26,12 +27,13 @@ import (
 // nothing (M2), and the seam is worth being able to read on its own.
 
 // buildNorth assembles the federation service, the certificate authority and
-// the north-bound handler tree.
+// the north-bound handler tree, over the grant service serve built.
 func buildNorth(
 	ctx context.Context,
 	cfg *config.Config,
 	st *store.Store,
 	emitter identity.AuditSink,
+	grants *access.Service,
 	log *slog.Logger,
 ) (*http.Server, *north.Server, error) {
 	federation, err := buildFederation(cfg, st, emitter, log)
@@ -47,6 +49,7 @@ func buildNorth(
 	handler, err := north.New(north.Options{
 		Federation:      federation,
 		CA:              ca,
+		Grants:          grants,
 		Logger:          log,
 		MaxBodyBytes:    cfg.North.MaxBodyBytes,
 		RequestTimeout:  cfg.North.RequestTimeout,

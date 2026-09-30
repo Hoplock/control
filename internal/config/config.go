@@ -144,6 +144,18 @@ const (
 	DefaultSubscriberQueue = 256
 )
 
+// Access grants and notifications (0012).
+const (
+	// DefaultGrantMaxDuration is the longest window a grant may have: a
+	// ceiling on a typo as much as a policy.
+	DefaultGrantMaxDuration = 7 * 24 * time.Hour
+	// DefaultGrantWorkflowPollInterval is how often pending workflow
+	// requests are asked about, when a workflow is registered.
+	DefaultGrantWorkflowPollInterval = 15 * time.Second
+	// DefaultWebhookTimeout bounds one webhook delivery attempt.
+	DefaultWebhookTimeout = 5 * time.Second
+)
+
 // logLevels is the set LogConfig.Level accepts, ordered from most to least
 // verbose.
 var logLevels = []string{"debug", "info", "warn", "error"}
@@ -166,6 +178,8 @@ type Config struct {
 	North      NorthConfig      `yaml:"north"`
 	Identity   IdentityConfig   `yaml:"identity"`
 	Credential CredentialConfig `yaml:"credential"`
+	Grants     GrantsConfig     `yaml:"grants"`
+	Notify     NotifyConfig     `yaml:"notify"`
 }
 
 // AuditConfig bounds log ingest and configures the record read-back path
@@ -553,6 +567,15 @@ func (c *Config) applyDefaults() {
 	if c.Credential.RotationOverlap == 0 {
 		c.Credential.RotationOverlap = DefaultRotationOverlap
 	}
+	if c.Grants.MaxDuration == 0 {
+		c.Grants.MaxDuration = DefaultGrantMaxDuration
+	}
+	if c.Grants.WorkflowPollInterval == 0 {
+		c.Grants.WorkflowPollInterval = DefaultGrantWorkflowPollInterval
+	}
+	if c.Notify.WebhookTimeout == 0 {
+		c.Notify.WebhookTimeout = DefaultWebhookTimeout
+	}
 	// UIDs.LeaseTerm has no default: zero means "state no term", which is
 	// a real answer rather than an unset field.
 }
@@ -629,6 +652,66 @@ type CredentialConfig struct {
 	// after a ROUTINE rotation, so certificates it already signed keep
 	// working for their remaining life. A compromise rotation ignores it.
 	RotationOverlap time.Duration `yaml:"rotation_overlap"`
+}
+
+// GrantsConfig bounds just-in-time grants (PLAN M10, 0012).
+//
+// There is deliberately no setting for how often expired grants are cleaned up:
+// nothing has to run for a grant to expire. A grant is live exactly while the
+// decision's own instant falls inside its window, so there is no sweeper whose
+// schedule could leave production access standing.
+type GrantsConfig struct {
+	// MaxDuration is the longest window a grant may have. A request for
+	// more is refused, naming this limit.
+	MaxDuration time.Duration `yaml:"max_duration"`
+	// WorkflowPollInterval is how often requests pending in a registered
+	// Hoplock Enterprise approval workflow are asked about
+	// (ext.GrantWorkflow). Unused when no workflow is registered.
+	WorkflowPollInterval time.Duration `yaml:"workflow_poll_interval"`
+}
+
+// NotifyConfig configures Control's outbound webhook — its own answer at the
+// notifier seam (ext.Notifier, M15). With no URL, notifications go only to
+// the notifiers a host binary registered, and a deployment with neither is
+// told so at start-up.
+type NotifyConfig struct {
+	// WebhookURL is where each notification is POSTed as JSON. https, or
+	// http to a loopback host only, and never with credentials in it.
+	WebhookURL string `yaml:"webhook_url"`
+	// WebhookSecretEnv names the environment variable holding the key every
+	// request is signed with (HMAC-SHA256). It names the variable and never
+	// holds the key: a secret in a configuration file is a secret in every
+	// copy of it.
+	WebhookSecretEnv string `yaml:"webhook_secret_env"`
+	// WebhookTimeout bounds one delivery attempt.
+	WebhookTimeout time.Duration `yaml:"webhook_timeout"`
+}
+
+// validate reports the first grant setting that cannot be acted on.
+func (g GrantsConfig) validate() error {
+	if g.MaxDuration <= 0 {
+		return &FieldError{Field: "grants.max_duration", Msg: "must be a positive duration"}
+	}
+	if g.WorkflowPollInterval <= 0 {
+		return &FieldError{Field: "grants.workflow_poll_interval", Msg: "must be a positive duration"}
+	}
+	return nil
+}
+
+// validate reports the first notification setting that cannot be acted on.
+// The URL's scheme and host rules are the notifier's, and are checked when
+// it is built at start-up (`internal/notify`), with the one error message.
+func (n NotifyConfig) validate() error {
+	if n.WebhookTimeout <= 0 {
+		return &FieldError{Field: "notify.webhook_timeout", Msg: "must be a positive duration"}
+	}
+	if n.WebhookSecretEnv != "" && n.WebhookURL == "" {
+		return &FieldError{
+			Field: "notify.webhook_secret_env",
+			Msg:   "names a signing key for a webhook that is not configured (notify.webhook_url)",
+		}
+	}
+	return nil
 }
 
 // validate reports the first north-bound setting that cannot be acted on.
@@ -744,6 +827,12 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Credential.validate(); err != nil {
+		return err
+	}
+	if err := c.Grants.validate(); err != nil {
+		return err
+	}
+	if err := c.Notify.validate(); err != nil {
 		return err
 	}
 	return c.UIDs.validate()

@@ -35,7 +35,7 @@ type Error struct {
 	CorrelationID string `json:"correlation_id"`
 }
 
-// The codes this phase produces. Adding one is deliberate.
+// The codes this surface produces. Adding one is deliberate.
 const (
 	// CodeUnauthenticated is a missing, malformed, expired or revoked
 	// credential. All four answer the same thing, on purpose: telling them
@@ -71,14 +71,31 @@ const (
 	// error because it is a CONFIGURATION answer, and the message names the
 	// key to set.
 	CodeCANotConfigured = "ca_not_configured"
+
+	// CodeGrantRequestDenied is a grant a registered approval workflow
+	// refused (ext.GrantWorkflow, 0012). It is a DECISION, answered 403 like
+	// the other refusals, and its own code because "you may not hold this"
+	// and "your credential may not ask" are different conversations.
+	CodeGrantRequestDenied = "grant_request_denied"
+	// CodeGrantWorkflowFailed is a workflow that answered with something no
+	// retry would change: the request is closed as failed.
+	CodeGrantWorkflowFailed = "grant_workflow_failed"
+	// CodeGrantRequestNotPending is a cancel of a request already decided.
+	CodeGrantRequestNotPending = "grant_request_not_pending"
+	// CodeGrantRevocationUndelivered is a grant that IS revoked — no new
+	// session can use it, and the revocation is recorded — whose
+	// session_kill could not be published. Revoking it again re-sends.
+	CodeGrantRevocationUndelivered = "grant_revocation_undelivered"
 )
 
-// AllCodes is every code this phase defines, so a test can assert that adding
+// AllCodes is every code this surface defines, so a test can assert that adding
 // one is deliberate and that none is reused for a different condition.
 var AllCodes = []string{
 	CodeUnauthenticated, CodeForbidden, CodeTenantOutOfScope, CodeTenantAmbiguous,
 	CodeNotFound, CodeInvalidRequest, CodeLoginRefused, CodeInternal, CodeMethodNotAllowed,
 	CodeCANotConfigured,
+	CodeGrantRequestDenied, CodeGrantWorkflowFailed, CodeGrantRequestNotPending,
+	CodeGrantRevocationUndelivered,
 }
 
 // writeJSON is the only writer in this package, so the content type cannot

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
@@ -23,15 +24,16 @@ import (
 // `TestNoContractRouteIsReachable` keeps that true: the day somebody mounts a
 // contract route on the wrong mux is not the day anyone notices.
 //
-// WHAT THIS PHASE SERVES. Federation and sessions — the credential model 0014
-// was told to resolve its tenant from — and the certificate authority's own
-// surface, which is this phase's to build. 0014 adds policy, inventory, audit
+// WHAT IT SERVES. Federation and sessions — the credential model 0014 was
+// told to resolve its tenant from — the certificate authority's own surface
+// (0011), and just-in-time grants (0012). 0014 adds policy, inventory, audit
 // query and the explain endpoint to this same router, which is why the router
 // is the enforcement point rather than each handler.
 type Server struct {
 	auth       Authenticator
 	federation *identity.Federation
 	ca         *credential.CA
+	grants     *access.Service
 	log        *slog.Logger
 	now        func() time.Time
 
@@ -51,6 +53,11 @@ type Options struct {
 	// CA is the per-tenant certificate authority (proxy D6a). Nil when this
 	// deployment has no key-encryption key configured; see New.
 	CA *credential.CA
+	// Grants creates, reads and revokes just-in-time grants (0012).
+	// Required: a grant needs nothing a deployment might lack — a store, the
+	// audit chain and the revocation stream are all core — so there is no
+	// configuration in which the grant routes should answer "not here".
+	Grants *access.Service
 	// Authenticator resolves a presented credential. Nil takes Federation,
 	// which is the production wiring; a test supplies its own.
 	Authenticator Authenticator
@@ -82,6 +89,9 @@ func New(o Options) (*Server, error) {
 	if o.Federation == nil {
 		return nil, fmt.Errorf("httpapi/north: a federation service is required")
 	}
+	if o.Grants == nil {
+		return nil, fmt.Errorf("httpapi/north: a grant service is required")
+	}
 	// A NIL CA IS ALLOWED, and it is the one dependency that is. The software
 	// custodian refuses to exist without a key-encryption key
 	// (`credential.key_encryption_key_env`), so a deployment that has not set
@@ -95,6 +105,7 @@ func New(o Options) (*Server, error) {
 		auth:           o.Authenticator,
 		federation:     o.Federation,
 		ca:             o.CA,
+		grants:         o.Grants,
 		log:            o.Logger,
 		now:            o.Now,
 		maxBodyBytes:   o.MaxBodyBytes,

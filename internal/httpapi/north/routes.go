@@ -8,9 +8,9 @@ import "github.com/hoplock/control/internal/identity"
 // The route table.
 //
 // It is ONE function so that the whole of what this surface serves, and what
-// each route requires, is readable in one sitting. 0014 appends to it; nothing
-// registers a route from anywhere else, because a route registered elsewhere is
-// a route the isolation test would have to be told about.
+// each route requires, is readable in one sitting. Later phases append to it;
+// nothing registers a route from anywhere else, because a route registered
+// elsewhere is a route the isolation test would have to be told about.
 //
 // The prefix is `/api/` rather than `/v1/`: `/v1/` is the CONTRACT's namespace
 // on the other listener (M1), and two surfaces that never share a port should
@@ -98,6 +98,55 @@ func (s *Server) routes() []Route {
 			Permission: identity.PermCARead,
 			Summary:    "the certificates that are still usable",
 			Handler:    s.handleCACertificates,
+		},
+
+		// --- just-in-time grants (M10, 0012) ---
+		//
+		// Creating and revoking are administrative acts (grant:write),
+		// audited with the actor; reading is grant:read, which every role
+		// holds. With an approval workflow registered, a create is a
+		// request it decides, and the request routes follow it.
+		{
+			Method: "POST", Pattern: APIPrefix + "/tenants/{tenant}/grants",
+			Access:     AccessTenant,
+			Permission: identity.PermGrantWrite,
+			Summary:    "grant time-boxed access, or ask the registered workflow to",
+			Handler:    s.handleGrantCreate,
+		},
+		{
+			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/grants",
+			Access:     AccessTenant,
+			Permission: identity.PermGrantRead,
+			Summary:    "list grants, by holder and by state",
+			Handler:    s.handleGrantList,
+		},
+		{
+			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/grants/{grant}",
+			Access:     AccessTenant,
+			Permission: identity.PermGrantRead,
+			Summary:    "one grant, and the decisions it supplied",
+			Handler:    s.handleGrantGet,
+		},
+		{
+			Method: "POST", Pattern: APIPrefix + "/tenants/{tenant}/grants/{grant}/revoke",
+			Access:     AccessTenant,
+			Permission: identity.PermGrantWrite,
+			Summary:    "revoke a grant and end the sessions it backed",
+			Handler:    s.handleGrantRevoke,
+		},
+		{
+			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/grant-requests/{request}",
+			Access:     AccessTenant,
+			Permission: identity.PermGrantRead,
+			Summary:    "a workflow request, asked about again while it is pending",
+			Handler:    s.handleGrantRequestGet,
+		},
+		{
+			Method: "POST", Pattern: APIPrefix + "/tenants/{tenant}/grant-requests/{request}/cancel",
+			Access:     AccessTenant,
+			Permission: identity.PermGrantWrite,
+			Summary:    "withdraw a pending workflow request",
+			Handler:    s.handleGrantRequestCancel,
 		},
 
 		// --- the claim mapping (read; authoring is 0014's) ---
