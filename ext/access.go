@@ -44,6 +44,28 @@ func (o GrantOutcome) String() string {
 	return "pending"
 }
 
+// GrantScope is what a grant would cover: what it permits, and which targets
+// it reaches. It is the grant's own scope, carried as Control stores it, so a
+// workflow governs exactly what would be created — an approver who is shown
+// three hostnames when the grant covers every `env=prod` target has approved
+// something other than what they were asked.
+//
+// The three selectors are ANDed, and an empty one is unconstrained. A grant
+// never reaches a target no policy rule reaches: it is an input the policy
+// engine reads, never a way around it (M10).
+type GrantScope struct {
+	// Name is the scope a policy rule matches on (`grant.scopes`), and so
+	// what the grant permits. It is always set.
+	Name string
+	// Hostnames are exact names, or a single leading wildcard
+	// (`*.db.example.com`).
+	Hostnames []string
+	// Labels must all be present on a target with these values.
+	Labels map[string]string
+	// Zones are fleet zones (M6).
+	Zones []string
+}
+
 // GrantRequest asks for time-boxed access.
 type GrantRequest struct {
 	// Tenant is required.
@@ -53,10 +75,17 @@ type GrantRequest struct {
 	RequestID string
 	// Subject is who would hold the grant.
 	Subject Subject
-	// Targets are what it would reach. Empty means every target the
-	// subject's policy already allows, narrowed by Privileges.
+	// Scope is what the grant would cover, and it is the authoritative
+	// statement of the request's reach.
+	Scope GrantScope
+	// Targets are the inventory records for the hostnames Scope names
+	// exactly, resolved so an approver can see a target's zone and labels.
+	// They never widen or narrow Scope: a wildcard, a label or a zone
+	// selects targets that are not listed here, and an empty list means
+	// only that Scope named no host Control holds a record of.
 	Targets []Target
-	// Privileges are the stable codes for what it would permit.
+	// Privileges are the stable codes for what it would permit. Control
+	// sends Scope.Name, the one privilege a grant carries.
 	Privileges []string
 	// Window is the access period asked for. A workflow may approve a
 	// shorter one and may never approve a longer one.
@@ -124,6 +153,28 @@ type GrantDecision struct {
 // path made it (M10). Anything a workflow wants remembered about how the grant
 // came to be travels in the grant's origin and external reference, not in a
 // parallel path into the decision.
+//
+// What Control does with each answer (phase 0012):
+//
+//   - GrantApproved: the grant is created with origin `workflow`, naming the
+//     request, WorkflowRef and every approver whose answer was yes. A zero
+//     end of Window means "as requested"; a Window reaching outside the
+//     request is clamped to it, and the request records that it was.
+//   - GrantDenied or GrantExpired, or a KindDenied error: no grant is
+//     created. The request is closed with that outcome and ReasonCode, the
+//     closure is audited, and the requester is told. Control never falls back
+//     to creating the grant directly: while a workflow is registered, an
+//     administrator's grant goes through it.
+//   - GrantPending: the request stays open and Control polls Status. A
+//     request still pending when the window it asked for closes is cancelled
+//     and closed as expired, because approving it could no longer grant
+//     anything.
+//   - KindUnavailable or an unclassified error from Submit is an outage: the
+//     request stays open with no WorkflowRef and Control submits it again,
+//     under the same RequestID, until it is answered or its window closes.
+//     That is what the idempotency below is for. Any other error kind closes
+//     the request as failed, because resubmitting it would get the same
+//     answer.
 type GrantWorkflow interface {
 	// Submit puts a request to the workflow. It may answer immediately or
 	// return GrantPending. It must be idempotent on GrantRequest.RequestID.
