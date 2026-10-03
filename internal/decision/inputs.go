@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/access"
+	"github.com/hoplock/control/internal/accessctx"
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/policy/model"
@@ -72,7 +73,15 @@ type assembled struct {
 	// record also names what the engine does not read — who created a grant
 	// and why — and a record that has to be joined to the grant table to
 	// say so is only as durable as that table (M4).
+	//
+	// With external context (M16) they are the grants the engine COUNTED:
+	// a pushed window awaiting its probe is here only once the probe
+	// confirmed it, and a window only a probe asserted is here as the grant
+	// built for this decision.
 	grants []store.Grant
+	// external is every external window this decision asked about, for the
+	// record.
+	external []accessctx.Entry
 }
 
 // assemble gathers the inputs for one authorize call.

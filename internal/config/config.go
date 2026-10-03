@@ -180,6 +180,8 @@ type Config struct {
 	Credential CredentialConfig `yaml:"credential"`
 	Grants     GrantsConfig     `yaml:"grants"`
 	Notify     NotifyConfig     `yaml:"notify"`
+
+	AccessContext AccessContextConfig `yaml:"access_context"`
 }
 
 // AuditConfig bounds log ingest and configures the record read-back path
@@ -573,6 +575,7 @@ func (c *Config) applyDefaults() {
 	if c.Grants.WorkflowPollInterval == 0 {
 		c.Grants.WorkflowPollInterval = DefaultGrantWorkflowPollInterval
 	}
+	c.AccessContext.applyDefaults()
 	if c.Notify.WebhookTimeout == 0 {
 		c.Notify.WebhookTimeout = DefaultWebhookTimeout
 	}
@@ -833,6 +836,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Notify.validate(); err != nil {
+		return err
+	}
+	if err := c.AccessContext.validate(c.Decision, c.Grants); err != nil {
 		return err
 	}
 	return c.UIDs.validate()

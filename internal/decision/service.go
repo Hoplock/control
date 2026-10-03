@@ -8,10 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
+	"github.com/hoplock/control/internal/access"
+	"github.com/hoplock/control/internal/accessctx"
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/fleet"
+	"github.com/hoplock/control/internal/policy/compile"
 	"github.com/hoplock/control/internal/policy/eval"
 	"github.com/hoplock/control/internal/policy/model"
 	"github.com/hoplock/control/internal/store"
@@ -44,6 +48,7 @@ type Service struct {
 	ids      func() string
 	log      *slog.Logger
 	budget   time.Duration
+	external *accessctx.Prober
 }
 
 // Options configures a Service.
@@ -65,6 +70,11 @@ type Options struct {
 	Refresh time.Duration
 	// Budget is the hard deadline on one call. Zero takes DefaultBudget.
 	Budget time.Duration
+	// External is the probe path for external access context (M16, 0013).
+	// Nil consults no external system: pushed windows that need no probe
+	// still count, because they are grants, and a window that needs one
+	// never does.
+	External *accessctx.Prober
 	// Now overrides the clock, and NewID the decision id. Tests use them;
 	// nothing in production should.
 	Now   func() time.Time
@@ -96,6 +106,7 @@ func New(o Options) (*Service, error) {
 		ids:      o.NewID,
 		log:      o.Logger,
 		budget:   o.Budget,
+		external: o.External,
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -108,6 +119,14 @@ func New(o Options) (*Service, error) {
 	}
 	if s.budget <= 0 {
 		s.budget = DefaultBudget
+	}
+	if s.external != nil && s.external.Budget() > s.budget/2 {
+		// The probe phase may spend at most half the decision's budget:
+		// the other half is the decision's own, and a probe that could
+		// consume all of it would make every authorize call hostage to a
+		// third party's availability (M5, M16).
+		return nil, fmt.Errorf("decision: the probe budget %s is more than half the decision budget %s",
+			s.external.Budget(), s.budget)
 	}
 	refresh := o.Refresh
 	if refresh <= 0 {
@@ -174,6 +193,11 @@ func (s *Service) Authorize(ctx context.Context, tenant store.Tenant, req *contr
 		return Outcome{}, err
 	}
 
+	pending, err := s.considerExternal(ctx, tenant, prog, &in)
+	if err != nil {
+		return Outcome{}, err
+	}
+
 	snap, expl := eval.Evaluate(prog, in.input)
 
 	rec := record{
@@ -187,7 +211,24 @@ func (s *Service) Authorize(ctx context.Context, tenant store.Tenant, req *contr
 		decidedAt: now,
 	}
 
+	explainExternal(&rec, in.grants, in.external)
+
 	if snap == nil {
+		if undetermined := dependsOn(prog, in.input, pending); undetermined != nil {
+			// Denied without the windows nobody could confirm, allowed with
+			// them, and their scope says an unanswered probe is an outage:
+			// the decision depends on a fact this server could not learn,
+			// so it is not a decision (M11). Recorded like any other
+			// unservable answer, best effort, and answered as an outage.
+			rec.effect = EffectUnserved
+			rec.expl.Unserved = undetermined.Error()
+			if writeErr := s.write(ctx, tenant, rec); writeErr != nil {
+				s.log.ErrorContext(ctx, "an undetermined decision could not be recorded",
+					"event", "decision_record_failed", "decision_id", rec.id,
+					"tenant", tenant.String(), "error", writeErr.Error())
+			}
+			return Outcome{}, undetermined
+		}
 		rec.effect = EffectDeny
 		if err := s.write(ctx, tenant, rec); err != nil {
 			return Outcome{}, err
@@ -408,4 +449,84 @@ func declaredVersion(req *contract.AuthorizeRequest) int32 {
 		return 0
 	}
 	return *req.PolicyVersion
+}
+
+// considerExternal asks the external systems this decision depends on, inside
+// the probe budget, and leaves in the input exactly the grants the engine may
+// count (M16). It returns the unanswered windows whose scope falls to outage:
+// they are never inputs, only the question dependsOn asks.
+func (s *Service) considerExternal(ctx context.Context, tenant store.Tenant, prog *compile.Program, in *assembled) ([]accessctx.PendingWindow, error) {
+	if s.external == nil {
+		// No probe path: a pushed window that needs a probe's confirmation
+		// cannot get one, and does not count. Every other grant does.
+		counted := in.grants[:0:0]
+		for _, g := range in.grants {
+			if g.Origin == store.GrantOriginExternal && g.External.Mode == store.ExternalPushProbe {
+				continue
+			}
+			counted = append(counted, g)
+		}
+		in.grants = counted
+		in.input.Grants = access.PolicyGrants(counted)
+		return nil, nil
+	}
+	considered, err := s.external.Consider(ctx, accessctx.Access{
+		Tenant:    tenant,
+		SubjectID: in.input.Subject.ID,
+		Groups:    in.input.Subject.Groups,
+		Target:    in.input.Target.Hostname,
+		Zone:      in.input.Target.Zone,
+		Labels:    in.input.Target.Labels,
+		At:        in.input.Now,
+	}, in.grants, func(scope string) model.ScopeDecl {
+		d, _ := prog.Scope(scope)
+		return d
+	})
+	if err != nil {
+		return nil, err
+	}
+	in.grants = considered.Counted
+	in.input.Grants = access.PolicyGrants(considered.Counted)
+	in.external = considered.Entries
+	return considered.Pending, nil
+}
+
+// dependsOn reports whether a denial depends on a window nobody could confirm
+// whose scope falls to outage: denied without the pending windows, allowed with
+// them. It returns the error that makes the call an outage, or nil when the
+// denial stands on its own — a decision that would deny either way is a
+// decision, whatever a provider failed to say.
+func dependsOn(prog *compile.Program, input model.Input, pending []accessctx.PendingWindow) *accessctx.UndeterminedError {
+	if len(pending) == 0 {
+		return nil
+	}
+	trial := input
+	trial.Grants = slices.Clone(input.Grants)
+	for _, p := range pending {
+		trial.Grants = append(trial.Grants, access.PolicyGrant(p.Grant))
+	}
+	snap, expl := eval.Evaluate(prog, trial)
+	if snap == nil {
+		return nil
+	}
+	for _, p := range pending {
+		if p.Grant.ID == expl.Grant {
+			return &accessctx.UndeterminedError{Provider: p.Grant.External.System, Reference: p.Grant.ExternalRef, Cause: p.Cause}
+		}
+	}
+	first := pending[0]
+	return &accessctx.UndeterminedError{Provider: first.Grant.External.System, Reference: first.Grant.ExternalRef, Cause: first.Cause}
+}
+
+// ScopeDeclaration answers what the tenant's active policy declares about a
+// grant scope. It implements accessctx.ScopePolicy over the compiled program
+// this service already holds, so the push receiver and the decision path read
+// one declaration rather than two copies of it.
+func (s *Service) ScopeDeclaration(ctx context.Context, tenant store.Tenant, scope string) (model.ScopeDecl, error) {
+	prog, err := s.programs.Program(ctx, tenant)
+	if err != nil {
+		return model.ScopeDecl{}, err
+	}
+	d, _ := prog.Scope(scope)
+	return d, nil
 }
