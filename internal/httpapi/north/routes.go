@@ -149,6 +149,22 @@ func (s *Server) routes() []Route {
 			Handler:    s.handleGrantRequestCancel,
 		},
 
+		// --- external access context: the push receiver (M16, 0013) ---
+		//
+		// An external system's credential asserts a window here. It is
+		// administrative in E7's sense and more so — granting access is a
+		// larger privilege than ending a session — so the route needs
+		// `access-context:push`, which only the integration role (and the
+		// admin) holds, and the integration's scope binding must then name
+		// this very credential. Everything past that is accessctx's.
+		{
+			Method: "POST", Pattern: APIPrefix + "/tenants/{tenant}/access-context/{provider}/push",
+			Access:     AccessTenant,
+			Permission: identity.PermAccessContextPush,
+			Summary:    "assert an external access window, admitted only through the integration's scope binding",
+			Handler:    s.handleAccessContextPush,
+		},
+
 		// --- the claim mapping (read; authoring is 0014's) ---
 		{
 			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/identity/claim-mapping",
