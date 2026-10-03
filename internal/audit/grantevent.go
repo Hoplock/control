@@ -291,6 +291,11 @@ func putList(attrs map[string]string, key string, values []string) {
 // putLabels writes a label selector as sorted `k=v` pairs, one attribute, so
 // "every grant on env=prod" is a substring of one field.
 func putLabels(attrs map[string]string, labels map[string]string) {
+	putLabelsAs(attrs, AttrGrantLabels, labels)
+}
+
+// putLabelsAs writes labels as sorted `k=v` pairs under key.
+func putLabelsAs(attrs map[string]string, key string, labels map[string]string) {
 	if len(labels) == 0 {
 		return
 	}
@@ -299,5 +304,5 @@ func putLabels(attrs map[string]string, labels map[string]string) {
 		pairs = append(pairs, k+"="+v)
 	}
 	slices.Sort(pairs)
-	attrs[AttrGrantLabels] = strings.Join(pairs, ",")
+	attrs[key] = strings.Join(pairs, ",")
 }

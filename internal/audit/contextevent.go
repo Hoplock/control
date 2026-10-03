@@ -45,6 +45,7 @@ const (
 	AttrBindingSubjects       = "access_context_binding_subjects"
 	AttrBindingSubjectGroups  = "access_context_binding_subject_groups"
 	AttrBindingTargets        = "access_context_binding_targets"
+	AttrBindingTargetLabels   = "access_context_binding_target_labels"
 	AttrBindingTargetZones    = "access_context_binding_target_zones"
 	AttrBindingMaxWindow      = "access_context_binding_max_window_seconds"
 	AttrBindingPrivileged     = "access_context_binding_privileged"
@@ -96,7 +97,7 @@ func (e *Emitter) ContextEvent(ctx context.Context, tx *store.Store, tenant stor
 		putList(attrs, AttrBindingSubjects, b.Subjects)
 		putList(attrs, AttrBindingSubjectGroups, b.SubjectGroups)
 		putList(attrs, AttrBindingTargets, b.Targets)
-		putLabels(attrs, b.TargetLabels)
+		putLabelsAs(attrs, AttrBindingTargetLabels, b.TargetLabels)
 		putList(attrs, AttrBindingTargetZones, b.TargetZones)
 		attrs[AttrBindingMaxWindow] = strconv.FormatInt(int64(b.MaxWindow/time.Second), 10)
 		attrs[AttrBindingPrivileged] = strconv.FormatBool(b.Privileged)

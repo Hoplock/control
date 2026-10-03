@@ -16,6 +16,7 @@ import (
 
 	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/access"
+	"github.com/hoplock/control/internal/accessctx"
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/decision"
@@ -688,21 +689,22 @@ func TestAnAdministratorsGrantAndAnExternalOneDecideIdentically(t *testing.T) {
 	external := newHarness(t, withIDs())
 
 	adminGrant := admin.create(dbaFor30m())
-	// The external grant is created the way 0013's push path creates one —
-	// through access.CreateExternal, audited, with origin external, the
+	// The external grant arrives the way every external grant does (0013):
+	// an integration pushes a window to the real receiver, its scope
+	// binding admits it, and it becomes a grant — origin external, the
 	// system that asserted it, the reference, and the window it asserted:
-	// here the grant's own, so the deadline is the same too.
-	spec := access.ExternalSpec{
-		Subject: alice,
-		Scope: access.Scope{Name: adminGrant.Scope, Labels: adminGrant.ScopeLabels,
-			Targets: []string{"db01.example.com"}},
-		NotBefore: adminGrant.NotBefore, ExpiresAt: adminGrant.ExpiresAt,
-		System: "itsm", AssertionID: "INC-9/1", Mode: store.ExternalPush, Reference: "INC-9",
-		WindowStart: adminGrant.NotBefore, WindowEnd: adminGrant.ExpiresAt,
-		Reason: "window asserted by itsm", Ceiling: time.Hour,
+	// here the administrator's own, so the deadline is the same too.
+	res, err := external.receiver(t).Push(t.Context(), tenant, scannerToken, "itsm", "application/json", []byte(`{
+		"id": "INC-9/1", "reference": "INC-9", "subject": "`+alice+`",
+		"targets": ["db01.example.com"],
+		"window": {"NotBefore": "`+adminGrant.NotBefore.Format(time.RFC3339Nano)+`",
+		           "NotAfter": "`+adminGrant.ExpiresAt.Format(time.RFC3339Nano)+`"}
+	}`))
+	if err != nil {
+		t.Fatalf("push the external window: %v", err)
 	}
-	if _, _, err := external.grants.CreateExternal(t.Context(), tenant, scannerToken, spec); err != nil {
-		t.Fatalf("create the external grant: %v", err)
+	if res.Grant.Origin != store.GrantOriginExternal || !res.Grant.ExpiresAt.Equal(adminGrant.ExpiresAt) {
+		t.Fatalf("the pushed grant = %+v; want an external grant with the administrator's window", res.Grant)
 	}
 
 	admin.advance(time.Minute)
@@ -1393,4 +1395,60 @@ func TestAnExternalWindowIsRefusedWhenMalformed(t *testing.T) {
 	if !access.AdditionalContextValid(json.RawMessage(`"a sentence"`)) || access.AdditionalContextValid(json.RawMessage(`true`)) {
 		t.Error("AdditionalContextValid disagrees with the contract's string-or-object rule")
 	}
+}
+
+// receiver builds the real push receiver (internal/accessctx) over this
+// harness: one integration, `itsm`, that reads a push as a WindowAssertion in
+// JSON, and a scope binding letting the scanner token assert prod-dba windows
+// for alice on production hosts.
+func (h *harness) receiver(t *testing.T) *accessctx.Service {
+	t.Helper()
+	ingest, err := audit.New(audit.Options{Store: h.store, Logger: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	emitter, err := audit.NewEmitter(ingest)
+	if err != nil {
+		t.Fatalf("emitter: %v", err)
+	}
+	providers, err := accessctx.NewProviders([]ext.Bound[ext.AccessContextProvider]{{
+		Registration: ext.Registration{Provider: "example.com/itsm"}, Impl: jsonWindows{},
+	}}, 0)
+	if err != nil {
+		t.Fatalf("providers: %v", err)
+	}
+	svc, err := accessctx.New(accessctx.Options{
+		Store: h.store, Grants: h.grants, Recorder: emitter, Providers: providers,
+		Policy: h.decisions, Now: h.now,
+	})
+	if err != nil {
+		t.Fatalf("accessctx: %v", err)
+	}
+	if _, err := svc.PutBinding(t.Context(), tenant, operator, store.AccessContextBinding{
+		Provider: "itsm", Mode: store.ExternalPush, Scope: "prod-dba",
+		Subjects: []string{alice}, TargetLabels: map[string]string{"env": "prod"},
+		MaxWindow: time.Hour, PushPrincipals: []string{scannerToken.Principal}, Enabled: true,
+	}); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	return svc
+}
+
+// jsonWindows is an integration whose pushes are already WindowAssertions.
+type jsonWindows struct{}
+
+func (jsonWindows) Describe() ext.AccessContextInfo {
+	return ext.AccessContextInfo{Name: "itsm", Pushes: true}
+}
+
+func (jsonWindows) Probe(context.Context, ext.AccessContextQuery) (ext.AccessEvidence, error) {
+	return ext.AccessEvidence{}, ext.ErrNoEvidence
+}
+
+func (jsonWindows) Interpret(_ context.Context, p ext.AccessContextPush) (ext.WindowAssertion, error) {
+	var a ext.WindowAssertion
+	if err := json.Unmarshal(p.Body, &a); err != nil {
+		return ext.WindowAssertion{}, ext.Errorf(ext.PointAccessContextProvider, "itsm", "Interpret", ext.KindMalformed, "%v", err)
+	}
+	return a, nil
 }
