@@ -351,3 +351,19 @@ func TestTheDeclarativePushMapping(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A provider built without the configuration loader's defaults — a zero
+// timeout — is bounded by its caller's deadline, never answered "too late"
+// before it has asked.
+func TestAZeroTimeoutLeavesTheCallersDeadlineToGovern(t *testing.T) {
+	fake := &fakeScanner{}
+	fake.answer(200, running)
+	srv := httptest.NewServer(fake)
+	t.Cleanup(srv.Close)
+	c := scannerConfig(srv.URL)
+	c.Probe.Timeout = 0
+	ev, err := newProvider(t, c, loopback()).Probe(t.Context(), query(""))
+	if err != nil || ev.State != ext.WindowConfirmed {
+		t.Errorf("a zero timeout = %+v, %v; want the probe made and answered", ev, err)
+	}
+}

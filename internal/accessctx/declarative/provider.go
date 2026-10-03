@@ -434,8 +434,14 @@ func (p *Provider) Probe(ctx context.Context, q ext.AccessContextQuery) (ext.Acc
 		body = strings.NewReader(pr.body.render(values, jsonEscape))
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, pr.timeout)
-	defer cancel()
+	if pr.timeout > 0 {
+		// The provider's own bound, inside the probe budget the caller's
+		// deadline already carries. Zero leaves that deadline to govern
+		// alone: a zero timeout is "no tighter bound", never "already late".
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, pr.timeout)
+		defer cancel()
+	}
 	req, err := http.NewRequestWithContext(ctx, pr.method, u.String(), body)
 	if err != nil {
 		return ext.AccessEvidence{}, p.errorf("Probe", ext.KindInternal, "building the request: %v", err)
