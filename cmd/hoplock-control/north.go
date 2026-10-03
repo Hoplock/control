@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/hoplock/control/internal/access"
+	"github.com/hoplock/control/internal/accessctx"
 	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/extdefault"
@@ -34,6 +35,7 @@ func buildNorth(
 	st *store.Store,
 	emitter identity.AuditSink,
 	grants *access.Service,
+	pushes *accessctx.Service,
 	log *slog.Logger,
 ) (*http.Server, *north.Server, error) {
 	federation, err := buildFederation(cfg, st, emitter, log)
@@ -50,6 +52,8 @@ func buildNorth(
 		Federation:      federation,
 		CA:              ca,
 		Grants:          grants,
+		AccessContext:   pushes,
+		MaxPushBytes:    cfg.AccessContext.MaxPushBytes,
 		Logger:          log,
 		MaxBodyBytes:    cfg.North.MaxBodyBytes,
 		RequestTimeout:  cfg.North.RequestTimeout,

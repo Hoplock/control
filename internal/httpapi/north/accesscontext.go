@@ -131,4 +131,3 @@ func (s *Server) refusePush(w http.ResponseWriter, r *http.Request, ref *accessc
 		Message: message, Parameters: params,
 	})
 }
-
