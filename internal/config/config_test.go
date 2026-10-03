@@ -450,3 +450,46 @@ events: {heartbeat_interval: 0s}
 		t.Errorf("publish_listener = %q, want none unless configured", cfg.Events.PublishListener)
 	}
 }
+
+// Grants and notifications (0012). Both sections are optional and both have a
+// default for everything; what they refuse is a value nobody can act on.
+func TestGrantAndNotifyDefaultsApplyWhenTheSectionsAreAbsent(t *testing.T) {
+	cfg, err := config.Parse(strings.NewReader(validYAML))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Grants.MaxDuration != config.DefaultGrantMaxDuration {
+		t.Errorf("grants.max_duration = %v, want the default %v", cfg.Grants.MaxDuration, config.DefaultGrantMaxDuration)
+	}
+	if cfg.Grants.WorkflowPollInterval != config.DefaultGrantWorkflowPollInterval {
+		t.Errorf("grants.workflow_poll_interval = %v, want the default %v",
+			cfg.Grants.WorkflowPollInterval, config.DefaultGrantWorkflowPollInterval)
+	}
+	if cfg.Notify.WebhookTimeout != config.DefaultWebhookTimeout {
+		t.Errorf("notify.webhook_timeout = %v, want the default %v", cfg.Notify.WebhookTimeout, config.DefaultWebhookTimeout)
+	}
+	// No webhook unless one is configured: notifications leave this
+	// deployment only for a destination somebody chose.
+	if cfg.Notify.WebhookURL != "" {
+		t.Errorf("notify.webhook_url = %q, want none unless configured", cfg.Notify.WebhookURL)
+	}
+}
+
+func TestGrantAndNotifySettingsNobodyCanActOnAreRefused(t *testing.T) {
+	for field, section := range map[string]string{
+		"grants.max_duration":           "grants: {max_duration: -1h}",
+		"grants.workflow_poll_interval": "grants: {workflow_poll_interval: -5s}",
+		"notify.webhook_timeout":        "notify: {webhook_url: \"https://hooks.example.com/x\", webhook_timeout: -1s}",
+		// A signing key for a webhook that does not exist is a
+		// configuration somebody believes does something.
+		"notify.webhook_secret_env": "notify: {webhook_secret_env: HOOK_KEY}",
+	} {
+		t.Run(field, func(t *testing.T) {
+			_, err := config.Parse(strings.NewReader(validYAML + section + "\n"))
+			var fieldErr *config.FieldError
+			if !errors.As(err, &fieldErr) || fieldErr.Field != field {
+				t.Fatalf("Parse = %v, want a FieldError naming %s", err, field)
+			}
+		})
+	}
+}

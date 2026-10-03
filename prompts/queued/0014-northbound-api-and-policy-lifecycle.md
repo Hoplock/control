@@ -195,6 +195,13 @@ matched rule, the mapping version that produced the attributes (0011), the
 obligations, the snapshot, and — if a grant was involved — which one and who
 approved it.
 
+The record already carries the grant (0012): `explanation.grant` names it, and
+the entry of `inputs.grants[]` with that `id` holds it whole — scope, window,
+origin, creator and reason, request id, workflow reference, approvers and any
+external assertion — so explain renders it without joining the grant table.
+`decisions.grant_id` answers the reverse question, and 0012's
+`GET .../grants/{grant}` already serves it.
+
 This is the other half of the proxy's disclosure rule: the user is told
 "access denied" and a session id, deliberately vague so the proxy is not an
 oracle for probing the estate, and an operator resolves that id here into

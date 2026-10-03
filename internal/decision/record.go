@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/policy/eval"
 	"github.com/hoplock/control/internal/policy/model"
@@ -44,8 +45,10 @@ import (
 
 // The effects a record can carry.
 const (
-	// EffectAllow is a decision that was served as a snapshot.
-	EffectAllow = "allow"
+	// EffectAllow is a decision that was served as a snapshot. It is the
+	// store's spelling, because revocation finds the sessions a grant backed
+	// by it (0012).
+	EffectAllow = store.DecisionEffectAllow
 	// EffectDeny is a decision to refuse, which the proxy relayed as
 	// "access denied".
 	EffectDeny = "deny"
@@ -117,11 +120,53 @@ type recordedConnState struct {
 	PolicyVersion int32  `json:"policy_version,omitempty"`
 }
 
+// recordedGrant is one live grant as the evaluation saw it (M4, M10).
+//
+// It carries everything the engine matched on — the scope's name and selector
+// and the window — so a simulation replaying the record reads the same grant,
+// and everything "explain why" names: who created it and why, and the request,
+// approvers or external assertion behind it.
+//
+// EVERY FIELD IS ALWAYS PRESENT, empty or not. A record made under an
+// administrator's grant and one made under a workflow's or an external
+// system's have one shape, differing only in values: the engine has no branch
+// on origin, and a record that changed shape with origin would suggest it did.
 type recordedGrant struct {
-	ID        string `json:"id"`
-	Origin    string `json:"origin,omitempty"`
-	Scope     string `json:"scope,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"`
+	ID          string             `json:"id"`
+	Origin      string             `json:"origin"`
+	Scope       recordedGrantScope `json:"scope"`
+	NotBefore   string             `json:"not_before"`
+	ExpiresAt   string             `json:"expires_at"`
+	Reason      string             `json:"reason"`
+	ReasonCode  string             `json:"reason_code"`
+	CreatedBy   recordedGrantActor `json:"created_by"`
+	RequestID   string             `json:"request_id"`
+	WorkflowRef string             `json:"workflow_ref"`
+	Approvers   []string           `json:"approvers"`
+	External    recordedExternal   `json:"external"`
+}
+
+type recordedGrantScope struct {
+	Name    string            `json:"name"`
+	Targets []string          `json:"targets"`
+	Labels  map[string]string `json:"labels"`
+	Zones   []string          `json:"zones"`
+}
+
+type recordedGrantActor struct {
+	Subject    string `json:"subject"`
+	Principal  string `json:"principal"`
+	BreakGlass bool   `json:"break_glass"`
+}
+
+// recordedExternal is what an external system asserted, or the ticket a
+// requester cited. The window is recorded, never enforced: the deadline the
+// snapshot carries already weighed it.
+type recordedExternal struct {
+	System      string `json:"system"`
+	Reference   string `json:"reference"`
+	WindowStart string `json:"window_start"`
+	WindowEnd   string `json:"window_end"`
 }
 
 // recordedExplanation is the engine's account of the answer, plus what the
@@ -208,6 +253,7 @@ func (s *Service) write(ctx context.Context, tenant store.Tenant, rec record) er
 		ProxyID:      rec.proxyID,
 		SessionID:    rec.sessionID,
 		MatchedRule:  rec.expl.Rule,
+		GrantID:      rec.expl.Grant,
 		Obligations:  rec.expl.Obligations,
 		Snapshot:     snapshot,
 		DecidedAt:    rec.decidedAt,
@@ -261,15 +307,58 @@ func newRecordedInputs(in assembled, req *contract.AuthorizeRequest) recordedInp
 	if req.PolicyVersion != nil {
 		out.Connection.PolicyVersion = *req.PolicyVersion
 	}
-	for _, g := range in.input.Grants {
-		out.Grants = append(out.Grants, recordedGrant{
-			ID:        g.ID,
-			Origin:    string(g.Origin),
-			Scope:     g.Scope.Name,
-			ExpiresAt: timeString(g.ExpiresAt),
-		})
+	for _, g := range in.grants {
+		out.Grants = append(out.Grants, newRecordedGrant(g))
 	}
 	return out
+}
+
+// newRecordedGrant renders one live grant row for the record. The origin is
+// the policy vocabulary's — the word a rule's `grant.origins` uses — because
+// that is the word an operator reading the explanation beside it will see.
+func newRecordedGrant(g store.Grant) recordedGrant {
+	return recordedGrant{
+		ID:     g.ID,
+		Origin: string(access.PolicyOrigin(g.Origin)),
+		Scope: recordedGrantScope{
+			Name:    g.Scope,
+			Targets: nonNil(g.ScopeTargets),
+			Labels:  nonNilMap(g.ScopeLabels),
+			Zones:   nonNil(g.ScopeZones),
+		},
+		NotBefore:  timeString(g.NotBefore),
+		ExpiresAt:  timeString(g.ExpiresAt),
+		Reason:     g.Reason,
+		ReasonCode: g.ReasonCode,
+		CreatedBy: recordedGrantActor{
+			Subject:    g.CreatedBy.Subject,
+			Principal:  g.CreatedBy.Principal,
+			BreakGlass: g.CreatedBy.BreakGlass,
+		},
+		RequestID:   g.RequestID,
+		WorkflowRef: g.ApprovalRef,
+		Approvers:   nonNil(g.Approvers),
+		External: recordedExternal{
+			System:      g.External.System,
+			Reference:   g.ExternalRef,
+			WindowStart: timeString(g.External.WindowStart),
+			WindowEnd:   timeString(g.External.WindowEnd),
+		},
+	}
+}
+
+func nonNil(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+func nonNilMap(v map[string]string) map[string]string {
+	if v == nil {
+		return map[string]string{}
+	}
+	return v
 }
 
 // newRecordedExplanation renders the engine's explanation for storage.

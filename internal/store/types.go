@@ -190,6 +190,11 @@ type Decision struct {
 	// MatchedRule names the rule that produced the answer. Empty means no
 	// rule matched, which is itself an explanation.
 	MatchedRule string
+	// GrantID names the grant that satisfied the matched rule's grant
+	// constraint, empty where none did. It is a column as well as a field of
+	// the explanation because revocation asks FROM the grant which sessions
+	// it backed (M10).
+	GrantID string
 	// Obligations are what the decision emitted (record, approve, step up).
 	Obligations []string
 	// Snapshot is the response returned to the proxy, verbatim.
@@ -343,32 +348,226 @@ type Grant struct {
 	ID string
 	// SubjectID is who the grant is for.
 	SubjectID string
-	// Scope is what it covers. 0012 owns its shape; this layer stores it.
+	// Scope is the scope's NAME: what a policy rule matches with
+	// `grant.scopes`, and so what the grant permits.
 	Scope string
+	// ScopeTargets, ScopeLabels and ScopeZones are the scope's SELECTOR:
+	// which targets it covers, all three ANDed. Empty means every target the
+	// matching rule already covers — a grant never reaches a target no rule
+	// reaches.
+	ScopeTargets []string
+	ScopeLabels  map[string]string
+	ScopeZones   []string
 	// NotBefore and ExpiresAt bound the window. ExpiresAt is strictly after
 	// NotBefore, enforced by the schema.
 	NotBefore time.Time
 	ExpiresAt time.Time
 	// Origin says which of the three ways produced it.
 	Origin GrantOrigin
-	// ApprovalRef points at the approval that produced it, where one did.
+	// ReasonCode is an optional stable code for why; Reason is the creator's
+	// own words, required of every grant this server creates.
+	ReasonCode string
+	Reason     string
+	// CreatedBy is who created it: the administrator, or the requester whose
+	// request a workflow approved.
+	CreatedBy GrantActor
+	// RequestID is Control's own request, when a workflow produced the grant.
+	RequestID string
+	// ApprovalRef is the workflow's reference for that request.
 	ApprovalRef string
-	// ExternalRef is the ticket, scan, or incident an external assertion
-	// named (M16).
+	// Approvers are the subjects the workflow reported as approving.
+	Approvers []string
+	// ExternalRef is the ticket, scan, or incident the grant is tied to: the
+	// one an external system asserted (M16), or the one its requester cited.
 	ExternalRef string
+	// External is what an external system asserted, when one did (M16,
+	// populated by 0013).
+	External GrantExternal
 	// RevokedAt is set when the grant was withdrawn before its expiry. A
 	// revoked grant is never a decision input again.
 	RevokedAt time.Time
+	// RevokedBy and RevokeReason say who withdrew it, and the reason the
+	// holder was shown when their sessions ended.
+	RevokedBy    GrantActor
+	RevokeReason string
 
 	CreatedAt time.Time
 }
 
+// GrantActor is who acted on a grant: the three facts a reader needs, and
+// nothing a reader would have to infer.
+type GrantActor struct {
+	// Subject is the person. It is empty for a machine token, which has no
+	// person behind it.
+	Subject string
+	// Principal is the credential that acted — a console session or an API
+	// token (0011) — and is never empty on an act this server recorded.
+	Principal string
+	// BreakGlass reports that the credential was a break-glass one (M7). It
+	// is asserted from the credential, never inferred from anything else.
+	BreakGlass bool
+}
+
+// GrantExternal is what an external system asserted about a grant (M16). The
+// reference itself is Grant.ExternalRef, because a grant an administrator
+// created can cite a ticket too.
+type GrantExternal struct {
+	// System names the integration that asserted the window.
+	System string
+	// WindowStart and WindowEnd are the window it asserted. They are
+	// recorded, not enforced: the session deadline already weighed them.
+	WindowStart time.Time
+	WindowEnd   time.Time
+	// AdditionalKind is `string`, `object`, or empty when there is none, and
+	// Additional is the JSON text that arrived.
+	AdditionalKind string
+	Additional     string
+}
+
+// GrantState is where a grant stands at an instant. Three of the four are a
+// function of the clock and are never stored: a column somebody has to update
+// is a column a stuck job leaves saying "active".
+type GrantState string
+
+const (
+	// GrantScheduled is a grant whose window has not opened yet.
+	GrantScheduled GrantState = "scheduled"
+	// GrantActive is a grant whose window contains the instant. It is the
+	// only state in which a grant is a decision input.
+	GrantActive GrantState = "active"
+	// GrantExpired is a grant whose window has closed. Nothing had to run
+	// for it to get here.
+	GrantExpired GrantState = "expired"
+	// GrantRevoked is a grant an operator withdrew. It is the one state a
+	// clock cannot produce, and so the one that is stored.
+	GrantRevoked GrantState = "revoked"
+)
+
 // Live reports whether the grant is a decision input at instant t.
 func (g Grant) Live(t time.Time) bool {
-	if !g.RevokedAt.IsZero() {
-		return false
+	return g.State(t) == GrantActive
+}
+
+// State reports where the grant stands at instant t.
+func (g Grant) State(t time.Time) GrantState {
+	switch {
+	case !g.RevokedAt.IsZero():
+		return GrantRevoked
+	case t.Before(g.NotBefore):
+		return GrantScheduled
+	case !t.Before(g.ExpiresAt):
+		return GrantExpired
+	default:
+		return GrantActive
 	}
-	return !t.Before(g.NotBefore) && t.Before(g.ExpiresAt)
+}
+
+// GrantQuery selects grants for an operator's list.
+type GrantQuery struct {
+	// SubjectID narrows to one holder. Empty means every holder.
+	SubjectID string
+	// State narrows to one state at instant At. Empty means every state.
+	State GrantState
+	// At is the instant State is judged at. Required when State is set:
+	// time is an input, never a clock this layer reads.
+	At time.Time
+	// Limit bounds the answer. Zero takes a default; there is no unbounded
+	// list.
+	Limit int
+}
+
+// GrantRevocation is one operator's withdrawal of a grant.
+type GrantRevocation struct {
+	// At is when it was withdrawn. Required.
+	At time.Time
+	// By is who withdrew it.
+	By GrantActor
+	// Reason is shown to the holder when their sessions end, verbatim.
+	Reason string
+}
+
+// GrantSession is one session a grant backed: the proxy that asked and the
+// session it asked for, which is exactly what a session_kill addresses.
+type GrantSession struct {
+	ProxyID   string
+	SessionID string
+}
+
+// GrantRequestState is where a workflow request stands. Closed set.
+type GrantRequestState string
+
+const (
+	// GrantRequestPending is a request the workflow has not decided. It is
+	// not access, and it lives in a table the decision path never reads.
+	GrantRequestPending GrantRequestState = "pending"
+	// GrantRequestApproved produced a grant, which it names.
+	GrantRequestApproved GrantRequestState = "approved"
+	// GrantRequestDenied is the workflow's "no". No grant exists.
+	GrantRequestDenied GrantRequestState = "denied"
+	// GrantRequestExpired was never decided while it could still matter:
+	// the workflow said so, or the window asked for closed first.
+	GrantRequestExpired GrantRequestState = "expired"
+	// GrantRequestCancelled was withdrawn by an operator before a decision.
+	GrantRequestCancelled GrantRequestState = "cancelled"
+	// GrantRequestFailed could not be decided: the workflow refused it for a
+	// reason that retrying would not change.
+	GrantRequestFailed GrantRequestState = "failed"
+)
+
+// GrantApproval is one approver's answer, as a workflow reported it.
+type GrantApproval struct {
+	Approver string    `json:"approver"`
+	Approved bool      `json:"approved"`
+	At       time.Time `json:"at"`
+	Reason   string    `json:"reason,omitempty"`
+}
+
+// GrantRequest is what a registered workflow is deciding (ext.GrantWorkflow).
+// It carries the grant that would be created, and where the decision stands.
+type GrantRequest struct {
+	// ID is Control's request id, the one the workflow must treat as one
+	// request however many times it is submitted.
+	ID string
+	// The grant asked for: the same scope, window and reason a grant carries.
+	SubjectID    string
+	Scope        string
+	ScopeTargets []string
+	ScopeLabels  map[string]string
+	ScopeZones   []string
+	NotBefore    time.Time
+	ExpiresAt    time.Time
+	ReasonCode   string
+	Reason       string
+	ExternalRef  string
+	// RequestedBy and RequestedAt are who asked and when.
+	RequestedBy GrantActor
+	RequestedAt time.Time
+	// WorkflowProvider names the extension deciding it; WorkflowRef is the
+	// workflow's own reference, empty until a submission is confirmed.
+	WorkflowProvider string
+	WorkflowRef      string
+	// State is where it stands; the outcome fields say why it left pending.
+	State         GrantRequestState
+	OutcomeCode   string
+	OutcomeText   string
+	Approvals     []GrantApproval
+	WindowClamped bool
+	// GrantID names the grant an approved request produced.
+	GrantID   string
+	DecidedAt time.Time
+	PolledAt  time.Time
+}
+
+// GrantRequestResolution is how a pending request leaves `pending`.
+type GrantRequestResolution struct {
+	State         GrantRequestState
+	OutcomeCode   string
+	OutcomeText   string
+	Approvals     []GrantApproval
+	WindowClamped bool
+	GrantID       string
+	WorkflowRef   string
+	At            time.Time
 }
 
 // UIDCursor is the per-target allocation cursor (PLAN §4). The whole storage

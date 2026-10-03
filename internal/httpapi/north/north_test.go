@@ -15,11 +15,15 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hoplock/control/internal/access"
+	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/extdefault"
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -34,6 +38,41 @@ import (
 
 var testKEK = bytes.Repeat([]byte{0x11}, extdefault.KeyEncryptionKeySize)
 
+// newGrants builds the real grant service over a store: the real audit chain
+// and a real revocation broker, because what the surface promises about a
+// grant — audited, revocable — is only true if those are the ones behind it.
+func newGrants(t *testing.T, st *store.Store, o access.Options) *access.Service {
+	t.Helper()
+	ingest, err := audit.New(audit.Options{Store: st})
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	emitter, err := audit.NewEmitter(ingest)
+	if err != nil {
+		t.Fatalf("emitter: %v", err)
+	}
+	if o.Revoker == nil {
+		bus, err := revoke.New(revoke.Options{Logger: slog.New(slog.DiscardHandler)})
+		if err != nil {
+			t.Fatalf("bus: %v", err)
+		}
+		t.Cleanup(func() { _ = bus.Close(context.Background()) })
+		o.Revoker = bus
+	}
+	o.Store, o.Recorder = st, emitter
+	if o.Logger == nil {
+		o.Logger = slog.New(slog.DiscardHandler)
+	}
+	if o.Settle == 0 {
+		o.Settle = time.Millisecond
+	}
+	svc, err := access.New(o)
+	if err != nil {
+		t.Fatalf("grants: %v", err)
+	}
+	return svc
+}
+
 type serverFixture struct {
 	st         *store.Store
 	federation *identity.Federation
@@ -42,6 +81,13 @@ type serverFixture struct {
 }
 
 func newServer(t *testing.T) *serverFixture {
+	t.Helper()
+	return newServerWithGrants(t, access.Options{})
+}
+
+// newServerWithGrants is newServer with the grant service configured — a
+// registered approval workflow, say.
+func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture {
 	t.Helper()
 	st := storetest.New(t)
 
@@ -61,6 +107,7 @@ func newServer(t *testing.T) *serverFixture {
 	server, err := north.New(north.Options{
 		Federation:      federation,
 		CA:              ca,
+		Grants:          newGrants(t, st, grantOpts),
 		DefaultTenant:   "tenant-a",
 		InsecureCookies: true,
 	})
@@ -605,7 +652,8 @@ func TestADeploymentWithNoKeyEncryptionKeyStillServesEverythingElse(t *testing.T
 		t.Fatalf("federation: %v", err)
 	}
 	server, err := north.New(north.Options{
-		Federation: federation, DefaultTenant: "tenant-a", InsecureCookies: true,
+		Federation: federation, Grants: newGrants(t, st, access.Options{}),
+		DefaultTenant: "tenant-a", InsecureCookies: true,
 	})
 	if err != nil {
 		t.Fatalf("a listener without a certificate authority did not build: %v", err)
@@ -869,7 +917,8 @@ func TestTheAccessLogNamesThePrincipalAndTheTenantItResolved(t *testing.T) {
 		t.Fatalf("ensure: %v", err)
 	}
 	server, err := north.New(north.Options{
-		Federation: federation, CA: ca, DefaultTenant: "tenant-a", InsecureCookies: true,
+		Federation: federation, CA: ca, Grants: newGrants(t, st, access.Options{}),
+		DefaultTenant: "tenant-a", InsecureCookies: true,
 		Logger: slog.New(slog.NewJSONHandler(&buf, nil)),
 	})
 	if err != nil {

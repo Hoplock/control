@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/decision"
@@ -35,7 +36,7 @@ const shutdownGrace = 15 * time.Second
 // deployment where half the product is up. The north-bound listener arrives here
 // with 0011 rather than 0014 because this phase is what M2 was waiting for: the
 // credential model. 0014 adds routes to a listener that already authenticates.
-func serve(ctx context.Context, cfg *config.Config, st *store.Store, log *slog.Logger) error {
+func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions *ext.Extensions, log *slog.Logger) error {
 	// The event broker is built FIRST, because the fleet registry reads it:
 	// a cache hint is only issued to a proxy holding a live subscription
 	// (M9, PLAN §5.4), and that read is [fleet.SubscriptionState]. Before
@@ -157,7 +158,26 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, log *slog.L
 		"heartbeat_interval_seconds", bus.AdvertisedHeartbeatSeconds(),
 	)
 
-	northSrv, northHandler, err := buildNorth(ctx, cfg, st, emitter, log)
+	// Operator notifications and just-in-time grants (0012). The notifier is
+	// started before anything can produce a notification and closed after
+	// every listener has stopped, so an act a request completed is announced
+	// rather than lost to the order of shutdown.
+	notifier, err := buildNotifier(cfg, extensions, log)
+	if err != nil {
+		return err
+	}
+	notifier.Start()
+	grants, err := buildGrants(cfg, st, emitter, bus, notifier, extensions, log)
+	if err != nil {
+		return err
+	}
+	// Requests pending in a registered workflow are asked about on a clock.
+	// Without a workflow nothing is ever pending, and Watch returns at once.
+	pollCtx, stopPolling := context.WithCancel(ctx)
+	defer stopPolling()
+	go grants.Watch(pollCtx, cfg.Grants.WorkflowPollInterval)
+
+	northSrv, northHandler, err := buildNorth(ctx, cfg, st, emitter, grants, log)
 	if err != nil {
 		return err
 	}
@@ -243,6 +263,10 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, log *slog.L
 	}
 	if err := northSrv.Shutdown(shutdownCtx); err != nil {
 		log.Warn("the north-bound listener did not shut down cleanly", "error", err)
+	}
+	stopPolling()
+	if err := notifier.Close(shutdownCtx); err != nil {
+		log.Warn("operator notifications were still queued at shutdown", "error", err)
 	}
 	if err := bus.Close(shutdownCtx); err != nil {
 		log.Warn("the revocation broker did not drain inside the shutdown grace", "error", err)

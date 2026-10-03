@@ -171,6 +171,9 @@ type Fixture struct {
 	Proxies  []store.Proxy
 	Bundles  []store.PolicyBundle
 	Grants   []store.Grant
+	// GrantRequests seeds workflow requests (0012). Each is born pending,
+	// whatever its State says: resolving one is the repository's job.
+	GrantRequests []store.GrantRequest
 	// UIDCursors seeds allocation cursors. Each entry is created, never
 	// upserted: a cursor that already exists is a conflict, because
 	// re-creating one is how it would go backwards.
@@ -220,6 +223,11 @@ func Seed(t testing.TB, st *store.Store, f Fixture) {
 	for _, g := range f.Grants {
 		if err := st.Grants().Insert(ctx, f.Tenant, g); err != nil {
 			t.Fatalf("seed grant %s: %v", g.ID, err)
+		}
+	}
+	for _, r := range f.GrantRequests {
+		if err := st.GrantRequests().Insert(ctx, f.Tenant, r); err != nil {
+			t.Fatalf("seed grant request %s: %v", r.ID, err)
 		}
 	}
 	for _, c := range f.UIDCursors {
@@ -292,6 +300,22 @@ func Grant(id, subjectID string, d time.Duration) store.Grant {
 		NotBefore: now.Add(-time.Minute),
 		ExpiresAt: now.Add(d),
 		Origin:    store.GrantOriginManual,
+	}
+}
+
+// GrantRequest returns a pending workflow request for a subject, asking for d
+// from now.
+func GrantRequest(id, subjectID string, d time.Duration) store.GrantRequest {
+	now := time.Now().UTC()
+	return store.GrantRequest{
+		ID:               id,
+		SubjectID:        subjectID,
+		Scope:            "target:*",
+		NotBefore:        now,
+		ExpiresAt:        now.Add(d),
+		Reason:           "storetest",
+		RequestedBy:      store.GrantActor{Subject: "admin", Principal: "p-admin"},
+		WorkflowProvider: "storetest/workflow",
 	}
 }
 

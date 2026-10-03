@@ -28,6 +28,9 @@ var repositoryInterfaces = map[string]reflect.Type{
 	"GrantRepository":        reflect.TypeOf((*GrantRepository)(nil)).Elem(),
 	"UIDCursorRepository":    reflect.TypeOf((*UIDCursorRepository)(nil)).Elem(),
 
+	// Access grants (0012).
+	"GrantRequestRepository": reflect.TypeOf((*GrantRequestRepository)(nil)).Elem(),
+
 	// The fleet registry (0006).
 	"ProxyEnrollmentRepository":   reflect.TypeOf((*ProxyEnrollmentRepository)(nil)).Elem(),
 	"ProxyEdgeRepository":         reflect.TypeOf((*ProxyEdgeRepository)(nil)).Elem(),
@@ -104,6 +107,7 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"AuditRepository":        s.Audit(),
 		"GrantRepository":        s.Grants(),
 		"UIDCursorRepository":    s.UIDCursors(),
+		"GrantRequestRepository": s.GrantRequests(),
 
 		"ProxyEnrollmentRepository":   s.ProxyEnrollments(),
 		"ProxyEdgeRepository":         s.ProxyEdges(),
@@ -202,9 +206,33 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Grants.Insert": func() error {
 			return s.Grants().Insert(ctx, "", Grant{ID: "g", Origin: GrantOriginManual, ExpiresAt: nowForTest()})
 		},
-		"Grants.Get":         func() error { _, err := s.Grants().Get(ctx, "", "g"); return err },
-		"Grants.ListLive":    func() error { _, err := s.Grants().ListLive(ctx, "", "s", nowForTest()); return err },
-		"Grants.Revoke":      func() error { return s.Grants().Revoke(ctx, "", "g", nowForTest()) },
+		"Grants.Get":      func() error { _, err := s.Grants().Get(ctx, "", "g"); return err },
+		"Grants.ListLive": func() error { _, err := s.Grants().ListLive(ctx, "", "s", nowForTest()); return err },
+		"Grants.Revoke": func() error {
+			_, err := s.Grants().Revoke(ctx, "", "g", GrantRevocation{At: nowForTest()})
+			return err
+		},
+		"Grants.List": func() error { _, err := s.Grants().List(ctx, "", GrantQuery{}); return err },
+		"GrantRequests.Insert": func() error {
+			return s.GrantRequests().Insert(ctx, "", GrantRequest{
+				ID: "r", SubjectID: "s", NotBefore: nowForTest(), ExpiresAt: nowForTest().Add(time.Hour),
+			})
+		},
+		"GrantRequests.Get":         func() error { _, err := s.GrantRequests().Get(ctx, "", "r"); return err },
+		"GrantRequests.ListPending": func() error { _, err := s.GrantRequests().ListPending(ctx, "", 1); return err },
+		"GrantRequests.Polled": func() error {
+			return s.GrantRequests().Polled(ctx, "", "r", "ref", nowForTest())
+		},
+		"GrantRequests.Resolve": func() error {
+			return s.GrantRequests().Resolve(ctx, "", "r", GrantRequestResolution{
+				State: GrantRequestDenied, At: nowForTest(),
+			})
+		},
+		"Decisions.ListByGrant": func() error { _, err := s.Decisions().ListByGrant(ctx, "", "g", 1); return err },
+		"Decisions.SessionsByGrant": func() error {
+			_, _, err := s.Decisions().SessionsByGrant(ctx, "", "g", 1)
+			return err
+		},
 		"UIDCursors.Get":     func() error { _, err := s.UIDCursors().Get(ctx, "", "t"); return err },
 		"UIDCursors.Create":  func() error { return s.UIDCursors().Create(ctx, "", "t", 0, 10) },
 		"UIDCursors.Advance": func() error { _, err := s.UIDCursors().Advance(ctx, "", "t", 1); return err },

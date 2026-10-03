@@ -123,6 +123,15 @@ type DecisionRepository interface {
 	// first. It is the lookup an operator arrives with, because a session id
 	// is what the user was told; a chained session has one record per hop.
 	ListBySession(ctx context.Context, tenant Tenant, sessionID string, limit int) ([]Decision, error)
+	// ListByGrant returns the decisions a grant supplied, newest first,
+	// bounded by limit: "what did this grant let anybody do" (M10).
+	ListByGrant(ctx context.Context, tenant Tenant, grantID string, limit int) ([]Decision, error)
+	// SessionsByGrant returns the distinct sessions a grant backed — every
+	// allowed decision under it that named a proxy and a session — bounded by
+	// limit. It is what revocation ends. The boolean reports that the limit
+	// cut the answer short, so a caller can never mistake a partial list for
+	// the whole one.
+	SessionsByGrant(ctx context.Context, tenant Tenant, grantID string, limit int) ([]GrantSession, bool, error)
 }
 
 // AuditRepository is the append-only audit store (M8). 0010 owns the chain;
@@ -174,11 +183,34 @@ type GrantRepository interface {
 	// this subject at instant t. Revoked and expired grants are excluded by
 	// the index, not by the caller.
 	ListLive(ctx context.Context, tenant Tenant, subjectID string, at time.Time) ([]Grant, error)
-	// Revoke withdraws a grant at time t. Absent is ErrNotFound; a grant
-	// already revoked keeps its original revocation time, because the
-	// question an auditor asks is when access stopped, and the second
-	// answer is not more true than the first.
-	Revoke(ctx context.Context, tenant Tenant, grantID string, t time.Time) error
+	// List is the operator's list, newest first, bounded (GrantQuery).
+	List(ctx context.Context, tenant Tenant, q GrantQuery) ([]Grant, error)
+	// Revoke withdraws a grant. Absent is ErrNotFound. It reports whether
+	// THIS call revoked it: a grant already revoked keeps its original
+	// time, revoker and reason, because the question an auditor asks is when
+	// access stopped, and the second answer is not more true than the first.
+	Revoke(ctx context.Context, tenant Tenant, grantID string, r GrantRevocation) (bool, error)
+}
+
+// GrantRequestRepository stores the requests a registered grant workflow is
+// deciding (ext.GrantWorkflow). It is a separate table from grants on purpose:
+// a request is not access, and the decision path reads nothing here.
+type GrantRequestRepository interface {
+	// Insert stores a new request. A duplicate id is ErrConflict.
+	Insert(ctx context.Context, tenant Tenant, r GrantRequest) error
+	// Get returns one request. Absent is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, requestID string) (GrantRequest, error)
+	// ListPending returns pending requests, least recently polled first,
+	// bounded by limit.
+	ListPending(ctx context.Context, tenant Tenant, limit int) ([]GrantRequest, error)
+	// Polled records that a pending request was asked about at `at`, and
+	// the workflow's reference for it when the workflow has just confirmed
+	// one. A request that is no longer pending is left alone.
+	Polled(ctx context.Context, tenant Tenant, requestID, workflowRef string, at time.Time) error
+	// Resolve moves a pending request to a terminal state. A request that is
+	// not pending is ErrConflict: a decision is taken once, and two nodes
+	// polling the same workflow cannot both apply one.
+	Resolve(ctx context.Context, tenant Tenant, requestID string, r GrantRequestResolution) error
 }
 
 // UIDCursorRepository owns the uid non-reuse floor (PLAN §4).
