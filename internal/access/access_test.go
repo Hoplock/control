@@ -688,18 +688,21 @@ func TestAnAdministratorsGrantAndAnExternalOneDecideIdentically(t *testing.T) {
 	external := newHarness(t, withIDs())
 
 	adminGrant := admin.create(dbaFor30m())
-	// The external grant is written the way 0013's push path will write
-	// one: origin external, the system that asserted it, the reference,
-	// and the window it asserted — here the grant's own, so the deadline
-	// is the same too.
-	ext := adminGrant
-	ext.Origin = store.GrantOriginExternal
-	ext.CreatedBy = store.GrantActor{}
-	ext.External = store.GrantExternal{
-		System: "itsm", WindowStart: adminGrant.NotBefore, WindowEnd: adminGrant.ExpiresAt,
+	// The external grant is created the way 0013's push path creates one —
+	// through access.CreateExternal, audited, with origin external, the
+	// system that asserted it, the reference, and the window it asserted:
+	// here the grant's own, so the deadline is the same too.
+	spec := access.ExternalSpec{
+		Subject: alice,
+		Scope: access.Scope{Name: adminGrant.Scope, Labels: adminGrant.ScopeLabels,
+			Targets: []string{"db01.example.com"}},
+		NotBefore: adminGrant.NotBefore, ExpiresAt: adminGrant.ExpiresAt,
+		System: "itsm", AssertionID: "INC-9/1", Mode: store.ExternalPush, Reference: "INC-9",
+		WindowStart: adminGrant.NotBefore, WindowEnd: adminGrant.ExpiresAt,
+		Reason: "window asserted by itsm", Ceiling: time.Hour,
 	}
-	if err := external.store.Grants().Insert(t.Context(), tenant, ext); err != nil {
-		t.Fatalf("insert external grant: %v", err)
+	if _, _, err := external.grants.CreateExternal(t.Context(), tenant, scannerToken, spec); err != nil {
+		t.Fatalf("create the external grant: %v", err)
 	}
 
 	admin.advance(time.Minute)
@@ -1270,5 +1273,124 @@ func sameShape(a, b any) bool {
 		_, isMap := b.(map[string]any)
 		_, isList := b.([]any)
 		return !isMap && !isList
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The external path (M16, 0013)
+// ---------------------------------------------------------------------------
+
+var scannerToken = access.Actor{Principal: "p-scanner", DisplayName: "acme-scanner token", CorrelationID: "corr-push"}
+
+// externalFor30m is what a push the binding admitted arrives as: the window it
+// asserted, the window it is granted, and how that was bounded.
+func (h *harness) externalFor30m(assertion string) access.ExternalSpec {
+	now := h.now()
+	return access.ExternalSpec{
+		Subject:           alice,
+		Scope:             access.Scope{Name: "prod-dba", Targets: []string{"db01.example.com"}, Labels: map[string]string{"env": "prod"}},
+		NotBefore:         now,
+		ExpiresAt:         now.Add(30 * time.Minute),
+		System:            "itsm",
+		AssertionID:       assertion,
+		Mode:              store.ExternalPush,
+		Reference:         "CHG-42",
+		WindowStart:       now,
+		WindowEnd:         now.Add(2 * time.Hour),
+		AdditionalContext: json.RawMessage(`{"change_class":"standard"}`),
+		Reason:            "window asserted by itsm",
+		Ceiling:           30 * time.Minute,
+		Clamped:           true,
+	}
+}
+
+// A pushed window becomes a grant like any other: stored, audited with the
+// credential that pushed it in the same transaction — including that its
+// window was clamped — and announced naming the system.
+func TestAnExternalWindowIsAGrantAuditedWithItsCeiling(t *testing.T) {
+	h := newHarness(t)
+	g, replayed, err := h.grants.CreateExternal(t.Context(), tenant, scannerToken, h.externalFor30m("a-1"))
+	if err != nil || replayed {
+		t.Fatalf("CreateExternal = %v, replayed %v", err, replayed)
+	}
+	if g.Origin != store.GrantOriginExternal || g.External.System != "itsm" || g.External.AssertionID != "a-1" ||
+		g.External.Mode != store.ExternalPush || g.ExternalRef != "CHG-42" ||
+		g.External.AdditionalKind != store.AdditionalContextObject || g.CreatedBy.Principal != "p-scanner" {
+		t.Errorf("the stored grant = %+v", g)
+	}
+	if !g.ExpiresAt.Equal(h.now().Add(30*time.Minute)) || !g.External.WindowEnd.Equal(h.now().Add(2*time.Hour)) {
+		t.Errorf("windows: granted until %v, asserted until %v", g.ExpiresAt, g.External.WindowEnd)
+	}
+
+	recs := h.controlRecords(access.EventGrantCreated)
+	if len(recs) != 1 {
+		t.Fatalf("%d grant.created records, want 1", len(recs))
+	}
+	attrs := recs[0].Attributes
+	for k, want := range map[string]string{
+		audit.AttrGrantOrigin:            "external",
+		audit.AttrGrantExternalSystem:    "itsm",
+		audit.AttrGrantExternalAssertion: "a-1",
+		audit.AttrGrantExternalMode:      "push",
+		audit.AttrGrantExternalClamped:   "true",
+		audit.AttrGrantExternalCeiling:   "1800",
+		audit.AttrPrincipalID:            "p-scanner",
+	} {
+		if attrs[k] != want {
+			t.Errorf("audit attribute %s = %q, want %q", k, attrs[k], want)
+		}
+	}
+	n := h.notes.find(access.EventGrantCreated)
+	if n == nil || n.Attributes["external_system"] != "itsm" || n.Attributes["window_clamped"] != "true" {
+		t.Errorf("the announcement = %+v, want the system named and the clamp said", n)
+	}
+}
+
+// The same assertion twice is one grant — and a revoked one stays revoked,
+// because the external system saying it again is not a new decision.
+func TestAnAssertionPushedAgainIsTheSameGrantEvenRevoked(t *testing.T) {
+	h := newHarness(t)
+	first, _, err := h.grants.CreateExternal(t.Context(), tenant, scannerToken, h.externalFor30m("a-1"))
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	again, replayed, err := h.grants.CreateExternal(t.Context(), tenant, scannerToken, h.externalFor30m("a-1"))
+	if err != nil || !replayed || again.ID != first.ID {
+		t.Fatalf("second = %s, replayed %v, %v; want %s replayed", again.ID, replayed, err, first.ID)
+	}
+
+	if _, err := h.grants.Revoke(t.Context(), tenant, operator, first.ID, "scan cancelled"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	third, replayed, err := h.grants.CreateExternal(t.Context(), tenant, scannerToken, h.externalFor30m("a-1"))
+	if err != nil || !replayed || third.ID != first.ID || third.RevokedAt.IsZero() {
+		t.Fatalf("after revocation = %+v, replayed %v, %v; want the revoked grant", third, replayed, err)
+	}
+	if n := len(h.controlRecords(access.EventGrantCreated)); n != 1 {
+		t.Errorf("%d grant.created records for one assertion, want 1", n)
+	}
+}
+
+// `additional_context` is a JSON string or a JSON object and nothing else; a
+// pushed window that names no host is one nobody can audit.
+func TestAnExternalWindowIsRefusedWhenMalformed(t *testing.T) {
+	h := newHarness(t)
+	for name, mutate := range map[string]func(*access.ExternalSpec){
+		"a number":     func(s *access.ExternalSpec) { s.AdditionalContext = json.RawMessage(`42`) },
+		"a list":       func(s *access.ExternalSpec) { s.AdditionalContext = json.RawMessage(`["a"]`) },
+		"no host":      func(s *access.ExternalSpec) { s.Scope.Targets = nil },
+		"no assertion": func(s *access.ExternalSpec) { s.AssertionID = "" },
+		"probe mode":   func(s *access.ExternalSpec) { s.Mode = store.ExternalProbe },
+		"empty window": func(s *access.ExternalSpec) { s.ExpiresAt = s.NotBefore },
+	} {
+		spec := h.externalFor30m("a-" + name)
+		mutate(&spec)
+		var verr *access.ValidationError
+		if _, _, err := h.grants.CreateExternal(t.Context(), tenant, scannerToken, spec); !errors.As(err, &verr) {
+			t.Errorf("%s: err = %v, want a validation error", name, err)
+		}
+	}
+	if !access.AdditionalContextValid(json.RawMessage(`"a sentence"`)) || access.AdditionalContextValid(json.RawMessage(`true`)) {
+		t.Error("AdditionalContextValid disagrees with the contract's string-or-object rule")
 	}
 }
