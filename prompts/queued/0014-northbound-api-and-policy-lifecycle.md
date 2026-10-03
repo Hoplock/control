@@ -5,9 +5,12 @@
   endpoint may not outlive the phase that needed it. **This phase is limb 4 of
   that rule for two debug paths** (below): the removals are obligations here,
   not suggestions.
-- `docs/PLAN.md` — especially **§2 (M2, M3, M4, M9, M15, M17)**, §5 (the bundle
-  and the explanation, including §5.2's enforcement rungs and session deadline,
-  and §5.4's cache-hint invariants), §7 (audit query).
+- `docs/PLAN.md` — especially **§2 (M2, M3, M4, M9, M15, M16, M17)**, §5 (the
+  bundle and the explanation, including §5.2's enforcement rungs and session
+  deadline, §5.4's cache-hint invariants, and §5.5's external access context —
+  what a decision record says about a window a provider pushed or probed), §7
+  (audit query, and the external-context records). Open `0013`'s learnings
+  for the binding API and the record fields this surface renders.
 - `docs/learnings/` — read summaries; open `0005` (bundle, compiler errors,
   explanation type), `0006` (the capability query this surface exposes), `0008`
   (decision records), `0010` (audit query layer), `0009` (publishing an operator
@@ -1511,6 +1514,42 @@ Read-only, and no privilege to change it: registration happens before the
 server starts and is immutable afterwards (0004), so there is nothing here to
 mutate and an endpoint that appeared to offer it would be lying.
 
+### External access context: providers, scope bindings, and why a grant exists (0013, M16)
+0013 built the mechanism and left this surface its management, so that an
+operator can do with an API what 0013's tests do with Go. What exists:
+`accessctx.Service.PutBinding` / `Binding` / `Bindings` / `DeleteBinding` —
+validated against the providers the server runs and audited in their own
+transaction (`access_context.binding_put` / `binding_deleted`) —
+`accessctx.Providers.List()` (every provider by its external system's name, the
+directions it implements, and the registration behind it), and the push receiver
+itself, already served (`POST .../access-context/{provider}/push`,
+`access-context:push`). **Until this phase lands there is no operator path to a
+binding**, so no integration can assert anything anywhere: build these routes
+over that API rather than beside it.
+
+- **Bindings:** list, get, put and delete under
+  `/tenants/{tenant}/access-context/bindings[/{provider}]`. Add
+  `access-context:read` (in every person's read set: a binding says who may open
+  what, and an auditor reads it) and `access-context:write` (the admin's; a
+  binding is a standing pre-approval to open access, larger than `grant:write`,
+  so give it to no narrower role without deciding so in the plan). The
+  `integration` role holds neither — it reads nothing. Render a binding whole,
+  `push_principals` by principal id, and answer `access.ValidationError` and
+  accessctx's `Problem*` codes field by field as the grant routes do (M21).
+- **Providers:** a read-only listing beside the extension registry's (below):
+  the system name, `probes`/`pushes`, and the registration — the names a binding
+  may use.
+- **Grants:** the grant views already carry `external`; add its `mode` and
+  `assertion_id` (`store.GrantExternal`), so a pushed window that counts only
+  while its probe confirms it is visibly that.
+- **Explain** renders `explanation.external` (provider, reference, window,
+  `arrived`, `confirmed`, `fell`), `explanation.unanswered`, and
+  `inputs.external_context[]` whole; an `unserved` record whose `unserved` names
+  an undetermined window is explained as the outage it was, not as a denial.
+- **Simulation** replays `inputs.grants[]` — which holds only the windows that
+  counted — and **never re-probes**: a probe's answer is a recorded input, and
+  asking a scanner about last week now is a different question.
+
 ### `cmd/policyctl`
 The same operations from a terminal: `validate`, `diff`, `simulate`, `apply`,
 `explain`. It talks to the north-bound API — never to the database directly, or
@@ -1584,6 +1623,13 @@ phases earlier, not discovered there.
 ## Acceptance criteria
 - Role enforcement is tested per route, including an auditor token being refused
   a policy activation.
+- External access context (0013): a binding written over this surface is
+  validated and audited exactly as `accessctx.Service.PutBinding` is; an
+  `integration` credential can neither read nor write one; the provider listing
+  names every provider by system; explain renders a decision a probed window
+  supplied with its provider, reference and window, and a denial or an outage an
+  unanswered probe caused with which way it fell; simulation never calls a
+  provider.
 - A north-bound route is not reachable on the south-bound listener, and vice
   versa.
 - Upload → validate (with a deliberately broken bundle, asserting the error text
