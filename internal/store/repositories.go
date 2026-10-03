@@ -179,6 +179,10 @@ type GrantRepository interface {
 	Insert(ctx context.Context, tenant Tenant, g Grant) error
 	// Get returns one grant. Absent is ErrNotFound.
 	Get(ctx context.Context, tenant Tenant, grantID string) (Grant, error)
+	// GetByAssertion returns the grant a push of this assertion produced,
+	// by the external system's name and the assertion's own id (0013).
+	// Absent is ErrNotFound.
+	GetByAssertion(ctx context.Context, tenant Tenant, system, assertionID string) (Grant, error)
 	// ListLive is the decision path's query: the grants that are inputs for
 	// this subject at instant t. Revoked and expired grants are excluded by
 	// the index, not by the caller.
@@ -190,6 +194,21 @@ type GrantRepository interface {
 	// time, revoker and reason, because the question an auditor asks is when
 	// access stopped, and the second answer is not more true than the first.
 	Revoke(ctx context.Context, tenant Tenant, grantID string, r GrantRevocation) (bool, error)
+}
+
+// AccessContextBindingRepository stores what each external-context integration
+// may ever assert in a tenant (M16, 0013): one binding per provider.
+type AccessContextBindingRepository interface {
+	// Put creates or replaces a provider's binding. The row's own shape —
+	// someone to grant to, something to name, a positive window — is
+	// enforced by the schema; the rest is the caller's to validate.
+	Put(ctx context.Context, tenant Tenant, b AccessContextBinding) error
+	// Get returns one provider's binding. Absent is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, provider string) (AccessContextBinding, error)
+	// List returns every binding in the tenant, by provider.
+	List(ctx context.Context, tenant Tenant) ([]AccessContextBinding, error)
+	// Delete removes a provider's binding and reports whether there was one.
+	Delete(ctx context.Context, tenant Tenant, provider string) (bool, error)
 }
 
 // GrantRequestRepository stores the requests a registered grant workflow is

@@ -19,7 +19,8 @@ const grantColumns = `grant_id, subject_id, scope, scope_targets, scope_labels, 
 	`request_id, approval_ref, approvers, external_ref, ` +
 	`external_system, external_window_start, external_window_end, ` +
 	`external_additional_kind, external_additional, ` +
-	`revoked_at, revoked_by, revoked_by_principal, revoke_reason, created_at`
+	`revoked_at, revoked_by, revoked_by_principal, revoke_reason, created_at, ` +
+	`external_assertion_id, external_mode`
 
 // defaultGrantLimit and maxGrantLimit bound an operator's list. There is no
 // unbounded list on this surface, for the reason there is none beside the
@@ -59,9 +60,10 @@ func (r grantRepo) Insert(ctx context.Context, tenant Tenant, g Grant) error {
 		                    request_id, approval_ref, approvers, external_ref,
 		                    external_system, external_window_start, external_window_end,
 		                    external_additional_kind, external_additional, revoked_at,
-		                    revoked_by, revoked_by_principal, revoke_reason)
+		                    revoked_by, revoked_by_principal, revoke_reason,
+		                    external_assertion_id, external_mode)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-		        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`,
+		        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`,
 		tenant, g.ID, g.SubjectID, g.Scope,
 		nonNilStrings(g.ScopeTargets), nonNilMap(g.ScopeLabels), nonNilStrings(g.ScopeZones),
 		notBefore, g.ExpiresAt, string(g.Origin), g.ReasonCode, g.Reason,
@@ -69,8 +71,31 @@ func (r grantRepo) Insert(ctx context.Context, tenant Tenant, g Grant) error {
 		g.RequestID, g.ApprovalRef, nonNilStrings(g.Approvers), g.ExternalRef,
 		g.External.System, nullableTime(g.External.WindowStart), nullableTime(g.External.WindowEnd),
 		g.External.AdditionalKind, g.External.Additional, nullableTime(g.RevokedAt),
-		g.RevokedBy.Subject, g.RevokedBy.Principal, g.RevokeReason)
+		g.RevokedBy.Subject, g.RevokedBy.Principal, g.RevokeReason,
+		g.External.AssertionID, string(g.External.Mode))
 	return wrap(op, err)
+}
+
+func (r grantRepo) GetByAssertion(ctx context.Context, tenant Tenant, system, assertionID string) (Grant, error) {
+	const op = "store.Grants.GetByAssertion"
+	if err := checkTenant(op, tenant); err != nil {
+		return Grant{}, err
+	}
+	if system == "" || assertionID == "" {
+		return Grant{}, invalid(op, "a system and an assertion id are required")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	// Served by grants_external_assertion_key (0009), the same unique index
+	// that makes a second insert of one assertion impossible.
+	row := r.s.db.QueryRow(ctx, `
+		SELECT `+grantColumns+`
+		FROM grants
+		WHERE tenant = $1 AND external_system = $2 AND external_assertion_id = $3`,
+		tenant, system, assertionID)
+	return scanGrant(op, row)
 }
 
 func (r grantRepo) Get(ctx context.Context, tenant Tenant, grantID string) (Grant, error) {
@@ -247,6 +272,7 @@ func scanGrant(op string, row rowScanner) (Grant, error) {
 	var (
 		g          Grant
 		origin     string
+		mode       string
 		windowFrom *time.Time
 		windowTo   *time.Time
 		revokedAt  *time.Time
@@ -257,11 +283,13 @@ func scanGrant(op string, row rowScanner) (Grant, error) {
 		&g.RequestID, &g.ApprovalRef, &g.Approvers, &g.ExternalRef,
 		&g.External.System, &windowFrom, &windowTo,
 		&g.External.AdditionalKind, &g.External.Additional,
-		&revokedAt, &g.RevokedBy.Subject, &g.RevokedBy.Principal, &g.RevokeReason, &g.CreatedAt)
+		&revokedAt, &g.RevokedBy.Subject, &g.RevokedBy.Principal, &g.RevokeReason, &g.CreatedAt,
+		&g.External.AssertionID, &mode)
 	if err != nil {
 		return Grant{}, wrap(op, err)
 	}
 	g.Origin = GrantOrigin(origin)
+	g.External.Mode = ExternalMode(mode)
 	g.External.WindowStart = timeOrZero(windowFrom)
 	g.External.WindowEnd = timeOrZero(windowTo)
 	g.RevokedAt = timeOrZero(revokedAt)

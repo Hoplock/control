@@ -4,6 +4,7 @@
 package compile
 
 import (
+	"maps"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -39,6 +40,7 @@ func Compile(b *model.Bundle) (*Program, error) {
 		digest:   b.Digest(),
 		location: b.Location(),
 		rules:    make([]Rule, 0, len(b.Rules)),
+		scopes:   maps.Clone(b.Scopes),
 	}
 	for i := range b.Rules {
 		prog.rules = append(prog.rules, c.rule(&b.Rules[i]))

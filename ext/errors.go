@@ -95,9 +95,12 @@ var (
 	// ErrDenied reports a deliberate refusal.
 	ErrDenied = errors.New("ext: denied")
 	// ErrNoEvidence reports that an AccessContextProvider has nothing to say
-	// about the access being asked about. It is not a denial and not a
-	// failure: silence is evidence of absence only if policy says it is, and
-	// that is policy's decision to make, not the provider's.
+	// about the access being asked about. Control reads it exactly as
+	// evidence with State WindowNotConfirmed: the external system answered,
+	// and no window is open. It is not a denial and not a failure — what the
+	// absence of a window is worth is policy's decision, not the provider's —
+	// and it is never "could not determine", which is an error of another
+	// kind (see AccessContextProvider).
 	ErrNoEvidence = errors.New("ext: no evidence")
 )
 

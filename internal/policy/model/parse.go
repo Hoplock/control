@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	// tzdata is embedded on purpose. A bundle names an IANA location and the
 	// compiler resolves it, so without this the same bundle compiles on a
@@ -102,6 +103,14 @@ func (b *Bundle) Validate() Rejections {
 	if len(b.Rules) == 0 {
 		rs = append(rs, Reject(CodeNoRules, "", 0))
 	}
+	for name, d := range b.Scopes {
+		if !ValidScopeName(name) {
+			rs = append(rs, Reject(CodeScopeNameInvalid, "", d.line, "scope", strconv.Quote(name)))
+		}
+		if d.Privileged && d.Unanswered == UnansweredOpen {
+			rs = append(rs, Reject(CodeScopePrivilegedFailOpen, "", d.line, "scope", name))
+		}
+	}
 	if b.Timezone != "" {
 		if _, err := time.LoadLocation(b.Timezone); err != nil {
 			rs = append(rs, Reject(CodeTimezoneUnknown, "", 0, "timezone", b.Timezone))
@@ -139,6 +148,21 @@ func (b *Bundle) Validate() Rejections {
 	return rs.Sorted()
 }
 
+// MaxScopeNameLen bounds a grant scope's name, here and wherever a grant is
+// written.
+const MaxScopeNameLen = 128
+
+// ValidScopeName reports whether name can be a grant scope: what a grant
+// carries and a rule matches with `grant.scopes`. It is trimmed, non-empty, at
+// most MaxScopeNameLen characters, and free of control characters — the rule a
+// grant's scope is held to when it is created (0012).
+func ValidScopeName(name string) bool {
+	if name == "" || name != strings.TrimSpace(name) || len(name) > MaxScopeNameLen {
+		return false
+	}
+	return !strings.ContainsFunc(name, unicode.IsControl)
+}
+
 // attachRuleLines walks the parsed document for the line each rule starts on.
 // Rules are a sequence, so the i-th element is the i-th rule; a document whose
 // shape does not match simply leaves the lines at zero, and a rejection with no
@@ -152,6 +176,10 @@ func attachRuleLines(root *yaml.Node, b *Bundle) {
 		return
 	}
 	for i := 0; i+1 < len(doc.Content); i += 2 {
+		if doc.Content[i].Value == "scopes" {
+			attachScopeLines(doc.Content[i+1], b)
+			continue
+		}
 		if doc.Content[i].Value != "rules" {
 			continue
 		}
@@ -165,6 +193,21 @@ func attachRuleLines(root *yaml.Node, b *Bundle) {
 			}
 		}
 		return
+	}
+}
+
+// attachScopeLines records the line each scope declaration starts on: the line
+// of its key, which is where an author looks for it.
+func attachScopeLines(m *yaml.Node, b *Bundle) {
+	if m.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		name := m.Content[i].Value
+		if d, ok := b.Scopes[name]; ok {
+			d.line = m.Content[i].Line
+			b.Scopes[name] = d
+		}
 	}
 }
 

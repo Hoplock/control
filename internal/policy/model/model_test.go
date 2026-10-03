@@ -385,3 +385,85 @@ rules:
 		t.Error("a malformed duration was accepted")
 	}
 }
+
+// The `scopes` section (M16): what the policy says about a grant scope beyond
+// the rules that match it. A privileged scope can never fall open on an
+// unanswered probe — the one combination that would grant privileged access on
+// a stale assertion — and the rejection places itself on the declaration.
+func TestScopeDeclarations(t *testing.T) {
+	b := parse(t, `schema_version: 1
+tenant: acme
+scopes:
+  vuln-scan:
+    description: the scanner's root window
+    privileged: true
+  change-window:
+    unanswered: open
+  incident:
+    privileged: true
+    unanswered: outage
+rules:
+  - id: first
+    effect: allow
+    route: {intent: direct, channels: [session], filter: {mode: whitelist}}
+`)
+	if rs := b.Validate(); len(rs) != 0 {
+		t.Fatalf("a valid scopes section was refused: %v", rs)
+	}
+	scan := b.Scopes["vuln-scan"]
+	if !scan.Privileged || scan.Unanswered != model.UnansweredUnset || scan.Line() != 4 {
+		t.Errorf("vuln-scan = %+v (line %d)", scan, scan.Line())
+	}
+	if got := b.Scopes["change-window"].Unanswered; got != model.UnansweredOpen {
+		t.Errorf("change-window unanswered = %q, want open", got)
+	}
+
+	refused := parse(t, `schema_version: 1
+tenant: acme
+scopes:
+  vuln-scan: {privileged: true, unanswered: open}
+  " padded": {}
+rules:
+  - id: first
+    effect: allow
+    route: {intent: direct, channels: [session], filter: {mode: whitelist}}
+`)
+	rs := refused.Validate()
+	if !rs.Has(model.CodeScopePrivilegedFailOpen) || !rs.Has(model.CodeScopeNameInvalid) {
+		t.Fatalf("rejections = %v, want the fail-open and the name refused", rs)
+	}
+	for _, r := range rs {
+		if r.Code == model.CodeScopePrivilegedFailOpen && r.Line != 4 {
+			t.Errorf("the fail-open rejection is at line %d, want the declaration's, 4", r.Line)
+		}
+	}
+
+	// An answer outside the closed set is a decode error naming the set, not
+	// a value quietly read as the default.
+	_, err := model.Parse([]byte(`schema_version: 1
+tenant: acme
+scopes:
+  vuln-scan: {unanswered: allow}
+rules:
+  - {id: r, effect: deny, reason: no}
+`))
+	if err == nil || !strings.Contains(err.Error(), "outage") {
+		t.Errorf("an unknown unanswered setting = %v, want a decode error naming the vocabulary", err)
+	}
+}
+
+func TestValidScopeName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"prod-dba":               true,
+		"vuln scan":              true,
+		"":                       false,
+		" padded":                false,
+		"tab\tinside":            false,
+		strings.Repeat("s", 128): true,
+		strings.Repeat("s", 129): false,
+	} {
+		if got := model.ValidScopeName(name); got != want {
+			t.Errorf("ValidScopeName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

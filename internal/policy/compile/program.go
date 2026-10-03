@@ -24,6 +24,20 @@ type Program struct {
 	digest   string
 	location *time.Location
 	rules    []Rule
+	scopes   map[string]model.ScopeDecl
+}
+
+// Scope returns what the policy declares about a grant scope (M16), and
+// whether it declares anything. An undeclared scope is the zero ScopeDecl: not
+// privileged, and no answer of its own for an unanswered probe.
+//
+// The engine never calls this. It is read by the layer that decides which
+// external windows a decision may count, and by the push receiver deciding
+// whether an integration may open one — which is why it lives on the program
+// those two already hold rather than in a second copy of the bundle.
+func (p *Program) Scope(name string) (model.ScopeDecl, bool) {
+	d, ok := p.scopes[name]
+	return d, ok
 }
 
 // Tenant is the tenant this program serves.

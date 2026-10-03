@@ -185,3 +185,21 @@ func TestANilPrincipalMayActNowhere(t *testing.T) {
 		t.Fatal("a nil principal resolved a tenant")
 	}
 }
+
+// The integration role is somebody else's software holding a credential here:
+// it may push a window and do nothing else, and in particular read nothing —
+// not the grants its own pushes became, not the audit chain, not the policy.
+func TestTheIntegrationRoleCanOnlyPush(t *testing.T) {
+	got := identity.RoleIntegration.Permissions()
+	if len(got) != 1 || got[0] != identity.PermAccessContextPush {
+		t.Errorf("the integration role holds %v, want only %s", got, identity.PermAccessContextPush)
+	}
+	for _, role := range identity.AllRoles {
+		if role != identity.RoleIntegration && role != identity.RoleAdmin && role.Can(identity.PermAccessContextPush) {
+			t.Errorf("%s may push external windows; only an integration's credential (and the admin) may", role)
+		}
+	}
+	if r, err := identity.ParseRole("integration"); err != nil || r != identity.RoleIntegration {
+		t.Errorf("ParseRole(integration) = %v, %v", r, err)
+	}
+}

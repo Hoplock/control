@@ -423,3 +423,101 @@ notify:
 
   # One delivery attempt's bound.
   webhook_timeout: 5s
+
+# External access context (PLAN M16, phase 0013). Optional; every field has the
+# default shown, and with no providers nothing external is ever consulted.
+#
+# An external system — a vulnerability scanner, a change-ticket system — opens a
+# time-boxed, target-scoped window: by PUSHING it to
+# `POST /api/v1/tenants/{tenant}/access-context/{provider}/push` with a token
+# holding the `integration` role, by being PROBED on the authorize call, or both
+# (a push opens the window, a probe confirms it). A window that is admitted is a
+# GRANT, and policy decides what it permits (`grant.scopes`), never the provider.
+#
+# Nothing here lets an integration assert anything in a tenant. That is the
+# tenant's SCOPE BINDING for the provider: who it may grant to, what it may
+# name, the one grant scope it produces, its longest window, whether it may open
+# privileged access, which token may push for it. A push outside it is refused
+# and audited as an attempted privilege escalation.
+access_context:
+  # The deadline on every probe one authorize call makes, all at once. At most
+  # half of decision.budget: the other half is the decision's own, and a probe
+  # that could consume all of it makes every connection hostage to a third
+  # party's availability. A probe that misses it is recorded as undetermined.
+  probe_budget: 500ms
+
+  # The server's ceiling on an external window's length, after the binding's
+  # own maximum. A push asking for more is CLAMPED to it, not refused, and the
+  # audit record says so. At most grants.max_duration.
+  max_window: 12h
+
+  # How far an external system's clock may disagree with this one, and how old
+  # a pushed assertion may be when it says when it was issued.
+  clock_skew: 2m
+  max_assertion_age: 15m
+
+  # What an unanswered probe means for a scope the policy neither marks
+  # privileged nor gives an answer of its own (a bundle's `scopes:` section):
+  # closed (the window does not count), outage (if the decision depends on the
+  # window, the call is an outage, never "access denied"), or open (a pushed
+  # window counts unconfirmed). A privileged scope is closed whatever this says.
+  unanswered: outage
+
+  # The longest any probe answer is reused, whatever a provider's TTL says, and
+  # how many probes one provider may have in flight before new ones answer
+  # "undetermined: saturated" rather than start another.
+  max_probe_ttl: 5m
+  max_probes_in_flight: 32
+
+  # One integration's pushes per tenant: sustained per second, and at once.
+  # Past them a push is answered 429 with Retry-After.
+  push_rate: 5
+  push_burst: 20
+
+  # The largest push body accepted.
+  max_push_bytes: 65536
+
+  # Where a declarative provider may connect. A provider's host is fixed by its
+  # URL — a template fills a path or a query, never a scheme, host or port —
+  # and every connection is checked at DIAL TIME against the address actually
+  # dialled. Loopback, private, link-local (the cloud metadata service), CGNAT,
+  # reserved, multicast and unspecified addresses are refused unless a prefix
+  # here admits them. Redirects are never followed; no environment proxy is
+  # used.
+  egress:
+    allow_cidrs: []
+    # allow_cidrs: [10.20.0.0/16]   # an on-premises scanner's subnet
+
+  # Control's declarative HTTP providers: configured, not coded. Each is
+  # registered as its own provider, `hoplock/control/declarative/<name>`.
+  providers: []
+  # - name: acme-scanner
+  #   probe:
+  #     # Placeholders: {{tenant}} {{subject.id}} {{target.hostname}}
+  #     # {{target.zone}} {{reference}} {{scope}} {{at}} — each escaped for
+  #     # where it lands. https, or http to a loopback host only.
+  #     url: https://scanner.example.com/api/scans/active?host={{target.hostname}}
+  #     method: GET                   # or POST, with a JSON `body:` template
+  #     auth:
+  #       type: bearer                # none | bearer | basic | header
+  #       token_env: ACME_SCANNER_TOKEN
+  #     timeout: 300ms                # at most probe_budget
+  #     ttl: 30s                      # how long an answer is reused
+  #     absent_status: [404]          # statuses that mean "no such window"
+  #     confirm:                      # ALL must hold for a 2xx to confirm
+  #       - {path: "$.state", equals: running}
+  #       - {path: "$.hosts", contains: "{{target.hostname}}"}
+  #     reference: "$.scan_id"        # required, unless confirming a pushed one
+  #     window_start: "$.started_at"  # RFC 3339 text or Unix seconds
+  #     window_end: "$.ends_at"
+  #     additional_context: "$.profile"   # a JSON string or object, recorded
+  #     assertions: {profile: "$.profile.name"}
+  #   push:                           # JSON paths into what the system POSTs
+  #     id: "$.event.id"              # the idempotency key; required
+  #     reference: "$.scan.id"
+  #     subject: "$.scan.operator"    # required
+  #     targets: "$.scan.hosts[*]"    # required: hostnames or *.wildcards
+  #     window_start: "$.scan.start"
+  #     window_end: "$.scan.end"      # required
+  #     issued_at: "$.sent_at"
+  #     additional_context: "$.scan.profile"

@@ -74,6 +74,10 @@ type Event struct {
 	Grant *store.Grant
 	// Request is the workflow request involved, when there is one.
 	Request *store.GrantRequest
+	// External is what a push carried beyond the grant it became: the
+	// ceiling applied to it and whether it bit. Nil for every act that was
+	// not an external system's push (M16).
+	External *ExternalAct
 	// At is when it happened.
 	At time.Time
 }
@@ -158,6 +162,15 @@ func notification(tenant store.Tenant, ev Event) ext.Notification {
 		attrs["expires_at"] = g.ExpiresAt.UTC().Format(time.RFC3339)
 		if g.ExternalRef != "" {
 			attrs["external_ref"] = g.ExternalRef
+		}
+		if g.External.System != "" {
+			attrs["external_system"] = g.External.System
+		}
+		if g.External.Mode != "" {
+			attrs["external_mode"] = string(g.External.Mode)
+		}
+		if ev.External != nil && ev.External.Clamped {
+			attrs["window_clamped"] = "true"
 		}
 		if ev.Name == EventGrantRevoked {
 			attrs["revoke_reason"] = g.RevokeReason

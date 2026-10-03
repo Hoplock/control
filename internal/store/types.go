@@ -422,6 +422,85 @@ type GrantExternal struct {
 	// Additional is the JSON text that arrived.
 	AdditionalKind string
 	Additional     string
+	// AssertionID is the push's own id in the external system: the
+	// idempotency key, unique per tenant and system (0013). Empty for every
+	// grant no push produced.
+	AssertionID string
+	// Mode is how the window arrived: ExternalPush, or ExternalPushProbe
+	// when it counts only while its provider's probe confirms it. Empty for
+	// every grant no push produced.
+	Mode ExternalMode
+}
+
+// ExternalMode is how an external window reaches a decision (M16).
+type ExternalMode string
+
+const (
+	// ExternalPush is a pushed window the integration's binding trusts on
+	// its own: the push is the whole assertion.
+	ExternalPush ExternalMode = "push"
+	// ExternalProbe is a window only a probe asserts, confirmed per decision.
+	// It is never a stored grant's mode: it lives in the decision record that
+	// relied on it.
+	ExternalProbe ExternalMode = "probe"
+	// ExternalPushProbe is M16's default composition: a push opens the
+	// window, and it counts only while the provider's probe confirms it.
+	ExternalPushProbe ExternalMode = "push-probe"
+)
+
+// Valid reports whether m is one of the three modes.
+func (m ExternalMode) Valid() bool {
+	switch m {
+	case ExternalPush, ExternalProbe, ExternalPushProbe:
+		return true
+	}
+	return false
+}
+
+// Pushes reports whether an integration in this mode accepts pushes.
+func (m ExternalMode) Pushes() bool { return m == ExternalPush || m == ExternalPushProbe }
+
+// Probes reports whether a window in this mode is confirmed by a probe.
+func (m ExternalMode) Probes() bool { return m == ExternalProbe || m == ExternalPushProbe }
+
+// AccessContextBinding is what one integration may EVER assert in one tenant:
+// the pre-registered scope M16 requires of every push, and the bound on every
+// probe. A push outside it is refused and audited as an attempted privilege
+// escalation; nothing an integration asserts can reach past it.
+type AccessContextBinding struct {
+	// Provider is the provider's name (ext.AccessContextInfo.Name).
+	Provider string
+	// Mode is whether the integration pushes, probes, or both.
+	Mode ExternalMode
+	// Scope is the grant scope every window from this integration carries.
+	Scope string
+	// Subjects and SubjectGroups are who it may grant to: these subject ids,
+	// or members of these groups. At least one of the two is non-empty.
+	Subjects      []string
+	SubjectGroups []string
+	// Targets, TargetLabels and TargetZones are what it may name, in a grant
+	// scope's own shape and ANDed. At least one is non-empty.
+	Targets      []string
+	TargetLabels map[string]string
+	TargetZones  []string
+	// MaxWindow is the longest window it may open; the server's ceiling
+	// applies on top.
+	MaxWindow time.Duration
+	// Privileged is whether it may open a window in a scope the policy marks
+	// privileged.
+	Privileged bool
+	// PushPrincipals are the north-bound principal ids that may push for it.
+	// Empty means none may.
+	PushPrincipals []string
+	// Enabled is false for a binding kept but not in force: no push is
+	// accepted and no probe is asked.
+	Enabled bool
+	// Description is free text for whoever reads the binding next.
+	Description string
+	// UpdatedBy is who last wrote it.
+	UpdatedBy GrantActor
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // GrantState is where a grant stands at an instant. Three of the four are a

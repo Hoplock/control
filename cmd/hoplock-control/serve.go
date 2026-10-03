@@ -86,6 +86,14 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		identity.WithMaxPolls(cfg.MFA.MaxPolls),
 	)
 
+	// External access context's probe path (0013, M16): the providers the
+	// sealed registry holds, asked on the authorize call inside their share
+	// of the budget. Built before the decision service, which holds it.
+	contextProviders, prober, err := buildProber(cfg, st, extensions, log)
+	if err != nil {
+		return err
+	}
+
 	// The composition root for `/v1/authorize` (0008). It holds the
 	// compiled policy and the fleet graph in memory rather than reloading
 	// either per request: a proxy is holding a user's handshake open while
@@ -97,6 +105,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		Logger:   log,
 		Refresh:  cfg.Decision.Refresh,
 		Budget:   cfg.Decision.Budget,
+		External: prober,
 	})
 	if err != nil {
 		return err
@@ -177,7 +186,15 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	defer stopPolling()
 	go grants.Watch(pollCtx, cfg.Grants.WorkflowPollInterval)
 
-	northSrv, northHandler, err := buildNorth(ctx, cfg, st, emitter, grants, log)
+	// The push receiver (0013): an admitted window becomes a grant through
+	// the grant service, and whether a scope is privileged is the active
+	// policy's to say, which the decision service already holds.
+	pushes, err := buildPushReceiver(cfg, st, grants, emitter, contextProviders, decisions, log)
+	if err != nil {
+		return err
+	}
+
+	northSrv, northHandler, err := buildNorth(ctx, cfg, st, emitter, grants, pushes, log)
 	if err != nil {
 		return err
 	}

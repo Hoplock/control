@@ -76,6 +76,11 @@ const (
 	// PermDecisionRead is resolving a decision or session id into the whole
 	// story (M4).
 	PermDecisionRead Permission = "decision:read"
+	// PermAccessContextPush is asserting a window to an external-context
+	// integration's push receiver (M16, 0013). It is the one thing the
+	// integration role can do, and what it can reach is decided again per
+	// push: the integration's scope binding must name this very credential.
+	PermAccessContextPush Permission = "access-context:push"
 )
 
 // AllPermissions is every permission, in a stable order. A test asserts each
@@ -88,12 +93,22 @@ var AllPermissions = []Permission{
 	PermIdentityRead, PermIdentityWrite,
 	PermCARead, PermCARotate,
 	PermAuditRead, PermDecisionRead,
+	PermAccessContextPush,
 }
 
 // Role is a named permission set. Closed set (M13).
 type Role string
 
 const (
+	// RoleIntegration is an external system's credential (M16): a scanner's
+	// or a ticketing system's token. It may push a window assertion and do
+	// nothing else — it reads NOTHING, which makes it the one role without
+	// the read set below. That is deliberate: the credential sits in
+	// somebody else's software, and every grant, decision and audit record
+	// in the tenant is not that software's to read. What it may assert is
+	// bounded per push by the integration's scope binding, which must name
+	// this credential by its principal id.
+	RoleIntegration Role = "integration"
 	// RoleAuditor can read everything and change nothing. It is the role a
 	// compliance function holds, and it is deliberately total across the
 	// reads: an auditor who has to ask an engineer for a record is not an
@@ -112,10 +127,11 @@ const (
 
 // AllRoles is every role, in the order an operator would read them: least
 // privilege first.
-var AllRoles = []Role{RoleAuditor, RolePolicyAuthor, RoleGrantAdmin, RoleFleetAdmin, RoleAdmin}
+var AllRoles = []Role{RoleIntegration, RoleAuditor, RolePolicyAuthor, RoleGrantAdmin, RoleFleetAdmin, RoleAdmin}
 
-// readOnly is what every role can do, because a role that can change a thing
-// it cannot read is a role that changes things blind.
+// readOnly is what every role a PERSON holds can do, because a role that can
+// change a thing it cannot read is a role that changes things blind. The
+// integration role is the one exception, and its comment says why.
 var readOnly = []Permission{
 	PermPolicyRead, PermGrantRead, PermFleetRead,
 	PermIdentityRead, PermCARead, PermAuditRead, PermDecisionRead,
@@ -124,6 +140,7 @@ var readOnly = []Permission{
 // rolePermissions is the whole of RBAC's vocabulary. Read it as the product's
 // documentation of what each role means.
 var rolePermissions = map[Role][]Permission{
+	RoleIntegration:  {PermAccessContextPush},
 	RoleAuditor:      readOnly,
 	RolePolicyAuthor: append(slices.Clone(readOnly), PermPolicyWrite, PermPolicyPublish),
 	RoleGrantAdmin:   append(slices.Clone(readOnly), PermGrantWrite, PermGrantApprove),

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/access"
+	"github.com/hoplock/control/internal/accessctx"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
@@ -34,10 +35,12 @@ type Server struct {
 	federation *identity.Federation
 	ca         *credential.CA
 	grants     *access.Service
+	context    *accessctx.Service
 	log        *slog.Logger
 	now        func() time.Time
 
 	maxBodyBytes   int64
+	maxPushBytes   int64
 	requestTimeout time.Duration
 	secureCookies  bool
 	defaultTenant  store.Tenant
@@ -58,6 +61,14 @@ type Options struct {
 	// audit chain and the revocation stream are all core — so there is no
 	// configuration in which the grant routes should answer "not here".
 	Grants *access.Service
+	// AccessContext is the push receiver for external access context (M16,
+	// 0013). Nil runs no integration: every push answers
+	// `provider_not_found`, exactly as it would for a provider nobody
+	// configured.
+	AccessContext *accessctx.Service
+	// MaxPushBytes caps a push body, below the surface's own body limit.
+	// Zero takes DefaultMaxPushBytes.
+	MaxPushBytes int64
 	// Authenticator resolves a presented credential. Nil takes Federation,
 	// which is the production wiring; a test supplies its own.
 	Authenticator Authenticator
@@ -106,6 +117,8 @@ func New(o Options) (*Server, error) {
 		federation:     o.Federation,
 		ca:             o.CA,
 		grants:         o.Grants,
+		context:        o.AccessContext,
+		maxPushBytes:   o.MaxPushBytes,
 		log:            o.Logger,
 		now:            o.Now,
 		maxBodyBytes:   o.MaxBodyBytes,
@@ -127,6 +140,9 @@ func New(o Options) (*Server, error) {
 	}
 	if s.requestTimeout <= 0 {
 		s.requestTimeout = DefaultRequestTimeout
+	}
+	if s.maxPushBytes <= 0 {
+		s.maxPushBytes = DefaultMaxPushBytes
 	}
 
 	s.router = NewRouter(s.enforce)

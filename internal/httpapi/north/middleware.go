@@ -35,6 +35,10 @@ const (
 	// largest thing this surface will ever accept (0014); this is generous
 	// for it and finite for everything else.
 	DefaultMaxBodyBytes int64 = 4 << 20
+	// DefaultMaxPushBytes caps an external-context push (0013): a window
+	// assertion is a small JSON object, and an integration that sends a
+	// megabyte of one is broken or something worse.
+	DefaultMaxPushBytes int64 = 64 << 10
 	// DefaultRequestTimeout bounds a single request. A server-side timeout
 	// that ANSWERS beats a slow answer that looks like an outage.
 	DefaultRequestTimeout = 30 * time.Second

@@ -54,6 +54,20 @@ const (
 	// asks about it first, so it is a filter rather than a comparison.
 	AttrGrantSelfGranted = "grant_self_granted"
 
+	// The external path (M16, 0013). Prefixed `grant_external_` and never
+	// `grant_window_`, for the reason above: the asserted window of the act
+	// is not a session's grant context.
+	AttrGrantExternalSystem    = "grant_external_system"
+	AttrGrantExternalAssertion = "grant_external_assertion_id"
+	AttrGrantExternalMode      = "grant_external_mode"
+	AttrGrantExternalStart     = "grant_external_window_start"
+	AttrGrantExternalEnd       = "grant_external_window_end"
+	// AttrGrantExternalClamped marks a push that asked for a longer window
+	// than its ceiling and was given the ceiling. Clamped, not refused — and
+	// the record is where an auditor finds that it happened.
+	AttrGrantExternalClamped = "grant_external_clamped"
+	AttrGrantExternalCeiling = "grant_external_ceiling_seconds"
+
 	AttrRequestState   = "grant_request_state"
 	AttrRequestOutcome = "grant_request_outcome"
 	AttrRequestDetail  = "grant_request_outcome_text"
@@ -135,6 +149,19 @@ func (e *Emitter) GrantEvent(ctx context.Context, tx *store.Store, tenant store.
 		if g.CreatedBy.Subject != "" && g.CreatedBy.Subject == g.SubjectID {
 			attrs[AttrGrantSelfGranted] = "true"
 		}
+		put(attrs, AttrGrantExternalSystem, g.External.System)
+		put(attrs, AttrGrantExternalAssertion, g.External.AssertionID)
+		put(attrs, AttrGrantExternalMode, string(g.External.Mode))
+		if !g.External.WindowStart.IsZero() {
+			attrs[AttrGrantExternalStart] = stamp(g.External.WindowStart)
+		}
+		if !g.External.WindowEnd.IsZero() {
+			attrs[AttrGrantExternalEnd] = stamp(g.External.WindowEnd)
+		}
+	}
+	if x := ev.External; x != nil {
+		attrs[AttrGrantExternalClamped] = strconv.FormatBool(x.Clamped)
+		attrs[AttrGrantExternalCeiling] = strconv.FormatInt(int64(x.Ceiling/time.Second), 10)
 	}
 
 	actor := ev.Actor
@@ -204,6 +231,9 @@ func grantMessage(ev access.Event) string {
 		if ev.Workflow != "" {
 			return "grant created for " + holder(ev) + " on approval"
 		}
+		if ev.Grant != nil && ev.Grant.External.Mode != "" {
+			return "grant created for " + holder(ev) + " on a window " + ev.Grant.External.System + " asserted"
+		}
 		return "grant created for " + holder(ev)
 	case access.EventGrantRevoked:
 		return "grant revoked for " + holder(ev)
@@ -261,6 +291,11 @@ func putList(attrs map[string]string, key string, values []string) {
 // putLabels writes a label selector as sorted `k=v` pairs, one attribute, so
 // "every grant on env=prod" is a substring of one field.
 func putLabels(attrs map[string]string, labels map[string]string) {
+	putLabelsAs(attrs, AttrGrantLabels, labels)
+}
+
+// putLabelsAs writes labels as sorted `k=v` pairs under key.
+func putLabelsAs(attrs map[string]string, key string, labels map[string]string) {
 	if len(labels) == 0 {
 		return
 	}
@@ -269,5 +304,5 @@ func putLabels(attrs map[string]string, labels map[string]string) {
 		pairs = append(pairs, k+"="+v)
 	}
 	slices.Sort(pairs)
-	attrs[AttrGrantLabels] = strings.Join(pairs, ",")
+	attrs[key] = strings.Join(pairs, ",")
 }

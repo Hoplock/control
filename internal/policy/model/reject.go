@@ -118,6 +118,12 @@ const (
 	CodeEnforcementAppliedUnprovisioned  Code = "enforcement.applied_rung_unprovisioned"
 )
 
+// Scope-declaration codes: the `scopes` section (M16).
+const (
+	CodeScopeNameInvalid        Code = "scope.name_invalid"
+	CodeScopePrivilegedFailOpen Code = "scope.privileged_fails_open"
+)
+
 // Obligation-scope codes.
 const (
 	CodeObligationKindMissing Code = "obligation.kind_missing"
@@ -202,10 +208,12 @@ var messages = map[Code]string{
 	CodeEnforcementAttestationUnexpected: "an attestation is carried but no axis is `platform-attested` (execution is {execution}, reach is {reach}); an applied rung is configured by the proxy and has nobody to attribute",
 	CodeEnforcementAppliedUnprovisioned:  "enforcement.{axis} is {rung}, which the proxy applies to an account it administers, but every ladder entry is `brokered-key` or `static-key`; the proxy refuses that response outright — add an `ephemeral-user` or `ephemeral-account` entry, or use `platform-attested` if the target already enforces it",
 
-	CodeObligationKindMissing: "obligation {index} names no kind; use `record-session`, `require-approval` or `require-step-up`",
-	CodeObligationDuplicate:   "obligation {obligation} is listed twice; remove the duplicate",
-	CodeObligationOnDeny:      "a deny rule carries obligation {obligation}; obligations are things a permitted session must do, and a denied one has none",
-	CodeObligationContradicts: "obligation {obligation} contradicts the route: {detail}",
+	CodeScopeNameInvalid:        "scope {scope} is not a usable name; a scope name is the text a grant carries and a rule matches, so it may not be blank, padded, longer than 128 characters or contain control characters",
+	CodeScopePrivilegedFailOpen: "scope {scope} is privileged and says `unanswered: open`; a privileged window never counts on an unconfirmed push, so use `closed` or `outage`, or omit the key",
+	CodeObligationKindMissing:   "obligation {index} names no kind; use `record-session`, `require-approval` or `require-step-up`",
+	CodeObligationDuplicate:     "obligation {obligation} is listed twice; remove the duplicate",
+	CodeObligationOnDeny:        "a deny rule carries obligation {obligation}; obligations are things a permitted session must do, and a denied one has none",
+	CodeObligationContradicts:   "obligation {obligation} contradicts the route: {detail}",
 }
 
 // Rejection is one reason a bundle was refused. It is a value, not a sentence:

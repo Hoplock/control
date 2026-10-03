@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/access"
+	"github.com/hoplock/control/internal/accessctx"
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/policy/eval"
 	"github.com/hoplock/control/internal/policy/model"
@@ -72,6 +73,12 @@ type recordedInputs struct {
 	Context    recordedContext   `json:"context"`
 	Grants     []recordedGrant   `json:"grants,omitempty"`
 	Connection recordedConnState `json:"connection"`
+	// ExternalContext is every external window this decision asked about
+	// (M16): what each provider answered, whether it was cached, and — when
+	// it could not answer — which way the scope's setting sent it. It is
+	// always present, empty when nothing was asked, so a record made with
+	// external context and one made without have one shape.
+	ExternalContext []accessctx.Entry `json:"external_context"`
 }
 
 type recordedSubject struct {
@@ -167,6 +174,10 @@ type recordedExternal struct {
 	Reference   string `json:"reference"`
 	WindowStart string `json:"window_start"`
 	WindowEnd   string `json:"window_end"`
+	// Mode is how the window arrived — `push`, `push-probe` or `probe` —
+	// and AssertionID the push's own id, empty for anything no push made.
+	Mode        string `json:"mode"`
+	AssertionID string `json:"assertion_id"`
 }
 
 // recordedExplanation is the engine's account of the answer, plus what the
@@ -193,6 +204,39 @@ type recordedExplanation struct {
 	// CacheKey is the hint this decision was issued under, so that an
 	// operator withdrawing it (0009) can name it.
 	CacheKey string `json:"cache_key,omitempty"`
+	// External is the external story of the grant that supplied the access,
+	// when an external system's window did (M16): which provider, which
+	// reference, which window, how it arrived and whether a probe confirmed
+	// it. "A scanner said so" without saying which scan is not explained.
+	External *recordedExplainedExternal `json:"external,omitempty"`
+	// Unanswered names every window whose probe could not answer, and which
+	// way it fell — the part of a denial (or an outage) a provider caused.
+	Unanswered []recordedUnanswered `json:"unanswered,omitempty"`
+}
+
+// recordedExplainedExternal is the external story of the deciding grant.
+type recordedExplainedExternal struct {
+	Provider    string `json:"provider"`
+	Reference   string `json:"reference"`
+	WindowStart string `json:"window_start"`
+	WindowEnd   string `json:"window_end"`
+	// Arrived is `pushed`, `probed`, or `pushed-and-probed`.
+	Arrived string `json:"arrived"`
+	// Confirmed reports that a probe confirmed the window for this
+	// decision; false for a push-only window, and for one that fell open.
+	Confirmed bool `json:"confirmed"`
+	// Fell is `open` when the window counted although its probe could not
+	// answer.
+	Fell string `json:"fell,omitempty"`
+}
+
+// recordedUnanswered is one window whose probe could not answer.
+type recordedUnanswered struct {
+	Provider  string `json:"provider"`
+	Reference string `json:"reference"`
+	Scope     string `json:"scope"`
+	Cause     string `json:"cause"`
+	Fell      string `json:"fell"`
 }
 
 // record is one decision on its way to storage.
@@ -310,6 +354,10 @@ func newRecordedInputs(in assembled, req *contract.AuthorizeRequest) recordedInp
 	for _, g := range in.grants {
 		out.Grants = append(out.Grants, newRecordedGrant(g))
 	}
+	out.ExternalContext = in.external
+	if out.ExternalContext == nil {
+		out.ExternalContext = []accessctx.Entry{}
+	}
 	return out
 }
 
@@ -343,7 +391,58 @@ func newRecordedGrant(g store.Grant) recordedGrant {
 			Reference:   g.ExternalRef,
 			WindowStart: timeString(g.External.WindowStart),
 			WindowEnd:   timeString(g.External.WindowEnd),
+			Mode:        string(g.External.Mode),
+			AssertionID: g.External.AssertionID,
 		},
+	}
+}
+
+// explainExternal names the external story of the grant that decided, and of
+// every window that went unanswered. It reads the decision's own inputs — the
+// grants it counted and the windows it asked about — so explain (0014) never
+// has to join a table that may have changed since.
+func explainExternal(rec *record, counted []store.Grant, entries []accessctx.Entry) {
+	for _, e := range entries {
+		if e.Outcome == accessctx.OutcomeUndetermined {
+			rec.expl.Unanswered = append(rec.expl.Unanswered, recordedUnanswered{
+				Provider: e.Provider, Reference: e.Reference, Scope: e.Scope, Cause: e.Cause, Fell: e.Fell,
+			})
+		}
+	}
+	if rec.expl.Grant == "" {
+		return
+	}
+	for _, g := range counted {
+		if g.ID != rec.expl.Grant || g.Origin != store.GrantOriginExternal {
+			continue
+		}
+		x := &recordedExplainedExternal{
+			Provider:    g.External.System,
+			Reference:   g.ExternalRef,
+			WindowStart: timeString(g.External.WindowStart),
+			WindowEnd:   timeString(g.External.WindowEnd),
+		}
+		switch g.External.Mode {
+		case store.ExternalPush:
+			x.Arrived = "pushed"
+		case store.ExternalPushProbe:
+			x.Arrived = "pushed-and-probed"
+		case store.ExternalProbe:
+			x.Arrived = "probed"
+		}
+		for _, e := range entries {
+			if e.Grant != g.ID {
+				continue
+			}
+			x.Confirmed = e.Outcome == accessctx.OutcomeConfirmed
+			x.Fell = e.Fell
+			if e.WindowEnd != "" {
+				// What the probe said is the authoritative window.
+				x.WindowStart, x.WindowEnd = e.WindowStart, e.WindowEnd
+			}
+		}
+		rec.expl.External = x
+		return
 	}
 }
 
