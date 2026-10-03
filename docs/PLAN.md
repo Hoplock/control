@@ -2487,6 +2487,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0017 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0018 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 | 0019 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
+| 0020 | Self-service grant requests | a requester's own door into a registered approval workflow — `grant:request`, the `requester` role, the self-scoped `…/me/grant-requests` routes whose subject is resolved from the caller, refused `403 grant_workflow_not_registered` while no workflow is registered; `ext.GrantRequest.BreakGlass`; the poller learning every tenant a proxy subscribes in, so a decision is applied across a restart without a cross-tenant read (M10, M15, M18). Raised by `Hoplock/enterprise#10`; depends only on merged phases (0011, 0012, 0013), so it may run before 0014–0019 |
 
 > **Audits are not in this table, and not in the queue.**
 > `prompts/audit/` holds prompts that run repeatedly against the whole
