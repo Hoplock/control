@@ -192,7 +192,7 @@ var points = [...]PointInfo{
 		Multiple:     true,
 		WhenAbsent:   WhenAbsentDisabled,
 		Absent:       "no external access context is consulted and no window is opened by one",
-		ControlShips: "the declarative HTTP provider — a probe URL, its authentication, a request template, assertions over the response, a TTL, and a webhook field mapping, configured rather than coded (phase 0013, M16)",
+		ControlShips: "the declarative HTTP provider — a probe URL, its authentication, a request template, assertions over the response, a TTL, and a webhook field mapping, configured rather than coded and registered once per configured integration (phase 0013, M16)",
 	},
 }
 

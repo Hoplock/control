@@ -58,6 +58,17 @@ vendor integration: the rule stops being visible in the bundle, stops being
 simulated, and stops being explainable. Report what the external system
 asserted; policy decides what it is worth.
 
+It has two directions and three answers (M16, phase 0013). `Probe` asks the
+external system on the authorize path and answers `WindowConfirmed` or
+`WindowNotConfirmed` — or an error, which is **could not determine**:
+`KindUnavailable` for a network (wrap `context.DeadlineExceeded` on a timeout)
+and `KindMalformed` for an answer that made no sense. `Interpret` reads a push
+into a `WindowAssertion`. `Describe` names the external system — the key a
+tenant's scope binding is filed under — and says which directions you
+implement. Scope, replay, clock skew and the window ceiling are Control's, not
+yours: you are handed only pushes that already passed authentication, and
+everything you assert is checked after you return.
+
 ## How to implement a point
 
 Implement the interface. That is the whole of it — no plugin loading, no
