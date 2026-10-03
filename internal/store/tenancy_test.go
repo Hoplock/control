@@ -31,6 +31,23 @@ var repositoryInterfaces = map[string]reflect.Type{
 	// Access grants (0012).
 	"GrantRequestRepository": reflect.TypeOf((*GrantRequestRepository)(nil)).Elem(),
 
+	// External access context (0013).
+	"AccessContextBindingRepository": reflect.TypeOf((*AccessContextBindingRepository)(nil)).Elem(),
+
+	// Identity, federation and credentials (0011). 0012 found these missing
+	// from this list; every one of them already named its tenant, and now a
+	// method added to them later has to as well.
+	"GroupRepository":             reflect.TypeOf((*GroupRepository)(nil)).Elem(),
+	"RoleBindingRepository":       reflect.TypeOf((*RoleBindingRepository)(nil)).Elem(),
+	"ConnectorRepository":         reflect.TypeOf((*ConnectorRepository)(nil)).Elem(),
+	"ClaimMappingRepository":      reflect.TypeOf((*ClaimMappingRepository)(nil)).Elem(),
+	"FederatedIdentityRepository": reflect.TypeOf((*FederatedIdentityRepository)(nil)).Elem(),
+	"FlowStateRepository":         reflect.TypeOf((*FlowStateRepository)(nil)).Elem(),
+	"NorthPrincipalRepository":    reflect.TypeOf((*NorthPrincipalRepository)(nil)).Elem(),
+	"CAKeyRepository":             reflect.TypeOf((*CAKeyRepository)(nil)).Elem(),
+	"SSHCertificateRepository":    reflect.TypeOf((*SSHCertificateRepository)(nil)).Elem(),
+	"SoftwareKeyRepository":       reflect.TypeOf((*SoftwareKeyRepository)(nil)).Elem(),
+
 	// The fleet registry (0006).
 	"ProxyEnrollmentRepository":   reflect.TypeOf((*ProxyEnrollmentRepository)(nil)).Elem(),
 	"ProxyEdgeRepository":         reflect.TypeOf((*ProxyEdgeRepository)(nil)).Elem(),
@@ -108,6 +125,19 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"GrantRepository":        s.Grants(),
 		"UIDCursorRepository":    s.UIDCursors(),
 		"GrantRequestRepository": s.GrantRequests(),
+
+		"AccessContextBindingRepository": s.AccessContextBindings(),
+
+		"GroupRepository":             s.Groups(),
+		"RoleBindingRepository":       s.RoleBindings(),
+		"ConnectorRepository":         s.Connectors(),
+		"ClaimMappingRepository":      s.ClaimMappings(),
+		"FederatedIdentityRepository": s.FederatedIdentities(),
+		"FlowStateRepository":         s.FlowStates(),
+		"NorthPrincipalRepository":    s.NorthPrincipals(),
+		"CAKeyRepository":             s.CAKeys(),
+		"SSHCertificateRepository":    s.SSHCertificates(),
+		"SoftwareKeyRepository":       s.SoftwareKeys(),
 
 		"ProxyEnrollmentRepository":   s.ProxyEnrollments(),
 		"ProxyEdgeRepository":         s.ProxyEdges(),
@@ -371,6 +401,132 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.ProxyTokens().ListByProxy(ctx, "", "p")
 			return err
 		},
+
+		// External access context (0013).
+		"Grants.GetByAssertion": func() error {
+			_, err := s.Grants().GetByAssertion(ctx, "", "itsm", "a-1")
+			return err
+		},
+		"AccessContextBindings.Put": func() error {
+			return s.AccessContextBindings().Put(ctx, "", AccessContextBinding{
+				Provider: "itsm", Mode: ExternalPush, Scope: "s", MaxWindow: time.Hour,
+			})
+		},
+		"AccessContextBindings.Get": func() error {
+			_, err := s.AccessContextBindings().Get(ctx, "", "itsm")
+			return err
+		},
+		"AccessContextBindings.List": func() error {
+			_, err := s.AccessContextBindings().List(ctx, "")
+			return err
+		},
+		"AccessContextBindings.Delete": func() error {
+			_, err := s.AccessContextBindings().Delete(ctx, "", "itsm")
+			return err
+		},
+
+		// Identity, federation and credentials (0011).
+		"Groups.Get":          func() error { _, err := s.Groups().Get(ctx, "", "g"); return err },
+		"Groups.List":         func() error { _, err := s.Groups().List(ctx, ""); return err },
+		"Groups.Upsert":       func() error { return s.Groups().Upsert(ctx, "", Group{ID: "g"}) },
+		"Groups.Delete":       func() error { return s.Groups().Delete(ctx, "", "g") },
+		"Groups.AddMember":    func() error { return s.Groups().AddMember(ctx, "", "g", "s") },
+		"Groups.RemoveMember": func() error { return s.Groups().RemoveMember(ctx, "", "g", "s") },
+		"Groups.GroupsOf":     func() error { _, err := s.Groups().GroupsOf(ctx, "", "s"); return err },
+		"RoleBindings.List":   func() error { _, err := s.RoleBindings().List(ctx, ""); return err },
+		"RoleBindings.RolesFor": func() error {
+			_, err := s.RoleBindings().RolesFor(ctx, "", "s", nil)
+			return err
+		},
+		"RoleBindings.Bind":   func() error { return s.RoleBindings().Bind(ctx, "", RoleBinding{}) },
+		"RoleBindings.Unbind": func() error { return s.RoleBindings().Unbind(ctx, "", RoleBinding{}) },
+		"Connectors.Get":      func() error { _, err := s.Connectors().Get(ctx, "", "c"); return err },
+		"Connectors.List":     func() error { _, err := s.Connectors().List(ctx, ""); return err },
+		"Connectors.Upsert":   func() error { return s.Connectors().Upsert(ctx, "", Connector{}) },
+		"Connectors.Delete":   func() error { return s.Connectors().Delete(ctx, "", "c") },
+		"ClaimMappings.Active": func() error {
+			_, err := s.ClaimMappings().Active(ctx, "")
+			return err
+		},
+		"ClaimMappings.Get":  func() error { _, err := s.ClaimMappings().Get(ctx, "", 1); return err },
+		"ClaimMappings.List": func() error { _, err := s.ClaimMappings().List(ctx, ""); return err },
+		"ClaimMappings.Put": func() error {
+			_, err := s.ClaimMappings().Put(ctx, "", "doc", "digest", "me")
+			return err
+		},
+		"ClaimMappings.Activate": func() error { return s.ClaimMappings().Activate(ctx, "", 1) },
+		"FederatedIdentities.Resolve": func() error {
+			_, err := s.FederatedIdentities().Resolve(ctx, "", "c", "x")
+			return err
+		},
+		"FederatedIdentities.Link": func() error {
+			return s.FederatedIdentities().Link(ctx, "", FederatedIdentity{})
+		},
+		"FederatedIdentities.ListBySubject": func() error {
+			_, err := s.FederatedIdentities().ListBySubject(ctx, "", "s")
+			return err
+		},
+		"FlowStates.Begin": func() error { return s.FlowStates().Begin(ctx, "", FlowState{}) },
+		"FlowStates.Consume": func() error {
+			_, err := s.FlowStates().Consume(ctx, "", "st", nowForTest())
+			return err
+		},
+		"FlowStates.DeleteExpired": func() error {
+			_, err := s.FlowStates().DeleteExpired(ctx, "", nowForTest())
+			return err
+		},
+		"NorthPrincipals.Get": func() error { _, err := s.NorthPrincipals().Get(ctx, "", "p"); return err },
+		"NorthPrincipals.ByTokenDigest": func() error {
+			_, err := s.NorthPrincipals().ByTokenDigest(ctx, "", "d")
+			return err
+		},
+		"NorthPrincipals.BySessionDigest": func() error {
+			_, err := s.NorthPrincipals().BySessionDigest(ctx, "", "d")
+			return err
+		},
+		"NorthPrincipals.Put": func() error { return s.NorthPrincipals().Put(ctx, "", NorthPrincipal{}) },
+		"NorthPrincipals.Touch": func() error {
+			return s.NorthPrincipals().Touch(ctx, "", "p", nowForTest())
+		},
+		"NorthPrincipals.Revoke": func() error {
+			return s.NorthPrincipals().Revoke(ctx, "", "p", nowForTest())
+		},
+		"NorthPrincipals.List": func() error { _, err := s.NorthPrincipals().List(ctx, ""); return err },
+		"CAKeys.Active":        func() error { _, err := s.CAKeys().Active(ctx, ""); return err },
+		"CAKeys.Get":           func() error { _, err := s.CAKeys().Get(ctx, "", "k"); return err },
+		"CAKeys.List":          func() error { _, err := s.CAKeys().List(ctx, ""); return err },
+		"CAKeys.Insert":        func() error { return s.CAKeys().Insert(ctx, "", CAKey{}) },
+		"CAKeys.Rotate": func() error {
+			return s.CAKeys().Rotate(ctx, "", CAKey{}, nowForTest(), nowForTest())
+		},
+		"SSHCertificates.NextSerial": func() error {
+			_, err := s.SSHCertificates().NextSerial(ctx, "")
+			return err
+		},
+		"SSHCertificates.Insert": func() error { return s.SSHCertificates().Insert(ctx, "", SSHCertificate{}) },
+		"SSHCertificates.Get": func() error {
+			_, err := s.SSHCertificates().Get(ctx, "", 1)
+			return err
+		},
+		"SSHCertificates.Outstanding": func() error {
+			_, err := s.SSHCertificates().Outstanding(ctx, "", nowForTest())
+			return err
+		},
+		"SSHCertificates.ListBySubject": func() error {
+			_, err := s.SSHCertificates().ListBySubject(ctx, "", "s", 1)
+			return err
+		},
+		"SSHCertificates.Revoke": func() error {
+			return s.SSHCertificates().Revoke(ctx, "", 1, nowForTest(), "r")
+		},
+		"SSHCertificates.RevokeByCAKey": func() error {
+			_, err := s.SSHCertificates().RevokeByCAKey(ctx, "", "k", nowForTest(), "r")
+			return err
+		},
+		"SoftwareKeys.Get":    func() error { _, err := s.SoftwareKeys().Get(ctx, "", "k"); return err },
+		"SoftwareKeys.Insert": func() error { return s.SoftwareKeys().Insert(ctx, "", SoftwareKey{}) },
+		"SoftwareKeys.List":   func() error { _, err := s.SoftwareKeys().List(ctx, ""); return err },
+		"SoftwareKeys.Delete": func() error { return s.SoftwareKeys().Delete(ctx, "", "k") },
 	}
 
 	if got, want := len(calls), totalRepositoryMethods(); got != want {

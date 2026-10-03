@@ -95,6 +95,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}}); err != nil {
 		return err
 	}
+	if err := registerDeclarative(registry, cfg.AccessContext); err != nil {
+		return err
+	}
 	extensions, err := registry.Seal()
 	if err != nil {
 		return err

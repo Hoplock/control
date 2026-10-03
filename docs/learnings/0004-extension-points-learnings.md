@@ -63,7 +63,7 @@ NotAfter time.Time}`, `Subject{ID, ExternalID, Username string, Groups []string}
 | `ActionHandler` | `Start(ctx, exec ActionExecutor) error`; `Stop(ctx) error` | nothing | **disabled** — no external system can kill a session or lock a subject out |
 | `ReportProvider` (multi) | `Reports(ctx, Tenant) ([]ReportDescriptor, error)`; `Generate(ctx, ReportRequest) (Report, error)` | audit query, explain, simulation (0010, 0014) | **core** — the north-bound queries are the reporting available |
 | `PolicyValidator` (multi) | `Validate(ctx, PolicyDocument) ([]Finding, error)` | the compiler's exhaustive authoring-time checks (0005) | **core** — the compiler's own checks are the whole of validation, and always run |
-| `AccessContextProvider` (multi) | `Probe(ctx, AccessContextQuery) (AccessEvidence, error)` | the declarative HTTP provider (0013, M16) | **disabled** — no external access context is consulted |
+| `AccessContextProvider` (multi) | `Probe(ctx, AccessContextQuery) (AccessEvidence, error)` — **changed by 0013**: now also `Describe() AccessContextInfo` and `Interpret(ctx, AccessContextPush) (WindowAssertion, error)`; read 0013's summary, not this row | the declarative HTTP provider (0013, M16) | **disabled** — no external access context is consulted |
 
 Supporting interfaces, which are **not** points: `Leadership` (`Held() bool`;
 `Changes() <-chan bool`; `Release(ctx) error`), `SyncSink` and `ActionExecutor`

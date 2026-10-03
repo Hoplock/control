@@ -224,6 +224,12 @@ func (s *Store) Audit() AuditRepository { return auditRepo{s} }
 // Grants returns the grant repository.
 func (s *Store) Grants() GrantRepository { return grantRepo{s} }
 
+// AccessContextBindings returns the external-context scope binding repository
+// (0013).
+func (s *Store) AccessContextBindings() AccessContextBindingRepository {
+	return accessContextBindingRepo{s}
+}
+
 // GrantRequests returns the workflow request repository (0012).
 func (s *Store) GrantRequests() GrantRequestRepository { return grantRequestRepo{s} }
 

@@ -6,6 +6,8 @@ package north
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/hoplock/control/internal/accessctx"
 )
 
 // Errors on this surface are MACHINE-READABLE (M21).
@@ -86,6 +88,26 @@ const (
 	// session can use it, and the revocation is recorded — whose
 	// session_kill could not be published. Revoking it again re-sends.
 	CodeGrantRevocationUndelivered = "grant_revocation_undelivered"
+
+	// The push receiver's refusals (M16, 0013) are accessctx's codes,
+	// answered verbatim so an integration's operator and a SIEM rule read
+	// one vocabulary. Each is a DECISION about the push — never an outage,
+	// which is CodeInternal.
+	CodeProviderNotFound    = accessctx.CodeProviderNotFound
+	CodePushNotSupported    = accessctx.CodePushNotSupported
+	CodeBindingNotFound     = accessctx.CodeBindingNotFound
+	CodeBindingDisabled     = accessctx.CodeBindingDisabled
+	CodePushNotPermitted    = accessctx.CodePushNotPermitted
+	CodePushNotAccepted     = accessctx.CodePushNotAccepted
+	CodeRateLimited         = accessctx.CodeRateLimited
+	CodeAssertionMalformed  = accessctx.CodeAssertionMalformed
+	CodeOutsideScope        = accessctx.CodeOutsideScope
+	CodeAssertionConflict   = accessctx.CodeAssertionConflict
+	CodeAssertionStale      = accessctx.CodeAssertionStale
+	CodeAssertionFromFuture = accessctx.CodeAssertionFromFuture
+	CodeWindowClosed        = accessctx.CodeWindowClosed
+	// CodePayloadTooLarge is a push body past access_context.max_push_bytes.
+	CodePayloadTooLarge = "payload_too_large"
 )
 
 // AllCodes is every code this surface defines, so a test can assert that adding
@@ -96,6 +118,10 @@ var AllCodes = []string{
 	CodeCANotConfigured,
 	CodeGrantRequestDenied, CodeGrantWorkflowFailed, CodeGrantRequestNotPending,
 	CodeGrantRevocationUndelivered,
+	CodeProviderNotFound, CodePushNotSupported, CodeBindingNotFound, CodeBindingDisabled,
+	CodePushNotPermitted, CodePushNotAccepted, CodeRateLimited, CodeAssertionMalformed,
+	CodeOutsideScope, CodeAssertionConflict, CodeAssertionStale, CodeAssertionFromFuture,
+	CodeWindowClosed, CodePayloadTooLarge,
 }
 
 // writeJSON is the only writer in this package, so the content type cannot

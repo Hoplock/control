@@ -493,3 +493,65 @@ func TestGrantAndNotifySettingsNobodyCanActOnAreRefused(t *testing.T) {
 		})
 	}
 }
+
+func TestAccessContextDefaultsApplyWhenTheSectionIsAbsent(t *testing.T) {
+	cfg, err := config.Parse(strings.NewReader(validYAML))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	a := cfg.AccessContext
+	if a.ProbeBudget != config.DefaultProbeBudget || a.MaxWindow != config.DefaultExternalMaxWindow ||
+		a.Unanswered != config.DefaultUnanswered || a.MaxPushBytes != config.DefaultMaxPushBytes {
+		t.Errorf("access_context defaults = %+v", a)
+	}
+	// Nothing external is consulted unless somebody configured it.
+	if len(a.Providers) != 0 || len(a.Egress.AllowCIDRs) != 0 {
+		t.Errorf("providers %v, egress %v; want none unless configured", a.Providers, a.Egress.AllowCIDRs)
+	}
+	// The probe phase may never have more than half the decision budget.
+	if a.ProbeBudget > cfg.Decision.Budget/2 {
+		t.Errorf("the default probe budget %s is more than half the decision budget %s", a.ProbeBudget, cfg.Decision.Budget)
+	}
+}
+
+func TestAccessContextSettingsNobodyCanActOnAreRefused(t *testing.T) {
+	provider := func(body string) string {
+		return "access_context:\n  providers:\n    - " + body + "\n"
+	}
+	for field, section := range map[string]string{
+		// A probe that could spend the whole decision budget makes every
+		// authorize call hostage to a third party.
+		"access_context.probe_budget":          "access_context: {probe_budget: 1500ms}",
+		"access_context.max_window":            "access_context: {max_window: 200h}",
+		"access_context.unanswered":            "access_context: {unanswered: allow}",
+		"access_context.max_push_bytes":        "access_context: {max_push_bytes: 99999999}",
+		"access_context.egress.allow_cidrs[0]": "access_context: {egress: {allow_cidrs: [not-a-cidr]}}",
+		"access_context.providers[0].name":     provider("{name: Acme_Scanner, push: {id: $.id, subject: $.s, targets: $.t, window_end: $.e}}"),
+		"access_context.providers[0].probe":    provider("{name: idle}"),
+		"access_context.providers[0].probe.confirm": provider(
+			"{name: acme, probe: {url: \"https://s.example.com/\"}}"),
+		"access_context.providers[0].probe.confirm[0]": provider(
+			"{name: acme, probe: {url: \"https://s.example.com/\", confirm: [{path: $.a, equals: x, exists: true}]}}"),
+		"access_context.providers[0].probe.timeout": provider(
+			"{name: acme, probe: {url: \"https://s.example.com/\", timeout: 2s, confirm: [{path: $.a, exists: true}]}}"),
+		"access_context.providers[0].push.window_end": provider(
+			"{name: acme, push: {id: $.id, subject: $.s, targets: $.t}}"),
+	} {
+		t.Run(field, func(t *testing.T) {
+			_, err := config.Parse(strings.NewReader(validYAML + section + "\n"))
+			var fieldErr *config.FieldError
+			if !errors.As(err, &fieldErr) || fieldErr.Field != field {
+				t.Fatalf("Parse = %v, want a FieldError naming %s", err, field)
+			}
+		})
+	}
+
+	twice := "access_context:\n  providers:\n" +
+		"    - {name: acme, push: {id: $.id, subject: $.s, targets: $.t, window_end: $.e}}\n" +
+		"    - {name: acme, push: {id: $.id, subject: $.s, targets: $.t, window_end: $.e}}\n"
+	var fieldErr *config.FieldError
+	if _, err := config.Parse(strings.NewReader(validYAML + twice)); !errors.As(err, &fieldErr) ||
+		fieldErr.Field != "access_context.providers[1].name" {
+		t.Errorf("a provider configured twice = %v", err)
+	}
+}

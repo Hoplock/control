@@ -111,7 +111,7 @@ decision.
 | **M13** | tech choices (Go, Postgres, closed enum kinds) | live | §3 |
 | **M14** | licensing: this repository is the open-source plane | live | §8 |
 | **M15** | Enterprise extends this repository; it never forks it | live | §3, §10, §11 |
-| **M16** | external access context is an input; its integrations are extensions | live | §5, §7, §10, §11 |
+| **M16** | external access context is an input; its integrations are extensions | live | §3, §5, §7, §10, §11 |
 | **M17** | the fleet graph carries capabilities, not just reachability | live | §4, §5, §10 |
 | **M18** | tenancy is a request dimension, not a process constant | live | §10, §11 |
 | **M19** | a deployment has an identity and can be supervised | live | §3, §10, §11 |
@@ -455,44 +455,79 @@ decision.
     the decision path, which M5 governs.
 
   So the default composition is: a **push opens a pending window**, and a
-  **probe confirms at authorize time**. Where the probe cannot be reached, the
-  answer is configurable and **fails closed for privileged grants**, because the
-  access this exists to gate is the access least safe to grant on a stale
-  assertion.
+  **probe confirms at authorize time**; a deployment may run either alone. A
+  probe has **three answers, not two** — confirmed, not confirmed, and *could
+  not determine* — and the third is an outage of that provider, never "no
+  window" (M11). What it means for a decision is the **policy's**: a bundle's
+  `scopes:` section marks a grant scope `privileged` and gives it an
+  `unanswered` answer — `closed` (the window does not count), `outage` (if the
+  decision depends on the window, the call is an outage), or `open` (the pushed
+  window counts unconfirmed). Unset takes the deployment's default
+  (`access_context.unanswered`, `outage`), and a **privileged scope always falls
+  closed**: the access this exists to gate is the access least safe to grant on
+  a stale assertion. The decision record says which way each unanswered window
+  fell.
 
   Three properties belong to the framework rather than to each integration, and
   a customer-written provider gets them for free precisely because they are not
-  its job:
+  its job (`internal/accessctx`):
 
-  1. **A push is untrusted input that names a target.** It is authenticated, and
-     it is constrained to a **pre-registered scope** — the subjects, targets, and
-     maximum window that integration may ever grant. Without that constraint the
-     push endpoint *is* an access-granting API with a vendor's software on the
-     other end, which is proxy D15's warning and this repository's problem to
-     answer. It is administrative in exactly the sense Enterprise E7 means, and
-     more so: granting access is a larger privilege than ending a session.
-  2. **Replay, idempotency, and clock skew** are handled once. An integration
-     that gets these wrong is the weakest link in a chain that includes every
-     other integration.
+  1. **A push is untrusted input that names a target.** It is authenticated —
+     the north-bound `access-context:push` permission, held only by the
+     `integration` role, which reads nothing — and constrained to a
+     **pre-registered scope binding**, one per provider per tenant: the
+     subjects (ids or groups) it may grant to, the targets it may name (a grant
+     scope's own selector), the one grant scope it produces, the longest window
+     it may open, whether it may open privileged access at all, and the
+     credentials that may push for it. A push outside it is refused and
+     audited, `critical`, as an attempted privilege escalation. Without that
+     constraint the push endpoint *is* an access-granting API with a vendor's
+     software on the other end, which is proxy D15's warning and this
+     repository's problem to answer. It is administrative in exactly the sense
+     Enterprise E7 means, and more so: granting access is a larger privilege
+     than ending a session.
+  2. **Replay, idempotency, and clock skew** are handled once. An assertion's
+     own id is its idempotency key, unique per system: the same id twice is the
+     same window, a different window under it is a conflict, and a revoked
+     window stays revoked however often it is pushed again. An assertion older
+     than `access_context.max_assertion_age`, or issued further ahead than
+     `access_context.clock_skew`, is refused; a start within the skew is read as
+     now. An integration that gets these wrong is the weakest link in a chain
+     that includes every other integration.
   3. **A server-side ceiling on window length**, applied regardless of what the
-     external system asserted. An integration may ask for less than the ceiling
-     and never more.
+     external system asserted: the shorter of the binding's maximum and
+     `access_context.max_window`, measured from when the window opens. An
+     integration may ask for less and never more — a longer window is
+     **clamped, not refused**, and the clamp is recorded.
 
   A confirmed window **is a grant** (M10) — not a parallel path into the
-  decision. It carries its origin and its external reference, the engine reads
-  it like any other grant, and simulation and "explain why" keep telling the
-  truth, which is the entire reason M10 refused a bolt-on in the first place.
+  decision. A push becomes one through `internal/access`, origin `external`,
+  audited with the credential that pushed it; a probe-only window becomes one
+  for the decision that relied on it, with an id derived from the window. The
+  engine reads it like any other grant and has no branch on where it came from,
+  and simulation and "explain why" keep telling the truth, which is the entire
+  reason M10 refused a bolt-on in the first place.
 
-  The seam is `ext.AccessContextProvider` (0004), and per M15 it ships a **real
-  default here**: a *declarative HTTP provider* configured rather than coded —
-  a probe endpoint, its authentication, a request template, assertions over the
-  response, and a cache TTL, plus a webhook receiver with a field mapping. That
-  default is not a stub standing in for the product; it is how a self-hosting
-  customer integrates a system nobody has heard of, and it covers most scanners
-  and ITSM systems without anyone writing Go. Packaged, vendor-specific
-  integrations — Qualys and BMC Helix first — are Enterprise's, and they are
-  packaging and support rather than capability, which is exactly where M15 draws
-  the line.
+  A probe spends from the decision's budget, so it has a **fixed share** of it:
+  every probe one decision makes runs concurrently under
+  `access_context.probe_budget` (500 ms by default, at most half of
+  `decision.budget`), and one that misses it is abandoned and recorded as
+  undetermined. Answers are reused for the provider's TTL, capped, and
+  concurrent decisions about one access share one call (§5.5).
+
+  The seam is `ext.AccessContextProvider` (0004, revised by 0013): `Describe`
+  names the external system and the directions it implements, `Probe` answers
+  one access, `Interpret` reads one push. Per M15 it ships a **real default
+  here**: a *declarative HTTP provider* configured rather than coded — a probe
+  endpoint, its authentication, a request template, assertions over the
+  response, and a cache TTL, plus a push field mapping — each configured
+  integration registered as its own provider, and every connection held to an
+  egress allow-list at dial time. That default is not a stub standing in for
+  the product; it is how a self-hosting customer integrates a system nobody has
+  heard of, and it covers most scanners and ITSM systems without anyone writing
+  Go. Packaged, vendor-specific integrations — Qualys and BMC Helix first — are
+  Enterprise's, and they are packaging and support rather than capability, which
+  is exactly where M15 draws the line.
 
 - **M17 — The fleet graph carries capabilities, not just reachability (amends
   M6, new).** M6 has proxies declare their zone, reachability, and connection
@@ -881,6 +916,7 @@ control/
 │   ├── audit/              # ingest, hash chain, query, retention (M8)
 │   ├── export/             # SIEM sinks (Splunk/Sentinel/Elastic)
 │   ├── access/             # time-boxed grants, workflow requests, revocation (M10)
+│   ├── accessctx/          # external access context: bindings, push, probe; declarative/ (M16)
 │   ├── notify/             # operator notifications: the webhook, registered notifiers (M15)
 │   ├── extdefault/         # Control's own implementations behind the ext/ seam (M15)
 │   ├── instance/           # deployment identity, supervisory registration (M19)
@@ -1041,6 +1077,13 @@ alternative, and it gives up the one-binary deployment for nothing.
   Revocation publishes through `internal/revoke` twice: once at once, and once
   more after one decision budget, so a session whose authorize raced the
   revocation is ended as well.
+- **`internal/accessctx`** — external access context (M16): the provider set
+  keyed by external system, the per-tenant scope bindings and their internal
+  API, the push receiver that admits a window through its binding and creates
+  the grant through `internal/access`, and the probe path the decision service
+  runs inside its budget. It decides nothing about access: what reaches the
+  engine is grants. `declarative/` is Control's own provider, configured under
+  `access_context.providers` rather than coded.
 - **`internal/notify`** — Control's outbound webhook and every registered
   `ext.Notifier`, with one queue and worker per destination: nothing waits on a
   notification and nothing fails because of one. It is Control's core answer at
@@ -1589,7 +1632,7 @@ input, as it does `events.publish_url`, and the proxy's `cmd/mock-control`
 | Context | time of day, day of week, source network/geo, the proxy asking (`conn.proxy_id` — the entry proxy on a user's first hop, an inner hop on a chained one) |
 | Target | hostname, labels (`env=prod`, `kind=appliance`, `owner=payments`), zone |
 | Grants | live JIT grants for this subject and scope (M10), including windows confirmed from external context (M16) |
-| External context | a scan, ticket, or incident asserted by an integration and confirmed at decision time (M16) |
+| External context | a scan, ticket, or incident an integration pushed or a probe confirmed (M16) — it reaches the engine only as a grant (§5.5), never as an axis of its own |
 
 The **session axes** — channel type, in-channel request, forwarding destination,
 global request, command — are outputs rather than inputs, and they are absent
@@ -1903,6 +1946,44 @@ reuses it on, and three consequences this server owns:
   proxy holds, and the withdrawal would report success having dropped nothing.
   The operator surface therefore says on every publication **what it covered**,
   because a revocation that silently misses is worse than one that refuses.
+
+### 5.5 External access context at decision time (M16)
+
+The engine never sees a provider. What it sees is grants, and the layer above it
+(`internal/decision`, calling `accessctx.Prober`) decides which external windows
+are among them before it evaluates:
+
+- **The three shapes.** A push-only window (`external_mode = 'push'`) is a stored
+  grant and simply counts. A push-probe window counts only once its provider's
+  probe confirms it for this subject and target — narrowed to the end the
+  probe states, because the probe is the authoritative direction. A probe-only
+  window is asked about whenever an enabled `probe` binding covers the subject
+  and target, and a confirmation becomes a grant built for this decision: the
+  binding's scope, on this host, from now until the ceiling or the window's
+  end, its id derived from the window.
+- **The budget.** All of one decision's probes run at once under the probe
+  budget, which configuration holds to at most half of the decision's. Nothing
+  waits for a provider: the call waits for the deadline, and a provider that
+  ignores its context costs its own goroutine — bounded per provider — and
+  never the handshake.
+- **The fall.** An undetermined window — timeout, unreachable, malformed,
+  failed, saturated, or no provider able to probe — goes the way its scope's
+  `unanswered` setting says. `open` counts a pushed window unconfirmed (a
+  probe-only window has nothing to fall open to, so it falls closed). `outage`
+  windows are never inputs: the decision is evaluated without them, and only
+  if it denies is it evaluated again with them — denied without, allowed with,
+  is a decision that depends on a fact nobody could learn, so the call answers
+  `5xx` and the record is `unserved`. A denial that stands on its own stays a
+  denial.
+- **The record.** `inputs.grants[]` holds the grants the engine counted, each
+  with its external `mode` and `assertion_id`. `inputs.external_context[]` holds
+  one entry per window asked about: provider, mode, reference, scope and
+  whether it is privileged, the outcome and its cause, whether the answer was
+  cached and when it was fetched, the window the provider stated, its further
+  assertions, which way an unanswered one fell, and whether it counted.
+  `explanation.external` names the provider, reference and window of the grant
+  that decided — and whether it was pushed, probed or both — and
+  `explanation.unanswered` lists every window whose probe could not answer.
 
 ---
 
@@ -2317,6 +2398,18 @@ reuses it on, and three consequences this server owns:
   never be written even if a malformed record contains one. Assert it in tests,
   because "the proxy promises not to send it" is not a control on this side.
 
+- **External access context is audited on this server's own chain** (M16).
+  An accepted push is recorded as the grant it became — `grant.created`, with
+  the credential that pushed it, the system, the assertion id, the mode, the
+  window asserted, and the ceiling with whether it clamped
+  (`grant_external_*`). Everything a push produced that is *not* a grant is
+  `access_context.push_refused` or, for a push outside its integration's scope
+  or from a credential the binding does not name,
+  `access_context.escalation_attempt` at `critical`. A binding written or
+  removed is `access_context.binding_put` / `binding_deleted`, in the
+  transaction that makes the change. None of these use the `grant_system` or
+  `grant_reference` keys: those index a SESSION's grant context.
+
 ---
 
 ## 8. Cross-cutting conventions
@@ -2387,7 +2480,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0010 | Audit ingest & tamper-evident store | batch + priority ingest, the per-tenant-per-stream hash chain and its verifier, redaction, the query layer, and the record read-back path 0014 deletes (M8) |
 | 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
 | 0012 | Access grants | time-boxed grants as policy inputs whose expiry is the decision's own clock; create, list, inspect and revoke on the north-bound API under `grant:write`/`grant:read`; revocation that ends the sessions a grant backed with the reason shown; every act audited with its actor; `ext.GrantWorkflow` routing — requests, polling, the grant a workflow approves; Control's outbound webhook notifier (M10, M15) |
-| 0013 | External access context | `ext.AccessContextProvider`, push receiver with scope binding, probe path inside the authorize budget, declarative HTTP provider as the default (M16) |
+| 0013 | External access context | `ext.AccessContextProvider` — `Describe`, `Probe`, `Interpret`, three answers; scope bindings per provider per tenant and their internal API; the push receiver behind the `integration` role, with replay, skew and a clamping ceiling; the probe path inside a fixed share of the authorize budget; a policy's `scopes:` declaration (`privileged`, `unanswered`); the declarative HTTP provider as the default (M16) |
 | 0014 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.7.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, an emptied axis judged per proxy from what each build declares its profiles offer (`Hoplock/proxy#72`, which met the cross-repo dependency `Hoplock/control#41` raised) and shown to the author as a per-build finding, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |
 | 0015 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
 | 0016 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's per-build finding (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |

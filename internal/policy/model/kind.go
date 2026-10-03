@@ -545,6 +545,42 @@ func (o *GrantOrigin) UnmarshalYAML(n *yaml.Node) error {
 	return decodeEnum(n, o, grantOrigins, "grant origin")
 }
 
+// Unanswered is what a decision does with an external window whose probe could
+// not answer — timed out, unreachable, or answered nonsense (M16). The probe
+// is the authoritative direction, so a window it could not confirm is neither
+// confirmed nor refuted, and the policy says which way that falls rather than
+// a provider or a default nobody chose. The decision record says which way it
+// fell.
+type Unanswered string
+
+const (
+	// UnansweredUnset is the zero value: the deployment's default applies
+	// (`access_context.unanswered`) — and a privileged scope falls closed
+	// whatever that default is.
+	UnansweredUnset Unanswered = ""
+	// UnansweredClosed means the window does not count, and the decision is
+	// made without it. For access only that window could grant, that is a
+	// denial whose record says the probe did not answer.
+	UnansweredClosed Unanswered = "closed"
+	// UnansweredOutage means that when the decision depends on the window,
+	// the call answers as an outage (M11) rather than as a decision either
+	// way: nobody is told "access denied" because a scanner's API was slow.
+	UnansweredOutage Unanswered = "outage"
+	// UnansweredOpen means the pushed window counts although its probe could
+	// not confirm it — the push is the only direction that works when the
+	// external system cannot be reached. Never for a privileged scope: the
+	// access this exists to gate is the access least safe to grant on a stale
+	// assertion.
+	UnansweredOpen Unanswered = "open"
+)
+
+var unansweredAnswers = []Unanswered{UnansweredClosed, UnansweredOutage, UnansweredOpen}
+
+// UnmarshalYAML decodes an Unanswered.
+func (u *Unanswered) UnmarshalYAML(n *yaml.Node) error {
+	return decodeEnum(n, u, unansweredAnswers, "unanswered setting")
+}
+
 // CacheKeyComponent is one input a cache hint's key is derived from (PLAN
 // §5.4). The key selects the sharing scope, so the set is closed and named
 // rather than a format string: a key shared across identities serves one user
