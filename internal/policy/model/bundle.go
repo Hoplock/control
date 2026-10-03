@@ -42,6 +42,14 @@ type Bundle struct {
 	Labels map[string][]string `yaml:"labels,omitempty"`
 	// Groups is the declared group vocabulary, for the same reason.
 	Groups []string `yaml:"groups,omitempty"`
+	// Scopes says what the policy holds about a grant scope beyond the rules
+	// that match it (M16): whether access in it is privileged, and what a
+	// decision does when the probe confirming an external window for it
+	// cannot answer. A scope declared nowhere is not privileged and takes the
+	// deployment's default. Nothing here is a match axis — the engine reads
+	// grants exactly as before — so declaring a scope changes no decision
+	// that did not involve an external window.
+	Scopes map[string]ScopeDecl `yaml:"scopes,omitempty"`
 
 	// Rules are evaluated in order, first match wins. The default-deny at
 	// the end is not authored and cannot be removed.
@@ -171,6 +179,27 @@ type TargetMatch struct {
 	Labels map[string][]string `yaml:"labels,omitempty"`
 	Zones  []string            `yaml:"zones,omitempty"`
 }
+
+// ScopeDecl is one grant scope's declaration.
+type ScopeDecl struct {
+	// Description is free text for whoever reads the bundle next.
+	Description string `yaml:"description,omitempty"`
+	// Privileged marks access the policy treats as privileged. An external
+	// window in this scope falls closed when its probe cannot answer, never
+	// open, and an integration may push one only if its scope binding is
+	// permitted privileged access at all (M16).
+	Privileged bool `yaml:"privileged,omitempty"`
+	// Unanswered is what an unanswered probe means for a window in this
+	// scope. Unset takes the deployment's default — closed, for a privileged
+	// scope, whatever that default is.
+	Unanswered Unanswered `yaml:"unanswered,omitempty"`
+
+	// line is the 1-based line the declaration starts on, for rejections.
+	line int
+}
+
+// Line is the 1-based line the declaration starts on, or 0 when unknown.
+func (d ScopeDecl) Line() int { return d.line }
 
 // GrantMatch constrains the live just-in-time grants for this subject (M10).
 type GrantMatch struct {
