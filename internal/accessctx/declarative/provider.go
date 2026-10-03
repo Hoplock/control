@@ -454,7 +454,7 @@ func (p *Provider) Probe(ctx context.Context, q ext.AccessContextQuery) (ext.Acc
 	if err != nil {
 		return ext.AccessEvidence{}, p.transportError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes+1))
 	if err != nil {
 		return ext.AccessEvidence{}, p.transportError(err)

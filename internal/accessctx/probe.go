@@ -494,8 +494,10 @@ func (p *Prober) classify(ev ext.AccessEvidence, err error, j job, acc Access) r
 	case ext.WindowNotConfirmed:
 		return result{state: ext.WindowNotConfirmed, evidence: ev}
 	case ext.WindowConfirmed:
-	default:
+	case ext.WindowUndetermined:
 		return undetermined(CauseMalformed, "the provider returned no answer and no error")
+	default:
+		return undetermined(CauseMalformed, fmt.Sprintf("the provider returned state %d, which is not an answer", ev.State))
 	}
 
 	// A confirmation has to be explainable: it names a window, it is the
@@ -554,20 +556,34 @@ func (p *Prober) settle(out *Considered, j job, r result, acc Access) {
 		out.Counted = append(out.Counted, g)
 	case ext.WindowNotConfirmed:
 		// No window. Nothing counts and nothing falls.
+	case ext.WindowUndetermined:
+		p.fallInto(out, &e, j, r, acc)
 	default:
-		fell := p.fall(j)
-		e.Fell = string(fell)
-		switch fell {
-		case model.UnansweredOpen:
-			// Only a pushed window can fall open: there is a push to fall
-			// open to. It counts as it was pushed.
-			e.Grant, e.Counted = j.grant.ID, true
-			out.Counted = append(out.Counted, *j.grant)
-		case model.UnansweredOutage:
-			out.Pending = append(out.Pending, PendingWindow{Grant: p.unconfirmed(j, acc), Cause: r.cause})
-		}
+		// classify never produces another state; were one to appear, it is
+		// not an answer, and an answer that is not one is undetermined.
+		e.Outcome = OutcomeUndetermined
+		p.fallInto(out, &e, j, r, acc)
 	}
 	out.Entries = append(out.Entries, e)
+}
+
+// fallInto sends an unanswered window the way its scope says.
+func (p *Prober) fallInto(out *Considered, e *Entry, j job, r result, acc Access) {
+	fell := p.fall(j)
+	e.Fell = string(fell)
+	switch fell {
+	case model.UnansweredOpen:
+		// Only a pushed window can fall open: there is a push to fall open
+		// to. It counts as it was pushed.
+		e.Grant, e.Counted = j.grant.ID, true
+		out.Counted = append(out.Counted, *j.grant)
+	case model.UnansweredOutage:
+		out.Pending = append(out.Pending, PendingWindow{Grant: p.unconfirmed(j, acc), Cause: r.cause})
+	case model.UnansweredClosed, model.UnansweredUnset:
+		// The window does not count. (fall never answers Unset; were it
+		// to, closed is the direction that grants nothing.)
+		e.Fell = string(model.UnansweredClosed)
+	}
 }
 
 // fall is which way an unanswered window goes: the scope's own setting, else
