@@ -4,9 +4,10 @@
 > https://github.com/Hoplock/enterprise/pull/10, under `## Upstream request`,
 > and answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2). It is
 > numbered last because nothing queued depends on it, and it depends on nothing
-> queued: only on 0011 (RBAC and the north-bound credential model) and 0012
-> (grants and the workflow seam), both merged. **It may run before 0013–0019**,
-> started with `docs/KICKOFF.md`'s "Specific prompt" block, and nothing needs
+> queued: only on 0011 (RBAC and the north-bound credential model), 0012 (grants
+> and the workflow seam) and 0013 (whose `integration` role and push-receiver
+> refusals it follows), all merged. **It may run before 0014–0019**, started
+> with `docs/KICKOFF.md`'s "Specific prompt" block, and nothing needs
 > renumbering when it does. Run it before Enterprise's approval phase (its 0003)
 > if you can; that phase builds around these three gaps until they exist.
 
@@ -26,7 +27,8 @@
       This phase applies the same rule to the subject, and its third need is
       M18's "the store cannot enumerate tenants".
     - **M7**: break-glass is asserted, never inferred.
-    - **M11**: a deny is a decision, and everything else is a 5xx.
+    - **M11**: a refusal made on purpose is a decision, and a 5xx is an
+      outage.
     - **M2**: the north-bound surface and its one middleware chain.
     - **M9** and **M22**: the event subscription every proxy holds, and the
       tenant its credential carries.
@@ -39,13 +41,17 @@
   - Open **`0011`** for RBAC, the principal and the route table, **`0004`** for
     the `ext` registry and `ext.Points()`, and **`0009`** for the event
     subscription.
+  - In **`0013`**'s summary, read the first bullet. Its `integration` role is
+    the first role without `readOnly`, and its push receiver is the precedent
+    for refusing a capability this deployment lacks: a 4xx with its own code.
 - Code. Read it before designing anything:
   - `ext/access.go`: `GrantRequest`, and the doc comment on `GrantWorkflow`.
     Its "What Control does with each answer" list is the contract Enterprise
     builds against.
   - `ext/point.go`: `PointGrantWorkflow`.
   - `internal/identity/rbac.go` and `principal.go`.
-  - `internal/httpapi/north/{router,routes,middleware,grants,errors}.go`.
+  - `internal/httpapi/north/{router,routes,middleware,grants,errors}.go`, and
+    `refusePush` in `accesscontext.go`.
   - `internal/access/{service,workflow}.go`.
   - `cmd/hoplock-control/{serve,grants}.go`.
 - The request itself, for the requester's own words. It cites Enterprise
@@ -163,14 +169,25 @@ written; each alternative below meets the same need.
 - `PermGrantRequest Permission = "grant:request"`: asking the registered
   workflow for a grant for yourself. Add it to `AllPermissions`.
 - `RoleRequester Role = "requester"`, holding **exactly** `grant:request`.
-  - It goes first in `AllRoles`, which is ordered least privilege first.
+  - It goes in `AllRoles` after `integration` (0013) and before `auditor`:
+    the list is ordered least privilege first.
   - `admin` holds it through `AllPermissions`. No other role gains it.
+  - Test it the way `TestTheIntegrationRoleCanOnlyPush` tests `integration`:
+    `requester` holds exactly `grant:request`, no role but it and `admin`
+    holds that permission, and `ParseRole("requester")` resolves.
 - `requester` deliberately does **not** hold `readOnly`. That set includes
   `audit:read`, `decision:read` and `identity:read` over the whole tenant, and
   nobody needs those to ask for access.
-  - Revise `readOnly`'s comment: it is no longer what every role holds.
-  - Say why the requester still never changes anything blind: everything it
-    can change, it can read, through the self routes below and nowhere else.
+  - It is the second role without `readOnly`, and the first that a person
+    holds. Since 0013, `readOnly`'s comment says it is "what every role a
+    PERSON holds can do", with `integration` the one exception. That stops
+    being true, so revise the comment to name both exceptions and their
+    different reasons:
+    - `integration` is somebody else's software, and it reads nothing on
+      purpose.
+    - `requester` changes only its own requests, and it reads exactly those,
+      through the self routes below and nowhere else. So it never changes
+      anything blind.
   - `TestEveryRoleCanReadWhatItCanChange` gains no pair for `grant:request`,
     because no tenant-wide read matches it. Its comment says so.
 - `TestTheAuditorChangesNothing` lists `grant:request` among the writes.
@@ -225,14 +242,20 @@ POST /api/v1/tenants/{tenant}/me/grant-requests/{request}/cancel  AccessSelf  gr
   - `201` with the grant and the request when approved at once;
   - `403 grant_request_denied`;
   - `502 grant_workflow_failed`.
-- It has one answer of its own: **with no workflow registered, `501` and
+- It has one answer of its own: **with no workflow registered, `403` and
   `grant_workflow_not_registered`**.
   - Nothing is stored: no request row, no grant, no audit record. The message
     says a grant administrator can grant access directly.
-  - It is not a deny, because nothing was decided about this access (M11).
-  - It is not a `503` like `ca_not_configured`, because no setting in this
-    binary changes the answer. This deployment lacks the capability, and the
-    refusal says so (M15).
+  - It is a refusal this server makes on purpose, so it is a 4xx with its own
+    code (M11). That is how 0013's push receiver answers a capability this
+    deployment lacks: `push_not_supported` is a `403`.
+  - It is not a 5xx. On this surface a 5xx is an outage, and a caller may
+    retry an outage. Retrying here gets the same answer until a workflow is
+    registered, and a deployment with none is working as designed (M15).
+  - That is also why it is not a `503` like `ca_not_configured`, which reports
+    a deployment missing a setting it needs.
+  - It is not `grant_request_denied`, because no workflow said no. A client
+    tells the two apart by code (M21).
   - The refusal lives in the service, not only in the handler (item 4 below),
     so no later caller can turn a self-request into a self-grant.
 - **"Own" means the caller is the request's holder** (its `subject`), whoever
@@ -282,9 +305,12 @@ POST /api/v1/tenants/{tenant}/me/grant-requests/{request}/cancel  AccessSelf  gr
   - **The subject is a `WHERE` predicate, never a filter applied in Go**, for
     the same reason M18 puts the tenant in every query. Both methods take the
     tenant first, so `TestRepositoryMethodsTakeATenant` keeps passing.
+  - `TestEmptyTenantIsRefusedBeforeAnyQuery` lists its calls by hand. Add both
+    methods beside the existing `GrantRequests.*` entries.
 - A new forward-only migration indexes
   `grant_requests (tenant, subject_id, requested_at DESC)`. Use the next free
-  number: `0009` as this is written, or whatever is next when you start.
+  number: `0010` as this is written (0013 took `0009`), or whatever is next
+  when you start.
 
 ### 5. Break-glass on the request (`ext/access.go`, `internal/access/workflow.go`)
 - Add to `ext.GrantRequest`, beside `RequestedBy`:
@@ -337,7 +363,8 @@ POST /api/v1/tenants/{tenant}/me/grant-requests/{request}/cancel  AccessSelf  gr
     applied in every tenant a proxy is live in.
   - §6's RBAC paragraph: the `requester` role, why it holds no `readOnly`, and
     `AccessSelf`, where the subject is resolved from the caller and never
-    asserted.
+    asserted. Its role list still names five roles; 0013 recorded
+    `integration` in M16 only, so name the whole set.
   - §3, wherever it describes the route table or the poller.
   - This phase's §10 row, to match what was delivered.
 - No new decision is expected: this phase applies M10, M15 and M18. If you find
@@ -384,7 +411,7 @@ route added later is covered on the day it is added.
 - The fake sees `Subject.ID == RequestedBy.ID` from the self door. From the
   administrator's create, it sees the administrator's id as `RequestedBy`.
 - With **no** workflow registered:
-  - the self create answers `501 grant_workflow_not_registered`;
+  - the self create answers `403 grant_workflow_not_registered`;
   - the tenant has no new request row, no new grant and no new audit record;
   - the administrator's direct create still works exactly as before.
 - A body naming `subject` gets `400 invalid_request`. A denied self-request gets
@@ -450,7 +477,7 @@ State at least these obligations:
    yet" from what merged.
    - The door exists at `…/me/grant-requests`, under `grant:request` (role
      `requester`).
-   - It is refused with `501 grant_workflow_not_registered` while no workflow
+   - It is refused with `403 grant_workflow_not_registered` while no workflow
      is registered, which is what its E4 already requires of an unlicensed
      binary.
    - Enterprise builds no requester's door of its own.
@@ -493,7 +520,7 @@ sync is written from its summary block, which MUST give:
 
 - the four routes, with their access class and permission;
 - the `requester` role, and why it holds no `readOnly`;
-- every answer the self create can give, including `501
+- every answer the self create can give, including `403
   grant_workflow_not_registered`;
 - `ext.GrantRequest.BreakGlass`, verbatim;
 - how the poller now learns a tenant.
