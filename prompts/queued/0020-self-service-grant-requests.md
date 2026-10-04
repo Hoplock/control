@@ -14,9 +14,10 @@
 ## Read first
 - `docs/PROTOCOL.md` — session workflow. Read §3 for `ext/` as a compatibility
   promise and for revising the plan in place.
-- `docs/CROSS-REPO-PROTOCOL.md` — **§4.1**, and **§5** at "The PR that answers
-  an upstream request is not a sync". This phase changes `ext/`, a shared
-  surface, and it answers a request, so it owes a downstream sync (below).
+- `docs/CROSS-REPO-PROTOCOL.md` — **§4.1**, **§4.3** (where the sync is
+  queued), and **§5** at "The PR that answers an upstream request is not a
+  sync". This phase changes `ext/`, a shared surface, and it answers a request,
+  so it owes a downstream sync (below).
 - `docs/PLAN.md`:
   - **§2**:
     - **M10**: grants, and governance as a seam. This phase extends its
@@ -499,10 +500,11 @@ State at least these obligations:
    request reaches the workflow, so they name the second door and the
    break-glass flag.
 
-End the section with the **"Downstream sync" kickoff** from
-`docs/KICKOFF.md`, verbatim except for its blanks: this PR's URL, and the
-obligations above. Repeat it in your reply to the user, and say it needs a
-**fresh session with `hoplock/enterprise` checked out**.
+Queue the **"Downstream sync" kickoff** from `docs/KICKOFF.md`, verbatim except
+for its blanks — this PR's URL, and the obligations above — as
+`prompts/downstream/queued/control-PR#<n>-<short-description>.md`, committed
+once the PR is open, and end the section by naming that file
+(`docs/CROSS-REPO-PROTOCOL.md` §4.3).
 
 ### `hoplock/proxy`
 Write **"None"** rather than leaving the repository out. The contract (M1) is

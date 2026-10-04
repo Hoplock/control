@@ -325,6 +325,38 @@ func TestPromptDirectoriesKeepTheirShapes(t *testing.T) {
 	}
 }
 
+// requestFile is how docs/CROSS-REPO-PROTOCOL.md §4.3 names a queued
+// cross-repo request: after the repository that raised it, which is always this
+// one, and the number of the PR that did.
+var requestFile = regexp.MustCompile(`^control-PR#[1-9][0-9]*-[a-z0-9]+(-[a-z0-9]+)*\.md$`)
+
+// TestRequestQueuesKeepTheirShapes enforces docs/CROSS-REPO-PROTOCOL.md §4.3.
+// The request queues sit outside the numbered sequence: where a file is says
+// where the work is done, and the PR its name carries says how long it has
+// waited. A file named any other way is one the cross-repo kickoff cannot place.
+func TestRequestQueuesKeepTheirShapes(t *testing.T) {
+	for _, dir := range []string{
+		"prompts/upstream/queued", "prompts/upstream/implemented",
+		"prompts/downstream/queued", "prompts/downstream/implemented",
+	} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Errorf("%s: %v — every repository carries all four request folders, each with a .gitkeep "+
+				"so git keeps it while it is empty (CROSS-REPO-PROTOCOL §4.3)", dir, err)
+			continue
+		}
+		for _, e := range entries {
+			if e.Name() == ".gitkeep" {
+				continue
+			}
+			if e.IsDir() || !requestFile.MatchString(e.Name()) {
+				t.Errorf("%s/%s: a request is named control-PR#<n>-short-description.md, after the PR that "+
+					"raised it (CROSS-REPO-PROTOCOL §4.3)", dir, e.Name())
+			}
+		}
+	}
+}
+
 func promptExists(name string) bool {
 	for _, dir := range []string{"prompts/queued", "prompts/implemented"} {
 		if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("%s.md", name))); err == nil {
