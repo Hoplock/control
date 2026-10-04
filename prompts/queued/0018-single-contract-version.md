@@ -328,8 +328,9 @@ version support back needs the argument, not just the conclusion.
   from this session (§6); instead build everything the gap does not block,
   name the exact field or enum value under a `## Upstream request` heading in
   this PR together with what stays broken until it lands, record it in the
-  learnings summary, and end that section with the filled-in "Upstream request"
-  kickoff from `docs/KICKOFF.md`, repeated in your reply to the user (§4.2).
+  learnings summary, and queue the filled-in "Upstream request" kickoff from
+  `docs/KICKOFF.md` in `prompts/upstream/queued/`, naming the file in that
+  section (§4.2, §4.3).
   Telling the user and leaving it there is what turned the last two such needs
   into text nobody could run.
 

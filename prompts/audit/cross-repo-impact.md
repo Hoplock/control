@@ -29,8 +29,9 @@
   repository needs something the proxy does not have; it is a flow now, not a
   prohibition, and it ends in a runnable kickoff rather than in telling the
   user), §4 (the two hand-over obligations: §4.1, the upstream author's
-  obligation to look downstream, which is what this phase audits, and §4.2, the
-  mirror duty this phase itself owes whenever it finds a gap), §5 (what a
+  obligation to look downstream, which is what this phase audits, §4.2, the
+  mirror duty this phase itself owes whenever it finds a gap, and §4.3, the
+  queues both are written to), §5 (what a
   sync PR owes, including "how you searched", and why the PR that answers a
   request is not one), §6 (the guardrails).
 - `docs/PLAN.md` — the decision register at the head of **§2**, then **§4** (the
@@ -280,7 +281,10 @@ Text only, with a sync's discipline (§3.1, §6):
 - **never hand-edit a vendored artifact.** If `contract/` exists by the time this
   runs (it lands with 0002), a stale copy is fixed by `make contract-sync`, and
   a contract that has moved is a **downstream sync** (§3.1) with its own PR — not
-  this phase's to fold in. Hand the user the kickoff and say so;
+  this phase's to fold in. It should already be waiting in the proxy's
+  `prompts/downstream/queued/` (§4.3); if the proxy PR queued none, hand the user
+  the filled-in kickoff and say so, since this session cannot write to the
+  proxy;
 - **renumber no prompt** (`docs/PROTOCOL.md` §6). Appending a new queued prompt
   at the end is allowed where the audit finds work that is genuinely a phase, but
   prefer a sentence in the prompt that already owns the area: a new prompt is a
@@ -292,13 +296,14 @@ Text only, with a sync's discipline (§3.1, §6):
   **name the exact field, signature, endpoint or enum value**; record it as a
   named cross-repo dependency in the learnings summary; state it in this PR under
   a heading spelled exactly `## Upstream request`, with what stays broken until
-  it lands; and **end that section with a ready-to-run kickoff for
-  `hoplock/proxy`** — the "Upstream request" block in `docs/KICKOFF.md`, verbatim
-  except for its blanks — repeated in your reply to the user, saying plainly that
-  it needs a fresh session with `hoplock/proxy` checked out (§4.2). An audit
-  builds nothing, so §3.2's "build the seam unwired" step has no work here; the
-  named shape and the kickoff are the whole deliverable, and without the kickoff
-  the finding is archived rather than raised.
+  it lands; and **queue a ready-to-run kickoff for `hoplock/proxy`** — the
+  "Upstream request" block in `docs/KICKOFF.md`, verbatim except for its
+  blanks — as `prompts/upstream/queued/control-PR#<n>-<short-description>.md`,
+  committed once this PR is open, and end that section by naming the file
+  (§4.2, §4.3). An audit builds nothing, so §3.2's "build the seam unwired" step
+  has no work here; the named shape and the queued kickoff are the whole
+  deliverable, and without the kickoff the finding is archived rather than
+  raised.
 
 ### 8. Leave an as-of marker
 
@@ -335,8 +340,9 @@ periodic check quietly becomes a one-off.
   by this PR in the prompt that will implement it, or raised as a §3.2 upstream
   request with the exact upstream shape named — in the learnings summary, in this
   PR's `## Upstream request` section, and as a filled-in kickoff for
-  `hoplock/proxy` (§4.2). A named shape with no kickoff does not count: it is the
-  half that has twice been done and twice led nowhere.
+  `hoplock/proxy` queued in `prompts/upstream/queued/` (§4.2, §4.3). A named
+  shape with no queued kickoff does not count: it is the half that has twice
+  been done and twice led nowhere.
 - **The independent contract check of §5 is done**, and the greps are written
   down verbatim. "I checked carefully" is not a finding a reviewer can re-derive.
 - **Every `D*` id cited in this repository resolves** in the proxy's register
@@ -345,9 +351,8 @@ periodic check quietly becomes a one-off.
   nothing pushed upstream.
 - `make check` passes.
 - The reply to the user lists, separately: obligations landed, §3.2 upstream
-  requests raised — each with its filled-in kickoff, said plainly to need a fresh
-  session with `hoplock/proxy` checked out — and anything the audit could not
-  reach (see §1).
+  requests raised — each by the file it is queued as — and anything the audit
+  could not reach (see §1).
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`, with two deliberate departures that follow from this
@@ -366,8 +371,8 @@ prompt being a repeating audit rather than a phase:
 
 That summary block MUST give: the **as-of markers** (§8), the bounded-set
 command and how many PRs it produced, the findings table, every obligation
-landed and where, every §3.2 upstream request as a named shape — with the fact
-that its kickoff was emitted, so a later run can tell a raised need from a
+landed and where, every §3.2 upstream request as a named shape — with the file
+its kickoff was queued as, so a later run can tell a raised need from a
 recorded one — and what the next run can skip because this one covered it.
 
 Write the reasoning into the prompts and the plan as you go, not only into the

@@ -21,7 +21,7 @@
 - `docs/CROSS-REPO-PROTOCOL.md`:
   - **§1**: the shared-surfaces table. This phase adds a public package the
     table does not list (item 7).
-  - **§4.1** and **§4.2**.
+  - **§4.1** and **§4.2**, and **§4.3** for where both are queued.
   - **§5**, at "The PR that answers an upstream request is not a sync".
 - `docs/PLAN.md`:
   - **§2**:
@@ -522,16 +522,18 @@ State at least these obligations:
    reporting is still blocked, and that is its next upstream request. There
    are no host-declared permissions.
 
-End the section with the **"Downstream sync" kickoff** from
-`docs/KICKOFF.md`, verbatim except for its blanks: this PR's URL, and the
-obligations above. Repeat it in your reply to the user, and say it needs a
-**fresh session with `hoplock/enterprise` checked out**.
+Queue the **"Downstream sync" kickoff** from `docs/KICKOFF.md`, verbatim except
+for its blanks — this PR's URL, and the obligations above — as
+`prompts/downstream/queued/control-PR#<n>-<short-description>.md`, committed
+once the PR is open, and end the section by naming that file
+(`docs/CROSS-REPO-PROTOCOL.md` §4.3).
 
 ### `hoplock/proxy`
 - **Downstream: "None".** The contract (M1) is untouched, and the proxy
   consumes neither `ext/` nor `server/`.
 - **Upstream: one request.** `docs/CROSS-REPO-PROTOCOL.md` §1 should list
-  `server/` (item 7). Put it under `## Upstream request` with its own kickoff.
+  `server/` (item 7). Put it under `## Upstream request`, with its own kickoff
+  queued as `prompts/upstream/queued/control-PR#<n>-<short-description>.md`.
   It is the only one of the two hand-overs this phase owes the proxy.
 
 ### Who runs them

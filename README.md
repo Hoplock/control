@@ -90,7 +90,7 @@ through `contract-sync`. Never the other way around.
 | `contract/` | **vendored** contract from the proxy repo — never edited here |
 | `deploy/` | docker-compose topology: this server + Postgres + a real proxy |
 | `docs/` | plan, session protocol, and per-phase learnings |
-| `prompts/` | queued and implemented phase prompts |
+| `prompts/` | queued and implemented phase prompts, audits, and the cross-repo request queues (`upstream/`, `downstream/`) |
 
 ## Building and running
 
@@ -153,9 +153,11 @@ when a dependency moves it.
 **Read [`docs/PROTOCOL.md`](docs/PROTOCOL.md) in full before doing any work.**
 It defines how a session picks up a prompt, branches, what "done" means, and how
 work is handed off to the next session. `docs/KICKOFF.md` has the exact prompts
-to start a session with, including the downstream sync a cross-repo change owes
-this repository and the upstream request that turns a need this repository
-cannot meet into work in the repository that owns the shape. If your change
+to start a session with, including the one that answers queued cross-repo work:
+the downstream syncs a cross-repo change owes, and the upstream requests that
+turn a need this repository cannot meet into work in the repository that owns
+the shape — each queued as a file in `prompts/downstream/` or `prompts/upstream/`
+and answered oldest first across all three repositories. If your change
 touches a surface another Hoplock repository consumes — or needs one that does
 not exist yet — `docs/CROSS-REPO-PROTOCOL.md` covers that too.
 
