@@ -2,7 +2,10 @@
 
 > Raised upstream by `hoplock/enterprise` in
 > https://github.com/Hoplock/enterprise/pull/11, under `## Upstream request`,
-> and answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
+> and answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2). Item 7
+> also carries a second Enterprise need, from
+> https://github.com/Hoplock/enterprise/pull/8: a stale paragraph in that
+> protocol's §1, which only the proxy can fix, rides this phase's request to it.
 >
 > **Where it sits.** It is numbered last because nothing queued depends on it,
 > and it depends only on merged phases: 0004 (`ext/` and the registry), 0011
@@ -20,7 +23,7 @@
   owes both.
 - `docs/CROSS-REPO-PROTOCOL.md`:
   - **§1**: the shared-surfaces table. This phase adds a public package the
-    table does not list (item 7).
+    table does not list, and the paragraph under the table is stale (item 7).
   - **§4.1** and **§4.2**, and **§4.3** for where both are queued.
   - **§5**, at "The PR that answers an upstream request is not a sync".
 - `docs/PLAN.md`:
@@ -405,9 +408,13 @@ Control already defines:
   owns and Enterprise consumes. The file is the proxy's and is mirrored
   verbatim. So `server/` reaches that table by **an upstream request to
   `hoplock/proxy`** (§3.2, §4.2): the `ext/` row should become Control's public
-  Go API, `ext/` and `server/`. Put it in your PR under `## Upstream request`
-  with the `docs/KICKOFF.md` "Upstream request" block filled in. Do **not**
-  edit the local copy.
+  Go API, `ext/` and `server/`. The same request asks for a second change to
+  §1, which Enterprise raised in enterprise#8 and which was folded into this
+  phase so that the proxy edits §1 once: the paragraph under the table still
+  says `contract/` and `ext/` "do not exist yet", and they have existed since
+  0002 and 0004. Name enterprise#8 as where that part came from. Put both in
+  your PR under `## Upstream request`, with the `docs/KICKOFF.md` "Upstream
+  request" block filled in. Do **not** edit the local copy.
 - No new decision is expected. This phase applies M15, M2, M18, M11 and M21.
   If you find yourself settling something none of them settles, add a decision
   with its register row in the same PR, and say so in its first line.
@@ -531,10 +538,14 @@ once the PR is open, and end the section by naming that file
 ### `hoplock/proxy`
 - **Downstream: "None".** The contract (M1) is untouched, and the proxy
   consumes neither `ext/` nor `server/`.
-- **Upstream: one request.** `docs/CROSS-REPO-PROTOCOL.md` §1 should list
-  `server/` (item 7). Put it under `## Upstream request`, with its own kickoff
-  queued as `prompts/upstream/queued/control-PR#<n>-<short-description>.md`.
-  It is the only one of the two hand-overs this phase owes the proxy.
+- **Upstream: one request, for two changes to `docs/CROSS-REPO-PROTOCOL.md`
+  §1 (item 7).** List `server/`, and rewrite the paragraph that says
+  `contract/` and `ext/` "do not exist yet". The second is enterprise#8's need.
+  Its request file, `enterprise-PR#8-protocol-surfaces-exist.md`, is in
+  Enterprise's `prompts/upstream/implemented/`, because folding it in here was
+  the answer. Put both under `## Upstream request`, with one kickoff queued as
+  `prompts/upstream/queued/control-PR#<n>-<short-description>.md`. It is the
+  only one of the two hand-overs this phase owes the proxy.
 
 ### Who runs them
 Not you. This PR merges first, and the sync and the request run afterwards in
