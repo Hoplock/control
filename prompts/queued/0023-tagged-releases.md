@@ -289,20 +289,13 @@ passing silently.
 - `README.md`: how to depend on Control (a released version, never a
   `replace`) and where the changelog is.
 - The queued prompts whose hand-off owes `hoplock/enterprise` a sync. As this is
-  written that is 0015 (its closing **Cross-repo impact** paragraph, which says
-  "Hoplock Enterprise", so a grep for `hoplock/enterprise` misses it), and 0020,
+  written that is 0015 (its closing **Cross-repo impact** paragraph), and 0020,
   0021 and 0022 (each one's `hoplock/enterprise` section). Read each queued
   prompt's hand-off for any added since.
   - Each one's Enterprise obligations gain one line: Enterprise's pin moves to
     the release that PR cuts, named by version.
   - 0015's "the software version (already stamped by 0001)" names the release
     decision.
-  - 0015 and 0022 still describe the hand-off from before the request queues:
-    "the merging session owns a sync PR there", and "Repeat it in your reply to
-    the user". 0020 and 0021 queue the sync as a file
-    (`docs/CROSS-REPO-PROTOCOL.md` §4.3). You are editing those paragraphs
-    anyway, so bring those sentences in line, and change nothing else in those
-    prompts.
 - 0019 decides whether `ext.KeyAlgorithm.String()` changes what it returns. No
   API diff sees a behaviour change, so its Definition of Done names the
   changelog entry it owes if it does.
