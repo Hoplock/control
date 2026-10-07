@@ -1,15 +1,15 @@
-# 0020 — Self-service grant requests: a requester's own door, break-glass on the request, every live tenant polled
+# 0016 — Self-service grant requests: a requester's own door, break-glass on the request, every live tenant polled
 
 > Raised upstream by `hoplock/enterprise` in
 > https://github.com/Hoplock/enterprise/pull/10, under `## Upstream request`,
-> and answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2). It is
-> numbered last because nothing queued depends on it, and it depends on nothing
-> queued: only on 0011 (RBAC and the north-bound credential model), 0012 (grants
-> and the workflow seam) and 0013 (whose `integration` role and push-receiver
-> refusals it follows), all merged. **It may run before 0014–0019**, started
-> with `docs/KICKOFF.md`'s "Specific prompt" block, and nothing needs
-> renumbering when it does. Run it before Enterprise's approval phase (its 0003)
-> if you can; that phase builds around these three gaps until they exist.
+> and answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
+>
+> **Where it sits.** Third, after tagged releases (0014) and the public server
+> package (0015). It depends on nothing queued: only on 0011 (RBAC and the
+> north-bound credential model), 0012 (grants and the workflow seam) and 0013
+> (whose `integration` role and push-receiver refusals it follows), all merged.
+> It runs before the north-bound API (0018) because Enterprise's approval phase
+> (its 0003) builds around these three gaps until they exist.
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow. Read §3 for `ext/` as a compatibility
@@ -216,7 +216,7 @@ written; each alternative below meets the same need.
   (item 3 below), both in `AllCodes`.
 
 ### 3. The requester's routes (`internal/httpapi/north/routes.go`, `grants.go`)
-Append to the route table, under `// --- a requester's own (M10, 0020) ---`:
+Append to the route table, under `// --- a requester's own (M10, 0016) ---`:
 
 ```
 POST /api/v1/tenants/{tenant}/me/grant-requests                   AccessSelf  grant:request  ask the registered workflow for a grant for yourself
@@ -279,8 +279,8 @@ POST /api/v1/tenants/{tenant}/me/grant-requests/{request}/cancel  AccessSelf  gr
 - The tenant-wide routes do not change. `POST …/grants` and
   `POST …/grant-requests/{request}/cancel` stay `grant:write`, and a requester
   calling either gets `403 forbidden`.
-- If 0015 has merged when you start, these routes enter M19's north-bound
-  version like any other addition. If it has not, 0015 versions them with the
+- If 0019 has merged when you start, these routes enter M19's north-bound
+  version like any other addition. If it has not, 0019 versions them with the
   rest of the surface.
 
 ### 4. The service and the store (`internal/access`, `internal/store`)
@@ -386,7 +386,7 @@ POST /api/v1/tenants/{tenant}/me/grant-requests/{request}/cancel  AccessSelf  gr
 - **The caller's own grants** (`GET …/me/grants`), and **withdrawing your own
   grant early**. Neither was asked for, and a request read already returns the
   grant it produced.
-- **Console screens** for the self routes. 0016's console is a client of this
+- **Console screens** for the self routes. 0020's console is a client of this
   API, and whether a requester's view belongs in Control's console or
   Enterprise's is for those phases to decide. For a UI that hides what a caller
   cannot do, `GET /api/v1/session` already lists `grant:request` per tenant.
@@ -517,7 +517,7 @@ Not you. This PR merges first, and the sync runs afterwards in its own session
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0020-self-service-grant-requests-learnings.md`. Enterprise's
+`docs/learnings/0016-self-service-grant-requests-learnings.md`. Enterprise's
 sync is written from its summary block, which MUST give:
 
 - the four routes, with their access class and permission;

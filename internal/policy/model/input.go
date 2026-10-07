@@ -35,7 +35,7 @@ type Tenant string
 
 // Input is one whole evaluation's inputs. Time is a field rather than a call to
 // time.Now(): an engine with its own clock cannot be simulated over historical
-// traffic (0014) and cannot be tested without flakiness.
+// traffic (0018) and cannot be tested without flakiness.
 type Input struct {
 	// Now is the instant the decision is being made for. Day-of-week and
 	// time-of-day matching read it in the bundle's declared location.

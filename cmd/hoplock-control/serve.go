@@ -34,8 +34,8 @@ const shutdownGrace = 15 * time.Second
 // THE TWO SURFACES SHARE NO PORT, NO CHAIN AND NO CREDENTIAL (M2) — and they do
 // share a bring-up, because a process that starts one and not the other is a
 // deployment where half the product is up. The north-bound listener arrives here
-// with 0011 rather than 0014 because this phase is what M2 was waiting for: the
-// credential model. 0014 adds routes to a listener that already authenticates.
+// with 0011 rather than 0018 because this phase is what M2 was waiting for: the
+// credential model. 0018 adds routes to a listener that already authenticates.
 func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions *ext.Extensions, log *slog.Logger) error {
 	// The event broker is built FIRST, because the fleet registry reads it:
 	// a cache hint is only issued to a proxy holding a live subscription
@@ -314,7 +314,7 @@ func startPublishListener(cfg *config.Config, registry *fleet.Registry, bus *rev
 	log.Warn("the local revocation publish listener is enabled",
 		"event", "revoke_publish_listener_enabled",
 		"address", cfg.Events.PublishListener,
-		"note", "this is a pre-0014 operator path and publishes the kill switch; do not expose it",
+		"note", "this is a pre-0018 operator path and publishes the kill switch; do not expose it",
 	)
 	return &http.Server{
 		Addr:              cfg.Events.PublishListener,
@@ -340,7 +340,7 @@ func startAuditReadListener(cfg *config.Config, st *store.Store, log *slog.Logge
 	log.Warn("the local audit read listener is enabled",
 		"event", "audit_read_listener_enabled",
 		"address", cfg.Audit.ReadListener,
-		"note", "this is a pre-0014 operator path and serves audit records; do not expose it",
+		"note", "this is a pre-0018 operator path and serves audit records; do not expose it",
 	)
 	return &http.Server{
 		Addr:              cfg.Audit.ReadListener,

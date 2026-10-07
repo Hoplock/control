@@ -362,7 +362,7 @@ func TestADecisionMadeUnderAGrantNamesItInTheRecord(t *testing.T) {
 	rec, inputs, expl := h.record(out.Response.DecisionID)
 
 	// The explanation names the grant that satisfied the rule — what
-	// `explain` (0014) renders — and so does the indexed column revocation
+	// `explain` (0018) renders — and so does the indexed column revocation
 	// reads.
 	if expl["grant"] != g.ID {
 		t.Errorf("explanation grant = %v, want %s", expl["grant"], g.ID)

@@ -50,7 +50,7 @@ owes the sync back to Enterprise like any other consumer (§5).
 | `Notifier` | notifications go to the deployment's configured webhook | the webhook notifier (0012) |
 | `ClusterCoordinator` | **never empty:** Control's wiring registers the single-node coordinator | one member, every singleton held, an in-process bus (0004) |
 | `ActionHandler` | no external system can act on this deployment | nothing — inbound automation is an addition |
-| `ReportProvider` | the north-bound audit and decision queries are the reporting available | query, explain, simulation (0010, 0014) |
+| `ReportProvider` | the north-bound audit and decision queries are the reporting available | query, explain, simulation (0010, 0018) |
 | `PolicyValidator` | the compiler's own checks are the whole of validation, and always run | the compiler's exhaustive authoring-time checks (0005) |
 | `AccessContextProvider` | no external access context is consulted | the declarative HTTP provider — configured, not coded (0013, M16) |
 
@@ -176,7 +176,7 @@ Three rules the registry enforces:
 - **Every registration is visible.** `Registration.Provider` is required, the
   start-up log prints one line per point — including the points where nothing is
   registered, because that explains behaviour too — and the north-bound API
-  exposes the same listing (0014). An invisible extension is indistinguishable
+  exposes the same listing (0018). An invisible extension is indistinguishable
   from a bug in Control.
 
 Control's default supersedes nothing and is superseded by anything: registering

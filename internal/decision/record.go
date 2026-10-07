@@ -64,7 +64,7 @@ const (
 //
 // It is this package's shape rather than the engine's: `model.Input` carries a
 // netip.Addr and a time.Location and is tuned for evaluation, while this is
-// tuned for being read back in five years by somebody with a session id. 0014
+// tuned for being read back in five years by somebody with a session id. 0018
 // replays from it.
 type recordedInputs struct {
 	Now        time.Time         `json:"now"`
@@ -305,7 +305,7 @@ func (s *Service) write(ctx context.Context, tenant store.Tenant, rec record) er
 }
 
 // inputsDigest fixes the inputs an evaluation saw, so a simulation can say
-// whether it is replaying the same question (0014).
+// whether it is replaying the same question (0018).
 //
 // It is taken over the ENCODED document rather than over a hand-written
 // concatenation of fields, so that a field added to the document is a field in
@@ -399,7 +399,7 @@ func newRecordedGrant(g store.Grant) recordedGrant {
 
 // explainExternal names the external story of the grant that decided, and of
 // every window that went unanswered. It reads the decision's own inputs — the
-// grants it counted and the windows it asked about — so explain (0014) never
+// grants it counted and the windows it asked about — so explain (0018) never
 // has to join a table that may have changed since.
 func explainExternal(rec *record, counted []store.Grant, entries []accessctx.Entry) {
 	for _, e := range entries {

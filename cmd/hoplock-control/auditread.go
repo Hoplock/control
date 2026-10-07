@@ -33,7 +33,7 @@ import (
 // THAT MUST DELETE IT WILL SEE IT. `docs/PROTOCOL.md` §3 permits a debug
 // endpoint only when a named production API will supersede it and THAT PHASE'S
 // PROMPT CARRIES THE REMOVAL — a note in a learnings file does not count.
-// `prompts/queued/0014-northbound-api-and-policy-lifecycle.md` names every
+// `prompts/queued/0018-northbound-api-and-policy-lifecycle.md` names every
 // file, config key, fixture and CI line that goes with this one, and carries
 // an acceptance criterion asserting it is gone.
 //

@@ -1,4 +1,4 @@
-# 0017 — Cross-repo E2E topology, CI gate & hardening
+# 0021 — Cross-repo E2E topology, CI gate & hardening
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -42,7 +42,7 @@ what is left.
    plain pre-existing account standing in for an appliance (`brokered-key`).
    It also has an account that trusts this server's tenant CA through
    `TrustedUserCAKeys`, for `brokered-certificate` (`Hoplock/proxy#68`; wired
-   by 0014). The bundle to install is what `hoplock-control ca show` prints.
+   by 0018). The bundle to install is what `hoplock-control ca show` prints.
 6. **client** — runs the scenario SSH clients.
 
 ### Scenario suite
@@ -94,7 +94,7 @@ Each scenario is a product claim, proven across both components:
   closed here by design, and a suite that never exercises it would let us ship a
   server that silently refuses every ephemeral route in a fleet.
 - **A brokered certificate, minted for one session** (`Hoplock/proxy#68`;
-  wired by 0014). A route whose ladder names `brokered-certificate` logs the
+  wired by 0018). A route whose ladder names `brokered-certificate` logs the
   user into the CA-trusting account with a certificate this server signed for
   that session, and the target is left unmodified. The session's
   `provisioning` record stores `credential_certificate_serial`, and that serial
@@ -110,7 +110,7 @@ Each scenario is a product claim, proven across both components:
   weaker standing credential offered exactly when Control cannot say
   otherwise. The proxy's own e2e and mock prove that it refuses a malformed,
   expired or over-long certificate, so this suite does not prove that again.
-- **Fleet configuration round trip** (proxy D18; wired by 0014). Publish a zone
+- **Fleet configuration round trip** (proxy D18; wired by 0018). Publish a zone
   document through the north-bound API and assert on what the real proxy
   **reports**, not on the publish response. A document changing only a live
   setting is reported `applied`, with `running_*` equal to what was published.
@@ -122,7 +122,7 @@ Each scenario is a product claim, proven across both components:
   asserting it reports the new document with no second publish. Throughout, a
   session opened in the middle of the rollout succeeds, because configuration
   is not on the data path. Publishing a bootstrap-only key must be impossible
-  from the north-bound API (0014 refuses it), so the `rejected` path is proved
+  from the north-bound API (0018 refuses it), so the `rejected` path is proved
   by the proxy's own e2e and is not re-proved here. Use values equal to the
   proxies' bootstrap values, as the proxy's own scenario does, so the rest of
   the suite is unaffected.
@@ -135,12 +135,12 @@ Each scenario is a product claim, proven across both components:
 - **Audit**: the showcase query returns the blocked commands with the identity,
   route, decision, and grant behind them. Also assert that the fields this
   store indexes carry the names the real proxy emits (`Hoplock/proxy#66`,
-  indexed by 0014). An `ephemeral-user` session's `provisioning` record is
+  indexed by 0018). An `ephemeral-user` session's `provisioning` record is
   stored with `algorithm_profile` `default`, its `credential_method`, and,
   where the route carries a ladder, `credential_rung` counting from 1. So a
   session on the first-choice rung stores `1`, and the degradation query does
   not return it. Its `target.algorithms_negotiated` record (`Hoplock/proxy#69`,
-  ingested by 0014) is stored with `target_kex_algorithm`, never
+  ingested by 0018) is stored with `target_kex_algorithm`, never
   `kex_algorithm`, and the by-value query finds the session by it. Its target
   ends up holding both observations the real proxy reports, the probe's rungs
   and the separate key-exchange report, and neither overwrites the other.
@@ -164,12 +164,12 @@ Each scenario is a product claim, proven across both components:
   in-process handshake tests cover each stranded case and the
   `target.algorithm_policy_unmet` record. So this suite does not stand up a
   legacy target to prove either again. Floors and bans are the same
-  (`Hoplock/proxy#69`): the proxy's own e2e proves them, and 0019 extends this
+  (`Hoplock/proxy#69`): the proxy's own e2e proves them, and 0022 extends this
   suite with the post-quantum floor's scenarios. So build the main target from
   an image whose OpenSSH is 9.9 or later, which offers
   `mlkem768x25519-sha256`. The proxy's own target image, `debian:stable-slim`,
   currently does. One fact about bans only this topology can check
-  (`Hoplock/proxy#72`, judged by 0014): the declaration this server records
+  (`Hoplock/proxy#72`, judged by 0018): the declaration this server records
   for the real proxy (`capabilities.algorithm_profiles`) names every profile
   the proxy accepts, each with every axis non-empty. Assert it. This server's decoder ignores a key it does not
   know, so a misspelled key would turn every ban judgement into "unknown"
@@ -254,7 +254,7 @@ Each scenario is a product claim, proven across both components:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0017-e2e-topology-and-ci-learnings.md`. Summary block MUST
+`docs/learnings/0021-e2e-topology-and-ci-learnings.md`. Summary block MUST
 document how to run the topology locally, the seed/fixture layout, each scenario
 and what it proves, how the proxy revision is pinned and bumped, how the
 `govulncheck` gate is wired and what to do when it goes red without a code

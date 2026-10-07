@@ -17,7 +17,7 @@ import (
 
 // Everything a grant carries survives the round trip: the scope's selector,
 // why and who, the workflow's provenance and the external assertion. A field
-// that is written and not read back is a field explain (0014) cannot show.
+// that is written and not read back is a field explain (0018) cannot show.
 func TestAGrantRoundTripsEveryField(t *testing.T) {
 	t.Parallel()
 	st := storetest.New(t)

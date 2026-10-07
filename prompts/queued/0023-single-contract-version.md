@@ -1,4 +1,4 @@
-# 0018 — One contract version, end to end
+# 0023 — One contract version, end to end
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 ("never edit
@@ -52,7 +52,7 @@ exists moves them as a pair.
 > deployment could be supervised: a supervisory plane consumes many deployments
 > at many versions, so the north-bound surface has *exactly* the mid-upgrade
 > problem this phase is narrowing away south-bound, and it has it permanently.
-> Phase 0015 gives that surface its own version and its own negotiation. This
+> Phase 0019 gives that surface its own version and its own negotiation. This
 > phase must not touch it, must not fold its number into the contract's, and
 > must state the split in its learnings — the two numbers move independently and
 > for different reasons, which is the same lesson §4 already records about
@@ -94,7 +94,7 @@ this phase installs is **loud** rather than lenient.
   for `session_id: ""` on any kind and left `policy_version` at `6`,
   `Hoplock/proxy#72` (merged) moved it to `4.7.0` for
   `capabilities.algorithm_profiles` on the request and left `policy_version`
-  at `6`, and phase 0014 re-vendors. Expect at least `4.7.0` by the time this
+  at `6`, and phase 0018 re-vendors. Expect at least `4.7.0` by the time this
   phase runs, with `policy_version` at least `6`, and read the file.
 
   The contract's "Versioning" section is where the independence is stated:
@@ -190,7 +190,7 @@ this phase installs is **loud** rather than lenient.
 - The version-aware half of 0008's assembly goes: one assembly mode, no per-field
   "introduced in" table, no downgrade path. If 0008 built one, remove it and say
   so; if it did not, say that instead.
-- **0014 gives that gate its first live cases, and it has to go carefully.** A
+- **0018 gives that gate its first live cases, and it has to go carefully.** A
   response whose ladder names `brokered-certificate` needs vocabulary `5`, and
   one carrying `algorithm_floor` or `algorithm_bans` needs `6`
   (`requiredVersion`, `internal/decision/vocabulary.go`, following
@@ -290,21 +290,21 @@ version support back needs the argument, not just the conclusion.
   likely way to get this phase wrong.
 - **It may not fold the per-level floor rule into the version.** This server
   must not send an `algorithm_floor` level that the asking proxy did not declare
-  in `capabilities.algorithm_floors` (`Hoplock/proxy#69`, 0014). A proxy
+  in `capabilities.algorithm_floors` (`Hoplock/proxy#69`, 0018). A proxy
   declaring the one supported version may still enforce fewer levels than the
   contract names, for example a build from before a level was added. So the
   refusal for an undeclared level is a **capability** shortfall (M17), checked
   beside the rungs, and not a version mismatch. It stays when the version
   matches, and it must not be reworded as a version error, because an operator
   reading it has to look at that proxy's build rather than at the rollout. The
-  same holds for the per-proxy ban refusal (`Hoplock/proxy#72`, 0014): a route
+  same holds for the per-proxy ban refusal (`Hoplock/proxy#72`, 0018): a route
   whose bans leave an axis of the asking proxy's declared lists empty is
   refused to that proxy as a capability shortfall, whatever version it
   declared.
 - **It may not delete the negotiation tests**, only re-aim them (above).
 
 ## Out of scope
-- The **north-bound API version** and its negotiation (M19, phase 0015). It is a
+- The **north-bound API version** and its negotiation (M19, phase 0019). It is a
   separate number with a separate lifecycle and a real installed base; leave it
   alone and say in the learnings that you did.
 - Vendoring a new contract version. A downstream **sync** updates the text that
@@ -312,7 +312,7 @@ version support back needs the argument, not just the conclusion.
   vendors nothing; those are that repository's own numbered phases"
   (`docs/CROSS-REPO-PROTOCOL.md` §3.1) — so the `make contract-sync` run belongs
   to the phase that first needs the new shape. For `#56` that was **0009**; for
-  `#65`, `#66`, `#68`, `#69` and `#71` it is **0014**, where the obligation is
+  `#65`, `#66`, `#68`, `#69` and `#71` it is **0018**, where the obligation is
   written down. This
   line previously read "that is a downstream sync, not a phase", which is the
   opposite of what §3.1 says and would have left the re-vendor owned by
@@ -356,7 +356,7 @@ version support back needs the argument, not just the conclusion.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0018-single-contract-version-learnings.md`. The summary block
+`docs/learnings/0023-single-contract-version-learnings.md`. The summary block
 MUST give: where the supported version and the document version are defined and
 how they are tied to the vendored file, the exact refusal behaviour and status
 code, which conformance assertions are contract-level and which are this

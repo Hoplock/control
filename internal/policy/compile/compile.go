@@ -23,7 +23,7 @@ import (
 // What compilation deliberately does NOT decide is whether a given proxy or
 // target can *provide* something correctly authored — a rung, a device-field
 // name, a platform. That is a capability question answered from the fleet
-// registry (M17), on the issue path in 0008 and at publish time in 0014. The
+// registry (M17), on the issue path in 0008 and at publish time in 0018. The
 // split matters: an unrecognised device-field name is a skipped rung on the
 // proxy, not an error, and a compiler that refused one would make an estate's
 // own driver unauthorable.

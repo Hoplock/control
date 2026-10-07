@@ -102,7 +102,7 @@ func (p *Providers) Names() []string {
 	return slices.Clone(p.names)
 }
 
-// List returns every provider, by name: what the north-bound listing (0014)
+// List returns every provider, by name: what the north-bound listing (0018)
 // shows beside the registry's own rows.
 func (p *Providers) List() []Provider {
 	if p == nil {

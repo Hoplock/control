@@ -1,6 +1,6 @@
 # Hoplock Control — Console Design System
 
-> This document is **binding on phase 0016** and on every change to `ui/`
+> This document is **binding on phase 0020** and on every change to `ui/`
 > afterwards. PLAN **M20** is the decision that makes it so. It exists because
 > "make it look good" is not a requirement anybody can meet or fail, and a
 > console built to acceptance criteria that are all functional will be correct
@@ -9,7 +9,7 @@
 >
 > Read with `docs/PLAN.md` §2 (M20, M2, M18, M19, and **M21** — the console is
 > localisable from its first screen, and English is the only locale that ships)
-> and `prompts/queued/0016-management-console.md`.
+> and `prompts/queued/0020-management-console.md`.
 
 ---
 
@@ -61,7 +61,7 @@ labels, a modal for anything consequential, and default component-kit blue.
   is broken in an air-gapped deployment and, worse, leaks operator activity to a
   third party from inside a security product. This is not a preference.
 - **Keyboard is a path, not an affordance.** Audit and Explain are fully
-  keyboard-navigable (0016), there is a global command palette (`⌘K`/`Ctrl-K`),
+  keyboard-navigable (0020), there is a global command palette (`⌘K`/`Ctrl-K`),
   and focus is always visible.
 
 ---
@@ -244,7 +244,7 @@ Policy is read:
 
 ## 5. Deployment and tenant chrome (M18, M19)
 
-0016 requires that an operator with staging and production open in two tabs can
+0020 requires that an operator with staging and production open in two tabs can
 never confuse them, and that the distinction survives a screenshot. Design side:
 
 - The top bar carries the **deployment display name**, its short instance id in
@@ -285,7 +285,7 @@ rather than guessing.
 
 ## 7. Components
 
-The inventory 0016 must ship, each with **every** state designed — default,
+The inventory 0020 must ship, each with **every** state designed — default,
 hover, focus-visible, active, disabled, loading, error, empty, and both themes:
 
 **Primitives** — button (primary, secondary, ghost, danger), icon button (always
@@ -389,7 +389,7 @@ the same reason.
   falls back to system fonts beyond that. Pretending a new script is a free
   `<link>` is how an air-gapped deployment ends up rendering tofu.
 - **The server does not localise.** North-bound errors arrive as a stable code
-  and typed parameters and the console owns the sentence (M21, 0014); compiler
+  and typed parameters and the console owns the sentence (M21, 0018); compiler
   rejections arrive the same way (0005). Server logs stay English — they are read
   by operators and by support, and a log the vendor cannot read is worse than one
   in a second language.
@@ -399,7 +399,7 @@ the same reason.
 ## 10. How this is enforced
 
 A design system nobody checks is a mood board. Each of these is a CI job or a
-test, and 0016's acceptance criteria name them:
+test, and 0020's acceptance criteria name them:
 
 1. **Token lint.** No raw hex, `rgb()`, `px` font size, or `px` radius outside
    `tokens.css`. A stylelint rule; it fails the build.
@@ -447,7 +447,7 @@ test, and 0016's acceptance criteria name them:
   binding for the chosen framework, or equivalent). Catalogues are ICU JSON, one
   file per locale under `ui/src/locales/`, keys stable and never reused for a
   different sentence — a renamed key is a new key. `en.json` is the only one
-  committed in 0016.
+  committed in 0020.
 - **No chart library until there is a third chart.** The two §7 allows are
   hand-written SVG; a charting dependency for two charts is a bundle cost and a
   second visual identity at once.
@@ -455,7 +455,7 @@ test, and 0016's acceptance criteria name them:
   binary is shipped to self-hosters who may serve it over a VPN from a small
   instance.
 - **Assets are built in CI and committed** under `ui/dist/`, so `make build`
-  works on a machine with no Node (0016). The build is reproducible and a drift
+  works on a machine with no Node (0020). The build is reproducible and a drift
   check proves `dist/` matches `src/`.
 
 ---

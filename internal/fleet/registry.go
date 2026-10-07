@@ -541,7 +541,7 @@ func (r *Registry) Path(ctx context.Context, tenant store.Tenant, entry EntryPoi
 // health
 // ---------------------------------------------------------------------------
 
-// ProxyHealth is what the console's fleet screen (0016) renders and what an
+// ProxyHealth is what the console's fleet screen (0020) renders and what an
 // operator looks at first during an incident.
 type ProxyHealth struct {
 	ProxyID string
