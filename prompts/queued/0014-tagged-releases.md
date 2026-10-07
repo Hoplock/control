@@ -1,4 +1,4 @@
-# 0023 — Tagged releases: the first tag, a release from every phase after it, and what a version promises
+# 0014 — Tagged releases: the first tag, a release from every phase after it, and what a version promises
 
 > Raised upstream by `hoplock/enterprise` in
 > https://github.com/Hoplock/enterprise/pull/8, under `## One thing for you, not
@@ -6,17 +6,15 @@
 > (`docs/CROSS-REPO-PROTOCOL.md` §3.2). That PR predates the request queues. Its
 > request file is `enterprise-PR#8-control-release-tag.md` (§4.3).
 >
-> **Where it sits.** It is numbered last because nothing queued here depends on
-> it, and it depends only on merged phases: 0001 (the Makefile, CI and
-> `--version`) and 0004 (`ext/`, the public package a release versions). **It
-> may run before 0014–0022**, started with `docs/KICKOFF.md`'s "Specific prompt"
-> block, and nothing needs renumbering when it does. **Run it first if you
-> can.** It is small, and Enterprise's first phase (its 0001) cannot meet its E3
-> until a release exists, so every Enterprise phase waits on this one. Against
-> 0021 either order works. If 0021 merges first, `v0.1.0` contains `server/`. If
-> this phase merges first, 0021 cuts its own release under the rule added here.
-> If 0021 has merged, `cmd/hoplock-control/version.go` lives in
-> `internal/daemon`; nothing here depends on where.
+> **Where it sits.** First in the queue. It depends only on merged phases: 0001
+> (the Makefile, CI and `--version`) and 0004 (`ext/`, the public package a
+> release versions). It goes first because Enterprise's first phase (its 0001)
+> cannot meet its E3 until a release exists, so every Enterprise phase waits on
+> this one, and because every phase after it then releases under the rule it
+> adds. It is also small. The public server package (0015) comes next and cuts
+> its own release under that rule. Should 0015 have merged first anyway,
+> `cmd/hoplock-control/version.go` lives in `internal/daemon`, and nothing here
+> depends on where.
 
 ## Read first
 - `docs/PROTOCOL.md`. Read §3 for `ext/` as a compatibility promise, for
@@ -37,13 +35,13 @@
       served by the public module proxy and recorded in the checksum database.
       That is what makes a published version immutable.
     - **M19**: a deployment reports "the software version". This phase defines
-      what that is. It is not the north-bound API version 0015 adds.
+      what that is. It is not the north-bound API version 0019 adds.
     - **M1**: the contract has a version of its own, pinned by commit in
       `contract/UPSTREAM`. Not this one either.
     - **M13**: Go.
   - **§8**: the module path, the Go floor, and the CI bullet. This phase adds a
     releases bullet and two CI steps.
-  - **§10**: this phase's row. Read 0014's and 0018's rows only far enough to
+  - **§10**: this phase's row. Read 0018's and 0023's rows only far enough to
     see that the contract re-vendor and `policy_version` are other version
     axes.
 - `docs/learnings/`. Read the summaries, then open:
@@ -98,8 +96,9 @@ Control's own version, in one spelling.
     cannot prove what E3 requires.
   - No Enterprise phase has a Control version to build against, to bump
     deliberately, or to print in `--version`.
-  - Its 0008 runs its end-to-end criteria only "once Control can be started
-    from here and its 0014 is pinned". With no releases, that pin cannot exist.
+  - Its 0008 runs its end-to-end criteria only once Control can be started from
+    there and Control's north-bound API (0018) is pinned. With no releases,
+    that pin cannot exist.
 
 ## What this phase answers, and where it differs from the ask
 The shape is met as asked: `v0.1.0` is a tag on `main`. The requester could not
@@ -111,7 +110,7 @@ deliverable.
     phase here changes what Enterprise ships, not only the phases that touch
     `ext/`. And Enterprise takes a change only from a release (E3). One tag
     would unblock its 0001 and leave the same gap at the next phase it needs:
-    its 0008 already waits on 0014, which changes no public package.
+    its 0008 already waits on 0018, which changes no public package.
   - *What to build.* Every phase releases, in its own PR. CI cuts the tag from
     the merged PR, so a release never depends on somebody remembering to.
 - **A version must say what it promises.**
@@ -134,21 +133,21 @@ deliverable.
 
 One more thing is half there already. The binary reports a version (0001), but
 two builds of one commit spell it differently: `git describe` through the
-Makefile, Go's own stamp through `go build`. And once 0021 lets a host start
+Makefile, Go's own stamp through `go build`. And once 0015 lets a host start
 Control, it would report the host's version under Control's name.
 
 ## In scope
 
 ### 1. The release decision (`docs/PLAN.md` §2)
 Add it with the **next free `M` id**: M23 as this is written. Do not assume the
-number, because 0019 also adds a decision with the next free id. Use the id you
+number, because 0022 also adds a decision with the next free id. Use the id you
 take wherever this prompt says "the release decision", and add its register row
 in the same PR (PROTOCOL §3). Its first sentence is the row's "Settles":
 "Control is released as immutable tags of one module, and every phase is a
 release." Then it states:
 
 1. **What a release is.** An annotated tag `vMAJOR.MINOR.PATCH` on a commit on
-   `main`, of the one module (§8). `ext/`, and `server/` once 0021 lands, are
+   `main`, of the one module (§8). `ext/`, and `server/` once 0015 lands, are
    versioned with it, never separately.
 2. **How one is cut.** By merging a PR whose `CHANGELOG.md` names a version with
    no tag yet. CI tags that merge commit once every other job has passed on it
@@ -178,8 +177,8 @@ release." Then it states:
    in `go.mod`.
 7. **What it is not.** The module version is one of four version axes, and it
    is none of the other three: the vendored contract's (M1,
-   `contract/UPSTREAM`), `policy_version` (§4, 0018), and the north-bound API
-   version (M19, 0015). M19's "software version" **is** this one.
+   `contract/UPSTREAM`), `policy_version` (§4, 0023), and the north-bound API
+   version (M19, 0019). M19's "software version" **is** this one.
 
 Its register row's `Rendered in` names §8 and §10.
 
@@ -194,12 +193,12 @@ Its register row's `Rendered in` names §8 and §10.
 - Not listed: anything nobody consuming the module or running the binary can
   observe. That is prompts, plans, learnings and CI.
 - A behaviour change to a public package that no API diff can see is listed by
-  the phase that makes it, because nothing else will catch it. The change 0019
+  the phase that makes it, because nothing else will catch it. The change 0022
   proposes to `ext.KeyAlgorithm.String()` would be one.
 - `## v0.1.0` is the first release. Say what it contains by reference, without
-  restating PLAN §10: the phases merged when this one runs (0001–0013, this one,
-  and any of 0014–0022 merged before it), and `ext` as `ext/README.md`
-  describes it.
+  restating PLAN §10: the phases merged when this one runs (0001–0013 and this
+  one, plus any queued phase a session ran out of order before it), and `ext`
+  as `ext/README.md` describes it.
 
 ### 3. The release check (`scripts/release-check.sh`, `make release-check`, a CI job)
 It runs on every PR and every push. It reads `CHANGELOG.md`, the repository's
@@ -218,11 +217,11 @@ It runs on every PR and every push. It reads `CHANGELOG.md`, the repository's
 - refuses a tree where `prompts/implemented/` gained a prompt since the latest
   tag but there is no pending release, because a phase releases in its own PR;
 - ends with one line a reviewer reads: `on merge this releases v0.1.0 (MINOR:
-  0023 implemented; no previous release to diff)`, or `on merge this releases
+  0014 implemented; no previous release to diff)`, or `on merge this releases
   nothing`.
 
 The API diff compares the latest tag with the tree, for every public package.
-The set is **derived**, not listed, so `server/` is covered the day 0021 adds
+The set is **derived**, not listed, so `server/` is covered the day 0015 adds
 it and nobody has to remember. The expected tool is
 `golang.org/x/exp/cmd/apidiff`, pinned the way `golangci-lint` is. Another tool
 is fine if it reports an added interface method as incompatible. With no
@@ -253,14 +252,14 @@ passing silently.
   commit**. Never push a tag by hand, and never at another commit. Say this in
   the learnings.
 
-### 5. What a build reports (`cmd/hoplock-control/version.go`, or `internal/daemon/version.go` if 0021 has merged; `Makefile`)
+### 5. What a build reports (`cmd/hoplock-control/version.go`, or `internal/daemon/version.go` if 0015 has merged; `Makefile`)
 - `versionString` reports **Control's** module version from `debug.BuildInfo`:
   - `info.Main`, when its path is `github.com/hoplock/control`;
   - otherwise the `info.Deps` entry with that path, following `Replace` and
     saying so. A replaced build is a working copy, and it must not read as the
     release (E3).
 
-  A host started through 0021's `server.Main` then prints the Control release
+  A host started through 0015's `server.Main` then prints the Control release
   it was built against, not its own version under Control's name.
 - **One spelling per build.** Go stamps the main module's version from the
   repository's tags: the tag itself at a tagged commit, a pseudo-version after
@@ -273,7 +272,7 @@ passing silently.
 ### 6. The documents, and the queued prompts that owe Enterprise a sync
 - `docs/PLAN.md`, **revised in place** (PROTOCOL §3):
   - §2: the release decision and its register row (item 1). M19 is not
-    amended: its "software version" is the release decision's, and 0015 says
+    amended: its "software version" is the release decision's, and 0019 says
     so (below).
   - §8: a **Releases** bullet citing the decision, and the CI bullet gains the
     release check and the release job.
@@ -289,14 +288,14 @@ passing silently.
 - `README.md`: how to depend on Control (a released version, never a
   `replace`) and where the changelog is.
 - The queued prompts whose hand-off owes `hoplock/enterprise` a sync. As this is
-  written that is 0015 (its closing **Cross-repo impact** paragraph), and 0020,
-  0021 and 0022 (each one's `hoplock/enterprise` section). Read each queued
-  prompt's hand-off for any added since.
+  written that is 0015, 0016 and 0017 (each one's `hoplock/enterprise`
+  section), and 0019 (its closing **Cross-repo impact** paragraph). Read each
+  queued prompt's hand-off for any added since.
   - Each one's Enterprise obligations gain one line: Enterprise's pin moves to
     the release that PR cuts, named by version.
-  - 0015's "the software version (already stamped by 0001)" names the release
+  - 0019's "the software version (already stamped by 0001)" names the release
     decision.
-- 0019 decides whether `ext.KeyAlgorithm.String()` changes what it returns. No
+- 0022 decides whether `ext.KeyAlgorithm.String()` changes what it returns. No
   API diff sees a behaviour change, so its Definition of Done names the
   changelog entry it owes if it does.
 - No other queued prompt needs an edit. Every phase's release comes from
@@ -396,7 +395,7 @@ State at least these obligations:
 4. **Waiting on a Control phase.** Wherever an Enterprise prompt waits for a
    Control phase to be in "the pinned Control version", it now waits for **the
    release that phase cut**, which Control's changelog names. Its 0008 does
-   this for Control's 0014 ("once … its 0014 is pinned").
+   this for Control's north-bound API (0018).
 
 Queue the **"Downstream sync" kickoff** from `docs/KICKOFF.md`, verbatim except
 for its blanks — this PR's URL, and the obligations above — as
@@ -418,7 +417,7 @@ Not you. This PR merges first, and the sync runs afterwards in its own session
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`, including the line this phase adds to §4. This PR is
 the first one that line binds, and it releases `v0.1.0`. Move this prompt to
-`implemented/`, and add `docs/learnings/0023-tagged-releases-learnings.md`.
+`implemented/`, and add `docs/learnings/0014-tagged-releases-learnings.md`.
 Enterprise's sync is written from its summary block, which MUST give:
 
 - the release decision's id, and its bump rule verbatim;

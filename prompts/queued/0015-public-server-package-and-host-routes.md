@@ -1,4 +1,4 @@
-# 0021 — The public server package: one start for both binaries, host config sections, host routes behind Control's middleware
+# 0015 — The public server package: one start for both binaries, host config sections, host routes behind Control's middleware
 
 > Raised upstream by `hoplock/enterprise` in
 > https://github.com/Hoplock/enterprise/pull/11, under `## Upstream request`,
@@ -7,15 +7,16 @@
 > https://github.com/Hoplock/enterprise/pull/8: a stale paragraph in that
 > protocol's §1, which only the proxy can fix, rides this phase's request to it.
 >
-> **Where it sits.** It is numbered last because nothing queued depends on it,
-> and it depends only on merged phases: 0004 (`ext/` and the registry), 0011
-> (the north-bound listener, its route table and RBAC) and 0013. **It may run
-> before 0014–0020**, started with `docs/KICKOFF.md`'s "Specific prompt" block,
-> and nothing needs renumbering when it does. **Run it first if you can.** Until
-> it lands, Enterprise's binary cannot start at all, so every Enterprise phase
-> ships code that no server runs. 0014 and 0020 both edit `cmd/hoplock-control`
-> and the route table, and this phase moves the first and opens the second, so
-> running it before them saves each of them a rebase.
+> **Where it sits.** Second, after tagged releases (0014): it is the first phase
+> to cut its own release under 0014's rule, so Enterprise can pin the release
+> that contains `server/`. It depends only on merged phases: 0004 (`ext/` and
+> the registry), 0011 (the north-bound listener, its route table and RBAC) and
+> 0013.
+> Until it lands, Enterprise's binary cannot start at all, so every Enterprise
+> phase ships code that no server runs. Self-service grant requests (0016) and
+> the north-bound API (0018) both edit `cmd/hoplock-control` and the route
+> table, and this phase moves the first and opens the second, so it runs before
+> both and saves each of them a rebase.
 
 ## Read first
 - `docs/PROTOCOL.md`. Read §3 for `ext/` as a compatibility promise, for
@@ -42,7 +43,7 @@
     - **M13**: closed sets. Permissions, roles, access classes and error codes
       are closed sets.
     - **M7**: break-glass is asserted, never inferred.
-    - **M19**: the north-bound surface becomes a compatibility promise (0015).
+    - **M19**: the north-bound surface becomes a compatibility promise (0019).
   - **§3**: the layout, and "Component responsibilities" for
     `internal/httpapi/north`, `internal/identity`, `internal/extdefault`.
     Also the paragraph under the layout that says `ext/` is "the only
@@ -213,8 +214,8 @@ changes below; each meets the same need.
   alone.
 - Every queued prompt that names a file this item moves has its paths updated
   **in this PR**. As this is written that means:
-  - 0014: `publish.go`, `auditread.go`, `serve.go`;
-  - 0020: `serve.go`, `grants.go`.
+  - 0016: `serve.go`, `grants.go`;
+  - 0018: `publish.go`, `auditread.go`, `serve.go`.
 
   Grep `prompts/queued/` for `cmd/hoplock-control/`. A deletion obligation
   pointing at a path that no longer exists is how a debug endpoint outlives
@@ -422,7 +423,7 @@ Control already defines:
 ## Out of scope
 - **A cross-tenant access class** for E11's operator reporting. The reason is
   above. Name it in the learnings as the next request Enterprise will raise.
-- **A self-scoped host route.** 0020's `AccessSelf` is for Control's own
+- **A self-scoped host route.** 0016's `AccessSelf` is for Control's own
   requester routes. If Enterprise needs one, that is its own request.
 - **Host-declared permissions or roles.** See item 4.
 - **Host subcommands.** A host that wants commands of its own dispatches them
@@ -432,9 +433,9 @@ Control already defines:
   above needs it: approvals reach Control through `ext.GrantWorkflow`, which
   0012 already audits. If a governance act needs Control's chain, that is a
   request of its own.
-- **Console screens.** 0016 owns how Enterprise adds screens. This phase gives
+- **Console screens.** 0020 owns how Enterprise adds screens. This phase gives
   those screens an API to call, and nothing else.
-- **Host routes in M19's north-bound version.** If 0015 has merged, the version
+- **Host routes in M19's north-bound version.** If 0019 has merged, the version
   describes Control's routes, and the listing's `Provider` tells a client which
   routes are not Control's. Versioning a host's routes is the host's own
   compatibility promise.
@@ -553,7 +554,7 @@ their own sessions (`docs/CROSS-REPO-PROTOCOL.md` §2).
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0021-public-server-package-and-host-routes-learnings.md`.
+`docs/learnings/0015-public-server-package-and-host-routes-learnings.md`.
 Enterprise's sync is written from its summary block, which MUST give:
 
 - the exported signatures of `server/`, verbatim;

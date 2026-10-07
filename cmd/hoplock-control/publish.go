@@ -20,7 +20,7 @@ import (
 
 // The local publish path: `POST /debug/revoke`.
 //
-// IT EXISTS BECAUSE THE NORTH-BOUND API DOES NOT YET (0014), and for the same
+// IT EXISTS BECAUSE THE NORTH-BOUND API DOES NOT YET (0018), and for the same
 // reason `seed` does. The difference is that this one is also the contract's
 // own answer rather than only a gap: upstream Hoplock/proxy#56 states outright
 // that NOTHING ON `/v1` PUBLISHES AN EVENT — an event originates from an
@@ -36,7 +36,7 @@ import (
 // endpoint only when a named production API will supersede it and THAT PHASE'S
 // PROMPT CARRIES THE REMOVAL — a note in a learnings file does not count,
 // because the phase that has to act on it may be five phases away.
-// `prompts/queued/0014-northbound-api-and-policy-lifecycle.md` lists every file,
+// `prompts/queued/0018-northbound-api-and-policy-lifecycle.md` lists every file,
 // config key, fixture and CI line that goes with this one, and carries an
 // acceptance criterion asserting it is gone.
 //
@@ -55,7 +55,7 @@ import (
 //   - IT ONLY PUBLISHES. There is no read path, no listing, and no way to ask
 //     it what any proxy holds.
 //
-// It does not become a thin client of the north-bound API when 0014 lands. It
+// It does not become a thin client of the north-bound API when 0018 lands. It
 // is deleted, and the conformance suite's `events.publish_url` is repointed at
 // the real route.
 

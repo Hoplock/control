@@ -10,7 +10,7 @@
 # for a CI database that is created and destroyed in one job; a deployment
 # seeds its own file and keeps it off any host it need not be on.
 #
-# The seed command exists because the north-bound API does not yet (0014).
+# The seed command exists because the north-bound API does not yet (0018).
 # When it does, this becomes a thin client of it or it goes away.
 
 tenant: default

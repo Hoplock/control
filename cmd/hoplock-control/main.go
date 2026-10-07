@@ -124,7 +124,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	defer st.Close()
 
-	// The south-bound listener is bound; the north-bound one is not (0014).
+	// The south-bound listener is bound; the north-bound one is not (0018).
 	// They are two listeners from here on rather than two fields (M2).
 	if err := serve(ctx, cfg, st, extensions, log); err != nil {
 		return err

@@ -73,7 +73,7 @@ const (
 	DefaultMFAMaxPolls = 120
 	// DefaultNorthMaxBodyBytes caps a north-bound request body. It is larger
 	// than the south-bound cap because a policy bundle is the largest thing
-	// this surface accepts (0014) and nothing on the contract is close.
+	// this surface accepts (0018) and nothing on the contract is close.
 	DefaultNorthMaxBodyBytes int64 = 4 << 20
 	// DefaultNorthRequestTimeout bounds one north-bound request. It is longer
 	// than the south-bound one because nothing is holding a user's handshake
@@ -198,9 +198,9 @@ type Config struct {
 // It follows `events.publish_listener` in every respect: OFF UNLESS
 // CONFIGURED, refusing to bind without a credential of its own, on a port of
 // its own because the south-bound listener serves the contract and nothing
-// else (M2). It is superseded and DELETED by 0014's north-bound audit query
+// else (M2). It is superseded and DELETED by 0018's north-bound audit query
 // route — `docs/PROTOCOL.md` §3 permits a debug endpoint only against a named
-// successor whose own prompt carries the removal, and 0014's does, file by
+// successor whose own prompt carries the removal, and 0018's does, file by
 // file.
 type AuditConfig struct {
 	// ReadListener is an OPTIONAL address for the record read-back path,
@@ -249,7 +249,7 @@ type EventsConfig struct {
 	// Publishing an event is an operator action, and the contract states
 	// outright that nothing on `/v1` publishes one — the proxy-facing API
 	// would otherwise carry an endpoint no proxy calls. The north-bound
-	// API that will own it is 0014's, so until then the conformance suite
+	// API that will own it is 0018's, so until then the conformance suite
 	// (which cannot grade gap recovery without making this server emit an
 	// event while a subscriber is away) drives this listener instead.
 	//

@@ -1,4 +1,4 @@
-# 0014 — North-bound API & policy lifecycle
+# 0018 — North-bound API & policy lifecycle
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, and in **§3** the rule that a debug
@@ -326,7 +326,7 @@ publish that nothing can fetch has delivered nothing.
    `4.3.0` is a number the document has carried before: `#53` moved it
    **down** from `4.3.0` to `4.0.0`. A version string therefore does not
    identify a document, and nothing here may use one to. The checksum does
-   (0002, 0018). The re-vendor also moves the proxy commit the `conform` CI
+   (0002, 0023). The re-vendor also moves the proxy commit the `conform` CI
    job builds `cmd/mock-control` from. That is what gives the mock the fetch,
    the report, and `POST /debug/config`, and the conformance cases below
    depend on it.
@@ -721,7 +721,7 @@ and do not restate it.
    phase. At the re-vendor's ref that is **`6`**, because `#69` moved it
    again ("Algorithm floor and bans reach a proxy", below, item 1), and this
    method's tier is `5`. No test ties the constant to the document until
-   0018, so nothing forces the move, and that is the danger. Left behind, this
+   0023, so nothing forces the move, and that is the danger. Left behind, this
    server would hand a proxy an entry or a field it refuses the whole response
    over, which reaches the user as an outage. The gate for this is already
    built, in `internal/decision/vocabulary.go`. `requiredVersion` gains its
@@ -927,14 +927,14 @@ and do not restate it.
 
 ### Algorithm floor and bans reach a proxy (proxy phase 0045, `Hoplock/proxy#69`)
 
-0019 needs a way to say that a route's proxy→target leg must negotiate a
+0022 needs a way to say that a route's proxy→target leg must negotiate a
 hybrid post-quantum key exchange, and `algorithm_profile` can only weaken. The
-PR that queued 0019 raised the need upstream (`Hoplock/control#36`). The proxy
+PR that queued 0022 raised the need upstream (`Hoplock/control#36`). The proxy
 answered as its phase 0045, merged as **`Hoplock/proxy#69`**: contract
 **`4.5.0`**, `policy_version` **`6`**, and no new proxy decision. That PR's
 `## Cross-repo impact` section puts nine obligations on this repository. This
-phase owns the items below. 0016 owns the console views and the runbook's
-workflow, 0018 the version expectations, and 0019 asserting a floor end to end
+phase owns the items below. 0020 owns the console views and the runbook's
+workflow, 0023 the version expectations, and 0022 asserting a floor end to end
 against a real proxy. The re-vendor is item 1 of the fleet-configuration list
 above.
 
@@ -1031,7 +1031,7 @@ item 6. PLAN §5.2 records the dependency as met.
    Each declared level's `key_exchanges` is per-build truth, and so is each
    declared profile's offer. During a rolling upgrade two builds may accept
    different exchanges for one level, or offer different lists under one
-   profile, and the fleet view shows that (item 6, 0016). `algorithm_profiles`
+   profile, and the fleet view shows that (item 6, 0020). `algorithm_profiles`
    is what each profile offers per axis before any floor or ban, with both
    curve25519 spellings listed wherever either is offered, and item 4 judges
    bans against it. `algorithms` is every identifier a build can offer, per
@@ -1040,7 +1040,7 @@ item 6. PLAN §5.2 records the dependency as met.
    and nowhere else in the contract, so they have to be recorded per proxy.
    Record `algorithm_profiles` beside `algorithm_floors`, as one declaration.
    Item 4's publish-time judgement reads it whether or not a screen shows it,
-   and the fleet view shows it too (item 6, 0016). That is a write the decision
+   and the fleet view shows it too (item 6, 0020). That is a write the decision
    path causes, and M5 bounds the decision path. The three change together,
    and only when a proxy's build does. Decide how to record them within that
    budget, and say how in your learnings.
@@ -1224,7 +1224,7 @@ item 6. PLAN §5.2 records the dependency as met.
      the level. Authorize would refuse the route there (item 2), so these are
      the proxies that cannot enforce the level yet.
 
-   Serve the same facts read-only for the console (0016): the stored
+   Serve the same facts read-only for the console (0020): the stored
    observation per target, and each proxy's latest declaration with every
    level's key exchanges and every profile's offer per axis for its build
    (`Hoplock/proxy#72`). Item 4's per-build findings reach the console on the
@@ -1274,7 +1274,7 @@ item 6. PLAN §5.2 records the dependency as met.
 8. **Every step of the emergency runbook is callable here.** The runbook is
    upstream's (`api/README.md`, "Banned algorithms"): ban the algorithm, then
    send `cache_invalidate` with `all`, then send `session_kill` for the running
-   sessions found by what they negotiated. 0016 plans the workflow that walks an
+   sessions found by what they negotiated. 0020 plans the workflow that walks an
    operator through it. This phase owns the steps, and each is RBAC-gated and
    audited like every mutating action:
    - **The ban** is an ordinary publish (upload, validate, activate), with item
@@ -1329,7 +1329,7 @@ reports both kinds of loss as a `logging.gap` record. That PR's
 `## Cross-repo impact` section puts five obligations on this repository. Item
 1 of the fleet list above is the re-vendor. Item 1 of the `#66` list above is
 the `""` rule, rewritten. PLAN §7 now says what a gap in a proxy's stream is,
-and 0016 shows it. The items below are the rest.
+and 0020 shows it. The items below are the rest.
 
 They are this phase's for the reason the `#66` items are. This is the phase
 that serves the audit query, and from this phase on the north-bound names are
@@ -1384,7 +1384,7 @@ its keys ride `LogRecord.attributes`, an open map.
    arrived. The proxy itself omits `gap_first_at` and `gap_last_at` when no
    missing record carried a timestamp (its `internal/logging/gap.go`), so
    absent is not malformed there. Serve these facts read-only for the
-   console's audit view (0016).
+   console's audit view (0020).
 2. **A `400` only for a record this server will never store.** The
    re-vendored contract says what a `400` from either log endpoint costs, and
    it is no longer latency (PLAN §7). The proxy halves the batch until it has
@@ -1573,7 +1573,7 @@ Every north-bound route resolves exactly one tenant from the caller's scope
 ### Errors are machine-readable (M21)
 Every error this surface returns carries a **stable `code`**, typed
 **parameters**, an English **message**, and the correlation id M11 already
-requires. The console (0016) is the only layer that localises, and it can only
+requires. The console (0020) is the only layer that localises, and it can only
 do that if the sentence is assembled there — so an API that answers with prose
 alone makes a localisable console impossible, and that is decided here, two
 phases earlier, not discovered there.
@@ -1590,13 +1590,13 @@ phases earlier, not discovered there.
   handling here and no translated response, now or later (M21).
 
 ## Out of scope
-- The management console (0016). It is a **client** of this API and lives in
+- The management console (0020). It is a **client** of this API and lives in
   this repository under `ui/` (PLAN §3) — not a separate project, and not a
   privileged path of its own. Every capability it has, this surface grants it,
   which is why it cannot be built before this phase exists.
 - JIT requests and approvals (0012), though `explain` must be ready to name a
   grant.
-- SIEM export (0014).
+- SIEM export (Enterprise's, PLAN §11).
 - Revoking a brokered certificate mid-session. The revocation stream's
   `session_kill` already ends the session. A certificate revocation event, or
   a revocation-list check on the session path, would be a later phase if
@@ -1605,9 +1605,9 @@ phases earlier, not discovered there.
 - Publishing the CA's trust bundle to a target. `ca_public_keys` is carried by
   the proxy and acted on by nothing.
 - The console's impact preview, fleet coverage view and emergency-runbook
-  workflow (0016). This phase serves their data and every step of the runbook.
+  workflow (0020). This phase serves their data and every step of the runbook.
 - Asserting a `pq-hybrid-kex` floor end to end against a real proxy and target
-  (0019, on 0017's topology).
+  (0022, on 0021's topology).
 - Judging a ban for a proxy whose declaration omits the route's profile, or
   omits `algorithm_profiles`. That is "unknown" by the contract's own
   absent-value rule (item 4 of "Algorithm floor and bans reach a proxy"), and
@@ -1617,7 +1617,7 @@ phases earlier, not discovered there.
   set-aside area as a follow-up and has queued none, and nothing on the
   contract asks a proxy for one. A `refused` gap is reported here, and it is
   never retried from here.
-- The console's view of a gap in a proxy's stream (0016). This phase serves
+- The console's view of a gap in a proxy's stream (0020). This phase serves
   its data.
 
 ## Acceptance criteria
@@ -1847,7 +1847,7 @@ phases earlier, not discovered there.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0014-northbound-api-and-policy-lifecycle-learnings.md`. Summary
+`docs/learnings/0018-northbound-api-and-policy-lifecycle-learnings.md`. Summary
 block MUST give the route table with required roles, the bundle lifecycle states,
 the simulation API and its purity requirements, the `explain` response shape, and
 the `policyctl` command set. It must also give the fleet-configuration delivery:
@@ -1896,4 +1896,4 @@ And it must give what `Hoplock/proxy#71` changed here:
   sanctioned kinds each one is;
 - what you decided about the log endpoints' body limit.
 
-Phase 0012 adds routes to this surface and phase 0017 drives it end to end.
+Phase 0012 adds routes to this surface and phase 0021 drives it end to end.

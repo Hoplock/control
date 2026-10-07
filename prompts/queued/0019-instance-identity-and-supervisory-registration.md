@@ -1,4 +1,4 @@
-# 0015 — Instance identity, north-bound compatibility & supervisory registration
+# 0019 — Instance identity, north-bound compatibility & supervisory registration
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -11,7 +11,7 @@
 - `docs/learnings/` — read summaries; open `0004` (the `ext` package and
   `ClusterCoordinator`'s default), `0009` (the event stream, its replay and
   `resync` — this phase reuses its shape pointing the other way), `0011`
-  (tokens, scopes, RBAC), and `0014` (the north-bound API this phase versions).
+  (tokens, scopes, RBAC), and `0018` (the north-bound API this phase versions).
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` **D11** and §6.1 —
   outbound relay registration. This phase is that idea one level up, and it
   should be recognisably the same idea in the code.
@@ -95,7 +95,7 @@ A supervisor consuming many deployments meets version skew, so:
 - a deprecation window is stated in the documentation, not discovered by a
   client that broke.
 
-**This retires an assumption phase 0018 rests on.** Its premise — "this product
+**This retires an assumption phase 0023 rests on.** Its premise — "this product
 ships its proxy and its server together and has no installed base" — is true
 only while nobody operates a fleet of deployments. Update that phase's prompt in
 this PR to say the north-bound surface is exempt from its single-version rule
@@ -143,7 +143,7 @@ An opt-in outbound registration to a supervisor, off by default:
   attributed to the supervisor rather than folded into an anonymous "API"
   actor. The operator being supervised must be able to read what was done to
   them, in their own audit store, without asking the supervisor.
-- Its scope is visible in the north-bound API and in the console (0016), and it
+- Its scope is visible in the north-bound API and in the console (0020), and it
   is revocable there.
 
 ## Out of scope
@@ -194,7 +194,7 @@ An opt-in outbound registration to a supervisor, off by default:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0015-instance-identity-and-supervision-learnings.md`. Summary
+`docs/learnings/0019-instance-identity-and-supervision-learnings.md`. Summary
 block MUST give: the identity shape and where it is persisted; the health model
 at all three levels, its states, its freshness bounds, and how "absent" is
 distinguished from "healthy"; the north-bound

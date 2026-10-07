@@ -932,7 +932,7 @@ rules:
 // TestHandBuiltBundleGetsTheSameChecks covers the two rejections a YAML
 // document cannot reach, because the enum decoder refuses the value before the
 // compiler ever sees it. A bundle built in Go — which is what the authoring API
-// (0014) will hand over — gets the same answer.
+// (0018) will hand over — gets the same answer.
 func TestHandBuiltBundleGetsTheSameChecks(t *testing.T) {
 	channels := []model.ChannelType{model.ChannelSession}
 	b := &model.Bundle{

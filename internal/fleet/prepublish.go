@@ -17,8 +17,8 @@ import (
 // The pre-publish query (M17).
 //
 // AN OPERATOR MUST SEE THE MISMATCH BEFORE PUBLISHING, NOT AFTER. The north-bound
-// API (0014) needs to answer "which proxies can actually satisfy this policy",
-// which is a query over this registry's data; the query is built here and 0014
+// API (0018) needs to answer "which proxies can actually satisfy this policy",
+// which is a query over this registry's data; the query is built here and 0018
 // exposes it.
 //
 // Why it is worth building rather than discovering: a rung or a device field the
@@ -173,7 +173,7 @@ type Satisfaction struct {
 // Satisfiable reports whether at least one live proxy and, where the route
 // claims a target-dependent rung, at least one matching target can serve it.
 //
-// It is the one-line answer 0014 puts next to a publish button. The detail
+// It is the one-line answer 0018 puts next to a publish button. The detail
 // underneath it is what an operator reads when the answer is no.
 func (s Satisfaction) Satisfiable() bool {
 	proxyOK := false
@@ -262,7 +262,7 @@ func proxyVerdict(p store.Proxy, req RouteRequirement, live bool) ProxyVerdict {
 // CheckProxy reports whether one proxy's declared capabilities can serve a route.
 //
 // It is a PURE function of the declared set, so the answer can be tested without
-// a fleet and 0014 can render it for a proxy it already holds. Nothing here reads
+// a fleet and 0018 can render it for a proxy it already holds. Nothing here reads
 // the target's side: that is the second source, and the two are ANDed by
 // [Registry.CheckPolicy].
 func CheckProxy(proxyID string, zone Zone, caps Capabilities, live bool, req RouteRequirement) ProxyVerdict {

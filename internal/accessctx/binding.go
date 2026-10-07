@@ -32,7 +32,7 @@ import (
 //   - BY WHOM: the north-bound credentials that may push for it.
 //   - HOW: push, probe, or push-probe (a push opens, a probe confirms).
 //
-// This file is the internal API the north-bound surface (0014) exposes, and
+// This file is the internal API the north-bound surface (0018) exposes, and
 // the admission checks the push receiver and the probe path share.
 
 // Bounds on a binding. They keep a binding readable and an admission check

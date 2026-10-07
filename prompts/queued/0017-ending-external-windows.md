@@ -1,20 +1,19 @@
-# 0022 — Ending an external window: a push that ends what it opened, and the sessions it backed
+# 0017 — Ending an external window: a push that ends what it opened, and the sessions it backed
 
 > Raised upstream by `hoplock/enterprise` in
 > https://github.com/Hoplock/enterprise/pull/12, under `## Upstream request`,
 > and answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 >
-> **Where it sits.** It is numbered last because nothing queued depends on it,
-> and it depends only on merged phases: 0009 (the revocation stream), 0012
-> (grants, and the revocation that ends the sessions a grant backed) and 0013
-> (the push receiver, scope bindings and the declarative provider). **It may
-> run before 0014–0021**, started with `docs/KICKOFF.md`'s "Specific prompt"
-> block, and nothing needs renumbering when it does. Run it before Enterprise's
-> access-context phase (its 0008) if you can: until this lands, that phase
-> builds its vendors' "ended" detection unwired and skips its live-session
-> criterion. If 0021 has merged first, the wiring it moved out of
-> `cmd/hoplock-control` lives in `internal/daemon`; nothing here depends on
-> where.
+> **Where it sits.** Fourth, after tagged releases (0014), the public server
+> package (0015) and self-service grant requests (0016), and before the
+> north-bound API (0018). It depends only on merged phases: 0009 (the revocation
+> stream), 0012 (grants, and the revocation that ends the sessions a grant
+> backed) and 0013 (the push receiver, scope bindings and the declarative
+> provider). It runs this early because Enterprise's access-context phase (its
+> 0008) builds its vendors' "ended" detection unwired, and skips its
+> live-session criterion, until this lands. The public server package (0015)
+> runs first, so the wiring it moved out of `cmd/hoplock-control` lives in
+> `internal/daemon`; nothing here depends on where.
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow. Read §3 for `ext/` as a compatibility
@@ -419,11 +418,11 @@ Revise the order comment at the head of `push.go` to name both paths.
 
 ### 4. The ended ids (`internal/store`, a migration)
 A new forward-only migration, numbered next when you start — `0010` as this is
-written, unless 0020 or another phase has taken it. The content, not the house
+written, unless 0016 or another phase has taken it. The content, not the house
 style; match `0009`'s column conventions where they differ:
 
 ```sql
--- An end that named no window (M16, 0022). The id is kept so that an open
+-- An end that named no window (M16, 0017). The id is kept so that an open
 -- pushed under it afterwards is refused. A grant made under an id and an end
 -- kept for it never both exist: both are written under the assertion's lock.
 CREATE TABLE access_context_window_ends (
@@ -560,9 +559,9 @@ type endView struct {
   vendor's signature must be checked.
 - **Ending a probe-only window.** It is never stored (0013). Disabling the
   binding stops it being asked about.
-- **"Disable and revoke" on a binding**, which 0013's learnings leave to 0014's
+- **"Disable and revoke" on a binding**, which 0013's learnings leave to 0018's
   surface if it is wanted.
-- **The console** (0016). It is a client of the grant views, which already show
+- **The console** (0020). It is a client of the grant views, which already show
   `revoked_by` and the reason.
 - **`contract/` (M1).** Nothing on the wire changes: `session_kill` and
   `cache_invalidate` exist, and a revocation already publishes both. If it seems
@@ -676,7 +675,7 @@ State at least these obligations:
    - Drop "behind a seam named for it and visibly unwired", and turn the
      skipped live-session criterion into a real one: a Helix cancellation ends
      a person's live session with `session_kill`. It stays subject to 0008's
-     other skips — no binding route before Control's 0014, and the pinned
+     other skips — no binding route before Control's 0018, and the pinned
      version (E3).
 2. **Its "Qualys specifically" and "BMC Helix specifically".** "Closing reaches
    new connections only" stays true only for a vendor that cannot push. Record
@@ -709,7 +708,7 @@ Not you. This PR merges first, and the sync runs afterwards in its own session
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0022-ending-external-windows-learnings.md`. Enterprise's sync is
+`docs/learnings/0017-ending-external-windows-learnings.md`. Enterprise's sync is
 written from its summary block, which MUST give:
 
 - `ext.WindowAssertion.Ended`, verbatim;
