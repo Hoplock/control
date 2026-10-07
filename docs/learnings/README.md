@@ -32,9 +32,9 @@ by something it cannot see:
   and still produced nothing anybody could run. So the same dependency is also
   owed, by the PR that found it, as a `## Upstream request` section — the exact
   shape, what you built instead and where the seam is, and what stays broken
-  until it lands — ending with a **ready-to-run kickoff** for
-  `hoplock/proxy`, repeated in the reply to the user
-  (`docs/CROSS-REPO-PROTOCOL.md` §3.2, §4.2; the kickoff block is in
-  `docs/KICKOFF.md`). Write it in both places: the summary is how the *next
-  session here* finds it by reading, and the kickoff is how the upstream phase
-  actually gets started.
+  until it lands — and the **ready-to-run kickoff** for `hoplock/proxy`,
+  queued as a file in `prompts/upstream/queued/` and named at the end of that
+  section (`docs/CROSS-REPO-PROTOCOL.md` §3.2, §4.2, §4.3; the kickoff block is
+  in `docs/KICKOFF.md`). Write it in both places: the summary is how the *next
+  session here* finds it by reading, and the queued kickoff is how the upstream
+  phase actually gets started.

@@ -2,6 +2,9 @@
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
+- `docs/CROSS-REPO-PROTOCOL.md` — **§4.1** and **§4.3**: the downstream sync
+  this phase owes `hoplock/enterprise`, and where it is queued (see
+  **Cross-repo impact**, at the end).
 - `docs/PLAN.md` — especially **§2 (M19, M18, M2, M11, M15)**, §3
   (`internal/instance`), and §4's `policy_version` obligation, which is the
   pattern the north-bound version promise copies.
@@ -201,7 +204,14 @@ singleton is acquired and what happens on leadership change; the config section;
 and the exact scope grammar a supervisor credential uses.
 
 **Cross-repo impact.** Hoplock Enterprise builds its supervisory plane (E14) on
-this phase's output. Per `docs/CROSS-REPO-PROTOCOL.md` §3.1 the merging session
-owns a sync PR there, and it must carry the north-bound version number, the
-registration protocol, and the credential scope grammar verbatim — those three
-are what the downstream phase is written against.
+this phase's output, so this phase owes `hoplock/enterprise` a downstream sync
+(`docs/CROSS-REPO-PROTOCOL.md` §3.1). State the obligations in the PR's
+`## Cross-repo impact` section (§4.1): they must carry the north-bound version
+number, the registration protocol, and the credential scope grammar verbatim —
+those three are what the downstream phase is written against. Queue the
+**"Downstream sync" kickoff** from `docs/KICKOFF.md`, verbatim except for its
+blanks — this PR's URL, and those obligations — as
+`prompts/downstream/queued/control-PR#<n>-<short-description>.md`, committed
+once the PR is open, and end the section by naming that file (§4.3). The sync is
+not yours to run: this PR merges first, and the sync runs afterwards in its own
+session (§2).

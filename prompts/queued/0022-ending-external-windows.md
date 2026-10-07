@@ -20,9 +20,10 @@
 - `docs/PROTOCOL.md` — session workflow. Read §3 for `ext/` as a compatibility
   promise, for revising the plan in place, and for the downstream hand-over
   this phase owes.
-- `docs/CROSS-REPO-PROTOCOL.md` — **§4.1**, and **§5** at "The PR that answers
-  an upstream request is not a sync". This phase changes `ext/`, a shared
-  surface, and it answers a request, so it owes a downstream sync (below).
+- `docs/CROSS-REPO-PROTOCOL.md` — **§4.1**, **§4.3** (where the sync is
+  queued), and **§5** at "The PR that answers an upstream request is not a
+  sync". This phase changes `ext/`, a shared surface, and it answers a request,
+  so it owes a downstream sync (below).
 - `docs/PLAN.md`:
   - **§2**:
     - **M16**, in full: the two directions, the three properties the framework
@@ -690,10 +691,11 @@ State at least these obligations:
    declarative provider ends windows too (`push.ended`), so ending is not
    something the packaged integrations add.
 
-End the section with the **"Downstream sync" kickoff** from `docs/KICKOFF.md`,
-verbatim except for its blanks: this PR's URL, and the obligations above. Repeat
-it in your reply to the user, and say it needs a **fresh session with
-`hoplock/enterprise` checked out**.
+Queue the **"Downstream sync" kickoff** from `docs/KICKOFF.md`, verbatim except
+for its blanks — this PR's URL, and the obligations above — as
+`prompts/downstream/queued/control-PR#<n>-<short-description>.md`, committed
+once the PR is open, and end the section by naming that file
+(`docs/CROSS-REPO-PROTOCOL.md` §4.3).
 
 ### `hoplock/proxy`
 Write **"None"** rather than leaving the repository out. The contract (M1) is
