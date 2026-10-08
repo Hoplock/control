@@ -13,7 +13,21 @@ root fails the build if that ever stops being true.
 `ext` is versioned with the module, and changing a signature here breaks a
 downstream build. Treat it the way this repository treats the vendored wire
 contract: change it deliberately, say so in the phase's learnings file, and
-never as a drive-by. A phase that adds or changes an interface here owes a
+never as a drive-by.
+
+A consumer pins a **release**: an immutable tag `vMAJOR.MINOR.PATCH` of the
+whole module. There is no `ext` version of its own (`docs/PLAN.md` M23). While
+MAJOR is `0`, a release is a **MINOR** when it contains a phase or an
+incompatible change to a public package, and a **PATCH** for anything else.
+Every incompatible change is listed under `### Breaking` in that release's
+section of `CHANGELOG.md`. "Incompatible" is read from the implementer's side
+as well as the caller's: a method added to an interface here breaks every
+implementation outside this module, so it is a break although no caller
+notices. `make release-check` holds this against the previous release on every
+pull request. It diffs this package, and any other public one, and refuses a
+release that does not declare what it finds.
+
+A phase that adds or changes an interface here owes a
 `## Cross-repo impact` section, and queues a ready-to-run sync kickoff for
 `hoplock/enterprise` in `prompts/downstream/queued/`
 (`docs/CROSS-REPO-PROTOCOL.md` §4.1, §4.3). Traffic runs the other way too:

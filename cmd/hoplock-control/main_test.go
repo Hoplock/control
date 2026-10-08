@@ -29,19 +29,6 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
-// A stamped build must report the stamp rather than the build-info fallback.
-func TestVersionStringUsesStamps(t *testing.T) {
-	version, commit, date = "v1.2.3", "abc1234", "2026-09-04T00:00:00Z"
-	t.Cleanup(func() { version, commit, date = "", "", "" })
-
-	got := versionString()
-	for _, want := range []string{"v1.2.3", "abc1234", "2026-09-04T00:00:00Z"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("versionString() = %q, want it to contain %q", got, want)
-		}
-	}
-}
-
 func TestRunReportsConfigError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := run([]string{"--config", filepath.Join(t.TempDir(), "absent.yaml")}, &stdout, &stderr)

@@ -689,6 +689,9 @@ State at least these obligations:
    credential and binding. Wherever E13 or §4 describes the seam: the
    declarative provider ends windows too (`push.ended`), so ending is not
    something the packaged integrations add.
+4. **Its pin.** Every obligation above holds from the release this PR cuts
+   (M23), never from `main`. Name that release by version, as this PR's
+   `CHANGELOG.md` section does, and say that Enterprise's pin moves to it.
 
 Queue the **"Downstream sync" kickoff** from `docs/KICKOFF.md`, verbatim except
 for its blanks — this PR's URL, and the obligations above — as

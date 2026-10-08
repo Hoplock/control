@@ -194,6 +194,11 @@ changes below; each meets the same need.
   listener builders, `versionString`, and their tests.
   - Keep each file's name and history (`git mv`).
   - Keep every behaviour.
+  - The Makefile's `VERSION=` override is `-X main.version`. Once `version`
+    lives in `internal/daemon`, the flag is
+    `-X github.com/hoplock/control/internal/daemon.version`. The linker
+    ignores an `-X` that names no variable, so only the test job's version
+    step notices if the flag is not moved too (M23).
   - `run(args, stdout, stderr)` becomes
     `daemon.Main(ctx, args, stdout, stderr, daemon.Host) error`. Here
     `daemon.Host` is the internal form of `server.Options` below.
@@ -529,6 +534,9 @@ State at least these obligations:
 5. **What it did not get.** There is no cross-tenant route, so its 0013's E11
    reporting is still blocked, and that is its next upstream request. There
    are no host-declared permissions.
+6. **Its pin.** Every obligation above holds from the release this PR cuts
+   (M23), never from `main`. Name that release by version, as this PR's
+   `CHANGELOG.md` section does, and say that Enterprise's pin moves to it.
 
 Queue the **"Downstream sync" kickoff** from `docs/KICKOFF.md`, verbatim except
 for its blanks — this PR's URL, and the obligations above — as
