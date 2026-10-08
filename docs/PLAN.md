@@ -118,6 +118,7 @@ decision.
 | **M20** | the console is a product surface with a specified design | live | §3, §10 |
 | **M21** | the console is localisable; English is the only catalogue | live | §3, §10 |
 | **M22** | a south-bound credential carries its tenant and names its proxy | live | §3, §10 |
+| **M23** | Control is released as immutable tags of one module, and every phase is a release | live | §8, §10 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -889,6 +890,61 @@ decision.
   production form. The seam is one interface and one middleware, and a
   certificate carries a subject that can say both of these things — so mTLS
   replaces the transport of this decision without replacing the decision.
+
+- **M23 — Control is released as immutable tags of one module, and every phase
+  is a release (new).** Hoplock Enterprise imports this module and ships it in
+  its own binary (M15), and takes a change only from a pinned, released
+  version, bumped with the changelog read (its E3). So a release is not
+  something that happens when somebody remembers one: every phase cuts one, CI
+  cuts it, and its number says what it promises.
+
+  1. **What a release is.** An annotated tag `vMAJOR.MINOR.PATCH` on a commit
+     on `main`, of the one module (§8). `ext/`, and `server/` once 0015 adds
+     it, are versioned with the module and never separately: there is no `ext`
+     version and no second module.
+  2. **How one is cut.** By merging a PR whose `CHANGELOG.md` names a version
+     with no tag yet. CI's `release` job tags that merge commit once every
+     other job has passed on it, publishes a GitHub Release with the same
+     notes, and proves the version resolves through the public module proxy.
+     No session and no person pushes a tag. The tag records what review
+     approved, at the commit that was checked.
+  3. **When.** Every numbered phase releases, in its own PR. A host embeds the
+     whole server (M15), so every phase changes what Enterprise ships, not only
+     the phases that touch `ext/`. A sync, an audit or the answer to a request
+     changes nothing a consumer runs, and releases nothing. A fix between
+     phases may release on its own.
+  4. **What the number says.** MAJOR stays `0` until a decision of its own
+     declares the public packages stable. Every major after `v1` changes the
+     module path (Go's semantic import versioning), so it is never taken in
+     passing. While MAJOR is `0`:
+     - **MINOR** for a release that contains a phase, or an incompatible change
+       to a public package;
+     - **PATCH** for anything else.
+
+     A release is the next MINOR or the next PATCH after the latest, so no
+     number is skipped. Every incompatible change is listed under
+     `### Breaking` in the release's changelog section.
+  5. **What "incompatible" means.** Go's API-compatibility rules, read from the
+     implementer's side as well as the caller's. Adding a method to an exported
+     interface is incompatible, because Enterprise implements `ext`'s
+     interfaces. The public packages are every package in the module that is
+     neither under `internal/` nor `package main`, and they are derived, never
+     listed.
+  6. **Immutability.** A published version is never moved, re-pushed or
+     deleted. The module is public (M14): the module proxy caches a version the
+     first time anyone fetches it, and the checksum database records its hash.
+     A moved tag is never seen by proxy users, and it is a checksum failure for
+     everyone else. A bad release is superseded by a new one and listed in a
+     `retract` directive in `go.mod`.
+  7. **What it is not.** The module version is one of four version axes, and
+     it is none of the other three: the vendored contract's (M1,
+     `contract/UPSTREAM`), `policy_version` (§4, 0023), and the north-bound API
+     version (M19, 0019). M19's "software version" **is** this one.
+
+  `make release-check` holds every PR to this decision, and §8 says how. A
+  build reports the version Go stamps from the tags, and when Control is built
+  into another program it reports the version of Control that program depends
+  on, never the program's own.
 
 ---
 
@@ -2438,8 +2494,21 @@ are among them before it evaluates:
 - **Testing**: unit tests per package; the policy engine tested exhaustively and
   in isolation; Postgres-backed tests against a real database in CI; the
   conformance suite (M1) run against this server **and** the proxy's mock.
+- **Releases (M23)**: an annotated tag `vMAJOR.MINOR.PATCH` of the one module,
+  cut by CI from the merged PR whose `CHANGELOG.md` names a version with no tag,
+  and every phase releases in its own PR. `make release-check` says what a
+  change releases and refuses a number it does not earn. It diffs the public
+  packages, derived with `go list`, against the latest release with
+  `golang.org/x/exp/cmd/apidiff`, pinned by `APIDIFF_VERSION` in the Makefile
+  for the reason golangci-lint is pinned. `make release-check-guard` proves its
+  refusals against a throwaway repository. A build reports the version Go
+  stamps from the repository's tags; `make build VERSION=…` overrides it only
+  for a build outside a git checkout.
 - **CI**: build, vet, test, lint, migrations check, contract-drift check,
-  conformance, `govulncheck`.
+  conformance, `govulncheck`, and the release check with its guard, on every
+  pull request and push. On a push to `main`, the `release` job runs after
+  every other job has passed. It is the only job with `contents: write`, and
+  it tags only the merge that introduced a version.
 
 ---
 
@@ -2481,7 +2550,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0011 | Identity, users, groups, roles & RBAC | local identity, groups, the fixed role set and its one enforcement point, OIDC/SAML brokers behind one interface, the versioned claim mapping, a real out-of-band MFA provider, the per-tenant SSH CA and its rotation story, and the north-bound listener's credential model — a caller never asserts its own tenant (M7, M18, M2) |
 | 0012 | Access grants | time-boxed grants as policy inputs whose expiry is the decision's own clock; create, list, inspect and revoke on the north-bound API under `grant:write`/`grant:read`; revocation that ends the sessions a grant backed with the reason shown; every act audited with its actor; `ext.GrantWorkflow` routing — requests, polling, the grant a workflow approves; Control's outbound webhook notifier (M10, M15) |
 | 0013 | External access context | `ext.AccessContextProvider` — `Describe`, `Probe`, `Interpret`, three answers; scope bindings per provider per tenant and their internal API; the push receiver behind the `integration` role, with replay, skew and a clamping ceiling; the probe path inside a fixed share of the authorize budget; a policy's `scopes:` declaration (`privileged`, `unanswered`); the declarative HTTP provider as the default (M16) |
-| 0014 | Tagged releases | what Enterprise pins (its E3), at every phase rather than once: a release decision with the next free `M` id — a release is an immutable `vMAJOR.MINOR.PATCH` tag of the one module, cut by CI from the merged PR whose `CHANGELOG.md` names a version with no tag, every phase a release, MINOR for a phase or an incompatible change to a public package and PATCH otherwise, a bad release retracted and never moved; `CHANGELOG.md`; a release check that diffs the derived set of public packages against the previous release and counts an added interface method as a break; the release job, the only one that writes, tagging the merge that introduced a version once every other job has passed on it and proving the version resolves through the module proxy; one version string per build, Control's own even inside a host binary; `v0.1.0`, cut by this phase's own merge (M15, M14, M19). Raised by `Hoplock/enterprise#8`; depends only on merged phases (0001, 0004), and runs first: Enterprise's first phase cannot pin Control until it lands, and every phase after it releases |
+| 0014 | Tagged releases | what Enterprise pins (its E3), at every phase rather than once. M23: a release is an immutable `vMAJOR.MINOR.PATCH` tag of the one module, cut by CI from the merged PR whose `CHANGELOG.md` names a version with no tag; every phase is a release; MINOR for a phase or an incompatible change to a public package, PATCH otherwise; a bad release is retracted and never moved. `CHANGELOG.md`; `make release-check`, which diffs the derived public packages against the latest release with a pinned `apidiff` and counts an added interface method as a break, and its guard against a throwaway repository; the `release` job, the only one that writes, which tags the merge that introduced a version once every other job has passed on it, publishes a GitHub Release, and proves the version resolves through the module proxy; one version per build, Control's own even inside a host's binary; `v0.1.0`, cut by this phase's own merge (M23, M15, M14, M19). Raised by `Hoplock/enterprise#8` |
 | 0015 | Public server package & host routes | `server/`, a public package beside `ext/` and the "server package" M15 names: `server.Main`, Control's whole command line, which `cmd/hoplock-control` becomes one call to, with the wiring moved to `internal/daemon`; host configuration sections accepted by the strict decoder and handed to the host; a host's north-bound routes mounted in the one route table as `AccessTenant`, naming a permission Control defines (`report:write` and `license:read` added) and answering in the M21 envelope with codes the host declares, never a `401`; no cross-tenant host route (M15, M2, M18, M11, M21). Raised by `Hoplock/enterprise#11`; depends only on merged phases (0004, 0011, 0013), and runs before 0016 and 0018, which both edit what it moves and opens |
 | 0016 | Self-service grant requests | a requester's own door into a registered approval workflow — `grant:request`, the `requester` role, the self-scoped `…/me/grant-requests` routes whose subject is resolved from the caller, refused `403 grant_workflow_not_registered` while no workflow is registered; `ext.GrantRequest.BreakGlass`; the poller learning every tenant a proxy subscribes in, so a decision is applied across a restart without a cross-tenant read (M10, M15, M18). Raised by `Hoplock/enterprise#10`; depends only on merged phases (0011, 0012, 0013), and Enterprise's approval phase builds around it until it lands |
 | 0017 | Ending an external window | `ext.WindowAssertion.Ended`: a push that ends the window its id opened, revoking the grant it became through 0012's revocation — its sessions ended with a reason Control writes, never the vendor's text, audited with the credential that pushed; read by id alone and never refused for its age, scope or window; an end that arrives before its open kept, and the open refused (`window_closed`); an expired window never rewritten as revoked; the declarative provider's `push.ended`; a probe that stops confirming still revokes nothing (M16, M10, M9, M5, M15). Raised by `Hoplock/enterprise#12`; depends only on merged phases (0009, 0012, 0013), and Enterprise's access-context phase builds around it until it lands |

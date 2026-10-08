@@ -5,7 +5,7 @@
 - `docs/CROSS-REPO-PROTOCOL.md` — **§4.1** and **§4.3**: the downstream sync
   this phase owes `hoplock/enterprise`, and where it is queued (see
   **Cross-repo impact**, at the end).
-- `docs/PLAN.md` — especially **§2 (M19, M18, M2, M11, M15)**, §3
+- `docs/PLAN.md` — especially **§2 (M19, M18, M2, M11, M15, M23)**, §3
   (`internal/instance`), and §4's `policy_version` obligation, which is the
   pattern the north-bound version promise copies.
 - `docs/learnings/` — read summaries; open `0004` (the `ext` package and
@@ -33,8 +33,10 @@ A deployment knows what it is and says so north-bound:
 - a **stable instance id**, generated once and persisted, never derived from a
   hostname, a pod name, or anything else that changes under a deployment;
 - an operator-set display name;
-- the software version (already stamped by 0001), the **contract version** it
-  vendors, and the **north-bound API version** it serves;
+- the software version: the module release M23 defines, which the binary
+  already reports (0001, 0014). Then the **contract version** it vendors, and
+  the **north-bound API version** it serves. These are three different axes,
+  and none of them is the others (M23, rule 7);
 - its tenant set (M18) and, per tenant, whether it is active.
 
 A **clustered deployment reports one identity, not one per node.** The id
@@ -208,7 +210,9 @@ this phase's output, so this phase owes `hoplock/enterprise` a downstream sync
 (`docs/CROSS-REPO-PROTOCOL.md` §3.1). State the obligations in the PR's
 `## Cross-repo impact` section (§4.1): they must carry the north-bound version
 number, the registration protocol, and the credential scope grammar verbatim —
-those three are what the downstream phase is written against. Queue the
+those three are what the downstream phase is written against — and the release
+this PR cuts, by version (M23): Enterprise's pin moves to it, and its
+supervisory plane is written against that release, not against `main`. Queue the
 **"Downstream sync" kickoff** from `docs/KICKOFF.md`, verbatim except for its
 blanks — this PR's URL, and those obligations — as
 `prompts/downstream/queued/control-PR#<n>-<short-description>.md`, committed

@@ -184,7 +184,11 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
 - **`ext/` is a compatibility promise.** It is the only non-`internal` package
   in the module. Changing a signature there breaks Enterprise builds, so treat
   it like the wire contract: change it deliberately, say so in your learnings,
-  and never as a drive-by.
+  and never as a drive-by. The promise is held by a check, not by intention:
+  `make release-check` diffs every public package against the previous
+  release, counts a method added to an interface as a break (Enterprise
+  implements them), and refuses a release that does not declare the break as
+  a MINOR under `### Breaking` (M23).
 - **`401` is a decision (M11).** Never return it for a database failure, a
   timeout, a compile error, or a panic. The proxy will faithfully tell a real
   user "access denied" and send your operator to debug permissions during an
@@ -230,6 +234,8 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
 - [ ] `go build ./...`, `go vet ./...`, and `go test ./...` pass locally.
 - [ ] Linter (`golangci-lint run`) passes, or new findings are justified.
 - [ ] New/changed behavior has unit tests; integration tests updated if relevant.
+- [ ] `CHANGELOG.md` names the release this phase cuts (M23), with its entry
+      and any `### Breaking` the check lists, and `make release-check` passes.
 - [ ] `make contract-check` passes — the vendored contract is unmodified and
       matches its pinned upstream commit.
 - [ ] `make conform` passes, once phase 0002 has landed and once this server

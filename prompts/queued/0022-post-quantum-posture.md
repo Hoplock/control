@@ -8,7 +8,8 @@
   the south-bound credential), **M1** (the contract is vendored read-only),
   **M7** (identity is federated and short-lived), **M13** (tech choices: closed
   enums, the `exhaustive` linter, and why `x/crypto/ssh` is on both ends),
-  **M15** (`ext/` is what Enterprise imports), **M5** (the decision path's
+  **M15** (`ext/` is what Enterprise imports), **M23** (what a release's
+  changelog must say), **M5** (the decision path's
   latency budget), **§4** (the south-bound contract, including
   `algorithm_profile` and its absent-value discipline), **§5.2** (the snapshot's
   output vocabulary, where `AlgorithmProfile` lives and where `algorithm_floor`
@@ -294,3 +295,9 @@ the target images, their OpenSSH versions, and the exchange each one recorded.
 The floor has landed upstream (`Hoplock/proxy#69`, vendored by 0018). So the
 next phase to touch routing has a floor to honour, and what it needs from here
 is evidence of what holds on the wire.
+
+If this phase changes what `ext.KeyAlgorithm.String()` returns for an
+unrecognised value, this PR's `CHANGELOG.md` section owes an entry that names
+`ext.KeyAlgorithm.String` and says what it now returns. No API diff sees a
+behaviour change, so `make release-check` cannot catch it, and the changelog is
+where Enterprise reads what changed before it bumps its pin (M23).

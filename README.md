@@ -101,8 +101,8 @@ with, so an older linter cannot read a newer stdlib. CI pins the version
 that satisfies this.
 
 ```sh
-make build                 # -> bin/hoplock-control, version stamped from git
-bin/hoplock-control --version
+make build                 # -> bin/hoplock-control
+bin/hoplock-control --version   # the version Go stamps from the repository's tags
 
 cp config.example.yaml config.yaml
 make run                   # or: bin/hoplock-control --config config.yaml
@@ -117,13 +117,15 @@ Useful targets (`make help` lists them all):
 
 | Target | What it does |
 | --- | --- |
-| `make build` | compile into `bin/` with the git version stamped in |
+| `make build` | compile into `bin/`; `VERSION=…` only for a build outside a git checkout |
 | `make test` | unit tests with the race detector |
 | `make vet` / `make lint` | `go vet`, then `golangci-lint` |
 | `make license-check` | verify the per-file SPDX header on every Go file |
 | `make fmt` / `make tidy` | format sources; reconcile `go.mod`/`go.sum` |
 | `make check` | everything CI runs, in CI's order |
 | `make contract-check` / `contract-sync` / `conform` | the contract workflow above |
+| `make release-check` | say what merging the tree releases, and refuse a wrong version number |
+| `make release-check-guard` | prove the release check refuses what it must |
 
 The daemon also carries the operator commands the north-bound API does not yet
 cover, and the two bootstrap ones it never will — a deployment with no principals
@@ -147,6 +149,25 @@ The `go` directive in `go.mod` is a **floor**, not a preference: CI builds on
 both it and the latest stable release with `GOTOOLCHAIN=local`, so the floor is
 enforced rather than quietly satisfied by a toolchain download. It moves only
 when a dependency moves it.
+
+## Depending on Control
+
+Hoplock Enterprise, and any other program built around this server, depends on
+a **released version** of `github.com/hoplock/control`:
+
+```sh
+go get github.com/hoplock/control@v0.1.0
+```
+
+A release is an immutable tag `vMAJOR.MINOR.PATCH`, cut by CI from a merged
+change, and every phase is one (`docs/PLAN.md` M23). Pin a release, never a
+pseudo-version of `main` and never a `replace` directive. A `replace` is fine
+while you develop against a local checkout, but a binary built with one is a
+working copy, and it reports `dev` rather than a version. Before you bump the
+pin, read what changed in [`CHANGELOG.md`](CHANGELOG.md). A MINOR release
+contains a phase or an incompatible change to a public package, and lists every
+incompatible change under `### Breaking`. A PATCH release contains neither.
+`ext` has no version of its own: it is released with the module.
 
 ## Contributing
 

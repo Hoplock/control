@@ -67,7 +67,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # `make build` stamps the version from `git describe`.
+          # Go stamps the binary's version from the repository's tags (PLAN
+          # M23), so the job needs every tag and the history between them.
           fetch-depth: 0
 
       - uses: actions/setup-go@v5
@@ -82,6 +83,23 @@ jobs:
 
       - name: Build
         run: make build
+
+      # One build, one version (PLAN M23). Go stamps it from the tags, and the
+      # Makefile no longer spells it another way. The second binary is built
+      # outside the tree, which must stay clean or both would say +dirty.
+      - name: Prove make build and go build report the same version
+        run: |
+          go build -o "$RUNNER_TEMP/hoplock-control" ./cmd/hoplock-control
+          made="$(bin/hoplock-control --version)"
+          built="$("$RUNNER_TEMP/hoplock-control" --version)"
+          echo "make build: $made"
+          echo "go build:   $built"
+          test "$made" = "$built"
+          # VERSION=... is the one override, for a build outside a git checkout.
+          # The linker silently ignores an -X that names no variable, so prove
+          # this one lands.
+          make build VERSION=v0.0.0-override BIN_DIR="$RUNNER_TEMP/override"
+          "$RUNNER_TEMP/override/hoplock-control" --version | grep -F 'hoplock-control v0.0.0-override '
 
       - name: Vet
         run: make vet
@@ -116,6 +134,32 @@ jobs:
       # this job because it is the job with a linter in it.
       - name: Prove the exhaustive linter rejects an unhandled member
         run: make exhaustive-guard
+
+  release-check:
+    name: release check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Every v* tag, the base branch, and the history the check walks
+          # (PLAN M23).
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # Says what merging this change releases, and refuses a version number
+      # that does not match the change. On a pull request its log shows the tag
+      # and the notes the merge will publish, and its last line is the one to
+      # read. It never tags: the release job below does, after merge.
+      - name: Check the release this change cuts
+        run: make release-check
+
+      # Checks the check, against a throwaway repository: one case per refusal,
+      # and the release job's decision along a main branch's history.
+      - name: Prove the release check refuses what it must
+        run: make release-check-guard
 
   license:
     name: license headers
@@ -323,3 +367,134 @@ jobs:
       - name: Print the server log
         if: always()
         run: cat server.log
+
+  # Cuts the release a merged change names (PLAN M23): an annotated tag on the
+  # merge commit, a GitHub Release with the same notes, and proof that the
+  # version resolves through the public module proxy, which is what Hoplock
+  # Enterprise pins (its E3).
+  #
+  # It is the only job that writes. No session and no person pushes a tag: the
+  # module is public (M14), so a version's content is fixed the first time
+  # anyone fetches it, and the checksum database records it. So a tag is cut
+  # only here, on the commit every other job has just passed on. A bad release
+  # is superseded and retracted in go.mod, never moved.
+  #
+  # When this job fails, fix the cause and re-run it ON THE SAME COMMIT. If
+  # creating the tag is refused (a repository setting), fix the setting and
+  # re-run. Never push the tag by hand, and never at another commit. A re-run on
+  # a commit that is already tagged resumes: it publishes the GitHub Release and
+  # proves the proxy, without tagging again.
+  release:
+    name: release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, lint, release-check, license, contract, conform, conform-self]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Two merges in quick succession must not race for one version, and the
+    # second must see the tag the first pushed, so they run one at a time. A
+    # run still waiting when a third arrives is cancelled by GitHub; the next
+    # run then fails and names the commit to re-run, as for any release left
+    # behind.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The pushed commit, never a branch head read again later: the tag
+          # records what review approved, at the commit that was checked.
+          ref: ${{ github.sha }}
+          # The tags, and main's history: how this job tells the merge that
+          # introduced a version from a later commit.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # "release vX.Y.Z" when this push introduced a version with no tag;
+      # "resume vX.Y.Z" when this commit already carries that tag; "nothing"
+      # otherwise. A later push while a version is still untagged is a release
+      # left behind, and the script refuses it and names the commit to re-run:
+      # tagging this one would publish content the release's section does not
+      # describe. It asks about the push (BEFORE..GITHUB_SHA), not the commit's
+      # parent, so a rebase merge, whose middle commits get no run, still works.
+      - name: Decide what this commit releases
+        id: plan
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          plan="$(scripts/release-check.sh plan "$GITHUB_SHA" "$BEFORE")"
+          echo "plan for $GITHUB_SHA: $plan"
+          case "$plan" in
+            nothing) ;;
+            "release v"* | "resume v"*)
+              echo "action=${plan%% *}" >> "$GITHUB_OUTPUT"
+              echo "version=${plan#* }" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "unexpected plan: $plan" >&2; exit 1 ;;
+          esac
+
+      - name: Write the release notes
+        if: steps.plan.outputs.version != ''
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          scripts/release-check.sh notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          { printf '## %s\n\n' "$VERSION"; cat "$RUNNER_TEMP/notes.md"; } > "$RUNNER_TEMP/tag-message.md"
+          cat "$RUNNER_TEMP/tag-message.md"
+
+      # Annotated, with the release's changelog section as its message.
+      # --cleanup=verbatim, because by default git strips every line that
+      # begins with '#' from a tag message, which is every heading in it.
+      - name: Tag the merge commit
+        if: steps.plan.outputs.action == 'release'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate --cleanup=verbatim --file "$RUNNER_TEMP/tag-message.md" "$VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/$VERSION"
+
+      # --verify-tag: the API must never create the tag itself, because it
+      # would put it on the branch head rather than on this commit.
+      - name: Publish the GitHub Release
+        if: steps.plan.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "the GitHub Release $VERSION exists already"
+          else
+            gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+      # What Enterprise's E3 needs, proven at the moment the version is made:
+      # it is fetchable by path through the public proxy, and recorded in the
+      # checksum database, which `go mod download` consults for a module it has
+      # never seen. Bounded, because a new tag can take minutes to reach the
+      # proxy. If it runs out, re-run this job on this commit: it resumes.
+      - name: Resolve the version through the module proxy
+        if: steps.plan.outputs.version != ''
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          GOPROXY: https://proxy.golang.org
+          GOSUMDB: sum.golang.org
+        run: |
+          module="$(go list -m)"
+          cd "$RUNNER_TEMP"
+          for delay in 0 10 20 40 60 120 120 120 120 120 120 120; do
+            sleep "$delay"
+            if out="$(go mod download -json "$module@$VERSION")" && ! grep -q '"Error"' <<<"$out"; then
+              echo "$out"
+              echo "$module@$VERSION resolves through $GOPROXY"
+              exit 0
+            fi
+            echo "$module@$VERSION does not resolve yet:" >&2
+            echo "$out" >&2
+          done
+          echo "$module@$VERSION did not resolve through $GOPROXY: re-run this job on $GITHUB_SHA" >&2
+          exit 1
