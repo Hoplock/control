@@ -179,5 +179,10 @@ names no variable, which is why 0015's prompt now warns about it.
   turned the workflow test red.
 - Run locally: golangci-lint v2.13.2 (0 issues), actionlint v1.7.7 with
   shellcheck 0.11.0 (clean), `go test -race ./...`.
+- **The runners' `awk` is gawk; a sandbox's may be mawk.** gawk processes
+  escapes in an `awk -v` value, so a regex passed that way loses its `\.`
+  (it matches any character) and gawk warns on stderr. That failed the guard
+  on CI only. Never pass a regex through `awk -v`. Run the guard under both,
+  with a directory that links `awk` to `gawk` first in `PATH`.
 - Not provable before merge: the release job itself. The PR's release-check log
   shows the tag and notes it will publish.

@@ -474,11 +474,15 @@ notes() {
 # parent is what keeps a rebase merge working: its heading may arrive in a
 # commit that never gets a run of its own.
 plan() {
-  local sha prior newest text by tagged
+  local sha prior newest="" text by tagged h
   sha=$(git rev-parse --verify "${1:-HEAD}^{commit}")
   prior=${2:-$sha^1}
   text=$(git show "$sha:$changelog" 2>/dev/null || true)
-  newest=$(printf '%s\n' "$text" | headings | cut -f2 | awk -v re="$semver_re" '$0 ~ re && !found { print; found = 1 }')
+  # Matched here, not in awk: awk -v processes escapes in what it is given, so
+  # the pattern's \. would arrive as "any character", with a warning from gawk.
+  while IFS= read -r h; do
+    if [ -z "$newest" ] && [[ $h =~ $semver_re ]]; then newest=$h; fi
+  done < <(printf '%s\n' "$text" | headings | cut -f2)
   if [ -z "$newest" ]; then
     echo nothing
     return 0
