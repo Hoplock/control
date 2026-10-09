@@ -56,10 +56,12 @@ If you cannot reach the API half, do the half you can and say plainly which
 half is missing — do not reconstruct PR descriptions from commit titles.
 
 An audit changes text, not behaviour: it implements and enforces nothing,
-hand-edits no vendored artifact, and renames or renumbers no prompt. Land each
-finding in the prompt that will implement it, not only in the plan. A finding
-that is a whole phase rather than a paragraph may be appended to the queue as
-a new numbered prompt — say so plainly — but never built here. If the work
+hand-edits no vendored artifact, and renames or renumbers no prompt except to
+make room for one it queues. Land each finding in the prompt that will
+implement it, not only in the plan. A finding that is a whole phase rather than
+a paragraph may be queued as a new numbered prompt — where it should run, never
+simply last, renumbering the queued prompts after it per docs/PROTOCOL.md §6 —
+say so plainly, but never build it here. If the work
 seems to need something the upstream repository does not have, that is
 docs/CROSS-REPO-PROTOCOL.md §3.2 — never approximate it, and do not stop at
 telling me: name the exact field, endpoint, enum value or signature, record it
@@ -233,11 +235,20 @@ part of it. The requester could not do this, which is the whole reason the
 request stops at a need.
 
 Write ONE self-contained prompt into prompts/queued/ per docs/PROTOCOL.md §7 —
-lowest unused number, contiguous above the implemented block, a "Read first"
-block naming plan sections by § and decisions by M id, in-scope and out-of-scope
-items, the exact files and shapes, acceptance criteria and required tests. Cite
-the requesting repository's decision ids by id (E* for enterprise), never
-restated (docs/CROSS-REPO-PROTOCOL.md §1).
+a "Read first" block naming plan sections by § and decisions by M id, in-scope
+and out-of-scope items, the exact files and shapes, acceptance criteria and
+required tests. Cite the requesting repository's decision ids by id (E* for
+enterprise), never restated (docs/CROSS-REPO-PROTOCOL.md §1).
+
+Queue it where it should run, never simply last: the default kickoff takes the
+lowest-numbered prompt, so its number is when it runs. Read the queued prompts
+and put it in the best order to run them in — after everything it depends on,
+before everything that depends on it, and early when nothing queued has a
+better claim, since the requesting repository is waiting on it. Renumber the
+queued prompts after it as docs/PROTOCOL.md §6 says, in this PR. The other
+repositories cite these numbers: grep them, and name every citation the
+renumbering leaves stale under "## Cross-repo impact", with its sync queued
+(docs/CROSS-REPO-PROTOCOL.md §4.1).
 
 Two things the prompt MUST carry, because they are what the request is for:
 - the exact shape asked for, in this repository's own vocabulary, and what
@@ -282,10 +293,11 @@ unwired, because a seam that fails visibly is what makes not-waiting safe (§4.2
 - **One session = one prompt = one PR.** Start a fresh session for each queued
   prompt. The session ends when its PR is merged (see `docs/PROTOCOL.md`).
 - **Respect dependencies / ordering.** Prompts are numbered in implementation
-  order and later ones assume earlier ones are merged. A fresh session branches
-  off `main`, so it only sees **merged** work — kick off the next prompt after
-  the previous PR merges. Only run prompts in parallel when they genuinely don't
-  depend on each other.
+  order and later ones assume earlier ones are merged. A prompt you add is
+  numbered where it should run, never simply last (`docs/PROTOCOL.md` §6). A
+  fresh session branches off `main`, so it only sees **merged** work — kick off
+  the next prompt after the previous PR merges. Only run prompts in parallel
+  when they genuinely don't depend on each other.
 - **An audit is not a phase either, and is not scheduled.** It has no number and
   no place in the order, so it runs when you ask for it. Ask after upstream has
   moved, not after the phase that assumed it hadn't.

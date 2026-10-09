@@ -21,8 +21,8 @@
 ## Read first
 - `docs/PROTOCOL.md` — session workflow; especially §3 (scope discipline, and
   that `contract/` is never edited), §6 (prompt-numbering invariants — this
-  phase renumbers nothing), and §7 (what a prompt you *write* owes a future
-  session).
+  phase renumbers nothing except to make room for a prompt it queues), and §7
+  (what a prompt you *write* owes a future session).
 - `docs/CROSS-REPO-PROTOCOL.md` — **in full.** It is short and it is the subject
   of this phase: §1 (the shared surfaces and who owns each), §2 (the direction
   rule), §3.1 (the sync flow), §3.2 (**upstream request** — the flow when this
@@ -285,10 +285,12 @@ Text only, with a sync's discipline (§3.1, §6):
   `prompts/downstream/queued/` (§4.3); if the proxy PR queued none, hand the user
   the filled-in kickoff and say so, since this session cannot write to the
   proxy;
-- **renumber no prompt** (`docs/PROTOCOL.md` §6). Appending a new queued prompt
-  at the end is allowed where the audit finds work that is genuinely a phase, but
-  prefer a sentence in the prompt that already owns the area: a new prompt is a
-  PR someone has to run, and most findings here are a paragraph;
+- **renumber no prompt** except to make room for one you queue
+  (`docs/PROTOCOL.md` §6). Queueing a new prompt is allowed where the audit finds
+  work that is genuinely a phase — where it should run, never simply last, since
+  its number is when it runs — but prefer a sentence in the prompt that already
+  owns the area: a new prompt is a PR someone has to run, and most findings here
+  are a paragraph;
 - anything this repository needs that the proxy does not have is **§3.2**, which
   is a flow and not a stopping point. Do not approximate it, and do not open a PR
   upstream from this session (§6) — but do not stop at telling the user either,
@@ -347,8 +349,8 @@ periodic check quietly becomes a one-off.
   down verbatim. "I checked carefully" is not a finding a reviewer can re-derive.
 - **Every `D*` id cited in this repository resolves** in the proxy's register
   today; each that does not is fixed here or reported.
-- No prompt renumbered, no prompt renamed, no vendored artifact hand-edited,
-  nothing pushed upstream.
+- No prompt renumbered or renamed except to make room for one this audit queued,
+  no vendored artifact hand-edited, nothing pushed upstream.
 - `make check` passes.
 - The reply to the user lists, separately: obligations landed, §3.2 upstream
   requests raised — each by the file it is queued as — and anything the audit
