@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Mauro Silva
 // SPDX-License-Identifier: Apache-2.0
 
-package main
+package daemon
 
 import (
 	"context"
@@ -35,23 +35,23 @@ import (
 // talks to the API is a bootstrap command that cannot run first.
 
 // runIdentity dispatches the `identity` subcommands.
-func runIdentity(args []string, stdout, stderr io.Writer) error {
+func runIdentity(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("identity: a command is required (%s)", strings.Join(identityCommands, ", "))
 	}
 	switch args[0] {
 	case "token-issue":
-		return runTokenIssue(args[1:], stdout, stderr)
+		return runTokenIssue(ctx, h, args[1:], stdout, stderr)
 	case "role-bind":
-		return runRoleBind(args[1:], stdout, stderr)
+		return runRoleBind(ctx, h, args[1:], stdout, stderr)
 	case "roles":
 		return runRoleList(stdout)
 	case "mapping-put":
-		return runMappingPut(args[1:], stdout, stderr)
+		return runMappingPut(ctx, h, args[1:], stdout, stderr)
 	case "mapping-show":
-		return runMappingShow(args[1:], stdout, stderr)
+		return runMappingShow(ctx, h, args[1:], stdout, stderr)
 	case "connector-put":
-		return runConnectorPut(args[1:], stdout, stderr)
+		return runConnectorPut(ctx, h, args[1:], stdout, stderr)
 	}
 	return fmt.Errorf("identity: unknown command %q (known: %s)", args[0], strings.Join(identityCommands, ", "))
 }
@@ -66,7 +66,7 @@ var identityCommands = []string{
 // nothing else: not the log, not an audit record, not an error. An audit record
 // of a credential is a credential in the audit store, which is the one place in
 // this system designed never to forget anything.
-func runTokenIssue(args []string, stdout, stderr io.Writer) error {
+func runTokenIssue(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control identity token-issue", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to the YAML configuration file")
@@ -85,7 +85,7 @@ func runTokenIssue(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	cfg, st, closeStore, err := openForIdentity(*configPath)
+	cfg, st, closeStore, err := openForIdentity(ctx, h, *configPath)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func runTokenIssue(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	cred, principal, err := federation.IssueToken(context.Background(), store.Tenant(cfg.Tenant),
+	cred, principal, err := federation.IssueToken(ctx, store.Tenant(cfg.Tenant),
 		identity.TokenRequest{DisplayName: *name, Scopes: scopes, TTL: *ttl})
 	if err != nil {
 		return err
@@ -160,7 +160,7 @@ func parseScopes(spec string) (map[store.Tenant]identity.RoleSet, error) {
 }
 
 // runRoleBind grants a role to a subject or a group, in one tenant.
-func runRoleBind(args []string, stdout, stderr io.Writer) error {
+func runRoleBind(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control identity role-bind", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to the YAML configuration file")
@@ -183,7 +183,7 @@ func runRoleBind(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	cfg, st, closeStore, err := openForIdentity(*configPath)
+	cfg, st, closeStore, err := openForIdentity(ctx, h, *configPath)
 	if err != nil {
 		return err
 	}
@@ -200,7 +200,6 @@ func runRoleBind(args []string, stdout, stderr io.Writer) error {
 		Role:      string(parsed),
 		GrantedBy: "cli",
 	}
-	ctx := context.Background()
 	if *remove {
 		if err := st.RoleBindings().Unbind(ctx, tenant, binding); err != nil {
 			return err
@@ -231,7 +230,7 @@ func runRoleList(stdout io.Writer) error {
 }
 
 // runMappingPut validates a claim mapping and makes it the active version.
-func runMappingPut(args []string, stdout, stderr io.Writer) error {
+func runMappingPut(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control identity mapping-put", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to the YAML configuration file")
@@ -259,7 +258,7 @@ func runMappingPut(args []string, stdout, stderr io.Writer) error {
 		return printMapping(stdout, mapping, "valid")
 	}
 
-	cfg, st, closeStore, err := openForIdentity(*configPath)
+	cfg, st, closeStore, err := openForIdentity(ctx, h, *configPath)
 	if err != nil {
 		return err
 	}
@@ -273,7 +272,7 @@ func runMappingPut(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	mapping, err := federation.PutMapping(context.Background(), tenant, document, "cli")
+	mapping, err := federation.PutMapping(ctx, tenant, document, "cli")
 	if err != nil {
 		return err
 	}
@@ -281,7 +280,7 @@ func runMappingPut(args []string, stdout, stderr io.Writer) error {
 }
 
 // runMappingShow prints the active mapping.
-func runMappingShow(args []string, stdout, stderr io.Writer) error {
+func runMappingShow(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control identity mapping-show", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to the YAML configuration file")
@@ -290,7 +289,7 @@ func runMappingShow(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	cfg, st, closeStore, err := openForIdentity(*configPath)
+	cfg, st, closeStore, err := openForIdentity(ctx, h, *configPath)
 	if err != nil {
 		return err
 	}
@@ -304,7 +303,7 @@ func runMappingShow(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	mapping, err := federation.ActiveMapping(context.Background(), tenant)
+	mapping, err := federation.ActiveMapping(ctx, tenant)
 	if err != nil {
 		return err
 	}
@@ -333,7 +332,7 @@ func orNone(values []string) string {
 // NOT in it is the client secret — the document names an environment variable,
 // and a document that tried to carry one would be a secret in a file and then in
 // a database row.
-func runConnectorPut(args []string, stdout, stderr io.Writer) error {
+func runConnectorPut(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control identity connector-put", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to the YAML configuration file")
@@ -372,11 +371,11 @@ func runConnectorPut(args []string, stdout, stderr io.Writer) error {
 		Enabled:     !*disabled,
 		Config:      document,
 	}
-	if _, err := (identity.DefaultBrokerFactory{}).Broker(context.Background(), "", row); err != nil {
+	if _, err := (identity.DefaultBrokerFactory{}).Broker(ctx, "", row); err != nil {
 		return err
 	}
 
-	cfg, st, closeStore, err := openForIdentity(*configPath)
+	cfg, st, closeStore, err := openForIdentity(ctx, h, *configPath)
 	if err != nil {
 		return err
 	}
@@ -386,7 +385,7 @@ func runConnectorPut(args []string, stdout, stderr io.Writer) error {
 	if *tenantFlag != "" {
 		tenant = store.Tenant(*tenantFlag)
 	}
-	if err := st.Connectors().Upsert(context.Background(), tenant, row); err != nil {
+	if err := st.Connectors().Upsert(ctx, tenant, row); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "connector %s (%s) written for tenant %s, enabled=%t\n",
@@ -395,35 +394,35 @@ func runConnectorPut(args []string, stdout, stderr io.Writer) error {
 }
 
 // runCA dispatches the `ca` subcommands.
-func runCA(args []string, stdout, stderr io.Writer) error {
+func runCA(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("ca: a command is required (show, rotate, issue, certificates)")
 	}
 	switch args[0] {
 	case "show":
-		return runCAShow(args[1:], stdout, stderr)
+		return runCAShow(ctx, h, args[1:], stdout, stderr)
 	case "rotate":
-		return runCARotate(args[1:], stdout, stderr)
+		return runCARotate(ctx, h, args[1:], stdout, stderr)
 	case "issue":
-		return runCAIssue(args[1:], stdout, stderr)
+		return runCAIssue(ctx, h, args[1:], stdout, stderr)
 	case "certificates":
-		return runCACertificates(args[1:], stdout, stderr)
+		return runCACertificates(ctx, h, args[1:], stdout, stderr)
 	}
 	return fmt.Errorf("ca: unknown command %q (known: show, rotate, issue, certificates)", args[0])
 }
 
-func runCAShow(args []string, stdout, stderr io.Writer) error {
+func runCAShow(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs, configPath, tenantFlag := caFlags("show", stderr)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	ca, tenant, closeStore, err := openCA(*configPath, *tenantFlag)
+	ca, tenant, closeStore, err := openCA(ctx, h, *configPath, *tenantFlag)
 	if err != nil {
 		return err
 	}
 	defer closeStore()
 
-	info, err := ca.Ensure(context.Background(), tenant)
+	info, err := ca.Ensure(ctx, tenant)
 	if err != nil {
 		return err
 	}
@@ -437,7 +436,7 @@ func runCAShow(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func runCARotate(args []string, stdout, stderr io.Writer) error {
+func runCARotate(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs, configPath, tenantFlag := caFlags("rotate", stderr)
 	comment := fs.String("comment", "", "why this rotation happened")
 	compromise := fs.Bool("compromise", false,
@@ -445,13 +444,13 @@ func runCARotate(args []string, stdout, stderr io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	ca, tenant, closeStore, err := openCA(*configPath, *tenantFlag)
+	ca, tenant, closeStore, err := openCA(ctx, h, *configPath, *tenantFlag)
 	if err != nil {
 		return err
 	}
 	defer closeStore()
 
-	result, err := ca.Rotate(context.Background(), tenant, credential.RotateRequest{
+	result, err := ca.Rotate(ctx, tenant, credential.RotateRequest{
 		Comment:    *comment,
 		Compromise: *compromise,
 	})
@@ -483,7 +482,7 @@ func runCARotate(args []string, stdout, stderr io.Writer) error {
 // request would be a way to get a credential without a decision. A command needs
 // a shell on the box and the database credential, which is not a privilege
 // escalation path — it is already the highest privilege there is.
-func runCAIssue(args []string, stdout, stderr io.Writer) error {
+func runCAIssue(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs, configPath, tenantFlag := caFlags("issue", stderr)
 	subject := fs.String("subject", "", "the subject the certificate is for (required)")
 	principals := fs.String("principals", "", "comma-separated logins the certificate is valid for (required)")
@@ -508,13 +507,12 @@ func runCAIssue(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	ca, tenant, closeStore, err := openCA(*configPath, *tenantFlag)
+	ca, tenant, closeStore, err := openCA(ctx, h, *configPath, *tenantFlag)
 	if err != nil {
 		return err
 	}
 	defer closeStore()
 
-	ctx := context.Background()
 	if _, err := ca.Ensure(ctx, tenant); err != nil {
 		return err
 	}
@@ -549,18 +547,18 @@ func runCAIssue(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func runCACertificates(args []string, stdout, stderr io.Writer) error {
+func runCACertificates(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs, configPath, tenantFlag := caFlags("certificates", stderr)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	ca, tenant, closeStore, err := openCA(*configPath, *tenantFlag)
+	ca, tenant, closeStore, err := openCA(ctx, h, *configPath, *tenantFlag)
 	if err != nil {
 		return err
 	}
 	defer closeStore()
 
-	rows, err := ca.Outstanding(context.Background(), tenant)
+	rows, err := ca.Outstanding(ctx, tenant)
 	if err != nil {
 		return err
 	}
@@ -586,12 +584,12 @@ func caFlags(name string, stderr io.Writer) (*flag.FlagSet, *string, *string) {
 
 // openForIdentity opens the store for a command, returning a closer rather than
 // deferring inside a helper.
-func openForIdentity(configPath string) (*config.Config, *store.Store, func(), error) {
-	cfg, err := config.Load(configPath)
+func openForIdentity(ctx context.Context, h Host, configPath string) (*config.Config, *store.Store, func(), error) {
+	cfg, err := h.loadConfig(configPath)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	st, err := store.Open(context.Background(), cfg.Database.DSN)
+	st, err := store.Open(ctx, cfg.Database.DSN)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -604,8 +602,8 @@ func openForIdentity(configPath string) (*config.Config, *store.Store, func(), e
 // the listener tolerates: a person typing `ca rotate` is asking for a certificate
 // authority, and answering "there is none" without saying why would send them to
 // read code.
-func openCA(configPath, tenantFlag string) (*credential.CA, store.Tenant, func(), error) {
-	cfg, st, closeStore, err := openForIdentity(configPath)
+func openCA(ctx context.Context, h Host, configPath, tenantFlag string) (*credential.CA, store.Tenant, func(), error) {
+	cfg, st, closeStore, err := openForIdentity(ctx, h, configPath)
 	if err != nil {
 		return nil, "", nil, err
 	}

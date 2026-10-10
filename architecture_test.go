@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -202,5 +203,133 @@ func TestEveryPhasePromisedByTheSeamIsARealPhase(t *testing.T) {
 					info.Interface, n)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// server: one start-up path (0015)
+// ---------------------------------------------------------------------------
+
+// serverPackage is the public package a host binary starts Control with.
+const serverPackage = modulePath + "/server"
+
+// commandDir is hoplock-control's own directory: the one caller of server in
+// this module.
+const commandDir = "cmd/hoplock-control"
+
+// serverImportsOutside reports every import of server under root that is not
+// in hoplock-control's command or in server itself. The dependency runs host →
+// server → internal, and never back: an internal package that imported server
+// would be Control depending on its own façade.
+func serverImportsOutside(t *testing.T, root string) []importViolation {
+	t.Helper()
+	var found []importViolation
+	for _, v := range scanImports(t, root, func(p string) bool { return underModule(p, serverPackage) }) {
+		file := filepath.ToSlash(v.File)
+		if strings.HasPrefix(file, commandDir+"/") || strings.HasPrefix(file, "server/") {
+			continue
+		}
+		found = append(found, v)
+	}
+	return found
+}
+
+// commandImportsBesideServer reports every import in hoplock-control's
+// non-test files that is neither server nor the standard library. That is the
+// test that there is one start-up path: a main that reached into internal/
+// would be a second wiring, and the two would drift.
+func commandImportsBesideServer(t *testing.T, root string) []importViolation {
+	t.Helper()
+	var found []importViolation
+	for _, v := range scanImports(t, filepath.Join(root, commandDir), func(p string) bool {
+		return p != serverPackage && !isStandardLibrary(p)
+	}) {
+		if !strings.HasSuffix(v.File, "_test.go") {
+			found = append(found, v)
+		}
+	}
+	return found
+}
+
+// isStandardLibrary reports whether an import path is the standard library's:
+// its first element has no dot, which no module path may lack.
+func isStandardLibrary(p string) bool {
+	first, _, _ := strings.Cut(p, "/")
+	return !strings.Contains(first, ".")
+}
+
+func TestServerIsImportedOnlyByTheCommand(t *testing.T) {
+	for _, v := range serverImportsOutside(t, ".") {
+		t.Errorf("%s imports %s: server is the façade a HOST starts Control with, and nothing in this "+
+			"module but %s depends on it (PLAN M15). Code behind it belongs in internal/daemon.",
+			v.File, v.Import, commandDir)
+	}
+}
+
+func TestExtImportsNothingFromServer(t *testing.T) {
+	violations := scanImports(t, "ext", func(p string) bool { return underModule(p, serverPackage) })
+	for _, v := range violations {
+		t.Errorf("ext/%s imports %s: ext is interface-only and cheap to import (PLAN M15); a host that "+
+			"only implements an extension must not pull in the server.", v.File, v.Import)
+	}
+}
+
+func TestTheCommandImportsServerAndTheStandardLibraryOnly(t *testing.T) {
+	for _, v := range commandImportsBesideServer(t, ".") {
+		t.Errorf("%s/%s imports %s: hoplock-control is one call to server.Main, so that it and a host "+
+			"binary start Control the same way. Wiring added here is wiring a host does not get.",
+			commandDir, v.File, v.Import)
+	}
+}
+
+// The three guards above, proven against a throwaway tree, in the style of
+// TestTheImportGuardActuallyCatchesOne: a guard that has never been shown to
+// fire is a guard nobody has tested.
+func TestTheServerGuardsActuallyCatchOne(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, source string) {
+		t.Helper()
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	imports := func(pkg string, paths ...string) string {
+		s := "package " + pkg + "\n\nimport (\n"
+		for _, p := range paths {
+			s += "\t_ \"" + p + "\"\n"
+		}
+		return s + ")\n"
+	}
+
+	write("internal/daemon/back.go", imports("daemon", serverPackage))
+	write("ext/host.go", imports("ext", serverPackage+"/sub"))
+	write(commandDir+"/main.go", imports("main", serverPackage, "os", modulePath+"/internal/daemon", "golang.org/x/sys/unix"))
+	write(commandDir+"/main_test.go", imports("main", modulePath+"/internal/store"))
+	write("server/server_test.go", imports("server_test", serverPackage))
+
+	got := serverImportsOutside(t, dir)
+	var files []string
+	for _, v := range got {
+		files = append(files, filepath.ToSlash(v.File))
+	}
+	sort.Strings(files)
+	if want := []string{"ext/host.go", "internal/daemon/back.go"}; !slices.Equal(files, want) {
+		t.Errorf("the server-import guard found %v, want %v: the command and server's own tests are allowed", files, want)
+	}
+
+	if got := scanImports(t, filepath.Join(dir, "ext"), func(p string) bool { return underModule(p, serverPackage) }); len(got) != 1 {
+		t.Errorf("the ext guard found %v, want the one import of server", got)
+	}
+
+	var beside []string
+	for _, v := range commandImportsBesideServer(t, dir) {
+		beside = append(beside, v.Import)
+	}
+	if want := []string{"github.com/hoplock/control/internal/daemon", "golang.org/x/sys/unix"}; !slices.Equal(beside, want) {
+		t.Errorf("the command guard found %v, want %v: server, the standard library and test files are allowed", beside, want)
 	}
 }

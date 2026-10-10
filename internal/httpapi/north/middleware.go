@@ -52,6 +52,7 @@ const (
 	ctxKeyPrincipal
 	ctxKeyTenant
 	ctxKeyFacts
+	ctxKeyHost
 )
 
 // requestFacts is what the access log learns from a middleware INSIDE it.

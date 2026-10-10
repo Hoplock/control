@@ -104,12 +104,18 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 		t.Fatalf("ca: %v", err)
 	}
 
+	// Every server these tests build carries a host's routes (M15), so the
+	// tests that enumerate the router cover host routes on the day they are
+	// mounted rather than on the day somebody remembers them.
 	server, err := north.New(north.Options{
 		Federation:      federation,
 		CA:              ca,
 		Grants:          newGrants(t, st, grantOpts),
 		DefaultTenant:   "tenant-a",
 		InsecureCookies: true,
+		HostProvider:    testHostProvider,
+		HostRoutes:      testHostRoutes(),
+		HostErrorCodes:  []string{"report_not_found"},
 	})
 	if err != nil {
 		t.Fatalf("server: %v", err)
@@ -197,12 +203,15 @@ func TestEveryRegisteredRouteRefusesATenantOutsideTheCallersScope(t *testing.T) 
 		"tenant-a": {identity.RoleAdmin},
 	})
 
-	tenantRoutes := 0
+	tenantRoutes, hostRoutes := 0, 0
 	for _, route := range f.server.Routes() {
 		if route.Access != "tenant" {
 			continue
 		}
 		tenantRoutes++
+		if route.Provider != "" {
+			hostRoutes++
+		}
 		t.Run(route.Method+" "+route.Pattern, func(t *testing.T) {
 			path := samplePath(route.Pattern, "tenant-b")
 			resp := f.do(t, route.Method, path, token, bytes.NewReader([]byte(`{}`)))
@@ -221,13 +230,21 @@ func TestEveryRegisteredRouteRefusesATenantOutsideTheCallersScope(t *testing.T) 
 	if tenantRoutes == 0 {
 		t.Fatal("no tenant-scoped routes are registered, so this test asserted nothing")
 	}
+	if hostRoutes != len(testHostRoutes()) {
+		t.Fatalf("enumerated %d host routes, want %d: a host's routes are in the table this test walks",
+			hostRoutes, len(testHostRoutes()))
+	}
 }
 
 func TestEveryRegisteredRouteRefusesAnUnauthenticatedCaller(t *testing.T) {
 	f := newServer(t)
+	hostRoutes := 0
 	for _, route := range f.server.Routes() {
 		if route.Access == "anonymous" {
 			continue
+		}
+		if route.Provider != "" {
+			hostRoutes++
 		}
 		t.Run(route.Method+" "+route.Pattern, func(t *testing.T) {
 			resp := f.do(t, route.Method, samplePath(route.Pattern, "tenant-a"), "",
@@ -239,6 +256,9 @@ func TestEveryRegisteredRouteRefusesAnUnauthenticatedCaller(t *testing.T) {
 				t.Fatalf("code %q", got)
 			}
 		})
+	}
+	if hostRoutes != len(testHostRoutes()) {
+		t.Fatalf("enumerated %d host routes, want %d", hostRoutes, len(testHostRoutes()))
 	}
 }
 

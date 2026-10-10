@@ -227,3 +227,4 @@ empty ones*. `Extensions.Status()` already produces exactly that shape.
   `cmd/hoplock-control`, and nothing outside the module can start a server
   because there is nothing to start. Whichever phase stands the listeners up
   owes that entry point, and it is a cross-repo obligation when it lands.
+  (Phase 0015 built it: the public `server/` package.)

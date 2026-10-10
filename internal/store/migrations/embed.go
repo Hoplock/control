@@ -8,8 +8,9 @@
 // The SQL lives here rather than in a top-level `migrations/` directory for a
 // single mechanical reason: `go:embed` cannot reach outside its own package
 // directory, so a top-level directory would need a top-level *package* to
-// embed it — and `ext/` is the only non-internal package this module has
-// (M15). See docs/PLAN.md §3.
+// embed it — and every non-internal package this module has (`ext/`,
+// `server/`) is a compatibility promise (M15), which a directory of SQL has no
+// business being. See docs/PLAN.md §3.
 //
 // Files are named `NNNN_short_description.sql`, applied in ascending numeric
 // order, and are never edited once merged: correcting one means adding the

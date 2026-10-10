@@ -1,15 +1,23 @@
 // Copyright (c) 2026 Mauro Silva
 // SPDX-License-Identifier: Apache-2.0
 
-package main
+package daemon
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// run is Control alone's command line, as hoplock-control's main calls it, so
+// the cases below read as they did when they lived beside main.
+func run(args []string, stdout, stderr io.Writer) error {
+	return Main(context.Background(), args, stdout, stderr, Host{})
+}
 
 func TestVersionFlag(t *testing.T) {
 	var stdout, stderr bytes.Buffer

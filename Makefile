@@ -12,9 +12,10 @@ BIN_DIR := bin
 # tree (PLAN M23). So `make build` and `go build` report the same version, and
 # nothing here stamps one. VERSION=... on the command line overrides it, for a
 # build outside a git checkout, where Go has nothing to stamp and the binary
-# would otherwise call itself "dev".
+# would otherwise call itself "dev". The variable is internal/daemon's, and the
+# linker silently ignores an -X that names none, so CI proves this one lands.
 VERSION =
-LDFLAGS := $(if $(VERSION),-X main.version=$(VERSION))
+LDFLAGS := $(if $(VERSION),-X $(MODULE)/internal/daemon.version=$(VERSION))
 
 # Config used by `make run`. Never committed; copy config.example.yaml.
 CONFIG ?= config.yaml

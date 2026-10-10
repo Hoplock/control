@@ -1447,12 +1447,12 @@ nothing.
 **The revocation publish path (0009).** Once the north-bound surface publishes
 operator events, delete:
 
-- `cmd/hoplock-control/publish.go` and `cmd/hoplock-control/publish_test.go`;
+- `internal/daemon/publish.go` and `internal/daemon/publish_test.go`;
 - `EventsConfig.PublishListener` and `EventsConfig.PublishToken` in
   `internal/config/config.go`, their validation in `EventsConfig.validate`, and
   their block in `config.example.yaml`;
 - `startPublishListener` and its shutdown handling in
-  `cmd/hoplock-control/serve.go`;
+  `internal/daemon/serve.go`;
 - the `events:` block in the `conform-self` job's `ci-config.yaml`
   (`.github/workflows/ci.yml`).
 
@@ -1465,7 +1465,7 @@ that posting to it makes an event happen — so no suite code changes.
 **The log read path (0010).** Once the north-bound surface serves the audit
 query, delete:
 
-- `cmd/hoplock-control/auditread.go` and `cmd/hoplock-control/auditread_test.go`;
+- `internal/daemon/auditread.go` and `internal/daemon/auditread_test.go`;
 - `AuditConfig.ReadListener` and `AuditConfig.ReadToken` in
   `internal/config/config.go`, the two branches of `AuditConfig.validate` that
   check them (the bounds beside them — `max_batch_records`, `max_record_bytes`,
@@ -1473,7 +1473,7 @@ query, delete:
   them), and the `read_listener`/`read_token` half of the `audit:` block in
   `config.example.yaml`;
 - `startAuditReadListener` and its shutdown handling in
-  `cmd/hoplock-control/serve.go`, including the `auditReader` arm of the
+  `internal/daemon/serve.go`, including the `auditReader` arm of the
   listener error channel;
 - the `audit:` block in the `conform-self` job's `ci-config.yaml`
   (`.github/workflows/ci.yml`) — the two read keys only.

@@ -26,6 +26,30 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.2.0
+
+A host binary can start Control.
+
+- **Phase:** 0015, the public server package and host routes.
+- **Public packages:** `server` is added, beside `ext`, and is the same
+  compatibility promise. `server.Main` is Control's whole command line and
+  `server.Run` the daemon alone; `server.Options` carries what a host adds:
+  `Provider`, `Registry`, `HostSections`, `HostConfig`, `Routes` (`server.Route`)
+  and `ErrorCodes`. A host route reads its caller with `server.CallerFrom`
+  (`server.Caller`) and answers a failure with `server.WriteError`. `ext` is
+  unchanged.
+- **Permissions:** two codes are added to the closed set. `report:write` is
+  held by `admin` alone; `license:read` by every role except `integration`.
+  Control serves no route that needs either: a host's routes name them.
+- **`hoplock-control`** is one call to `server.Main` and otherwise unchanged:
+  the same flags, subcommands, output, configuration and routes. Two things a
+  build or an operator can see:
+  - an interrupt or `SIGTERM` now cancels a running subcommand, which stops
+    with an error, where it used to end the process outright;
+  - the `VERSION=` override lands in `internal/daemon`, so an `-X
+    main.version=…` passed by hand no longer sets anything. Use
+    `make build VERSION=…`.
+
 ## v0.1.0
 
 The first release.

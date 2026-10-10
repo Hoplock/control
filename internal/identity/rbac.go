@@ -81,6 +81,18 @@ const (
 	// integration role can do, and what it can reach is decided again per
 	// push: the integration's scope binding must name this very credential.
 	PermAccessContextPush Permission = "access-context:push"
+
+	// PermReportWrite is changing what reports are produced: their
+	// schedules, their recipients and the campaigns they belong to. Control
+	// serves no route that needs it; a host's reporting routes name it (M15),
+	// because a host names a permission and never declares one. Reading a
+	// report is PermAuditRead: a report is the audit store, summarised.
+	PermReportWrite Permission = "report:write"
+	// PermLicenseRead is reading a deployment's licence and entitlement
+	// state. Control has no licence (M14) and serves no route that needs
+	// it; it exists so that a host's licence route names a permission this
+	// file defines rather than one it invents.
+	PermLicenseRead Permission = "license:read"
 )
 
 // AllPermissions is every permission, in a stable order. A test asserts each
@@ -94,6 +106,7 @@ var AllPermissions = []Permission{
 	PermCARead, PermCARotate,
 	PermAuditRead, PermDecisionRead,
 	PermAccessContextPush,
+	PermReportWrite, PermLicenseRead,
 }
 
 // Role is a named permission set. Closed set (M13).
@@ -121,7 +134,9 @@ const (
 	// RoleFleetAdmin enrolls and retires proxies (M6).
 	RoleFleetAdmin Role = "fleet-admin"
 	// RoleAdmin holds every permission, including the two that can grant
-	// permissions: identity:write and ca:rotate.
+	// permissions — identity:write and ca:rotate — and report:write, which
+	// no narrower role's meaning covers: the auditor changes nothing, and
+	// what a compliance report covers is not a policy, a grant or a proxy.
 	RoleAdmin Role = "admin"
 )
 
@@ -132,9 +147,13 @@ var AllRoles = []Role{RoleIntegration, RoleAuditor, RolePolicyAuthor, RoleGrantA
 // readOnly is what every role a PERSON holds can do, because a role that can
 // change a thing it cannot read is a role that changes things blind. The
 // integration role is the one exception, and its comment says why.
+//
+// license:read is here because it is not data about anyone: which features a
+// deployment is entitled to is something every person who uses it may know.
 var readOnly = []Permission{
 	PermPolicyRead, PermGrantRead, PermFleetRead,
 	PermIdentityRead, PermCARead, PermAuditRead, PermDecisionRead,
+	PermLicenseRead,
 }
 
 // rolePermissions is the whole of RBAC's vocabulary. Read it as the product's

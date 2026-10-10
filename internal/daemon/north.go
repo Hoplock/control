@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Mauro Silva
 // SPDX-License-Identifier: Apache-2.0
 
-package main
+package daemon
 
 import (
 	"context"
@@ -36,6 +36,7 @@ func buildNorth(
 	emitter identity.AuditSink,
 	grants *access.Service,
 	pushes *accessctx.Service,
+	h Host,
 	log *slog.Logger,
 ) (*http.Server, *north.Server, error) {
 	federation, err := buildFederation(cfg, st, emitter, log)
@@ -59,6 +60,10 @@ func buildNorth(
 		RequestTimeout:  cfg.North.RequestTimeout,
 		InsecureCookies: cfg.North.InsecureCookies,
 		DefaultTenant:   store.Tenant(cfg.Tenant),
+		// A host's routes enter the same table, behind the same chain (M15).
+		HostProvider:   h.Provider,
+		HostRoutes:     h.Routes,
+		HostErrorCodes: h.ErrorCodes,
 	})
 	if err != nil {
 		return nil, nil, err

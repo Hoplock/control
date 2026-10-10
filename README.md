@@ -81,10 +81,11 @@ through `contract-sync`. Never the other way around.
 
 | Path | What lives there |
 | --- | --- |
-| `cmd/hoplock-control` | the server daemon (both listeners) |
+| `cmd/hoplock-control` | the server binary (both listeners and the operator subcommands): one call to `server.Main` |
 | `cmd/pdpconform` | black-box contract conformance suite |
 | `cmd/policyctl` | CLI: validate, simulate, explain, apply a policy bundle |
 | `ext/` | **public** extension points — the seam Hoplock Enterprise implements |
+| `server/` | **public** — how a host binary such as Hoplock Enterprise's starts Control, with its own config section and routes (`ext/README.md`) |
 | `ui/` | management console, embedded into the binary |
 | `internal/` | implementation packages (see `docs/PLAN.md` §3), including the forward-only SQL in `internal/store/migrations/` |
 | `contract/` | **vendored** contract from the proxy repo — never edited here |

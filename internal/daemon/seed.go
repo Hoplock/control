@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Mauro Silva
 // SPDX-License-Identifier: Apache-2.0
 
-package main
+package daemon
 
 import (
 	"context"
@@ -18,7 +18,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/policy/compile"
@@ -43,7 +42,7 @@ import (
 //     writes them — there is no seed-only path into the credential tables.
 //
 // When 0018 lands, this becomes a thin client of that API or it goes away.
-func runSeed(args []string, stdout, stderr io.Writer) error {
+func runSeed(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control seed", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to the YAML configuration file")
@@ -55,7 +54,7 @@ func runSeed(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("seed: --file is required")
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := h.loadConfig(*configPath)
 	if err != nil {
 		return err
 	}
@@ -64,7 +63,6 @@ func runSeed(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	ctx := context.Background()
 	st, err := store.Open(ctx, cfg.Database.DSN)
 	if err != nil {
 		return err
