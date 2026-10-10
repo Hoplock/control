@@ -315,7 +315,7 @@ jobs:
 
       # The fixtures the expectation file describes. There is no north-bound
       # API yet (0018), so `seed` is how a server is configured to serve
-      # anything at all — see cmd/hoplock-control/seed.go for why that is not a
+      # anything at all — see internal/daemon/seed.go for why that is not a
       # back door.
       - name: Seed the fixtures the suite expects
         run: |

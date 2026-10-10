@@ -44,6 +44,7 @@ func TestEveryRoleCanReadWhatItCanChange(t *testing.T) {
 		{identity.PermFleetWrite, identity.PermFleetRead},
 		{identity.PermIdentityWrite, identity.PermIdentityRead},
 		{identity.PermCARotate, identity.PermCARead},
+		{identity.PermReportWrite, identity.PermAuditRead},
 	}
 	for _, role := range identity.AllRoles {
 		for _, pair := range pairs {
@@ -59,6 +60,7 @@ func TestTheAuditorChangesNothing(t *testing.T) {
 		identity.PermPolicyWrite, identity.PermPolicyPublish,
 		identity.PermGrantWrite, identity.PermGrantApprove,
 		identity.PermFleetWrite, identity.PermIdentityWrite, identity.PermCARotate,
+		identity.PermReportWrite,
 	}
 	for _, perm := range writes {
 		if identity.RoleAuditor.Can(perm) {
@@ -86,6 +88,31 @@ func TestOnlyTheAdminHoldsThePermissionsThatGrantPermissions(t *testing.T) {
 		if !identity.RoleAdmin.Can(perm) {
 			t.Errorf("the admin does not hold %s", perm)
 		}
+	}
+}
+
+// The two codes a host's routes name and Control's do not (0015). A host names
+// a permission and never declares one, so what each role means stays a fact
+// about this file rather than about which binary is running.
+func TestReportWriteIsTheAdminsAlone(t *testing.T) {
+	for _, role := range identity.AllRoles {
+		if got, want := role.Can(identity.PermReportWrite), role == identity.RoleAdmin; got != want {
+			t.Errorf("%s holds report:write = %v, want %v", role, got, want)
+		}
+	}
+}
+
+func TestLicenseReadIsHeldByEveryRoleAPersonHolds(t *testing.T) {
+	for _, role := range identity.AllRoles {
+		if got, want := role.Can(identity.PermLicenseRead), role != identity.RoleIntegration; got != want {
+			t.Errorf("%s holds license:read = %v, want %v", role, got, want)
+		}
+	}
+}
+
+func TestTheIntegrationRoleStillReadsNothing(t *testing.T) {
+	if got := identity.RoleIntegration.Permissions(); !slices.Equal(got, []identity.Permission{identity.PermAccessContextPush}) {
+		t.Errorf("the integration role holds %v, want only access-context:push", got)
 	}
 }
 

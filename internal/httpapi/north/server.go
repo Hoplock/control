@@ -29,7 +29,9 @@ import (
 // told to resolve its tenant from — the certificate authority's own surface
 // (0011), and just-in-time grants (0012). 0018 adds policy, inventory, audit
 // query and the explain endpoint to this same router, which is why the router
-// is the enforcement point rather than each handler.
+// is the enforcement point rather than each handler. A host binary's routes
+// (M15, host.go) enter the same router after Control's, so they are enforced by
+// the same middleware and enumerated by the same isolation test.
 type Server struct {
 	auth       Authenticator
 	federation *identity.Federation
@@ -44,6 +46,10 @@ type Server struct {
 	requestTimeout time.Duration
 	secureCookies  bool
 	defaultTenant  store.Tenant
+
+	// codes is every error code a handler on this server may answer with:
+	// Control's and its host's (M21).
+	codes map[string]bool
 
 	router  *Router
 	handler http.Handler
@@ -89,6 +95,16 @@ type Options struct {
 	DefaultTenant store.Tenant
 	// Now overrides the clock. Tests use it.
 	Now func() time.Time
+
+	// HostProvider names the host binary HostRoutes and HostErrorCodes came
+	// from (M15). Required when either is set.
+	HostProvider string
+	// HostRoutes are a host binary's routes, registered after Control's
+	// through the same table. See HostRoute.
+	HostRoutes []HostRoute
+	// HostErrorCodes are the codes HostRoutes may answer with, beside
+	// Control's own (M21).
+	HostErrorCodes []string
 }
 
 // New builds the north-bound handler tree.
@@ -111,8 +127,16 @@ func New(o Options) (*Server, error) {
 	// it. The routes are still registered, so the isolation test still covers
 	// them, and they answer [CodeCANotConfigured] naming the key to set: an
 	// operator-shaped answer beats a listener that will not bind.
+	if (len(o.HostRoutes) > 0 || len(o.HostErrorCodes) > 0) && o.HostProvider == "" {
+		return nil, errNoHostProvider
+	}
+	codes, err := declaredCodes(o.HostProvider, o.HostErrorCodes)
+	if err != nil {
+		return nil, err
+	}
 
 	s := &Server{
+		codes:          codes,
 		auth:           o.Authenticator,
 		federation:     o.Federation,
 		ca:             o.CA,
@@ -147,10 +171,8 @@ func New(o Options) (*Server, error) {
 
 	s.router = NewRouter(s.enforce)
 	s.router.SetNotFound(s.notFoundHandler())
-	for _, route := range s.routes() {
-		if err := s.router.Register(route); err != nil {
-			return nil, err
-		}
+	if err := s.registerTable(o.HostProvider, o.HostRoutes); err != nil {
+		return nil, err
 	}
 
 	// The chain, outermost first. The correlation id is first because every

@@ -94,6 +94,10 @@ type Route struct {
 	// Handler serves the request. It reads the caller and the tenant from
 	// the context and never from the request.
 	Handler http.HandlerFunc
+	// Provider names the host binary a route came from (M15), and is empty
+	// for Control's own. It travels into the listing so that an operator can
+	// see which routes are not Control's.
+	Provider string
 }
 
 // RouteInfo is a registered route as the listing and the tests see it.
@@ -103,6 +107,9 @@ type RouteInfo struct {
 	Access     string              `json:"access"`
 	Permission identity.Permission `json:"permission,omitempty"`
 	Summary    string              `json:"summary,omitempty"`
+	// Provider is the host binary that registered the route; empty for
+	// Control's own.
+	Provider string `json:"provider,omitempty"`
 }
 
 // String renders a route the way the startup log lists it.
@@ -182,9 +189,11 @@ func (r *Router) Register(route Route) error {
 
 	byMethod, seen := r.patterns[route.Pattern]
 	if !seen {
+		if err := r.handle(route.Pattern); err != nil {
+			return fmt.Errorf("httpapi/north: route %s %s: %w", route.Method, route.Pattern, err)
+		}
 		byMethod = map[string]http.Handler{}
 		r.patterns[route.Pattern] = byMethod
-		r.mux.Handle(route.Pattern, r.dispatch(route.Pattern))
 	}
 	if _, dup := byMethod[route.Method]; dup {
 		return fmt.Errorf("httpapi/north: route %s %s is registered twice", route.Method, route.Pattern)
@@ -197,7 +206,25 @@ func (r *Router) Register(route Route) error {
 		Access:     route.Access.String(),
 		Permission: route.Permission,
 		Summary:    route.Summary,
+		Provider:   route.Provider,
 	})
+	return nil
+}
+
+// handle mounts a pattern on the mux, turning the mux's refusal into an error.
+//
+// `http.ServeMux.Handle` PANICS on a pattern that conflicts with one already
+// mounted — `grants/{id}` beside `grants/{grant}`, or two wildcards that both
+// match one path with neither more specific. For Control's own table that is a
+// programming error caught by every test; for a host's routes it is input this
+// server was handed, and a host must never be able to crash start-up with it.
+func (r *Router) handle(pattern string) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("the pattern cannot be mounted: %v", rec)
+		}
+	}()
+	r.mux.Handle(pattern, r.dispatch(pattern))
 	return nil
 }
 

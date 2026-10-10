@@ -36,7 +36,7 @@ const shutdownGrace = 15 * time.Second
 // deployment where half the product is up. The north-bound listener arrives here
 // with 0011 rather than 0018 because this phase is what M2 was waiting for: the
 // credential model. 0018 adds routes to a listener that already authenticates.
-func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions *ext.Extensions, log *slog.Logger) error {
+func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions *ext.Extensions, h Host, log *slog.Logger) error {
 	// The event broker is built FIRST, because the fleet registry reads it:
 	// a cache hint is only issued to a proxy holding a live subscription
 	// (M9, PLAN §5.4), and that read is [fleet.SubscriptionState]. Before
@@ -194,7 +194,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
-	northSrv, northHandler, err := buildNorth(ctx, cfg, st, emitter, grants, pushes, log)
+	northSrv, northHandler, err := buildNorth(ctx, cfg, st, emitter, grants, pushes, h, log)
 	if err != nil {
 		return err
 	}
@@ -213,9 +213,17 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		"routes", len(northHandler.Routes()),
 	)
 	for _, route := range northHandler.Routes() {
-		log.Debug("north-bound route",
+		// A host's routes are logged at Info rather than Debug: an operator
+		// must be able to see, without turning anything on, which routes on
+		// this listener are not Control's (M15).
+		level := slog.LevelDebug
+		if route.Provider != "" {
+			level = slog.LevelInfo
+		}
+		log.Log(ctx, level, "north-bound route",
 			"method", route.Method, "pattern", route.Pattern,
-			"access", route.Access, "permission", string(route.Permission))
+			"access", route.Access, "permission", string(route.Permission),
+			"provider", route.Provider)
 	}
 	go func() {
 		err := northSrv.ListenAndServe()

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -19,7 +18,7 @@ import (
 // two nodes starting together must not race to build the schema, and a server
 // that migrates on startup is a server that does. This is that command, and
 // the server has no code path that calls it.
-func runMigrate(args []string, stdout, stderr io.Writer) error {
+func runMigrate(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control migrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to the YAML configuration file")
@@ -28,12 +27,11 @@ func runMigrate(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := h.loadConfig(*configPath)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
 	st, err := store.Open(ctx, cfg.Database.DSN)
 	if err != nil {
 		return err

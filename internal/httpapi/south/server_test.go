@@ -22,6 +22,7 @@ import (
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
+	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/httpapi/south"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/revoke"
@@ -105,6 +106,52 @@ func TestNoNorthBoundRouteIsReachable(t *testing.T) {
 			h.requireEnvelope(t, res)
 		}
 	}
+}
+
+// The mirror of the north side's TestNoContractRouteIsReachableOnThisListener
+// (M2). The north-bound table is ENUMERATED rather than listed — Control's
+// routes and a host's (M15) — so a route added there is covered here on the
+// day it is added, and a host route mounted on the wrong mux is caught by name.
+func TestNoRouteOfTheNorthBoundTableIsReachableHere(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+
+	ok := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	routes, err := north.Table("test/host", []north.HostRoute{
+		{Method: "GET", Pattern: "reports/{report}", Permission: identity.PermAuditRead, Summary: "a report", Handler: ok},
+		{Method: "POST", Pattern: "reports/schedules", Permission: identity.PermReportWrite, Summary: "a schedule", Handler: ok},
+	}, nil)
+	if err != nil {
+		t.Fatalf("the north-bound table: %v", err)
+	}
+
+	hostRoutes := 0
+	for _, route := range routes {
+		if route.Provider != "" {
+			hostRoutes++
+		}
+		path := northSamplePath(route.Pattern)
+		res := h.do(route.Method, path, []byte(`{}`), h.token())
+		if res.Code != http.StatusNotFound {
+			t.Errorf("%s %s (%s) = %d on the south-bound listener, want 404",
+				route.Method, path, route.Pattern, res.Code)
+		}
+		h.requireEnvelope(t, res)
+	}
+	if hostRoutes != 2 {
+		t.Fatalf("enumerated %d host routes, want 2: the table this walks must include a host's", hostRoutes)
+	}
+}
+
+// northSamplePath fills a north-bound pattern's wildcards with sample values.
+func northSamplePath(pattern string) string {
+	segments := strings.Split(pattern, "/")
+	for i, segment := range segments {
+		if strings.HasPrefix(segment, "{") {
+			segments[i] = "sample"
+		}
+	}
+	return strings.Join(segments, "/")
 }
 
 // Every path refuses a bad credential the same way, INCLUDING the ones this

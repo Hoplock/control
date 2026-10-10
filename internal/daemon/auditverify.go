@@ -10,7 +10,6 @@ import (
 	"io"
 
 	"github.com/hoplock/control/internal/audit"
-	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -29,7 +28,7 @@ import (
 //
 // The exit code is the answer: 0 for a chain that verifies, 1 for one that
 // does not, so this is usable from cron without parsing anything.
-func runAuditVerify(args []string, stdout, stderr io.Writer) error {
+func runAuditVerify(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control audit-verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", defaultConfigPath, "path to the YAML configuration file")
@@ -41,7 +40,7 @@ func runAuditVerify(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := h.loadConfig(*configPath)
 	if err != nil {
 		return err
 	}
@@ -50,7 +49,6 @@ func runAuditVerify(args []string, stdout, stderr io.Writer) error {
 		who = store.Tenant(*tenant)
 	}
 
-	ctx := context.Background()
 	st, err := store.Open(ctx, cfg.Database.DSN)
 	if err != nil {
 		return err

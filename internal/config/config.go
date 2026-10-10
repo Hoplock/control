@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -441,38 +442,78 @@ func (e *FieldError) Error() string {
 
 // Load reads and validates the configuration file at path.
 func Load(path string) (*Config, error) {
+	cfg, _, err := LoadHost(path, nil)
+	return cfg, err
+}
+
+// LoadHost is [Load] for a host binary that owns top-level sections of the
+// file (M15). See [ParseHost].
+func LoadHost(path string, host []string) (*Config, []HostSection, error) {
+	if err := CheckHostSections(host); err != nil {
+		return nil, nil, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("config: open %s: %w", path, err)
+		return nil, nil, fmt.Errorf("config: open %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
-	cfg, err := Parse(f)
+	cfg, sections, err := ParseHost(f, host)
 	if err != nil {
-		return nil, fmt.Errorf("config: %s: %w", path, err)
+		return nil, nil, fmt.Errorf("config: %s: %w", path, err)
 	}
-	return cfg, nil
+	return cfg, sections, nil
 }
 
 // Parse decodes and validates a configuration document. Decoding is strict:
 // a key the schema does not define is an error, not a shrug.
 func Parse(r io.Reader) (*Config, error) {
-	dec := yaml.NewDecoder(r)
+	cfg, _, err := ParseHost(r, nil)
+	return cfg, err
+}
+
+// ParseHost is [Parse] for a host binary that owns top-level sections of the
+// file (M15): each name in host is a key the strict decoder accepts without
+// Control defining it, and every other unknown key is still refused, with the
+// same message and the same line number Parse gives. The sections present in
+// the document come back re-encoded as YAML, in document order; an absent one
+// does not come back at all.
+func ParseHost(r io.Reader, host []string) (*Config, []HostSection, error) {
+	if err := CheckHostSections(host); err != nil {
+		return nil, nil, err
+	}
+	doc, err := io.ReadAll(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("config: %w", err)
+	}
+
+	// The host's sections are found first, by key and by line, because the
+	// strict decode below reports each of them as unknown and needs to know
+	// which refusals are the host's to drop. A document that does not parse
+	// finds none here, and the decode below says why in today's words.
+	sections, expected, err := hostSections(doc, host)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	dec := yaml.NewDecoder(bytes.NewReader(doc))
 	dec.KnownFields(true)
 
 	var cfg Config
 	if err := dec.Decode(&cfg); err != nil {
 		if errors.Is(err, io.EOF) {
-			return nil, errors.New("config: file is empty")
+			return nil, nil, errors.New("config: file is empty")
 		}
-		return nil, fmt.Errorf("config: %w", err)
+		if err := withoutHostKeys(err, expected); err != nil {
+			return nil, nil, fmt.Errorf("config: %w", err)
+		}
 	}
 
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &cfg, nil
+	return &cfg, sections, nil
 }
 
 // applyDefaults fills in the fields that have a safe default. Everything else

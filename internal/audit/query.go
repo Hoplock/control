@@ -16,7 +16,7 @@ import (
 // and this is what it will serve from; building the routes here would put the
 // operator surface on a listener whose credential model has not been designed
 // (M2). The one exception is the record read-back this phase must expose for
-// the priority ack to be observable at all — see cmd/hoplock-control/auditread.go.
+// the priority ack to be observable at all — see internal/daemon/auditread.go.
 
 // Reader answers the questions an investigation arrives with.
 type Reader struct {

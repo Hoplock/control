@@ -7,10 +7,12 @@ import "github.com/hoplock/control/internal/identity"
 
 // The route table.
 //
-// It is ONE function so that the whole of what this surface serves, and what
-// each route requires, is readable in one sitting. Later phases append to it;
-// nothing registers a route from anywhere else, because a route registered
-// elsewhere is a route the isolation test would have to be told about.
+// It is ONE function so that the whole of what Control serves here, and what
+// each route requires, is readable in one sitting. Later phases append to it.
+// The one other source of routes is a host binary's (M15): registerTable
+// (host.go) adds them after this table, through the same Router.Register and
+// the same middleware, so the isolation test enumerates them without being told
+// about them.
 //
 // The prefix is `/api/` rather than `/v1/`: `/v1/` is the CONTRACT's namespace
 // on the other listener (M1), and two surfaces that never share a port should
