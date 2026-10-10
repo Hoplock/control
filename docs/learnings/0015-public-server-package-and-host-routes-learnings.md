@@ -18,7 +18,7 @@
 - **`WriteError` renders `500 internal` and logs instead for:** a call outside a host route; an undeclared code; status outside 400–599; `401` or code `unauthenticated`; `internal` with a non-5xx; an empty message.
 - **Moved** with `git mv`, `cmd/hoplock-control` → `internal/daemon`: `accesscontext auditread auditverify grants identityctl main migrate north publish seed serve version` `.go` and their five `_test.go`. `run` became `daemon.Main`; `-X` is now `…/internal/daemon.version`.
 - **Decisions:** none added; **M15 revised in place** (names `server/`; register row gains §6, §8). §3, §6, §8, §10, PROTOCOL §3 revised. **Migrations:** none.
-- **Cross-repo:** sync for `hoplock/enterprise` queued as `prompts/downstream/queued/control-PR#NN-public-server-package.md`; request to `hoplock/proxy` (CROSS-REPO §1 table + stale paragraph, enterprise#8's half) as `prompts/upstream/queued/control-PR#NN-shared-surfaces-table.md`. **Enterprise's next request:** a cross-tenant access class for E11.
+- **Cross-repo:** sync for `hoplock/enterprise` queued as `prompts/downstream/queued/control-PR#56-public-server-package.md`; request to `hoplock/proxy` (CROSS-REPO §1 table + stale paragraph, enterprise#8's half) as `prompts/upstream/queued/control-PR#56-shared-surfaces-table.md`. **Enterprise's next request:** a cross-tenant access class for E11.
 
 ## Details
 
