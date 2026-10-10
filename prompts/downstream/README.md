@@ -12,8 +12,8 @@ sync" block from `docs/KICKOFF.md`, filled in and queued by the PR that owes it.
   default kickoff never reaches it: the "Next cross-repo request" kickoff in
   `docs/KICKOFF.md` answers the oldest request across all three repositories, in
   a session with all three checked out.
-- **Moved to `implemented/`**, unchanged, by a PR here that merges after the
-  sync PR that answered it.
+- **Moved to `implemented/`**, unchanged, by a PR here that is opened as a draft
+  and marked ready only once the sync PR that answered it has merged (§4.3).
 
 Syncs owed **to** this repository, by `hoplock/proxy`, wait in the proxy's
 `prompts/downstream/queued/`.
