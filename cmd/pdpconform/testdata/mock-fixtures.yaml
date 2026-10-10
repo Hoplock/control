@@ -5,7 +5,7 @@
 # implementation it was written beside tests agreement with itself (PLAN M1).
 # This file configures it to serve the routes cmd/pdpconform/testdata/
 # mock-expectations.yaml names, and nothing here is a statement about what THIS
-# server will serve — phase 0021 points the suite at that with its own
+# server will serve — phase 0022 points the suite at that with its own
 # expectation file.
 #
 # The fixture format is documented in the Hoplock Proxy repository's

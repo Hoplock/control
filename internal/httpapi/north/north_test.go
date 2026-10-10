@@ -549,7 +549,7 @@ func TestEveryErrorCarriesACodeAMessageAndTheCorrelationID(t *testing.T) {
 
 func TestEveryCodeThisSurfaceProducesIsDeclared(t *testing.T) {
 	// Adding one is deliberate; reusing one for a different condition is not
-	// allowed (0018's rule, decided here because the first routes are here).
+	// allowed (0019's rule, decided here because the first routes are here).
 	if len(north.AllCodes) != len(slices.Compact(slices.Sorted(slices.Values(north.AllCodes)))) {
 		t.Fatalf("a code is declared twice: %v", north.AllCodes)
 	}

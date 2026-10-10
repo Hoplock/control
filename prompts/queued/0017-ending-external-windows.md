@@ -6,7 +6,7 @@
 >
 > **Where it sits.** Fourth, after tagged releases (0014), the public server
 > package (0015) and self-service grant requests (0016), and before the
-> north-bound API (0018). It depends only on merged phases: 0009 (the revocation
+> north-bound API (0019). It depends only on merged phases: 0009 (the revocation
 > stream), 0012 (grants, and the revocation that ends the sessions a grant
 > backed) and 0013 (the push receiver, scope bindings and the declarative
 > provider). It runs this early because Enterprise's access-context phase (its
@@ -559,9 +559,9 @@ type endView struct {
   vendor's signature must be checked.
 - **Ending a probe-only window.** It is never stored (0013). Disabling the
   binding stops it being asked about.
-- **"Disable and revoke" on a binding**, which 0013's learnings leave to 0018's
+- **"Disable and revoke" on a binding**, which 0013's learnings leave to 0019's
   surface if it is wanted.
-- **The console** (0020). It is a client of the grant views, which already show
+- **The console** (0021). It is a client of the grant views, which already show
   `revoked_by` and the reason.
 - **`contract/` (M1).** Nothing on the wire changes: `session_kill` and
   `cache_invalidate` exist, and a revocation already publishes both. If it seems
@@ -675,7 +675,7 @@ State at least these obligations:
    - Drop "behind a seam named for it and visibly unwired", and turn the
      skipped live-session criterion into a real one: a Helix cancellation ends
      a person's live session with `session_kill`. It stays subject to 0008's
-     other skips — no binding route before Control's 0018, and the pinned
+     other skips — no binding route before Control's 0019, and the pinned
      version (E3).
 2. **Its "Qualys specifically" and "BMC Helix specifically".** "Closing reaches
    new connections only" stays true only for a vendor that cannot push. Record

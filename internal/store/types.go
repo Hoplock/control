@@ -127,7 +127,7 @@ type Proxy struct {
 	// proxy D13 makes first-class. 0006 owns the shape.
 	DeclaredCapabilities json.RawMessage
 	// SessionCount, LastError and LastErrorAt are health, as an operator
-	// needs them during an incident (0020 renders them).
+	// needs them during an incident (0021 renders them).
 	SessionCount int
 	LastError    string
 	LastErrorAt  time.Time
@@ -145,7 +145,7 @@ type PolicyBundle struct {
 	Version int64
 	// Source is the bundle document exactly as uploaded.
 	Source []byte
-	// Hash is the digest of Source, computed by the caller (0018) so that
+	// Hash is the digest of Source, computed by the caller (0019) so that
 	// the value stored is the one the uploader was told.
 	Hash string
 	// UploadedBy names the principal that uploaded it.

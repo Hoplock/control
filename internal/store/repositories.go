@@ -475,6 +475,6 @@ type TargetCapabilityRepository interface {
 	// failure to report, it is an input.
 	Get(ctx context.Context, tenant Tenant, hostname string, port int32, platform string) (TargetCapabilityRecord, error)
 	// List returns every record in the tenant, in (hostname, port, platform)
-	// order. The pre-publish query (0018) walks it.
+	// order. The pre-publish query (0019) walks it.
 	List(ctx context.Context, tenant Tenant) ([]TargetCapabilityRecord, error)
 }

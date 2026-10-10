@@ -13,9 +13,9 @@ import (
 // The operator surface: everything an operator action can ask this server to
 // publish, and nothing about how the operator was authenticated.
 //
-// It is MINIMAL HERE ON PURPOSE. The north-bound API is 0018's and the audit
+// It is MINIMAL HERE ON PURPOSE. The north-bound API is 0019's and the audit
 // record of an operator action is 0010's; what this phase owes is the shape
-// those two will put in front of, because whatever 0018 exposes inherits the
+// those two will put in front of, because whatever 0019 exposes inherits the
 // vocabulary chosen here. The one place that shape is opinionated is the
 // host-key asymmetry below, and it is opinionated because the alternative
 // misleads.

@@ -30,7 +30,7 @@ import (
 // operator needs during an incident, when the console may be exactly what is
 // broken.
 //
-// `cmd/policyctl` (0018) is the terminal client for the north-bound API and will
+// `cmd/policyctl` (0019) is the terminal client for the north-bound API and will
 // carry the operations that have an API. These stay: a bootstrap command that
 // talks to the API is a bootstrap command that cannot run first.
 

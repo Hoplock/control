@@ -321,7 +321,7 @@ func short(sum string) string {
 }
 
 // SchemaVersion reports the highest applied migration version, or 0 when the
-// database has never been migrated. 0019 reads it to report whether a
+// database has never been migrated. 0020 reads it to report whether a
 // deployment's schema is at the version its binary expects.
 func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
 	const op = "store.SchemaVersion"

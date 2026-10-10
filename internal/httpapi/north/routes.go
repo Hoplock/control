@@ -167,7 +167,7 @@ func (s *Server) routes() []Route {
 			Handler:    s.handleAccessContextPush,
 		},
 
-		// --- the claim mapping (read; authoring is 0018's) ---
+		// --- the claim mapping (read; authoring is 0019's) ---
 		{
 			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/identity/claim-mapping",
 			Access:     AccessTenant,

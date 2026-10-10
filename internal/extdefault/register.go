@@ -17,7 +17,7 @@ import (
 type Deps struct {
 	// Node is this process's membership record. A zero ID is filled in with
 	// a placeholder, because a deployment must still start when nothing has
-	// given it an identity yet — phase 0019 makes that identity real (M19).
+	// given it an identity yet — phase 0020 makes that identity real (M19).
 	Node ext.Node
 }
 
@@ -53,7 +53,7 @@ func Register(reg *ext.Registry, deps Deps) error {
 // from a bug in Control — and "nothing is registered here, so Control does X"
 // is exactly as useful to them as the other kind of line.
 //
-// The north-bound API exposes the same information (phase 0018); this is the
+// The north-bound API exposes the same information (phase 0019); this is the
 // copy that exists before anyone can call an API.
 func Log(log *slog.Logger, x *ext.Extensions) {
 	if log == nil || x == nil {

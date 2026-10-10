@@ -239,7 +239,7 @@ events:
   # Publishing an event is an operator action, and the contract states that
   # nothing on `/v1` publishes one — the proxy-facing API would otherwise carry
   # an endpoint no proxy calls. The north-bound API that will own it is phase
-  # 0018's; until then this is how the conformance suite makes this server emit
+  # 0019's; until then this is how the conformance suite makes this server emit
   # an event while a subscriber is away, which is the only way gap recovery is
   # gradeable at all.
   #
@@ -275,7 +275,7 @@ audit:
   # calls. The priority ack's durability guarantee — a 200 means the record is
   # stored — is therefore observable only through a path this server exposes
   # outside `/v1`, and the conformance suite takes it as an input. The
-  # north-bound audit query API that will own it is phase 0018's, which deletes
+  # north-bound audit query API that will own it is phase 0019's, which deletes
   # this one rather than folding it in.
   #
   # It is a separate port from both other listeners (M2), and read_token is
@@ -289,7 +289,7 @@ audit:
 # field has the default shown.
 #
 # It is a section of its own rather than settings shared with `south:` because
-# the two listeners share no middleware and no bounds. A policy bundle (0018) is
+# the two listeners share no middleware and no bounds. A policy bundle (0019) is
 # the largest thing this surface accepts and nothing on the contract is close.
 north:
   max_body_bytes: 4194304

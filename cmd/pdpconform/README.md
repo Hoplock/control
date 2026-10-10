@@ -63,7 +63,7 @@ make conform BASE_URL=http://127.0.0.1:8080 TOKEN=pdpconform-dev-token
 ## Running it locally against THIS server
 
 The suite is pointed at the real implementation by a second pair of files and
-no Go at all. There is no north-bound API yet (0018), so the server is
+no Go at all. There is no north-bound API yet (0019), so the server is
 configured with `hoplock-control seed`:
 
 ```
@@ -97,7 +97,7 @@ package sees it. Use space-free substrings.
 
 **Everything the suite knows about a server is in this file.** No login, target,
 fingerprint, token, or URL appears in any Go source file here. That is the
-property phase 0021 needs: pointing the suite at the real server is a new
+property phase 0022 needs: pointing the suite at the real server is a new
 expectation file and no code change at all.
 
 It is decoded **strictly** — an unknown key is an error — and validated for the
