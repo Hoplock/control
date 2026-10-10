@@ -25,9 +25,9 @@ import (
 // `TestNoContractRouteIsReachable` keeps that true: the day somebody mounts a
 // contract route on the wrong mux is not the day anyone notices.
 //
-// WHAT IT SERVES. Federation and sessions — the credential model 0018 was
+// WHAT IT SERVES. Federation and sessions — the credential model 0019 was
 // told to resolve its tenant from — the certificate authority's own surface
-// (0011), and just-in-time grants (0012). 0018 adds policy, inventory, audit
+// (0011), and just-in-time grants (0012). 0019 adds policy, inventory, audit
 // query and the explain endpoint to this same router, which is why the router
 // is the enforcement point rather than each handler. A host binary's routes
 // (M15, host.go) enter the same router after Control's, so they are enforced by

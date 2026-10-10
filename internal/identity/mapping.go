@@ -168,7 +168,7 @@ func (e *MappingRejected) Error() string {
 }
 
 // The rejection codes. Adding one is deliberate; reusing one for a different
-// condition is not allowed, for the reason 0018 gives about error codes.
+// condition is not allowed, for the reason 0019 gives about error codes.
 const (
 	RejectMappingUnparseable   = "mapping.unparseable"
 	RejectMappingSchemaVersion = "mapping.schema_version"

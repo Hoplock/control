@@ -27,7 +27,7 @@ import (
 
 // `hoplock-control seed` writes a development and CI fixture set.
 //
-// IT EXISTS BECAUSE THE NORTH-BOUND API DOES NOT YET (0018). The conformance
+// IT EXISTS BECAUSE THE NORTH-BOUND API DOES NOT YET (0019). The conformance
 // suite grades "a server configured to serve these identities" (M1), and until
 // there is an operator surface there is no way to configure one — so the
 // alternative to this command is a conformance leg that cannot run against
@@ -41,7 +41,7 @@ import (
 //   - the credentials it writes are hashed exactly as the running server
 //     writes them — there is no seed-only path into the credential tables.
 //
-// When 0018 lands, this becomes a thin client of that API or it goes away.
+// When 0019 lands, this becomes a thin client of that API or it goes away.
 func runSeed(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control seed", flag.ContinueOnError)
 	fs.SetOutput(stderr)

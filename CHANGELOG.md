@@ -26,6 +26,12 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+- Two texts name Control's phases by their new numbers, after the queue was
+  renumbered to fit phase 0018: `ReportProvider`'s `ControlShips` in
+  `ext.Points()` now reads "(phases 0010, 0019)", and the start-up warning on
+  the two temporary operator listeners now calls each "a pre-0019 operator
+  path". Nothing else changes.
+
 ## v0.2.0
 
 A host binary can start Control.

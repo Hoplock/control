@@ -176,7 +176,7 @@ var points = [...]PointInfo{
 		Multiple:     true,
 		WhenAbsent:   WhenAbsentCore,
 		Absent:       "the north-bound audit and decision queries are the whole of the reporting available",
-		ControlShips: "audit query, decision explain, and policy simulation over the recorded history (phases 0010, 0018)",
+		ControlShips: "audit query, decision explain, and policy simulation over the recorded history (phases 0010, 0019)",
 	},
 	PointPolicyValidator: {
 		Point:        PointPolicyValidator,

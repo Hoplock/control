@@ -15,7 +15,7 @@ import (
 // than only prose (PLAN M21).
 //
 // A policy author reads the English message, `policyctl` and CI print it, and
-// the console (0020) renders the Code in the operator's locale. Prose alone
+// the console (0021) renders the Code in the operator's locale. Prose alone
 // cannot be localised, and this package is pure — it has no locale and must
 // never acquire one. So every rejection carries a stable Code, the typed
 // Params that filled its message in, and the rule and line it is about.

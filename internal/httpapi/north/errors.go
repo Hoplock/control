@@ -13,9 +13,9 @@ import (
 // Errors on this surface are MACHINE-READABLE (M21).
 //
 // Every error carries a stable `code`, typed `parameters`, an English `message`
-// and the correlation id. The console (0020) is the only layer that localises,
+// and the correlation id. The console (0021) is the only layer that localises,
 // and it can only do that if the sentence is assembled there — so an API that
-// answers with prose alone makes a localisable console impossible. 0018 owns the
+// answers with prose alone makes a localisable console impossible. 0019 owns the
 // full code registry for this surface and extends what is here; the shape is
 // fixed now because the first routes are served now, and a second envelope added
 // later would be a second envelope forever.

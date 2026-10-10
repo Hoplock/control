@@ -18,7 +18,7 @@ const ProviderControl = "hoplock/control"
 
 // Registration is who is registering, and in what capacity. It travels with
 // the implementation so that every later listing — a start-up log line, the
-// north-bound registry endpoint (phase 0018) — can name the code actually in
+// north-bound registry endpoint (phase 0019) — can name the code actually in
 // play. An extension nobody can see is indistinguishable from a bug in
 // Control, which is why this is required rather than optional.
 type Registration struct {
@@ -406,7 +406,7 @@ func (x *Extensions) AccessContextProviders() []Bound[AccessContextProvider] {
 
 // Status is one row of the operator-facing view of what is in play: the point,
 // what is registered there, and what happens when nothing is. It is what the
-// start-up log prints and what the north-bound API exposes (phase 0018).
+// start-up log prints and what the north-bound API exposes (phase 0019).
 type Status struct {
 	// Info is the point's catalogue entry.
 	Info PointInfo

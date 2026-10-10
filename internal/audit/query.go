@@ -12,7 +12,7 @@ import (
 
 // The read side (PLAN §7).
 //
-// It is a QUERY LAYER AND NOT AN HTTP SURFACE. 0018 owns the north-bound API
+// It is a QUERY LAYER AND NOT AN HTTP SURFACE. 0019 owns the north-bound API
 // and this is what it will serve from; building the routes here would put the
 // operator surface on a listener whose credential model has not been designed
 // (M2). The one exception is the record read-back this phase must expose for

@@ -8,7 +8,7 @@
 > package (0015). It depends on nothing queued: only on 0011 (RBAC and the
 > north-bound credential model), 0012 (grants and the workflow seam) and 0013
 > (whose `integration` role and push-receiver refusals it follows), all merged.
-> It runs before the north-bound API (0018) because Enterprise's approval phase
+> It runs before the north-bound API (0019) because Enterprise's approval phase
 > (its 0003) builds around these three gaps until they exist.
 
 ## Read first
@@ -280,8 +280,8 @@ POST /api/v1/tenants/{tenant}/me/grant-requests/{request}/cancel  AccessSelf  gr
 - The tenant-wide routes do not change. `POST …/grants` and
   `POST …/grant-requests/{request}/cancel` stay `grant:write`, and a requester
   calling either gets `403 forbidden`.
-- If 0019 has merged when you start, these routes enter M19's north-bound
-  version like any other addition. If it has not, 0019 versions them with the
+- If 0020 has merged when you start, these routes enter M19's north-bound
+  version like any other addition. If it has not, 0020 versions them with the
   rest of the surface.
 
 ### 4. The service and the store (`internal/access`, `internal/store`)
@@ -387,7 +387,7 @@ POST /api/v1/tenants/{tenant}/me/grant-requests/{request}/cancel  AccessSelf  gr
 - **The caller's own grants** (`GET …/me/grants`), and **withdrawing your own
   grant early**. Neither was asked for, and a request read already returns the
   grant it produced.
-- **Console screens** for the self routes. 0020's console is a client of this
+- **Console screens** for the self routes. 0021's console is a client of this
   API, and whether a requester's view belongs in Control's console or
   Enterprise's is for those phases to decide. For a UI that hides what a caller
   cannot do, `GET /api/v1/session` already lists `grant:request` per tenant.

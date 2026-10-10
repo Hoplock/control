@@ -241,7 +241,7 @@ var (
 	otherPush   = access.Actor{Principal: "p-other", DisplayName: "another integration's token", CorrelationID: "corr-other"}
 )
 
-// bind writes a binding through the real API, as 0018's route will.
+// bind writes a binding through the real API, as 0019's route will.
 func (h *harness) bind(b store.AccessContextBinding) store.AccessContextBinding {
 	h.t.Helper()
 	got, err := h.context.PutBinding(h.t.Context(), tenant, admin, b)

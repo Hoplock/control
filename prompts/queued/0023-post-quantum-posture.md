@@ -1,4 +1,4 @@
-# 0022 — Post-quantum posture: state the wire, plumb the algorithms
+# 0023 — Post-quantum posture: state the wire, plumb the algorithms
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 (**never edit
@@ -19,8 +19,8 @@
 - `docs/learnings/` — read summaries; open **`0011`** (the CA, `ext.KeyStore`
   custody, the JOSE subset and *why the algorithm comes from the key*), **`0008`**
   (how `algorithm_profile` reaches the snapshot), **`0010`** (the audit record's
-  derived columns, including `algorithm_profile`), **`0021`** (the topology
-  and scenario suite this phase extends), and **`0018`** (how `algorithm_floor`
+  derived columns, including `algorithm_profile`), **`0022`** (the topology
+  and scenario suite this phase extends), and **`0019`** (how `algorithm_floor`
   is authored and served, and where the negotiated-algorithm records and each
   target's key-exchange observation are stored).
 - `contract/control.yaml` — **`algorithm_profile` and `algorithm_floor` only**
@@ -28,10 +28,10 @@
   than `default` is a weakening, and the floor's levels), plus
   `KexObservation`. You do not need the rest of the document.
 
-> **This phase runs after 0021 on purpose.** It touches both listeners, and the
-> listeners stop moving only once 0018 has replaced the two temporary operator
-> ports and 0020 is serving the console over the north-bound one. Doing TLS
-> before then means doing it twice. It also extends 0021's topology and scenario
+> **This phase runs after 0022 on purpose.** It touches both listeners, and the
+> listeners stop moving only once 0019 has replaced the two temporary operator
+> ports and 0021 is serving the console over the north-bound one. Doing TLS
+> before then means doing it twice. It also extends 0022's topology and scenario
 > suite rather than standing up its own.
 
 ## Objective
@@ -53,7 +53,7 @@ Two framings to hold onto, because they decide almost every judgement call below
   `algorithm_profile` can only *weaken* a route's algorithms. The floor this
   phase needed for the proxy→target leg was the proxy's vocabulary to add (M1),
   so it was raised upstream rather than approximated. Upstream has answered:
-  `algorithm_floor` exists (`Hoplock/proxy#69`), and 0018 vendors it and makes
+  `algorithm_floor` exists (`Hoplock/proxy#69`), and 0019 vendors it and makes
   it authorable. So this phase wires it rather than working around it. See
   "The algorithm floor has landed upstream".
 
@@ -162,19 +162,19 @@ register's `Rendered in` column requires (PROTOCOL §3).
 - **A tripwire for the SSH certificate gap**, in `internal/credential`, in the
   shape 0011's brokered-certificate tripwire established. That is a test that
   fails the build on the day an upstream fact changes, and names what to do.
-  0018 changes that test to pin the method's shape once `Hoplock/proxy#68` is
+  0019 changes that test to pin the method's shape once `Hoplock/proxy#68` is
   vendored, so copy the pattern and not the name. Assert that `x/crypto/ssh`'s
   certificate algorithms contain no post-quantum signature algorithm, and fail
   with a message naming what to do when one appears. The point is that the next
   session learns by the build going red rather than by reading this prompt.
-- Extend 0021's scenario suite and `deploy/` topology so the topology runs with
+- Extend 0022's scenario suite and `deploy/` topology so the topology runs with
   TLS configured on both listeners, and the suite asserts the posture rather than
   assuming it. The floor scenarios of item 6 go in the same suite.
-- `govulncheck` already gates every PR (0021); nothing new is needed there.
+- `govulncheck` already gates every PR (0022); nothing new is needed there.
 
 ### 6. Assert the proxy→target floor end to end (`Hoplock/proxy#69`)
-0018 makes `algorithm_floor` authorable and serves it. This phase proves its
-post-quantum level against a real proxy and a real target, on 0021's topology,
+0019 makes `algorithm_floor` authorable and serves it. This phase proves its
+post-quantum level against a real proxy and a real target, on 0022's topology,
 because only there do "decides" and "enforces" meet:
 
 - A route whose floor is `pq-hybrid-kex` succeeds against a target whose
@@ -194,19 +194,19 @@ because only there do "decides" and "enforces" meet:
   It fails the floor too, and that is the assertion that nothing here treats
   sntrup761 as meeting the level.
 - The target's key-exchange observation reaches the store as a report of its
-  own, and the target's rung observation is unchanged by it (0018, item 5 of
+  own, and the target's rung observation is unchanged by it (0019, item 5 of
   "Algorithm floor and bans reach a proxy").
 - Say where the proxy→target posture is read. For this server's own listeners
   the startup log states it (item 1). For the proxy→target leg it is per route
   and per session: the floor in force, as policy states it, and the negotiated
   exchange, as each session's record proves it. Name where an operator reads
-  each (0018's query, 0020's views). Add no configuration knob for it here: a
+  each (0019's query, 0021's views). Add no configuration knob for it here: a
   floor is route policy, not a property of this server's listeners.
 
 ## Out of scope
 - **Editing `contract/`** (M1). The floor this phase needed exists now
-  (`Hoplock/proxy#69`, vendored by 0018), so there is nothing left to invent.
-- **Authoring the floor, and anything about bans.** 0018 makes
+  (`Hoplock/proxy#69`, vendored by 0019), so there is nothing left to invent.
+- **Authoring the floor, and anything about bans.** 0019 makes
   `algorithm_floor` and `algorithm_bans` authorable, validates them and serves
   them. This phase asserts the floor end to end (item 6).
 - **Configuring the proxy→target SSH leg.** Which key exchange a proxy offers
@@ -232,7 +232,7 @@ queued this phase raised the floor upstream (`Hoplock/control#36`,
 
 **What landed.** `Hoplock/proxy#69` (merged) added `algorithm_floor`, a
 sibling of the profile on the authorize response, and moved `policy_version`
-to `6`. 0018 re-vendors it and makes it authorable, so check that
+to `6`. 0019 re-vendors it and makes it authorable, so check that
 `contract/control.yaml` carries it before you start. Three things differ from
 what `#36` asked for, and `#36`'s PR body is wrong about all three. Build
 against this list, not against that body:
@@ -256,7 +256,7 @@ against this list, not against that body:
 
 The proxy refuses `legacy-device` with any floor and accepts `legacy-rsa-sha1`
 with one. A floor the target cannot meet fails the session as an outage (PLAN
-§5.2). 0018 owns all of that on this side. This phase's part is item 6.
+§5.2). 0019 owns all of that on this side. This phase's part is item 6.
 
 ## Acceptance criteria
 - Both listeners serve TLS when configured and plaintext when not, and a
@@ -275,24 +275,24 @@ with one. A floor the target cannot meet fails the session as an outage (PLAN
   post-quantum certificate algorithm.
 - `docs/PLAN.md` carries the new decision, its register row, and the §8
   subsection on what is already adequate.
-- 0021's topology runs with TLS on both listeners and its suite asserts the
+- 0022's topology runs with TLS on both listeners and its suite asserts the
   posture.
 - A `pq-hybrid-kex` route to a target on OpenSSH 9.9 or later stores
   `target_kex_algorithm: mlkem768x25519-sha256` beside the floor in force. The
   same floor fails as an outage, and stores a `target.algorithm_policy_unmet`
   with cause `floor`, against a target with no hybrid and against one whose
-  only hybrid is sntrup761. All three are asserted on stored records in 0021's
+  only hybrid is sntrup761. All three are asserted on stored records in 0022's
   topology.
 - **No change to `contract/`**, and `make contract-check` passes.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0022-post-quantum-posture-learnings.md`. The summary block MUST
+`docs/learnings/0023-post-quantum-posture-learnings.md`. The summary block MUST
 give: the config keys added, the default posture and the one knob that changes
 it, the decision's `M` id, the `ext/` behaviour change and why it is safe, and —
 as its own line — **what the floor scenarios proved against the real proxy**:
 the target images, their OpenSSH versions, and the exchange each one recorded.
-The floor has landed upstream (`Hoplock/proxy#69`, vendored by 0018). So the
+The floor has landed upstream (`Hoplock/proxy#69`, vendored by 0019). So the
 next phase to touch routing has a floor to honour, and what it needs from here
 is evidence of what holds on the wire.
 

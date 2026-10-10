@@ -1,4 +1,4 @@
-# 0020 — Management console (web UI)
+# 0021 — Management console (web UI)
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -12,19 +12,19 @@
   enforce all of it. It
   is binding under M20, and it is not a style suggestion you may improve on
   mid-implementation — if it is wrong, change it in this PR and say so.
-- `docs/learnings/` — read summaries; open `0018` (**the API this consumes** —
+- `docs/learnings/` — read summaries; open `0019` (**the API this consumes** —
   every route and its required role), `0011` (RBAC), `0010` (audit query),
   `0006` (proxy health).
 - `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
   algorithm bullet (the floor and the bans), and **M17**, for what
-  `Hoplock/proxy#69` added and 0018 serves: the impact preview, the fleet
+  `Hoplock/proxy#69` added and 0019 serves: the impact preview, the fleet
   coverage view and the emergency runbook (below). The same bullet, from
   "Refusing exactly what the proxy refuses", covers what `Hoplock/proxy#72`
   added: what each build's profiles offer, and a ban's per-build finding. In
   the **Hoplock Proxy repository**, `api/README.md` "Banned algorithms" states
   the runbook. It is cited here and never restated.
 - `docs/PLAN.md` §7 at "A gap in a proxy's stream is a record, and it is not a
-  break in the chain", and **M11**, for what `Hoplock/proxy#71` added and 0018
+  break in the chain", and **M11**, for what `Hoplock/proxy#71` added and 0019
   serves: the `logging.gap` records that say where a proxy's stream has a
   hole, and why (the audit view, below). In the **Hoplock Proxy repository**,
   `api/README.md` "When records do not arrive" specifies the record. It is
@@ -47,26 +47,26 @@ is written so that half can fail a review rather than merely disappoint one.
   (`embed.FS`), so a deployment is still one binary. No separate web server, no
   Node runtime in production.
 - **It is an API client and nothing more.** The console calls the north-bound
-  API (0018) with the operator's own session; it never reaches into the database
+  API (0019) with the operator's own session; it never reaches into the database
   and never has a privileged path of its own. Any capability the console has,
   the API has, and RBAC (0011) applies identically — a console that can do what
   the API forbids is a second, unaudited authorisation system.
 - Screens, in priority order:
   1. **Fleet** — proxies, zones, health, last heartbeat, contract version, which
      have live relay registrations (0006), and each proxy's configuration state
-     as the proxy **reported** it (0018, proxy D18): desired and running
+     as the proxy **reported** it (0019, proxy D18): desired and running
      version, and `applied`, `pending_restart` (with the settings that are
      waiting on a restart), `rejected` or `fetch_failed` (with `last_error`). A
      proxy that has never reported is shown as its own state, never as
      `applied`. **Algorithm-floor coverage** too (`Hoplock/proxy#69`): which
      `algorithm_floor` levels each proxy's build declares, with the key
-     exchanges each level accepts **in that build**, as 0018 serves them. During
+     exchanges each level accepts **in that build**, as 0019 serves them. During
      a rolling upgrade two builds may accept different exchanges for one level.
      Show that as *in progress* (M19), never as a fault, and name the proxies
      that cannot enforce a level yet. A proxy that has declared nothing is
      `Not reported`, never "no floor". Beside the levels, show what each
      profile the build accepts offers per axis, before any floor or ban
-     (`Hoplock/proxy#72`, as 0018 serves it), so an operator reading a ban's
+     (`Hoplock/proxy#72`, as 0019 serves it), so an operator reading a ban's
      per-build finding can see what that build offers. A proxy whose build
      declared no profiles is `Not reported`, never "offers nothing".
   2. **Explain** — a session or decision id in, the whole story out: identity,
@@ -74,7 +74,7 @@ is written so that half can fail a review rather than merely disappoint one.
      links from the audit view.
   3. **Audit** — query by subject, target, time, kind, severity; the blocked-
      command view; session replay for recorded sessions. **Where a proxy's
-     stream has a hole, and why** (`Hoplock/proxy#71`, served by 0018). A
+     stream has a hole, and why** (`Hoplock/proxy#71`, served by 0019). A
      `logging.gap` is shown at its **span**, from `gap_first_at` to
      `gap_last_at`, and never at its own timestamp, which is often after the
      session ended. Show how many records are missing, their kinds, and how
@@ -100,7 +100,7 @@ is written so that half can fail a review rather than merely disappoint one.
   4. **Policy** — bundle versions, diff, validation errors inline against the
      source, **simulate** a candidate against recorded traffic, activate,
      roll back. **Before a route's `algorithm_floor` is raised, preview the
-     impact** (`Hoplock/proxy#69`, 0018's satisfiability report). Show the
+     impact** (`Hoplock/proxy#69`, 0019's satisfiability report). Show the
      targets the raise would break, with the level each was seen to meet, what
      it negotiated or offered, and when. Show targets with no observation, or a
      stale one, as `Not reported`, never as meeting the floor. Show the proxies
@@ -109,7 +109,7 @@ is written so that half can fail a review rather than merely disappoint one.
      since. The same view explains why `pq-hybrid-kex` needs OpenSSH 9.9 or
      later on the target, and it never promises sntrup761. A ban that names
      something no proxy declared is a warning the author reads and may
-     override (0018). So is a ban that leaves an axis empty on some proxies'
+     override (0019). So is a ban that leaves an axis empty on some proxies'
      builds (`Hoplock/proxy#72`). Show it per build: the proxies that will
      refuse the route, the axis, and what each of those builds offers there.
      Show a rolling upgrade's disagreement as *in progress* (M19), never as a
@@ -122,7 +122,7 @@ is written so that half can fail a review rather than merely disappoint one.
      is in play.
   7. **Emergency runbook** — the workflow for the day an advisory lands
      (`Hoplock/proxy#69`; upstream's `api/README.md` states the steps). It walks
-     an operator through three steps, each one a call 0018 serves and audits:
+     an operator through three steps, each one a call 0019 serves and audits:
      add the ban to the affected routes and activate it; send
      `cache_invalidate` with `all`, because a cached decision keeps the old
      policy until its hint runs out; then find the running sessions by what
@@ -145,7 +145,7 @@ is written so that half can fail a review rather than merely disappoint one.
 
 ### Deployment identity and tenant context (M18, M19)
 - The console always says **which deployment** this is: name, instance id,
-  version set, and health (0019). An operator with a staging and a production
+  version set, and health (0020). An operator with a staging and a production
   instance open in two tabs must never have to guess which is which, and the
   distinction has to survive a screenshot.
 - Where more than one tenant is in scope, the current tenant is visible in the
@@ -226,7 +226,7 @@ specification — this is the shape of what lands.
   decision ids, fingerprints, hostnames, labels, rule names, policy source.
 - **Operator-authored content is never translated** — a rule name is data, and
   "explain why" must cite the rule that is actually in the bundle.
-- **Errors come from the API as a code plus parameters** (0018) and from the
+- **Errors come from the API as a code plus parameters** (0019) and from the
   compiler the same way (0005); the console builds the sentence. If either
   phase shipped prose only, say so and raise it rather than parsing English.
 - **The server is not asked to localise.** The locale is resolved in the browser
@@ -275,7 +275,7 @@ becomes a test that runs today.
   empties an axis on one of two seeded builds is shown as a per-build warning
   naming that proxy, and it does not block the publish. Assert each against a
   seeded fixture.
-- The emergency runbook drives 0018's three calls in order, shows the kill
+- The emergency runbook drives 0019's three calls in order, shows the kill
   `reason` before sending it, and cannot finish without the `cache_invalidate`
   step. An end-to-end test walks it.
 - Against a seeded fixture, the audit view shows an `evicted` gap and a
@@ -320,7 +320,7 @@ becomes a test that runs today.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0020-management-console-learnings.md`. Summary block MUST give
+`docs/learnings/0021-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it —
 which, per M20, includes how it inherits the tokens and the component set rather

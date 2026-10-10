@@ -2,7 +2,7 @@
 # cmd/pdpconform/testdata/mock-fixtures.yaml.
 #
 # Everything the suite knows about a server lives in a file like this one. Phase
-# 0021 points the suite at the real server by writing its own, with no change to
+# 0022 points the suite at the real server by writing its own, with no change to
 # any Go file — see cmd/pdpconform/README.md for what each key means.
 
 proxy_id: proxy-1

@@ -32,7 +32,7 @@ const CorrelationHeader = "X-Correlation-Id"
 // Defaults for the chain.
 const (
 	// DefaultMaxBodyBytes caps a request body. A policy bundle is the
-	// largest thing this surface will ever accept (0018); this is generous
+	// largest thing this surface will ever accept (0019); this is generous
 	// for it and finite for everything else.
 	DefaultMaxBodyBytes int64 = 4 << 20
 	// DefaultMaxPushBytes caps an external-context push (0013): a window
