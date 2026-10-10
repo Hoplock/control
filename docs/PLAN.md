@@ -110,7 +110,7 @@ decision.
 | **M12** | tenancy is in the schema from day one | amended by M18 | §10 |
 | **M13** | tech choices (Go, Postgres, closed enum kinds) | live | §3 |
 | **M14** | licensing: this repository is the open-source plane | live | §8 |
-| **M15** | Enterprise extends this repository; it never forks it | live | §3, §10, §11 |
+| **M15** | Enterprise extends this repository; it never forks it | live | §3, §6, §8, §10, §11 |
 | **M16** | external access context is an input; its integrations are extensions | live | §3, §5, §7, §10, §11 |
 | **M17** | the fleet graph carries capabilities, not just reachability | live | §4, §5, §10 |
 | **M18** | tenancy is a request dimension, not a process constant | live | §10, §11 |
@@ -404,8 +404,16 @@ decision.
 - **M15 — Hoplock Enterprise extends this repository; it never forks it.**
   Commercial functionality lives in `github.com/hoplock/enterprise`, which
   imports this module as a library, implements the interfaces in `ext/`
-  (phase 0004), and ships its own binary. Two invariants make that work, and
-  both are enforced by tests rather than by intention:
+  (phase 0004), and ships its own binary. That binary starts Control through
+  the public **`server/`** package (phase 0015): `server.Main` is Control's
+  whole command line, and `server.Options` hands it the host's populated
+  registry, the top-level configuration sections the host owns, and the
+  host's north-bound routes — mounted in Control's own route table behind its
+  authentication, tenant resolution and RBAC (M2, M18), naming permissions
+  Control defines, and answering in Control's error envelope with codes the
+  host declares. `hoplock-control` is the same call with nothing added, so
+  there is one start-up path and not two that drift. Two invariants make that
+  work, and both are enforced by tests rather than by intention:
 
   1. **Control never imports Enterprise.** The dependency runs one way. An
      import-graph test fails the build if it ever does not.
@@ -953,11 +961,12 @@ decision.
 ```
 control/
 ├── cmd/
-│   ├── hoplock-control/    # the server daemon (both listeners)
+│   ├── hoplock-control/    # the server binary: one call to server.Main
 │   ├── pdpconform/         # black-box contract conformance suite (M1)
 │   └── policyctl/          # CLI: validate, simulate, explain, apply a bundle
 ├── internal/
-│   ├── config/             # YAML config loader
+│   ├── daemon/             # the command line and the bring-up behind server/ (M15)
+│   ├── config/             # YAML config loader, and the sections a host owns
 │   ├── contract/           # hand-written Go types + handler interfaces for the vendored contract
 │   ├── store/              # Postgres repositories, and migrations/ — the embedded SQL
 │   ├── policy/
@@ -980,6 +989,7 @@ control/
 │       ├── south/          # proxy-facing handlers (the contract)
 │       └── north/          # admin/operator/CI handlers
 ├── ext/                    # PUBLIC extension points — the seam Enterprise implements (M15)
+├── server/                 # PUBLIC: how a host binary starts Control, adds config and routes (M15)
 ├── ui/                     # management console, embedded into the binary
 │   └── DESIGN.md           # the console's design system — binding, not advisory (M20)
 ├── contract/               # VENDORED from the Hoplock Proxy repository — read-only (M1)
@@ -991,9 +1001,11 @@ control/
 The forward-only SQL lives in `internal/store/migrations/` rather than in a
 top-level `migrations/`, and the reason is mechanical: `go:embed` cannot reach
 outside its own package directory, so a top-level directory would need a
-top-level *package* to embed it — and `ext/` is the only non-internal package
-this module has (M15). Reading the files off disk at runtime was the
-alternative, and it gives up the one-binary deployment for nothing.
+top-level *package* to embed it — and the module's only non-internal packages
+are `ext/` and `server/`, each a compatibility promise to Hoplock Enterprise
+(M15), which a directory of SQL has no business being. Reading the files off
+disk at runtime was the alternative, and it gives up the one-binary deployment
+for nothing.
 
 ### Component responsibilities
 
@@ -1117,6 +1129,14 @@ alternative, and it gives up the one-binary deployment for nothing.
   Its errors carry a stable code, typed parameters, an English message and the
   correlation id (M21), which is also why it owns its own 404 and 405 rather than
   letting `http.ServeMux` answer them in prose.
+
+  A host binary's routes (M15) enter **the same table**, after Control's and
+  through the same registration: each is `AccessTenant` under
+  `/api/v1/tenants/{tenant}/`, names a permission Control defines, and answers
+  through a writer that renders Control's codes and the ones the host declared
+  — never a `401`, which is the middleware's alone (M11). There is no second
+  router and no second chain, so the isolation test enumerates a host's routes
+  on the day they are mounted, and the route listing names whose each route is.
 - **`internal/audit`** — append-only writer, chain verifier, and query API.
   Nothing else writes audit rows. One record is stored twice over: `body` holds
   the canonical JSON the chain hashed, as text rather than jsonb so a verifier
@@ -1156,6 +1176,24 @@ alternative, and it gives up the one-binary deployment for nothing.
   compiler's checks — the seam is additive and there is no default to register.
   What lands here is the narrower set where everything above the seam goes
   through it, which today is the single-node cluster coordinator.
+- **`server`** — how a host binary starts Control (M15), and the second of the
+  module's two public packages: a compatibility promise exactly as `ext` is. It
+  is a façade — `Main`, `Run`, `Options`, `Route`, `Caller`, `CallerFrom` and
+  `WriteError`, forwarding into `internal/daemon`, where every check a host can
+  fail lives. A host gets Control's whole command line, top-level configuration
+  sections of its own, north-bound routes of its own behind Control's
+  middleware, and Control's error envelope. It does not get a cross-tenant
+  route, a permission or role of its own, a `401`, a south-bound route, or a
+  write into Control's audit chain. Nothing in this module but
+  `cmd/hoplock-control` imports it, that command imports nothing else of the
+  module's, and `ext` imports nothing from it: three import-graph tests.
+- **`internal/daemon`** — the command line and the bring-up behind `server`:
+  subcommand dispatch, both listeners, and the wiring of every service. Every
+  way a host can be wrong is refused before the configuration file is read, a
+  database opened or a port bound. A host's configuration sections are accepted
+  by every subcommand and handed to the host by the daemon alone, before the
+  registry is sealed, so an extension a host builds from its section can still
+  be registered.
 - **`internal/instance`** — this deployment's own identity and version, and the
   outbound registration client that makes it supervisable (M19). It is a
   *client* of something above it, which makes it the only package here that
@@ -2095,8 +2133,8 @@ are among them before it evaluates:
   nothing downstream records which half was which.
 
   **The role set is fixed and lives in code** (`internal/identity/rbac.go`):
-  auditor, policy-author, grant-admin, fleet-admin, admin, over a closed
-  permission enum. There is no `roles` table, because a role whose permissions
+  integration, auditor, policy-author, grant-admin, fleet-admin, admin, over a
+  closed permission enum. There is no `roles` table, because a role whose permissions
   are rows is a role whose permissions can be widened by an UPDATE. What *is*
   data is who holds which role, per tenant: a role granted in tenant A confers
   nothing in tenant B, including to an administrator, and that is the binding's
@@ -2110,6 +2148,18 @@ are among them before it evaluates:
   failure mode is not a wrong decision in the middleware — it is one handler that
   read the tenant from the path itself. The console (0020) reaches it through the
   API, so there is no second enforcement point to keep in step.
+
+  **A host names a permission; Control defines it (M15).** A host binary's
+  routes (0015) name one of these codes and never declare one: declaring a code
+  would also mean saying which fixed roles grant it, and then what `admin` means
+  would depend on which binary is running. So the closed set carries the codes
+  Hoplock Enterprise's routes need and Control's own do not — `report:write`
+  (changing report schedules and campaigns: `admin` only, because the auditor
+  changes nothing and no narrower role's meaning covers it) and `license:read`
+  (licence and entitlement state: every role a person holds, because it is data
+  about no one, while `integration` still reads nothing). Control serves no route
+  that needs either. A host surface no defined code fits is an upstream request
+  for a new one, never a reason to open the set.
 
 - **Break-glass is asserted, never inferred (M7).** A local credential is flagged
   at the moment it is minted; the flag travels on the principal, is stored on the
@@ -2478,7 +2528,10 @@ are among them before it evaluates:
   latest stable, with `GOTOOLCHAIN: local` so the floor is enforced rather than
   asserted. Same reasoning as the proxy's PLAN §8.
 - **Config**: YAML, documented in `config.example.yaml`, strict decoding
-  (unknown keys are an error).
+  (unknown keys are an error). The one exception is a top-level key a host
+  binary declares as its own (M15): it is accepted, handed to the host
+  undecoded, and may never be a key Control defines. Every other unknown key is
+  refused with the line of the file the operator wrote.
 - **License (M14)**: Apache-2.0 `LICENSE` plus the per-file SPDX header in
   `docs/LICENSE-HEADER.md`.
 - **Errors/logging**: no secrets, no credentials, no tokens in errors or logs.
@@ -2551,7 +2604,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0012 | Access grants | time-boxed grants as policy inputs whose expiry is the decision's own clock; create, list, inspect and revoke on the north-bound API under `grant:write`/`grant:read`; revocation that ends the sessions a grant backed with the reason shown; every act audited with its actor; `ext.GrantWorkflow` routing — requests, polling, the grant a workflow approves; Control's outbound webhook notifier (M10, M15) |
 | 0013 | External access context | `ext.AccessContextProvider` — `Describe`, `Probe`, `Interpret`, three answers; scope bindings per provider per tenant and their internal API; the push receiver behind the `integration` role, with replay, skew and a clamping ceiling; the probe path inside a fixed share of the authorize budget; a policy's `scopes:` declaration (`privileged`, `unanswered`); the declarative HTTP provider as the default (M16) |
 | 0014 | Tagged releases | what Enterprise pins (its E3), at every phase rather than once. M23: a release is an immutable `vMAJOR.MINOR.PATCH` tag of the one module, cut by CI from the merged PR whose `CHANGELOG.md` names a version with no tag; every phase is a release; MINOR for a phase or an incompatible change to a public package, PATCH otherwise; a bad release is retracted and never moved. `CHANGELOG.md`; `make release-check`, which diffs the derived public packages against the latest release with a pinned `apidiff` and counts an added interface method as a break, and its guard against a throwaway repository; the `release` job, the only one that writes, which tags the merge that introduced a version once every other job has passed on it, publishes a GitHub Release, and proves the version resolves through the module proxy; one version per build, Control's own even inside a host's binary; `v0.1.0`, cut by this phase's own merge (M23, M15, M14, M19). Raised by `Hoplock/enterprise#8` |
-| 0015 | Public server package & host routes | `server/`, a public package beside `ext/` and the "server package" M15 names: `server.Main`, Control's whole command line, which `cmd/hoplock-control` becomes one call to, with the wiring moved to `internal/daemon`; host configuration sections accepted by the strict decoder and handed to the host; a host's north-bound routes mounted in the one route table as `AccessTenant`, naming a permission Control defines (`report:write` and `license:read` added) and answering in the M21 envelope with codes the host declares, never a `401`; no cross-tenant host route (M15, M2, M18, M11, M21). Raised by `Hoplock/enterprise#11`; depends only on merged phases (0004, 0011, 0013), and runs before 0016 and 0018, which both edit what it moves and opens |
+| 0015 | Public server package & host routes | `server/`, a public package beside `ext/` and the "server package" M15 names: `server.Main`, Control's whole command line, which `cmd/hoplock-control` becomes one call to, and `server.Run`, the daemon alone, with the wiring moved to `internal/daemon`; host configuration sections accepted by the strict decoder in every subcommand and handed to the host by the daemon before its registry is sealed; a host's north-bound routes mounted in the one route table as `AccessTenant`, naming a permission Control defines (`report:write` and `license:read` added), seen through `server.CallerFrom` and answering through `server.WriteError` in the M21 envelope with codes the host declares, never a `401`; everything a host can get wrong refused before a file is read or a port bound; no cross-tenant host route; import guards holding one start-up path; `v0.2.0` (M15, M2, M18, M11, M21, M23). Raised by `Hoplock/enterprise#11` |
 | 0016 | Self-service grant requests | a requester's own door into a registered approval workflow — `grant:request`, the `requester` role, the self-scoped `…/me/grant-requests` routes whose subject is resolved from the caller, refused `403 grant_workflow_not_registered` while no workflow is registered; `ext.GrantRequest.BreakGlass`; the poller learning every tenant a proxy subscribes in, so a decision is applied across a restart without a cross-tenant read (M10, M15, M18). Raised by `Hoplock/enterprise#10`; depends only on merged phases (0011, 0012, 0013), and Enterprise's approval phase builds around it until it lands |
 | 0017 | Ending an external window | `ext.WindowAssertion.Ended`: a push that ends the window its id opened, revoking the grant it became through 0012's revocation — its sessions ended with a reason Control writes, never the vendor's text, audited with the credential that pushed; read by id alone and never refused for its age, scope or window; an end that arrives before its open kept, and the open refused (`window_closed`); an expired window never rewritten as revoked; the declarative provider's `push.ended`; a probe that stops confirming still revokes nothing (M16, M10, M9, M5, M15). Raised by `Hoplock/enterprise#12`; depends only on merged phases (0009, 0012, 0013), and Enterprise's access-context phase builds around it until it lands |
 | 0018 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.7.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, an emptied axis judged per proxy from what each build declares its profiles offer (`Hoplock/proxy#72`, which met the cross-repo dependency `Hoplock/control#41` raised) and shown to the author as a per-build finding, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |

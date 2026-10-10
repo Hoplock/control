@@ -25,7 +25,9 @@ Three rules hold for every file here:
 ## Why the SQL is here and not in a top-level `migrations/`
 
 `go:embed` cannot reach outside its own package directory, so SQL in a
-top-level directory would need a top-level Go package to embed it — and `ext/`
-is the only non-internal package this module has (M15). The alternative, a
+top-level directory would need a top-level Go package to embed it — and every
+non-internal package this module has (`ext/`, `server/`) is a compatibility
+promise to Hoplock Enterprise (M15), which a directory of SQL has no business
+being. The alternative, a
 server that reads migration files off disk at runtime, gives up the
 one-binary deployment for nothing. See `embed.go` and PLAN §3.

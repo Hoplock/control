@@ -292,5 +292,5 @@ boundary with a reason, rather than something the contract forgot. Hoplock
 Proxy's `cmd/mock-control` `GET /debug/logs` and `POST /debug/revoke` are the
 reference shapes. This server answers the second of them with a publish
 listener of its own, off unless `events.publish_listener` is configured and
-credentialled (phase 0009, `cmd/hoplock-control/publish.go`); the CI leg
+credentialled (phase 0009, `internal/daemon/publish.go`); the CI leg
 configures one, which is what makes gap recovery gradeable here.

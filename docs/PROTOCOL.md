@@ -181,10 +181,12 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
   something from Enterprise, it needs an **extension point** in `ext/` instead —
   and a real default implementation here, because Control alone must be a
   complete product. An import-graph test enforces this; do not work around it.
-- **`ext/` is a compatibility promise.** It is the only non-`internal` package
-  in the module. Changing a signature there breaks Enterprise builds, so treat
-  it like the wire contract: change it deliberately, say so in your learnings,
-  and never as a drive-by. The promise is held by a check, not by intention:
+- **`ext/` and `server/` are a compatibility promise.** They are the only
+  non-`internal` packages in the module: `ext/` is the seam Enterprise
+  implements, and `server/` is how it starts Control, mounts its routes and
+  keeps its configuration section (M15). Changing a signature in either breaks
+  Enterprise builds, so treat them like the wire contract: change them
+  deliberately, say so in your learnings, and never as a drive-by. The promise is held by a check, not by intention:
   `make release-check` diffs every public package against the previous
   release, counts a method added to an interface as a break (Enterprise
   implements them), and refuses a release that does not declare the break as

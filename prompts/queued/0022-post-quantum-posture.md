@@ -87,7 +87,7 @@ change in the wire posture. Fix that:
   strictly decoded like everything else (§8), documented key by key in
   `config.example.yaml`, and **absent by default** so an existing deployment that
   terminates TLS in front of this server keeps working unchanged.
-- `cmd/hoplock-control/serve.go` and `north.go` call `ListenAndServeTLS` when a
+- `internal/daemon/serve.go` and `north.go` call `ListenAndServeTLS` when a
   section is configured and `ListenAndServe` when it is not. A section that names
   a certificate and no key — or a file that does not exist — **refuses to start**;
   a listener that silently fell back to plaintext because a path was wrong is the

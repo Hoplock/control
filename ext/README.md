@@ -1,8 +1,10 @@
 # `ext` — the extension seam
 
-This is the only non-`internal` package in `github.com/hoplock/control`. It is
-what Hoplock Enterprise imports, and it is what anybody else imports to extend a
-self-hosted deployment without forking it (PLAN M15).
+This is one of the two public packages in `github.com/hoplock/control`. It is
+what Hoplock Enterprise implements, and it is what anybody else imports to extend
+a self-hosted deployment without forking it (PLAN M15). The other is `server`,
+which starts Control with those extensions registered — see
+[Starting Control from a host](#starting-control-from-a-host).
 
 It is interface-only. Importing it costs you the interfaces and nothing else —
 no database driver, no HTTP stack, no policy compiler — and a test at the module
@@ -176,7 +178,8 @@ That is not decoration and it is not a paraphrase: it is copied verbatim from
 that file fails if this block and the source ever drift apart.
 
 In a host binary the last step is handing `registry` to Control, which registers
-its own defaults, seals it, and starts the server.
+its own defaults, seals it, and starts the server — with `server.Main` or
+`server.Run` ([below](#starting-control-from-a-host)).
 
 Three rules the registry enforces:
 
@@ -197,6 +200,112 @@ Control's default supersedes nothing and is superseded by anything: registering
 an extension at a point where Control registered a default is not a conflict,
 the extension wins, and the listing records which one is in play. Only
 `hoplock/control` may register with `Default` set.
+
+## Starting Control from a host
+
+`github.com/hoplock/control/server` is the other public package, and the other
+half of the promise. A host binary's `main` registers what it brings into an
+`ext.Registry` and makes one call:
+
+- **`server.Main(ctx, args, stdout, stderr, server.Options)`** is Control's
+  whole command line — the daemon and every subcommand (`migrate`, `seed`,
+  `audit-verify`, `identity`, `ca`). `hoplock-control` is this call with zero
+  `Options`, so the two binaries start Control the same way. A host owns its
+  signals and its exit code, and dispatches commands of its own before calling
+  it.
+- **`server.Run(ctx, config, server.Options)`** is the daemon alone, for tests
+  and for a host that builds its own command line.
+
+`Options` carries what a host adds, and nothing else:
+
+| Field | What Control does with it |
+| --- | --- |
+| `Provider` | names the host in the route listing and the start-up log; required with any of the fields below, and never `hoplock/control` |
+| `Registry` | registers Control's defaults into it, seals it — an extension beats a default — and serves with the sealed set |
+| `HostSections`, `HostConfig` | the strict decoder accepts those top-level keys, and `Run` hands each one present to `HostConfig` as YAML, before sealing and before anything serves; a key Control defines is refused, and every other unknown key is still an error |
+| `Routes` | mounted on the north-bound listener only, at `/api/v1/tenants/{tenant}/<Pattern>`, behind Control's authentication, tenant resolution and RBAC; `Permission` names one of Control's codes, never a new one |
+| `ErrorCodes` | the codes `server.WriteError` will render beside Control's own; anything else, and any `401`, renders `500 internal` |
+
+A handler reads who is calling with `server.CallerFrom` — the tenant Control
+resolved, the subject, the credential, the break-glass flag and the correlation
+id — and answers a failure with `server.WriteError`, in the envelope every
+north-bound error carries (M21). Everything a host can get wrong is refused
+before the configuration is read, a database is opened or a port is bound.
+
+```go
+// archive is a host's extension: a long-term archive Control does not ship
+// (ext.ArchiveStore is disabled when nothing registers one).
+type archive struct{ retention string }
+
+func (a *archive) Archive(context.Context, []ext.AuditRecord) error { return nil }
+
+func (a *archive) Search(context.Context, ext.ArchiveQuery) (ext.ArchivePage, error) {
+	return ext.ArchivePage{}, nil
+}
+
+// A host binary's main: register an extension, declare a configuration section
+// and a route, and start Control. A real host calls server.Main instead of
+// server.Run, so that its binary carries Control's subcommands too.
+func Example() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	store := &archive{}
+	registry := ext.NewRegistry()
+	if err := registry.RegisterArchiveStore(ext.Registration{Provider: "example/archive", Version: "v1.0.0"}, store); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+
+	config, err := os.Open("config.yaml")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+	defer func() { _ = config.Close() }()
+
+	err = server.Run(ctx, config, server.Options{
+		Provider: "example/host",
+		Registry: registry,
+
+		// `example:` in Control's configuration file is this host's. It is
+		// handed over undecoded, before the registry is sealed.
+		HostSections: []string{"example"},
+		HostConfig: func(section string, raw []byte) error {
+			var cfg struct {
+				Retention string `yaml:"retention"`
+			}
+			if err := yaml.Unmarshal(raw, &cfg); err != nil {
+				return err
+			}
+			store.retention = cfg.Retention
+			return nil
+		},
+
+		// GET /api/v1/tenants/{tenant}/archive/{record}, for a caller holding
+		// audit:read in the tenant Control resolved.
+		Routes: []server.Route{{
+			Method:     http.MethodGet,
+			Pattern:    "archive/{record}",
+			Permission: "audit:read",
+			Summary:    "one archived record",
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				caller, _ := server.CallerFrom(r.Context())
+				server.WriteError(w, r, http.StatusNotFound, "archive_record_not_found",
+					map[string]any{"record": r.PathValue("record"), "tenant": string(caller.Tenant)},
+					"the archive holds no such record")
+			}),
+		}},
+		ErrorCodes: []string{"archive_record_not_found"},
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+}
+```
+
+This block is `server/example_test.go` verbatim. It compiles under
+`go test ./server/`, and a test there fails if the two drift apart.
 
 ## Adding a point
 

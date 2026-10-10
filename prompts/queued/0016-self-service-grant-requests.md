@@ -54,7 +54,8 @@
   - `internal/httpapi/north/{router,routes,middleware,grants,errors}.go`, and
     `refusePush` in `accesscontext.go`.
   - `internal/access/{service,workflow}.go`.
-  - `cmd/hoplock-control/{serve,grants}.go`.
+  - `internal/daemon/{serve,grants}.go` (moved there from `cmd/hoplock-control`
+    by 0015).
 - The request itself, for the requester's own words. It cites Enterprise
   **E8** (approvals are policy inputs, never a second path into the decision)
   and **E4** (unlicensed or unconfigured means exactly Control's behaviour).
@@ -331,11 +332,11 @@ POST /api/v1/tenants/{tenant}/me/grant-requests/{request}/cancel  AccessSelf  gr
 - The change is additive, so Enterprise builds unchanged. It is still an `ext`
   change, so say so in your learnings (PROTOCOL §3).
 
-### 6. Every live tenant is polled (`cmd/hoplock-control`, `internal/access`)
+### 6. Every live tenant is polled (`internal/daemon`, `internal/access`)
 - When a proxy opens its event subscription (`GET /v1/proxies/{proxy_id}/events`,
   0009), report its tenant to `access.Service.Track`. That is the tenant its
   credential carries (M22), never one it asserts.
-- Wire it in `cmd/hoplock-control`: wrap the `EventStream` handed to the
+- Wire it in `internal/daemon`: wrap the `EventStream` handed to the
   south-bound server so that `Subscribe` reports the tenant, then delegates.
   - `internal/httpapi/south` and `internal/revoke` do **not** import
     `internal/access`.
