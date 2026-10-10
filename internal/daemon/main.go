@@ -4,7 +4,7 @@
 // Command hoplock-control is the Hoplock Control server daemon. It will
 // eventually serve both listeners (PLAN M2); at this phase it loads its
 // configuration, reports who it is, and waits to be told to stop.
-package main
+package daemon
 
 import (
 	"context"
