@@ -61,6 +61,17 @@
   adding an `Options` field for it would widen the promise for a test's sake.
   `daemon.Run` takes the writer; `server.Main` passes its `stderr`.
 
+### The lint pin moved to v2.14.0
+
+CI's `lint` job was red on `main` before this PR, from no change of anybody's:
+the `stable` leg moved to go1.27.2, which writes export data version 5, and the
+pinned golangci-lint v2.13.2 cannot read it ("could not import embed ... export
+data version 5 is greater than maximum supported version 4"). Reproduced under
+`GOTOOLCHAIN=go1.27.2` with both release binaries: v2.13.2 fails, v2.14.0 is
+clean and still passes `make exhaustive-guard`. The pin's comment now says a
+patch release can do this too. The release job needs every job, so without the
+bump this phase's merge would not have cut `v0.2.0`.
+
 ### Checked against Enterprise's prompts
 
 Item 4 asked for the table to be checked against `hoplock/enterprise`'s queued

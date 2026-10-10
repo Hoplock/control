@@ -119,14 +119,14 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v8
         with:
-          # Pinned, and the pin is not free-floating: golangci-lint type-checks
-          # with the go/types of the Go it was *built* with, so a linter built
-          # against an older Go cannot read the export data of a newer stdlib
-          # and fails every file with "could not import errors". Keep this at a
-          # release built with a Go at least as new as the `stable` leg above
-          # — v2.13.2 is built with go1.27.0 — and bump it in the same commit
-          # that moves the floor.
-          version: v2.13.2
+          # Pinned, and the pin is not free-floating: golangci-lint reads the
+          # stdlib's export data with the importer it was *built* with, so a
+          # linter older than the Go it lints fails every file with "could not
+          # import ...". A patch release can do it too: go1.27.2 writes export
+          # data version 5, which v2.13.2 cannot read and v2.14.0 can. Keep this
+          # at a release that lints cleanly under the `stable` leg above, and
+          # bump it in the same commit that moves the floor.
+          version: v2.14.0
 
       # Checks the check. `exhaustive` is what holds M3's closed vocabulary
       # together (PLAN M13), so this writes a switch and a lookup map with a
