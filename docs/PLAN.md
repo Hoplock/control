@@ -313,8 +313,10 @@ decision.
   so nothing has to run for one to expire and no stuck sweeper can leave
   production access standing. Revocation is the one state a clock cannot
   produce, so it is the only one stored; revoking a grant ends the sessions it
-  backed with a `session_kill` whose reason the holder is shown (M9). Creating
-  or revoking one is audited with its actor in the transaction that does it.
+  backed with a `session_kill` whose reason the holder is shown (M9). An
+  administrator revokes a grant, and so does the external system that asserted
+  a window, by ending it (M16) — for that window only. Creating or revoking one
+  is audited with its actor in the transaction that does it.
 
   **Governance is a seam, not a fork (M15).** Control alone lets an authorised
   administrator create a grant directly, which is a complete just-in-time story.
@@ -478,9 +480,11 @@ decision.
 
   It arrives in two directions and they are **not redundant**:
 
-  - **Push** — an external system tells Hoplock that a window has opened. Fast,
-    and it is the only direction that works when the external system cannot be
-    reached at decision time. It is also spoofable and lossy.
+  - **Push** — an external system tells Hoplock that a window has opened, or
+    that one it opened has ended. Fast, and it is the only direction that works
+    when the external system cannot be reached at decision time — and the only
+    one that can end a live session, because a probe runs only when somebody
+    connects. It is also spoofable and lossy.
   - **Probe** — Hoplock asks the external system whether the access is
     legitimate right now. Authoritative, and it costs a network round trip on
     the decision path, which M5 governs.
@@ -519,8 +523,11 @@ decision.
      than ending a session.
   2. **Replay, idempotency, and clock skew** are handled once. An assertion's
      own id is its idempotency key, unique per system: the same id twice is the
-     same window, a different window under it is a conflict, and a revoked
-     window stays revoked however often it is pushed again. An assertion older
+     same window, a different window under it is a conflict, and a revoked or
+     ended window stays ended however often it is pushed again — including one
+     whose end arrived before its open, because pushes are not delivered in
+     order: that end's id is kept, and the open is refused. A ticket reopened
+     or a scan re-run is a new window under a new id. An assertion older
      than `access_context.max_assertion_age`, or issued further ahead than
      `access_context.clock_skew`, is refused; a start within the skew is read as
      now. An integration that gets these wrong is the weakest link in a chain
@@ -537,7 +544,18 @@ decision.
   for the decision that relied on it, with an id derived from the window. The
   engine reads it like any other grant and has no branch on where it came from,
   and simulation and "explain why" keep telling the truth, which is the entire
-  reason M10 refused a bolt-on in the first place.
+  reason M10 refused a bolt-on in the first place. So ending a window is
+  revoking that grant, through `internal/access` — the same revocation an
+  administrator makes, which ends the sessions it backed — audited with the
+  credential that pushed the end, and the holder is shown Control's reason,
+  never the vendor's text. An end passes the push's door (the credential, the
+  binding, the rate) and nothing else: it is never refused for its age, its
+  scope or its window, because ending access cannot widen it, and a window
+  already expired is left expired rather than rewritten as revoked. A probe
+  that stops confirming a pushed window stops it counting and revokes nothing,
+  because the authorize path does not revoke (M5): ending a live session on a
+  probe's answer would need the windows behind live sessions re-probed off
+  that path, which is a phase of its own.
 
   A probe spends from the decision's budget, so it has a **fixed share** of it:
   every probe one decision makes runs concurrently under
@@ -1189,7 +1207,9 @@ for nothing.
 - **`internal/accessctx`** — external access context (M16): the provider set
   keyed by external system, the per-tenant scope bindings and their internal
   API, the push receiver that admits a window through its binding and creates
-  the grant through `internal/access`, and the probe path the decision service
+  the grant through `internal/access` — and ends one by revoking that grant
+  through it, keeping an end that named no window so that an open under its id
+  is refused — and the probe path the decision service
   runs inside its budget. It decides nothing about access: what reaches the
   engine is grants. `declarative/` is Control's own provider, configured under
   `access_context.providers` rather than coded.
@@ -2083,7 +2103,9 @@ are among them before it evaluates:
 - **The three shapes.** A push-only window (`external_mode = 'push'`) is a stored
   grant and simply counts. A push-probe window counts only once its provider's
   probe confirms it for this subject and target — narrowed to the end the
-  probe states, because the probe is the authoritative direction. A probe-only
+  probe states, because the probe is the authoritative direction. A pushed
+  window of either shape that its system ended is a revoked grant, and never
+  counts again whatever a probe says. A probe-only
   window is asked about whenever an enabled `probe` binding covers the subject
   and target, and a confirmation becomes a grant built for this decision: the
   binding's scope, on this host, from now until the ceiling or the window's
@@ -2561,10 +2583,13 @@ are among them before it evaluates:
   An accepted push is recorded as the grant it became — `grant.created`, with
   the credential that pushed it, the system, the assertion id, the mode, the
   window asserted, and the ceiling with whether it clamped
-  (`grant_external_*`). Everything a push produced that is *not* a grant is
-  `access_context.push_refused` or, for a push outside its integration's scope
-  or from a credential the binding does not name,
-  `access_context.escalation_attempt` at `critical`. A binding written or
+  (`grant_external_*`). An end that revoked one is `grant.revoked` with the
+  credential that pushed it and `grant_external_ended`, plus what the end
+  stated (`grant_external_ended_*`). Everything a push produced that is *not*
+  an act on a grant is `access_context.push_refused`, or, for a push outside
+  its integration's scope or from a credential the binding does not name,
+  `access_context.escalation_attempt` at `critical`, or, for an end that named
+  no window, `access_context.window_ended`. A binding written or
   removed is `access_context.binding_put` / `binding_deleted`, in the
   transaction that makes the change. None of these use the `grant_system` or
   `grant_reference` keys: those index a SESSION's grant context.
@@ -2659,7 +2684,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0014 | Tagged releases | what Enterprise pins (its E3), at every phase rather than once. M23: a release is an immutable `vMAJOR.MINOR.PATCH` tag of the one module, cut by CI from the merged PR whose `CHANGELOG.md` names a version with no tag; every phase is a release; MINOR for a phase or an incompatible change to a public package, PATCH otherwise; a bad release is retracted and never moved. `CHANGELOG.md`; `make release-check`, which diffs the derived public packages against the latest release with a pinned `apidiff` and counts an added interface method as a break, and its guard against a throwaway repository; the `release` job, the only one that writes, which tags the merge that introduced a version once every other job has passed on it, publishes a GitHub Release, and proves the version resolves through the module proxy; one version per build, Control's own even inside a host's binary; `v0.1.0`, cut by this phase's own merge (M23, M15, M14, M19). Raised by `Hoplock/enterprise#8` |
 | 0015 | Public server package & host routes | `server/`, a public package beside `ext/` and the "server package" M15 names: `server.Main`, Control's whole command line, which `cmd/hoplock-control` becomes one call to, and `server.Run`, the daemon alone, with the wiring moved to `internal/daemon`; host configuration sections accepted by the strict decoder in every subcommand and handed to the host by the daemon before its registry is sealed; a host's north-bound routes mounted in the one route table as `AccessTenant`, naming a permission Control defines (`report:write` and `license:read` added), seen through `server.CallerFrom` and answering through `server.WriteError` in the M21 envelope with codes the host declares, never a `401`; everything a host can get wrong refused before a file is read or a port bound; no cross-tenant host route; import guards holding one start-up path; `v0.2.0` (M15, M2, M18, M11, M21, M23). Raised by `Hoplock/enterprise#11` |
 | 0016 | Self-service grant requests | a requester's own door into a registered approval workflow — `grant:request`, the `requester` role holding exactly that and no read set (and so not `license:read`), the `AccessSelf` class whose subject the middleware resolves from the credential (`subject_required` for a machine token), and four routes under `/api/v1/tenants/{tenant}/me/grant-requests` — create (`202`/`201`/`403 grant_request_denied`/`502 grant_workflow_failed`, and `403 grant_workflow_not_registered` with nothing stored while no workflow is registered), list, read and cancel, where somebody else's request is `404`; the subject a `WHERE` predicate (`GetForSubject`, `ListForSubject`, migration `0010`); `ext.GrantRequest.BreakGlass`, copied from the stored request so a resubmission keeps it; the poller learning every tenant a proxy subscribes in, wired in `internal/daemon` around the event stream, so a decision is applied across a restart without a cross-tenant read; `v0.3.0` (M10, M15, M18, M7, M11, M2, M9, M22, M23). Raised by `Hoplock/enterprise#10`; depends only on merged phases (0011, 0012, 0013) |
-| 0017 | Ending an external window | `ext.WindowAssertion.Ended`: a push that ends the window its id opened, revoking the grant it became through 0012's revocation — its sessions ended with a reason Control writes, never the vendor's text, audited with the credential that pushed; read by id alone and never refused for its age, scope or window; an end that arrives before its open kept, and the open refused (`window_closed`); an expired window never rewritten as revoked; the declarative provider's `push.ended`; a probe that stops confirming still revokes nothing (M16, M10, M9, M5, M15). Raised by `Hoplock/enterprise#12`; depends only on merged phases (0009, 0012, 0013), and Enterprise's access-context phase builds around it until it lands |
+| 0017 | Ending an external window | `ext.WindowAssertion.Ended`: a push that ends the window its id opened, through the open's door (credential, binding, rate) and nothing else, revoking the grant it became through 0012's revocation (`access.Service.EndExternal`, one body with `Revoke`) — its sessions ended with `ExternalEndReason`, never the vendor's text, audited as `grant.revoked` with the credential that pushed and `grant_external_ended_*`; read by id alone and never refused for its age, scope or window; answered `200` `revoked` · `already_ended` · `recorded`, or `503 grant_revocation_undelivered`, push again to re-send; an end that arrives before its open kept (`access_context_window_ends`, migration `0011`, `access_context.window_ended`), and the open refused (`400 window_closed` on `id`) — both written under the assertion's advisory lock, so an id never has a grant and a kept end; an expired window never rewritten as revoked; the declarative provider's `push.ended`; a probe that stops confirming still revokes nothing; `v0.4.0` (M16, M10, M9, M5, M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#12`; depends only on merged phases (0009, 0012, 0013) |
 | 0018 | Cross-tenant access class | one north-bound route class that spans tenants, for a host's reads (M24, new): `AccessCrossTenant`, mounted at `/api/v1/cross-tenant/<pattern>` and nowhere else, with the middleware resolving every tenant in the caller's scope where it holds the route's permission, narrowed by a selector and never widened, a named tenant that fails refused rather than dropped, and the set handed to the handler as `server.Caller.Tenants`; `server.Route.Access`; reads only — a permission the auditor role holds; Control registers none of its own; the isolation test class extended to it (M18, M15, M2, M11, M8, M23). Raised by `Hoplock/enterprise#19`; depends only on merged phases (0011, 0015), and Enterprise's cross-tenant reporting (its 0013) builds around it until it lands |
 | 0019 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.7.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, an emptied axis judged per proxy from what each build declares its profiles offer (`Hoplock/proxy#72`, which met the cross-repo dependency `Hoplock/control#41` raised) and shown to the author as a per-build finding, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |
 | 0020 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |

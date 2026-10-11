@@ -26,6 +26,43 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.4.0
+
+An external system ends a window it opened, and the sessions it backed end
+with it.
+
+- **Phase:** 0017, ending an external window.
+- **Public packages:** `ext.WindowAssertion.Ended` is added. With it, a push
+  ends the window its `ID` opened: Control reads the `ID`, records `Reference`,
+  `IssuedAt` and `AdditionalContext` when set, and ignores every other field.
+  The zero value is an open, as every push was before. The documentation of
+  `WindowAssertion`, its `ID`, `Subject`, `Targets` and `Window`, and
+  `AccessContextProvider`'s push direction says what an end does. `server` is
+  unchanged.
+- **North-bound routes:** none added. The push receiver answers an end `200`
+  with `{assertion_id, outcome, grant, state}`, where `outcome` is `revoked`,
+  `already_ended` or `recorded`, after the settle pass when it revokes. An end
+  whose revocation could not be published is `503
+  grant_revocation_undelivered` with `grant_id` and `revoked: true`, as the
+  revoke route answers one; pushing the end again re-sends. An open under an
+  id its system already ended is `400 window_closed`, `field: id`. No error
+  code is added, and no role gains a permission.
+- **Behaviour no API diff shows:** an end revokes the grant its window became,
+  audited as `grant.revoked` with the integration's credential and
+  `grant_external_ended: "true"`, and the holder is shown "The access window
+  this session depended on has ended." — never the vendor's text. An end is
+  never refused for its age, scope or window. An end of a window already
+  revoked, ended or expired changes nothing; an expired one is not rewritten
+  as revoked. An end for an id with no window is kept and recorded as
+  `access_context.window_ended`, and a later open under that id is refused. A
+  probe that stops confirming a window still revokes nothing.
+- **Configuration:** a declarative provider's `push.ended` — assertions over
+  the push body in `probe.confirm`'s vocabulary, all of which must hold, with
+  no placeholders — makes a push an end. Absent, every push is an open.
+- **Migration:** `0011_external_window_ends.sql` adds one table,
+  `access_context_window_ends`. Run `hoplock-control migrate` before starting
+  this release.
+
 ## v0.3.0
 
 A person asks for access for themselves, through a registered approval
