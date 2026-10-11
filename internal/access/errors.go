@@ -56,6 +56,14 @@ const (
 // request that was in fact approved has been misled.
 var ErrNotPending = errors.New("access: the request has already been decided")
 
+// ErrNoWorkflow is a requester's own request on a deployment with no approval
+// workflow registered (0016). Nothing would decide it, and a request nobody
+// decides is a self-grant, so it is refused before anything is stored. It is a
+// refusal made on purpose, never an outage (M11): asking again gets the same
+// answer until a workflow is registered, and a deployment with none is
+// working as designed (M15) — an administrator grants access directly.
+var ErrNoWorkflow = errors.New("access: no approval workflow is registered to decide a request")
+
 // ErrUndelivered is a revocation that is RECORDED and could not be published.
 //
 // The grant is revoked — no new session may use it, and the audit record is

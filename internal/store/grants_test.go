@@ -375,6 +375,63 @@ func TestAGrantRequestIsDecidedOnce(t *testing.T) {
 	}
 }
 
+// A requester's own requests (0016): the subject is a predicate in the query,
+// so somebody else's request in the same tenant is not found rather than found
+// and then refused, and never appears in the list.
+func TestASubjectReadsOnlyTheRequestsItHolds(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+
+	early := storetest.GrantRequest("gr-alice-1", "alice", time.Hour)
+	early.RequestedAt = time.Now().UTC().Add(-time.Minute)
+	late := storetest.GrantRequest("gr-alice-2", "alice", time.Hour)
+	late.RequestedAt = time.Now().UTC()
+	storetest.Seed(t, st, storetest.Fixture{
+		Tenant:        tenantA,
+		GrantRequests: []store.GrantRequest{early, late, storetest.GrantRequest("gr-bob", "bob", time.Hour)},
+	})
+
+	got, err := st.GrantRequests().GetForSubject(ctx, tenantA, "alice", "gr-alice-1")
+	if err != nil || got.ID != "gr-alice-1" {
+		t.Fatalf("GetForSubject of alice's own: %+v, %v", got, err)
+	}
+	if _, err := st.GrantRequests().GetForSubject(ctx, tenantA, "alice", "gr-bob"); !store.IsNotFound(err) {
+		t.Errorf("alice read bob's request: %v, want ErrNotFound", err)
+	}
+	if _, err := st.GrantRequests().GetForSubject(ctx, tenantA, "", "gr-bob"); !store.IsInvalid(err) {
+		t.Errorf("a read with no subject: %v, want ErrInvalid", err)
+	}
+
+	list, err := st.GrantRequests().ListForSubject(ctx, tenantA, "alice", store.GrantRequestQuery{})
+	if err != nil {
+		t.Fatalf("ListForSubject: %v", err)
+	}
+	if len(list) != 2 || list[0].ID != "gr-alice-2" || list[1].ID != "gr-alice-1" {
+		t.Fatalf("alice's list = %+v, want her two, newest first", list)
+	}
+
+	// A state narrows; a limit bounds.
+	if err := st.GrantRequests().Resolve(ctx, tenantA, "gr-alice-1", store.GrantRequestResolution{
+		State: store.GrantRequestCancelled, At: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	cancelled, err := st.GrantRequests().ListForSubject(ctx, tenantA, "alice",
+		store.GrantRequestQuery{State: store.GrantRequestCancelled})
+	if err != nil || len(cancelled) != 1 || cancelled[0].ID != "gr-alice-1" {
+		t.Errorf("cancelled filter = %+v, %v", cancelled, err)
+	}
+	one, err := st.GrantRequests().ListForSubject(ctx, tenantA, "alice", store.GrantRequestQuery{Limit: 1})
+	if err != nil || len(one) != 1 {
+		t.Errorf("limit 1 = %d rows, %v", len(one), err)
+	}
+	if _, err := st.GrantRequests().ListForSubject(ctx, tenantA, "alice",
+		store.GrantRequestQuery{State: "approved-ish"}); !store.IsInvalid(err) {
+		t.Errorf("an unknown state: %v, want ErrInvalid", err)
+	}
+}
+
 // The approvals column is a document, and a request read back carries it as
 // it was written.
 func TestGrantApprovalsAreStoredAsWritten(t *testing.T) {

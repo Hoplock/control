@@ -26,6 +26,43 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.3.0
+
+A person asks for access for themselves, through a registered approval
+workflow.
+
+- **Phase:** 0016, self-service grant requests.
+- **Public packages:** `ext.GrantRequest.BreakGlass` is added: true when the
+  credential that raised the request was minted on the break-glass path,
+  copied from the stored request, so a resubmission after an outage keeps it.
+  `ext.GrantWorkflow`'s documentation names the two doors a request reaches
+  `Submit` through: an administrator's create, and a requester's own, where
+  `Subject` and `RequestedBy` are one person. In `ext.Points()`, the
+  `GrantWorkflow` point's `Absent` text adds that a requester's own request is
+  refused while nothing is registered. `server` is unchanged.
+- **Permissions and roles:** `grant:request` is added to the closed set, held
+  by a new role, `requester`, and by `admin`. `requester` holds nothing else:
+  no read set, and so not `license:read`, which is now held by every role
+  except `integration` and `requester`.
+- **North-bound routes:** four, in a new self-scoped class whose subject is
+  the caller's and never a field the caller sends, all under `grant:request`:
+  `POST` and `GET /api/v1/tenants/{tenant}/me/grant-requests`, and `GET …/{request}`
+  and `POST …/{request}/cancel` beneath it. The create takes the
+  administrator's body without `subject` and answers as the administrator's
+  create does with a workflow registered (`202`, `201`, `403
+  grant_request_denied`, `502 grant_workflow_failed`). With no workflow
+  registered it answers `403 grant_workflow_not_registered` and stores
+  nothing. Somebody else's request is `404`. A credential with no person
+  behind it is refused on every one of them, `403 subject_required`. Two error
+  codes are added: `subject_required` and `grant_workflow_not_registered`. A
+  host route pattern beginning `me/grant-requests` now collides with
+  Control's and is refused at start-up.
+- **Behaviour no API diff shows:** the approval workflow's poller now learns a
+  tenant when a proxy of that tenant opens its event subscription, so after a
+  restart a decision is applied in every tenant with a live proxy within one
+  `grants.workflow_poll_interval`, with nobody reading the request.
+- **Migration:** `0010_grant_requests_by_subject.sql` adds one index. Run
+  `hoplock-control migrate` before starting this release.
 - Two texts name Control's phases by their new numbers, after the queue was
   renumbered to fit phase 0018: `ReportProvider`'s `ControlShips` in
   `ext.Points()` now reads "(phases 0010, 0019)", and the start-up warning on

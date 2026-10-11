@@ -4,6 +4,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/config"
+	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/httpapi/south"
 	"github.com/hoplock/control/internal/notify"
 	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/store"
@@ -107,9 +110,9 @@ func buildGrants(
 	if err != nil {
 		return nil, err
 	}
-	// The configured tenant is polled from the start; any other from its
-	// first request (access.Service.Track says why the set is this
-	// process's own).
+	// The configured tenant is polled from the start; any other once a
+	// proxy of it subscribes (trackSubscriptions), or from its first
+	// request (access.Service.Track says why the set is this process's own).
 	svc.Track(store.Tenant(cfg.Tenant))
 	if opts.Workflow != nil {
 		log.Info("grants are routed through an approval workflow",
@@ -119,6 +122,38 @@ func buildGrants(
 		)
 	}
 	return svc, nil
+}
+
+// trackSubscriptions hands the south-bound listener the event stream with one
+// addition: every subscription reports its tenant to the workflow poller before
+// it is served (0016).
+//
+// THE POLLER LEARNS EVERY TENANT A GRANT COULD BE USED IN, BY SEEING IT. A
+// grant is only ever used through a proxy, and every proxy holds one
+// long-lived subscription (M9) whose credential names its tenant (M22) — the
+// tenant passed here, which the listener resolved and the proxy never asserted.
+// So after a restart, a tenant with a live proxy is polled as soon as its first
+// proxy reconnects, and a decision there is applied within one
+// grants.workflow_poll_interval, though nobody read the request. Nothing lists
+// tenants from the store, which cannot enumerate them (M18).
+//
+// It is wired here, not in the listener or the broker: neither imports the
+// grant service, and the authorize path gains nothing (M5).
+func trackSubscriptions(events south.EventStream, grants *access.Service) south.EventStream {
+	return trackedEvents{EventStream: events, track: grants.Track}
+}
+
+type trackedEvents struct {
+	south.EventStream
+	track func(store.Tenant)
+}
+
+// Subscribe reports the tenant, then serves the subscription unchanged. Track
+// is idempotent, cheap and only ever adds, so a proxy reconnecting costs the
+// poller nothing.
+func (e trackedEvents) Subscribe(ctx context.Context, tenant store.Tenant, proxyID, lastEventID string, emit func(*contract.RevocationEvent) error) error {
+	e.track(tenant)
+	return e.EventStream.Subscribe(ctx, tenant, proxyID, lastEventID, emit)
 }
 
 // workflowProvider names the registered workflow from the registry's own

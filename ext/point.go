@@ -133,7 +133,7 @@ var points = [...]PointInfo{
 		Point:        PointGrantWorkflow,
 		Interface:    "GrantWorkflow",
 		WhenAbsent:   WhenAbsentCore,
-		Absent:       "an authorised administrator creates a time-boxed grant directly",
+		Absent:       "an authorised administrator creates a time-boxed grant directly; a requester's own request is refused (grant_workflow_not_registered), because nothing would decide it",
 		ControlShips: "manual time-boxed grants, their expiry and their revocation (phase 0012)",
 	},
 	PointIdentitySync: {

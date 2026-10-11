@@ -138,11 +138,31 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
+	// Operator notifications and just-in-time grants (0012). The notifier is
+	// started before anything can produce a notification and closed after
+	// every listener has stopped, so an act a request completed is announced
+	// rather than lost to the order of shutdown.
+	//
+	// The grant service is built BEFORE the south-bound listener because
+	// that listener reports to it (0016): a proxy opening its event
+	// subscription tells the workflow poller its tenant. It depends on the
+	// bus, the notifier and the emitter, none of which depend on the
+	// listener.
+	notifier, err := buildNotifier(cfg, extensions, log)
+	if err != nil {
+		return err
+	}
+	notifier.Start()
+	grants, err := buildGrants(cfg, st, emitter, bus, notifier, extensions, log)
+	if err != nil {
+		return err
+	}
+
 	handler, err := south.New(south.Options{
 		Identity:       auth,
 		Fleet:          registry,
 		Decision:       decisions,
-		Events:         bus,
+		Events:         trackSubscriptions(bus, grants),
 		Logs:           ingest,
 		Logger:         log,
 		MaxBodyBytes:   cfg.South.MaxBodyBytes,
@@ -167,19 +187,6 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		"heartbeat_interval_seconds", bus.AdvertisedHeartbeatSeconds(),
 	)
 
-	// Operator notifications and just-in-time grants (0012). The notifier is
-	// started before anything can produce a notification and closed after
-	// every listener has stopped, so an act a request completed is announced
-	// rather than lost to the order of shutdown.
-	notifier, err := buildNotifier(cfg, extensions, log)
-	if err != nil {
-		return err
-	}
-	notifier.Start()
-	grants, err := buildGrants(cfg, st, emitter, bus, notifier, extensions, log)
-	if err != nil {
-		return err
-	}
 	// Requests pending in a registered workflow are asked about on a clock.
 	// Without a workflow nothing is ever pending, and Watch returns at once.
 	pollCtx, stopPolling := context.WithCancel(ctx)

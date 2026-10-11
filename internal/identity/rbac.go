@@ -48,6 +48,12 @@ const (
 	// PermGrantApprove is approving one. Separate from writing for the same
 	// reason publishing is separate from authoring.
 	PermGrantApprove Permission = "grant:approve"
+	// PermGrantRequest is asking the registered approval workflow for a
+	// grant for YOURSELF (M10, 0016). It reaches only the self-scoped routes,
+	// whose holder is the caller and never a name in the request, so it can
+	// neither grant anything nor touch anybody else's request: a workflow
+	// decides, and with none registered the request is refused.
+	PermGrantRequest Permission = "grant:request"
 
 	// PermFleetRead is reading proxies, zones and the graph (M6).
 	PermFleetRead Permission = "fleet:read"
@@ -100,7 +106,7 @@ const (
 // nobody can reach, which is a configuration bug that looks like a bug report.
 var AllPermissions = []Permission{
 	PermPolicyRead, PermPolicyWrite, PermPolicyPublish,
-	PermGrantRead, PermGrantWrite, PermGrantApprove,
+	PermGrantRead, PermGrantWrite, PermGrantApprove, PermGrantRequest,
 	PermFleetRead, PermFleetWrite,
 	PermIdentityRead, PermIdentityWrite,
 	PermCARead, PermCARotate,
@@ -122,6 +128,11 @@ const (
 	// bounded per push by the integration's scope binding, which must name
 	// this credential by its principal id.
 	RoleIntegration Role = "integration"
+	// RoleRequester is a person who may ask for access for themselves and
+	// do nothing else (M10, 0016): raise a request the registered approval
+	// workflow decides, read their own requests, and withdraw them. It holds
+	// none of the read set below, and its comment says why.
+	RoleRequester Role = "requester"
 	// RoleAuditor can read everything and change nothing. It is the role a
 	// compliance function holds, and it is deliberately total across the
 	// reads: an auditor who has to ask an engineer for a record is not an
@@ -142,14 +153,24 @@ const (
 
 // AllRoles is every role, in the order an operator would read them: least
 // privilege first.
-var AllRoles = []Role{RoleIntegration, RoleAuditor, RolePolicyAuthor, RoleGrantAdmin, RoleFleetAdmin, RoleAdmin}
+var AllRoles = []Role{RoleIntegration, RoleRequester, RoleAuditor, RolePolicyAuthor, RoleGrantAdmin, RoleFleetAdmin, RoleAdmin}
 
-// readOnly is what every role a PERSON holds can do, because a role that can
-// change a thing it cannot read is a role that changes things blind. The
-// integration role is the one exception, and its comment says why.
+// readOnly is what every role that administers or audits a tenant can do,
+// because a role that can change a thing it cannot read is a role that changes
+// things blind. Two roles hold none of it, for different reasons:
+//
+//   - integration is somebody else's software, and it reads nothing on
+//     purpose: every grant, decision and audit record in the tenant is not
+//     that software's to read.
+//   - requester changes only its own requests, and it reads exactly those —
+//     through the self-scoped routes and nowhere else — so it never changes
+//     anything blind. Reading the tenant's audit, decisions and identities is
+//     not needed to ask for access, and a role every developer holds must not
+//     carry it.
 //
 // license:read is here because it is not data about anyone: which features a
-// deployment is entitled to is something every person who uses it may know.
+// deployment is entitled to is something every administrator and auditor may
+// know.
 var readOnly = []Permission{
 	PermPolicyRead, PermGrantRead, PermFleetRead,
 	PermIdentityRead, PermCARead, PermAuditRead, PermDecisionRead,
@@ -160,6 +181,7 @@ var readOnly = []Permission{
 // documentation of what each role means.
 var rolePermissions = map[Role][]Permission{
 	RoleIntegration:  {PermAccessContextPush},
+	RoleRequester:    {PermGrantRequest},
 	RoleAuditor:      readOnly,
 	RolePolicyAuthor: append(slices.Clone(readOnly), PermPolicyWrite, PermPolicyPublish),
 	RoleGrantAdmin:   append(slices.Clone(readOnly), PermGrantWrite, PermGrantApprove),

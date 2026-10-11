@@ -95,8 +95,16 @@ type GrantRequest struct {
 	ReasonCode string
 	ReasonText string
 	// RequestedBy is the subject that submitted the request, which is not
-	// always Subject: an operator may request on someone's behalf.
+	// always Subject: an operator may request on someone's behalf. When a
+	// requester asked for themselves, the two are one person.
 	RequestedBy Subject
+	// BreakGlass reports that the credential RequestedBy presented was minted
+	// on the break-glass path (M7). It is copied from the request Control
+	// stored — asserted when that credential was minted, never inferred from a
+	// login source or a name — and it describes who raised the request, never
+	// Subject. A workflow may treat such a request differently; it learns the
+	// fact here or not at all.
+	BreakGlass bool
 	// RequestedAt is when Control received it.
 	RequestedAt time.Time
 	// ExternalRef ties the request to something outside Hoplock — a change
@@ -153,6 +161,18 @@ type GrantDecision struct {
 // path made it (M10). Anything a workflow wants remembered about how the grant
 // came to be travels in the grant's origin and external reference, not in a
 // parallel path into the decision.
+//
+// A request reaches Submit through one of two doors, and both arrive as the
+// same GrantRequest:
+//
+//   - an administrator's create, which names the holder, so RequestedBy is
+//     the administrator and Subject is whoever would hold the grant (0012);
+//   - a requester's own request, where Subject and RequestedBy are one person
+//     (0016). That door exists only while a workflow is registered: with none,
+//     Control refuses it, because a request nobody decides is a self-grant.
+//
+// A workflow tells the two apart by comparing Subject and RequestedBy, never by
+// another field.
 //
 // What Control does with each answer (phase 0012):
 //

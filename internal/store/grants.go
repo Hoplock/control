@@ -22,8 +22,9 @@ const grantColumns = `grant_id, subject_id, scope, scope_targets, scope_labels, 
 	`revoked_at, revoked_by, revoked_by_principal, revoke_reason, created_at, ` +
 	`external_assertion_id, external_mode`
 
-// defaultGrantLimit and maxGrantLimit bound an operator's list. There is no
-// unbounded list on this surface, for the reason there is none beside the
+// defaultGrantLimit and maxGrantLimit bound an operator's list of grants and a
+// requester's list of their own requests. There is no unbounded list on this
+// surface, for the reason there is none beside the
 // decision path (M5): a tenant's history only grows.
 const (
 	defaultGrantLimit = 100
@@ -480,6 +481,81 @@ func (r grantRequestRepo) Resolve(ctx context.Context, tenant Tenant, requestID 
 		return notFound(op)
 	}
 	return conflict(op, "the request has already been decided")
+}
+
+func (r grantRequestRepo) GetForSubject(ctx context.Context, tenant Tenant, subjectID, requestID string) (GrantRequest, error) {
+	const op = "store.GrantRequests.GetForSubject"
+	if err := checkTenant(op, tenant); err != nil {
+		return GrantRequest{}, err
+	}
+	if subjectID == "" {
+		return GrantRequest{}, invalid(op, "a subject is required")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	// The holder is in the WHERE clause, for the reason the tenant is
+	// (M18): somebody else's request is not a row this query can return.
+	row := r.s.db.QueryRow(ctx, `
+		SELECT `+grantRequestColumns+`
+		FROM grant_requests
+		WHERE tenant = $1 AND subject_id = $2 AND request_id = $3`, tenant, subjectID, requestID)
+	return scanGrantRequest(op, row)
+}
+
+func (r grantRequestRepo) ListForSubject(ctx context.Context, tenant Tenant, subjectID string, q GrantRequestQuery) ([]GrantRequest, error) {
+	const op = "store.GrantRequests.ListForSubject"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+	if subjectID == "" {
+		return nil, invalid(op, "a subject is required")
+	}
+	limit := q.Limit
+	switch {
+	case limit <= 0:
+		limit = defaultGrantLimit
+	case limit > maxGrantLimit:
+		limit = maxGrantLimit
+	}
+
+	conds := []string{"tenant = $1", "subject_id = $2"}
+	args := []any{tenant, subjectID}
+	switch q.State {
+	case "":
+	case GrantRequestPending, GrantRequestApproved, GrantRequestDenied,
+		GrantRequestExpired, GrantRequestCancelled, GrantRequestFailed:
+		args = append(args, string(q.State))
+		conds = append(conds, fmt.Sprintf("state = $%d", len(args)))
+	default:
+		return nil, invalid(op, fmt.Sprintf("%q is not a request state", q.State))
+	}
+	args = append(args, limit)
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.s.db.Query(ctx, `
+		SELECT `+grantRequestColumns+`
+		FROM grant_requests
+		WHERE `+strings.Join(conds, " AND ")+`
+		ORDER BY requested_at DESC, request_id DESC
+		LIMIT `+fmt.Sprintf("$%d", len(args)), args...)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+
+	var out []GrantRequest
+	for rows.Next() {
+		req, err := scanGrantRequest(op, rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, req)
+	}
+	return out, wrap(op, rows.Err())
 }
 
 func nonNilApprovals(v []GrantApproval) []GrantApproval {

@@ -203,12 +203,19 @@ func TestEveryRegisteredRouteRefusesATenantOutsideTheCallersScope(t *testing.T) 
 		"tenant-a": {identity.RoleAdmin},
 	})
 
-	tenantRoutes, hostRoutes := 0, 0
+	tenantRoutes, selfRoutes, hostRoutes := 0, 0, 0
 	for _, route := range f.server.Routes() {
-		if route.Access != "tenant" {
+		// A self route resolves its tenant exactly as a tenant route does,
+		// and refuses one outside scope before it ever asks whose records
+		// they are (0016).
+		switch route.Access {
+		case "tenant":
+			tenantRoutes++
+		case "self":
+			selfRoutes++
+		default:
 			continue
 		}
-		tenantRoutes++
 		if route.Provider != "" {
 			hostRoutes++
 		}
@@ -227,8 +234,9 @@ func TestEveryRegisteredRouteRefusesATenantOutsideTheCallersScope(t *testing.T) 
 			}
 		})
 	}
-	if tenantRoutes == 0 {
-		t.Fatal("no tenant-scoped routes are registered, so this test asserted nothing")
+	if tenantRoutes == 0 || selfRoutes == 0 {
+		t.Fatalf("%d tenant and %d self routes are registered, so this test asserted nothing about one class",
+			tenantRoutes, selfRoutes)
 	}
 	if hostRoutes != len(testHostRoutes()) {
 		t.Fatalf("enumerated %d host routes, want %d: a host's routes are in the table this test walks",
@@ -266,12 +274,17 @@ func TestEveryRouteDeclaresAnAccessClassAndATenantRouteDeclaresAPermission(t *te
 	f := newServer(t)
 	for _, route := range f.server.Routes() {
 		switch route.Access {
-		case "tenant":
+		case "tenant", "self":
 			if route.Permission == "" {
 				t.Errorf("%s names no permission", route)
 			}
 			if !slices.Contains(identity.AllPermissions, route.Permission) {
 				t.Errorf("%s names permission %q, which this build does not define", route, route.Permission)
+			}
+			// "Own" is visible in the path, so an operator reading a log
+			// line can tell a self route from a tenant-wide one (0016).
+			if self := strings.Contains(route.Pattern, "/me/") || strings.HasSuffix(route.Pattern, "/me"); self != (route.Access == "self") {
+				t.Errorf("%s is %s, but its path says otherwise", route, route.Access)
 			}
 		case "authenticated":
 			// A route about the CALLER rather than about a tenant's data.
@@ -307,6 +320,13 @@ func TestARouteThatIsNotFullyClassifiedIsRefusedAtRegistration(t *testing.T) {
 		"tenant route with an unknown permission": {
 			Method: "GET", Pattern: "/x", Access: north.AccessTenant,
 			Permission: "policy:invent", Handler: handler,
+		},
+		"self route with no permission": {
+			Method: "GET", Pattern: "/x", Access: north.AccessSelf, Handler: handler,
+		},
+		"self route with an unknown permission": {
+			Method: "GET", Pattern: "/x", Access: north.AccessSelf,
+			Permission: "grant:take", Handler: handler,
 		},
 		"anonymous route carrying a permission": {
 			Method: "GET", Pattern: "/x", Access: north.AccessAnonymous,

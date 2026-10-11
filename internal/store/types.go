@@ -637,6 +637,15 @@ type GrantRequest struct {
 	PolledAt  time.Time
 }
 
+// GrantRequestQuery selects one subject's requests (0016).
+type GrantRequestQuery struct {
+	// State narrows to one state. Empty means every state.
+	State GrantRequestState
+	// Limit bounds the answer. Zero takes a default; there is no unbounded
+	// list.
+	Limit int
+}
+
 // GrantRequestResolution is how a pending request leaves `pending`.
 type GrantRequestResolution struct {
 	State         GrantRequestState

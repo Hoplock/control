@@ -60,7 +60,7 @@ owes the sync back to Enterprise like any other consumer (§5).
 | --- | --- | --- |
 | `AuditSink` | records stay in the local tamper-evident store and are exported nowhere | the store, its hash chain, verifier and query API (0010) |
 | `ArchiveStore` | retention deletes records when their window closes | nothing — an archive is an addition |
-| `GrantWorkflow` | an authorised administrator creates a time-boxed grant directly | manual grants, expiry, revocation (0012) |
+| `GrantWorkflow` | an authorised administrator creates a time-boxed grant directly; a requester's own request is refused (`grant_workflow_not_registered`), because nothing would decide it | manual grants, expiry, revocation (0012) |
 | `IdentitySync` | identities arrive at login; nothing is provisioned ahead of time | nothing — provisioning is an addition |
 | `KeyStore` | Control holds its own software keys and signs with them | software custody and the tenant SSH CA (0011) |
 | `Notifier` | notifications go to the deployment's configured webhook | the webhook notifier (0012) |

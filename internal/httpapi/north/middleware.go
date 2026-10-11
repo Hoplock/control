@@ -53,6 +53,7 @@ const (
 	ctxKeyTenant
 	ctxKeyFacts
 	ctxKeyHost
+	ctxKeySubject
 )
 
 // requestFacts is what the access log learns from a middleware INSIDE it.
@@ -91,12 +92,24 @@ func PrincipalFrom(ctx context.Context) (*identity.Principal, bool) {
 // TenantFrom returns the ONE tenant this request resolved to.
 //
 // Every request resolves to exactly one, so an audit record never has to say
-// "some of them" (M18). A handler on an AccessTenant route can rely on it; on
-// any other class it is empty, and that is deliberate — a route that needs a
+// "some of them" (M18). A handler on an AccessTenant or AccessSelf route can
+// rely on it; on any other class it is empty, and that is deliberate — a route that needs a
 // tenant is a route that declares it needs one.
 func TenantFrom(ctx context.Context) (store.Tenant, bool) {
 	t, ok := ctx.Value(ctxKeyTenant).(store.Tenant)
 	return t, ok && t != ""
+}
+
+// SubjectFrom returns the subject an AccessSelf route resolved: the person
+// behind the credential, and so whose own records the request is about.
+//
+// It is the ONLY way a handler on a self route reads that subject, mirroring
+// [TenantFrom]. No path, query or body on such a route carries one, so there is
+// nowhere else to read it from — which is the point (M18's rule for the tenant,
+// applied to the subject). On any other class it is empty.
+func SubjectFrom(ctx context.Context) (string, bool) {
+	s, ok := ctx.Value(ctxKeySubject).(string)
+	return s, ok && s != ""
 }
 
 // Authenticator resolves a presented north-bound credential.
@@ -112,9 +125,10 @@ type Authenticator interface {
 //
 // It is the function the router's wrap resolves to, and it is the whole of
 // M18's north-bound half. Read it top to bottom: correlation, credential,
-// tenant, permission — and note that each step's failure has its own code,
-// because "you are not signed in", "you cannot do that here" and "that is not
-// your tenant" are three different operator problems.
+// tenant, permission, and on a self route the subject — and note that each
+// step's failure has its own code, because "you are not signed in", "you
+// cannot do that here", "that is not your tenant" and "there is nobody behind
+// this credential" are four different operator problems.
 func (s *Server) enforce(route Route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -204,6 +218,23 @@ func (s *Server) enforce(route Route) http.Handler {
 		ctx = context.WithValue(ctx, ctxKeyTenant, tenant)
 		if facts := factsFrom(ctx); facts != nil {
 			facts.tenant = tenant
+		}
+
+		// "OWN" IS RESOLVED HERE TOO, after the tenant and the permission,
+		// and from the credential alone. A machine token has no person
+		// behind it, so it has no own records, and a request it raised for
+		// "itself" would name nobody.
+		if route.Access == AccessSelf {
+			if principal.Subject == "" {
+				s.logRefusal(ctx, r, principal, tenant, CodeSubjectRequired)
+				writeError(w, http.StatusForbidden, Error{
+					Code: CodeSubjectRequired, CorrelationID: id,
+					Message:    "this route acts on the caller's own records, and this credential has no person behind it",
+					Parameters: map[string]any{"tenant": tenant.String()},
+				})
+				return
+			}
+			ctx = context.WithValue(ctx, ctxKeySubject, principal.Subject)
 		}
 		route.Handler(w, r.WithContext(ctx))
 	})
