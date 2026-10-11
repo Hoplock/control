@@ -536,6 +536,15 @@ func TestAccessContextSettingsNobodyCanActOnAreRefused(t *testing.T) {
 			"{name: acme, probe: {url: \"https://s.example.com/\", timeout: 2s, confirm: [{path: $.a, exists: true}]}}"),
 		"access_context.providers[0].push.window_end": provider(
 			"{name: acme, push: {id: $.id, subject: $.s, targets: $.t}}"),
+		// An end is read by assertions in probe.confirm's vocabulary: a path
+		// and exactly one predicate (0017) ...
+		"access_context.providers[0].push.ended[0]": provider(
+			"{name: acme, push: {id: $.id, subject: $.s, targets: $.t, window_end: $.e, ended: [{path: $.status}]}}"),
+		// ... and no placeholder, because a push names no access to expand
+		// one against.
+		"access_context.providers[0].push.ended[1]": provider(
+			"{name: acme, push: {id: $.id, subject: $.s, targets: $.t, window_end: $.e, " +
+				"ended: [{path: $.status, equals: Closed}, {path: $.ci, one_of: [\"{{target.hostname}}\"]}]}}"),
 	} {
 		t.Run(field, func(t *testing.T) {
 			_, err := config.Parse(strings.NewReader(validYAML + section + "\n"))
@@ -544,6 +553,17 @@ func TestAccessContextSettingsNobodyCanActOnAreRefused(t *testing.T) {
 				t.Fatalf("Parse = %v, want a FieldError naming %s", err, field)
 			}
 		})
+	}
+
+	ended := "access_context:\n  providers:\n" +
+		"    - {name: acme, push: {id: $.id, subject: $.s, targets: $.t, window_end: $.e, " +
+		"ended: [{path: $.status, one_of: [Cancelled, Closed]}]}}\n"
+	cfg, err := config.Parse(strings.NewReader(validYAML + ended))
+	if err != nil {
+		t.Fatalf("a push mapping that reads ends: %v", err)
+	}
+	if got := cfg.AccessContext.Providers[0].Push.Ended; len(got) != 1 || len(got[0].OneOf) != 2 {
+		t.Errorf("push.ended = %+v", got)
 	}
 
 	twice := "access_context:\n  providers:\n" +

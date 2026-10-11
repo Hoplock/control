@@ -67,6 +67,15 @@ const (
 	// the record is where an auditor finds that it happened.
 	AttrGrantExternalClamped = "grant_external_clamped"
 	AttrGrantExternalCeiling = "grant_external_ceiling_seconds"
+	// AttrGrantExternalEnded marks a revocation the window's own system made
+	// by ending the window (0017), and the three after it are what that end
+	// stated. They are kept apart from AttrGrantExternalEnd, which is the end
+	// of the window the OPEN asserted, and from AttrGrantRevoke, which is the
+	// reason the holder was shown — Control's text, never the system's.
+	AttrGrantExternalEnded           = "grant_external_ended"
+	AttrGrantExternalEndedReference  = "grant_external_ended_reference"
+	AttrGrantExternalEndedIssuedAt   = "grant_external_ended_issued_at"
+	AttrGrantExternalEndedAdditional = "grant_external_ended_additional_context"
 
 	AttrRequestState   = "grant_request_state"
 	AttrRequestOutcome = "grant_request_outcome"
@@ -163,6 +172,14 @@ func (e *Emitter) GrantEvent(ctx context.Context, tx *store.Store, tenant store.
 		attrs[AttrGrantExternalClamped] = strconv.FormatBool(x.Clamped)
 		attrs[AttrGrantExternalCeiling] = strconv.FormatInt(int64(x.Ceiling/time.Second), 10)
 	}
+	if end := ev.Ended; end != nil {
+		attrs[AttrGrantExternalEnded] = "true"
+		put(attrs, AttrGrantExternalEndedReference, end.Reference)
+		if !end.IssuedAt.IsZero() {
+			attrs[AttrGrantExternalEndedIssuedAt] = stamp(end.IssuedAt)
+		}
+		put(attrs, AttrGrantExternalEndedAdditional, strings.TrimSpace(string(end.AdditionalContext)))
+	}
 
 	actor := ev.Actor
 	attrs[AttrBreakGlass] = strconv.FormatBool(actor.BreakGlass)
@@ -236,6 +253,9 @@ func grantMessage(ev access.Event) string {
 		}
 		return "grant created for " + holder(ev)
 	case access.EventGrantRevoked:
+		if ev.Ended != nil && ev.Grant != nil {
+			return "grant revoked for " + holder(ev) + ": " + ev.Grant.External.System + " ended the window"
+		}
 		return "grant revoked for " + holder(ev)
 	case access.EventGrantRequested:
 		return "grant requested for " + holder(ev)

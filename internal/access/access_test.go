@@ -1452,3 +1452,19 @@ func (jsonWindows) Interpret(_ context.Context, p ext.AccessContextPush) (ext.Wi
 	}
 	return a, nil
 }
+
+// EndExternal is for a grant a push produced (0017). The receiver only ever
+// passes one it found by its assertion, so an administrator's grant reaching it
+// is a wiring fault: an outage, never a refusal, and nothing is revoked.
+func TestEndingAGrantNoPushProducedIsAnOutage(t *testing.T) {
+	h := newHarness(t)
+	g := h.create(dbaFor30m())
+	_, err := h.grants.EndExternal(t.Context(), tenant, operator, g.ID, access.ExternalEnd{})
+	var verr *access.ValidationError
+	if err == nil || errors.As(err, &verr) || store.IsNotFound(err) {
+		t.Fatalf("EndExternal on an administrator's grant = %v; want an outage", err)
+	}
+	if got, _ := h.store.Grants().Get(t.Context(), tenant, g.ID); !got.RevokedAt.IsZero() {
+		t.Error("the administrator's grant was revoked")
+	}
+}

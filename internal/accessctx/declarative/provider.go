@@ -86,6 +86,9 @@ type assertion struct {
 type push struct {
 	id, subject, targets, end                       jsonPath
 	reference, scope, start, issued, additionalPath *jsonPath
+	// ended are the assertions that make a push an end (0017), all of
+	// which must hold. Empty: every push is an open.
+	ended []assertion
 }
 
 // Options are what a provider needs from the process building it.
@@ -394,7 +397,27 @@ func buildPush(c config.DeclarativePushConfig) (*push, error) {
 		}
 		*dst = &path
 	}
+	for i, a := range c.Ended {
+		key := fmt.Sprintf("ended[%d]", i)
+		for _, v := range append(slices.Clone(a.OneOf), deref(a.Equals), deref(a.NotEquals), deref(a.Contains)) {
+			if strings.Contains(v, "{{") {
+				return nil, keyed(key, fmt.Errorf("holds a placeholder, and a push names no access to expand one against"))
+			}
+		}
+		built, err := buildAssertion(a)
+		if err != nil {
+			return nil, keyed(key, err)
+		}
+		p.ended = append(p.ended, built)
+	}
 	return p, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // Describe implements ext.AccessContextProvider.
@@ -556,6 +579,9 @@ func (p *Provider) Interpret(_ context.Context, in ext.AccessContextPush) (ext.W
 		return ext.WindowAssertion{}, p.errorf("Interpret", ext.KindMalformed, "the push is not JSON: %v", err)
 	}
 	m := p.push
+	if m.ends(doc) {
+		return p.interpretEnd(doc)
+	}
 	var a ext.WindowAssertion
 	var ok bool
 	if a.ID, ok = scalar(m.id, doc); !ok {
@@ -586,6 +612,49 @@ func (p *Provider) Interpret(_ context.Context, in ext.AccessContextPush) (ext.W
 	}
 	if a.Window.NotAfter, err = instantAt(&m.end, doc); err != nil {
 		return ext.WindowAssertion{}, p.errorf("Interpret", ext.KindMalformed, "window_end: %v", err)
+	}
+	if a.IssuedAt, err = instantAt(m.issued, doc); err != nil {
+		return ext.WindowAssertion{}, p.errorf("Interpret", ext.KindMalformed, "issued_at: %v", err)
+	}
+	if a.AdditionalContext, err = additionalAt(m.additionalPath, doc); err != nil {
+		return ext.WindowAssertion{}, p.errorf("Interpret", ext.KindMalformed, "additional_context: %v", err)
+	}
+	return a, nil
+}
+
+// ends reports whether a push reads as an end: `push.ended` is configured and
+// every one of its assertions holds over the body.
+func (m *push) ends(doc any) bool {
+	if len(m.ended) == 0 {
+		return false
+	}
+	for _, a := range m.ended {
+		if !a.holds(doc, nil) {
+			return false
+		}
+	}
+	return true
+}
+
+// interpretEnd reads an end: its id, required as for an open, and the
+// reference, issue time and additional context when they are mapped. It does
+// not read the subject, the targets, the scope or the window: a vendor's
+// "cancelled" body need not carry them, and Control reads an end by its id.
+func (p *Provider) interpretEnd(doc any) (ext.WindowAssertion, error) {
+	m := p.push
+	a := ext.WindowAssertion{Ended: true}
+	var ok bool
+	var err error
+	if a.ID, ok = scalar(m.id, doc); !ok {
+		return ext.WindowAssertion{}, p.errorf("Interpret", ext.KindMalformed, "id: %s names no single value", m.id.raw)
+	}
+	// What an end records is optional, and absent from the body means not
+	// stated — as an absent issue time or context already does — because a
+	// vendor's cancellation may carry less than its approval did.
+	if m.reference != nil && len(m.reference.values(doc)) > 0 {
+		if a.Reference, ok = scalar(*m.reference, doc); !ok {
+			return ext.WindowAssertion{}, p.errorf("Interpret", ext.KindMalformed, "reference: %s names no single value", m.reference.raw)
+		}
 	}
 	if a.IssuedAt, err = instantAt(m.issued, doc); err != nil {
 		return ext.WindowAssertion{}, p.errorf("Interpret", ext.KindMalformed, "issued_at: %v", err)

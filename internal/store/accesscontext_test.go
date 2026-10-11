@@ -4,6 +4,7 @@
 package store_test
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -160,5 +161,106 @@ func TestABindingRoundTripsAndIsReplacedInPlace(t *testing.T) {
 	}
 	if deleted, err := st.AccessContextBindings().Delete(ctx, tenantA, "acme-scanner"); err != nil || deleted {
 		t.Errorf("a second Delete = %v, %v; want nothing deleted", deleted, err)
+	}
+}
+
+// An end that named no window (0017) is kept once per system and tenant, read
+// back as it was written, and its lock is refused outside a transaction —
+// where it would serialize nothing.
+func TestAnEndThatNamedNoWindowIsKeptOnce(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	if _, err := st.AccessContextWindowEnds().Get(ctx, tenantA, "acme-scanner", "a-1"); !store.IsNotFound(err) {
+		t.Fatalf("Get before any end = %v, want not found", err)
+	}
+	end := store.AccessContextWindowEnd{
+		System: "acme-scanner", AssertionID: "a-1", Reference: "SCAN-7",
+		IssuedAt: now.Add(-time.Hour), EndedAt: now,
+		EndedBy: store.GrantActor{Principal: "p-scanner"},
+	}
+	if err := st.AccessContextWindowEnds().Insert(ctx, tenantA, end); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := st.AccessContextWindowEnds().Insert(ctx, tenantA, end); !store.IsConflict(err) {
+		t.Errorf("the same end kept twice = %v, want a conflict", err)
+	}
+	got, err := st.AccessContextWindowEnds().Get(ctx, tenantA, "acme-scanner", "a-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !reflect.DeepEqual(got, end) {
+		t.Errorf("Get = %+v, want %+v", got, end)
+	}
+
+	// Scoped to the system and the tenant, as an assertion id is on a grant.
+	if _, err := st.AccessContextWindowEnds().Get(ctx, tenantA, "other-scanner", "a-1"); !store.IsNotFound(err) {
+		t.Errorf("another system's id = %v, want not found", err)
+	}
+	if _, err := st.AccessContextWindowEnds().Get(ctx, tenantB, "acme-scanner", "a-1"); !store.IsNotFound(err) {
+		t.Errorf("another tenant's id = %v, want not found", err)
+	}
+
+	if err := st.AccessContextWindowEnds().Lock(ctx, tenantA, "acme-scanner", "a-1"); !store.IsInvalid(err) {
+		t.Errorf("Lock outside a transaction = %v, want it refused", err)
+	}
+	err = st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		return tx.AccessContextWindowEnds().Lock(ctx, tenantA, "acme-scanner", "a-1")
+	})
+	if err != nil {
+		t.Errorf("Lock inside a transaction: %v", err)
+	}
+}
+
+// The assertion's lock is held to the end of the transaction that took it: a
+// second transaction asking for the same assertion waits for the first, and one
+// asking for another assertion does not.
+func TestTheAssertionLockSerializesOneAssertionOnly(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+
+	held := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+			if err := tx.AccessContextWindowEnds().Lock(ctx, tenantA, "acme-scanner", "a-1"); err != nil {
+				return err
+			}
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+
+	// Another assertion is not held up.
+	if err := st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		return tx.AccessContextWindowEnds().Lock(ctx, tenantA, "acme-scanner", "a-2")
+	}); err != nil {
+		t.Fatalf("another assertion's lock: %v", err)
+	}
+
+	// The same one is.
+	acquired := make(chan error, 1)
+	go func() {
+		acquired <- st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+			return tx.AccessContextWindowEnds().Lock(ctx, tenantA, "acme-scanner", "a-1")
+		})
+	}()
+	select {
+	case err := <-acquired:
+		t.Fatalf("the same assertion's lock was taken while held (%v)", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("the holder: %v", err)
+	}
+	if err := <-acquired; err != nil {
+		t.Fatalf("the waiter: %v", err)
 	}
 }

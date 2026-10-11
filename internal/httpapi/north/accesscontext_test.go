@@ -7,9 +7,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +23,7 @@ import (
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/policy/model"
+	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -65,6 +69,13 @@ type pushFixture struct {
 
 func newPushServer(t *testing.T) *pushFixture {
 	t.Helper()
+	return newPushServerWith(t, nil)
+}
+
+// newPushServerWith builds the fixture with revoker publishing revocations; nil
+// is the real bus.
+func newPushServerWith(t *testing.T, revoker access.Revoker) *pushFixture {
+	t.Helper()
 	st := storetest.New(t)
 	storetest.Seed(t, st, storetest.Fixture{
 		Tenant:   "tenant-a",
@@ -76,7 +87,7 @@ func newPushServer(t *testing.T) *pushFixture {
 	if err != nil {
 		t.Fatalf("federation: %v", err)
 	}
-	grants := newGrants(t, st, access.Options{})
+	grants := newGrants(t, st, access.Options{Revoker: revoker})
 	ingest, err := audit.New(audit.Options{Store: st})
 	if err != nil {
 		t.Fatalf("audit: %v", err)
@@ -248,5 +259,127 @@ func TestOnlyTheNamedIntegrationCredentialMayPush(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("the integration credential listing grants = %d, want 403: it reads nothing", resp.StatusCode)
+	}
+}
+
+// An end over the wire (0017): 200 whatever it did, with what became of the
+// window; an open under an ended id is 400 window_closed on `id`; and an end
+// whose sessions could not be told is 503, as the revoke route answers one.
+
+type endAnswer struct {
+	AssertionID string `json:"assertion_id"`
+	Outcome     string `json:"outcome"`
+	Grant       string `json:"grant"`
+	State       string `json:"state"`
+}
+
+func decodeEnd(t *testing.T, resp *http.Response) endAnswer {
+	t.Helper()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("end = %d %+v, want 200", resp.StatusCode, decodeError(t, resp))
+	}
+	var a endAnswer
+	if err := json.NewDecoder(resp.Body).Decode(&a); err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func ended(id string) []byte {
+	b, _ := json.Marshal(map[string]any{"id": id, "ended": true})
+	return b
+}
+
+func TestAnEndOverTheWire(t *testing.T) {
+	f := newPushServer(t)
+	token, principal := f.tokenFor(t, identity.RoleIntegration)
+	f.bind(t, principal)
+
+	resp := f.push(t, pushPath, token, window("CHG-42/1", "db01.example.com"))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("open = %d", resp.StatusCode)
+	}
+	var opened struct {
+		Grant string `json:"grant"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&opened); err != nil {
+		t.Fatal(err)
+	}
+
+	if a := decodeEnd(t, f.push(t, pushPath, token, ended("CHG-42/1"))); a.Outcome != "revoked" ||
+		a.AssertionID != "CHG-42/1" || a.Grant != opened.Grant || a.State != "revoked" {
+		t.Errorf("an end = %+v, want revoked naming grant %s", a, opened.Grant)
+	}
+	g, err := f.st.Grants().Get(t.Context(), "tenant-a", opened.Grant)
+	if err != nil || g.RevokedBy.Principal != principal || g.RevokeReason != access.ExternalEndReason {
+		t.Errorf("the grant = %+v, %v; want it revoked by the integration with Control's reason", g, err)
+	}
+	if a := decodeEnd(t, f.push(t, pushPath, token, ended("CHG-42/1"))); a.Outcome != "already_ended" || a.Grant != opened.Grant {
+		t.Errorf("the end again = %+v, want already_ended", a)
+	}
+
+	// An end for an id never opened is an answer, not an error, and the open
+	// that follows is refused.
+	if a := decodeEnd(t, f.push(t, pushPath, token, ended("CHG-43/1"))); a.Outcome != "recorded" || a.Grant != "" || a.State != "" {
+		t.Errorf("an end before its open = %+v, want recorded and no grant", a)
+	}
+	late := f.push(t, pushPath, token, window("CHG-43/1", "db01.example.com"))
+	if e := decodeError(t, late); late.StatusCode != http.StatusBadRequest || e.Code != north.CodeWindowClosed ||
+		e.Parameters["field"] != "id" {
+		t.Errorf("an open after its end = %d %+v, want 400 window_closed on id", late.StatusCode, e)
+	}
+
+	malformed := f.push(t, pushPath, token, ended(""))
+	if e := decodeError(t, malformed); malformed.StatusCode != http.StatusBadRequest ||
+		e.Code != north.CodeAssertionMalformed || e.Parameters["field"] != "id" {
+		t.Errorf("an end with no id = %d %+v, want 400 assertion_malformed on id", malformed.StatusCode, e)
+	}
+}
+
+// switchableRevoker refuses every publication while it is down.
+type switchableRevoker struct {
+	next access.Revoker
+	down atomic.Bool
+}
+
+func (r *switchableRevoker) Kill(ctx context.Context, tenant store.Tenant, aud revoke.Audience, k revoke.Kill) (revoke.Receipt, error) {
+	if r.down.Load() {
+		return revoke.Receipt{}, errors.New("the broker is closed")
+	}
+	return r.next.Kill(ctx, tenant, aud, k)
+}
+
+func (r *switchableRevoker) Invalidate(ctx context.Context, tenant store.Tenant, aud revoke.Audience, inv revoke.Invalidation) (revoke.Receipt, error) {
+	if r.down.Load() {
+		return revoke.Receipt{}, errors.New("the broker is closed")
+	}
+	return r.next.Invalidate(ctx, tenant, aud, inv)
+}
+
+func TestAnUndeliveredEndIsAnsweredLikeAnUndeliveredRevocation(t *testing.T) {
+	bus, err := revoke.New(revoke.Options{Logger: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatalf("bus: %v", err)
+	}
+	t.Cleanup(func() { _ = bus.Close(context.Background()) })
+	rv := &switchableRevoker{next: bus}
+	f := newPushServerWith(t, rv)
+	token, principal := f.tokenFor(t, identity.RoleIntegration)
+	f.bind(t, principal)
+	if resp := f.push(t, pushPath, token, window("CHG-42/1", "db01.example.com")); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("open = %d", resp.StatusCode)
+	}
+
+	rv.down.Store(true)
+	resp := f.push(t, pushPath, token, ended("CHG-42/1"))
+	e := decodeError(t, resp)
+	if resp.StatusCode != http.StatusServiceUnavailable || e.Code != north.CodeGrantRevocationUndelivered ||
+		e.Parameters["revoked"] != true || e.Parameters["grant_id"] == "" {
+		t.Fatalf("an end with the stream down = %d %+v, want 503 grant_revocation_undelivered", resp.StatusCode, e)
+	}
+
+	rv.down.Store(false)
+	if a := decodeEnd(t, f.push(t, pushPath, token, ended("CHG-42/1"))); a.Outcome != "already_ended" || a.Grant != e.Parameters["grant_id"] {
+		t.Errorf("the end pushed again = %+v, want already_ended on grant %v", a, e.Parameters["grant_id"])
 	}
 }

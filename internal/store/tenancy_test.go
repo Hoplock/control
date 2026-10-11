@@ -31,8 +31,10 @@ var repositoryInterfaces = map[string]reflect.Type{
 	// Access grants (0012).
 	"GrantRequestRepository": reflect.TypeOf((*GrantRequestRepository)(nil)).Elem(),
 
-	// External access context (0013).
-	"AccessContextBindingRepository": reflect.TypeOf((*AccessContextBindingRepository)(nil)).Elem(),
+	// External access context (0013), and the ends that named no window
+	// (0017).
+	"AccessContextBindingRepository":   reflect.TypeOf((*AccessContextBindingRepository)(nil)).Elem(),
+	"AccessContextWindowEndRepository": reflect.TypeOf((*AccessContextWindowEndRepository)(nil)).Elem(),
 
 	// Identity, federation and credentials (0011). 0012 found these missing
 	// from this list; every one of them already named its tenant, and now a
@@ -126,7 +128,8 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"UIDCursorRepository":    s.UIDCursors(),
 		"GrantRequestRepository": s.GrantRequests(),
 
-		"AccessContextBindingRepository": s.AccessContextBindings(),
+		"AccessContextBindingRepository":   s.AccessContextBindings(),
+		"AccessContextWindowEndRepository": s.AccessContextWindowEnds(),
 
 		"GroupRepository":             s.Groups(),
 		"RoleBindingRepository":       s.RoleBindings(),
@@ -431,6 +434,22 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"AccessContextBindings.Delete": func() error {
 			_, err := s.AccessContextBindings().Delete(ctx, "", "itsm")
 			return err
+		},
+
+		// The ends that named no window (0017). Lock refuses the empty
+		// tenant before it asks whether it is inside a transaction.
+		"AccessContextWindowEnds.Lock": func() error {
+			return s.AccessContextWindowEnds().Lock(ctx, "", "itsm", "a-1")
+		},
+		"AccessContextWindowEnds.Get": func() error {
+			_, err := s.AccessContextWindowEnds().Get(ctx, "", "itsm", "a-1")
+			return err
+		},
+		"AccessContextWindowEnds.Insert": func() error {
+			return s.AccessContextWindowEnds().Insert(ctx, "", AccessContextWindowEnd{
+				System: "itsm", AssertionID: "a-1", EndedAt: nowForTest(),
+				EndedBy: GrantActor{Principal: "p"},
+			})
 		},
 
 		// Identity, federation and credentials (0011).

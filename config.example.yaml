@@ -521,3 +521,26 @@ access_context:
   #     window_end: "$.scan.end"      # required
   #     issued_at: "$.sent_at"
   #     additional_context: "$.scan.profile"
+  #     # Which pushes END a window rather than open one (0017). ALL must
+  #     # hold; the vocabulary is probe.confirm's, with no placeholders — a
+  #     # push names no access to expand one against. An end is read by `id`
+  #     # alone (plus reference, issued_at and additional_context when they
+  #     # are mapped): Control revokes the grant that window became, which
+  #     # ends its sessions, and keeps an id it never saw opened so a late open
+  #     # under it is refused. Absent: every push is an open.
+  #     ended:
+  #       - {path: "$.scan.state", one_of: [finished, aborted]}
+  # - name: itsm-changes              # a change ticket, opened and ended by push
+  #   push:
+  #     id: "$.change.revision_id"    # one id PER WINDOW: a reopened or
+  #                                   # rescheduled change is a new window, and
+  #                                   # an open under an id already ended is
+  #                                   # refused
+  #     reference: "$.change.number"
+  #     subject: "$.change.implementer"
+  #     targets: "$.change.ci[*].hostname"
+  #     window_start: "$.change.planned_start"
+  #     window_end: "$.change.planned_end"
+  #     issued_at: "$.sent_at"
+  #     ended:
+  #       - {path: "$.change.status", one_of: [Cancelled, Closed]}

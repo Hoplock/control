@@ -187,31 +187,32 @@ type AccessContextPush struct {
 }
 
 // WindowAssertion is what one push asserts: that a window has opened for one
-// subject on some targets. It is a claim, not a grant. Control turns it into a
-// grant only after the integration's scope binding admits every part of it.
+// subject on some targets, or, with Ended, that a window an earlier push opened
+// has ended. It is a claim, not a grant. Control turns an open into a grant
+// only after the integration's scope binding admits every part of it.
 type WindowAssertion struct {
 	// ID identifies this assertion in the external system, and it is what
 	// makes a push idempotent: the same ID twice is the same window, not two,
-	// and a revoked window stays revoked however often it is pushed again.
-	// Required.
+	// and a revoked window stays revoked however often it is pushed again,
+	// and an ended one stays ended. Required.
 	ID string
 	// Reference is the ticket, scan or incident the window belongs to — the
 	// identifier a human looks up on the other side. Empty means ID.
 	Reference string
 	// Subject is who the window is for: the subject id the proxy sends,
-	// which is what a decision looks grants up by. Required.
+	// which is what a decision looks grants up by. Required to open a window.
 	Subject string
 	// Targets are the hosts it names, each an exact hostname or a single
-	// leading wildcard (`*.db.example.com`). At least one: a window that names
-	// no host is one nobody can audit.
+	// leading wildcard (`*.db.example.com`). At least one to open a window: a
+	// window that names no host is one nobody can audit.
 	Targets []string
 	// Scope is the grant scope the window asks for. Empty means the scope
 	// the integration is bound to; any other value is outside the binding and
 	// is refused as an escalation attempt.
 	Scope string
-	// Window is the period asserted. NotAfter is required: a push has no
-	// later chance to say when the window ends, and Control will not invent
-	// one. A zero NotBefore means "from now".
+	// Window is the period asserted. NotAfter is required to open a window:
+	// the end it states is the one Control holds it to, and Control will not
+	// invent one. A zero NotBefore means "from now".
 	Window Window
 	// IssuedAt is when the external system made the assertion, when it says.
 	// Control refuses one older than it accepts, or further in the future
@@ -222,6 +223,25 @@ type WindowAssertion struct {
 	// recorded: a JSON string or a JSON object, verbatim, and nothing else.
 	// Empty means none.
 	AdditionalContext json.RawMessage
+	// Ended reports that the external system says the window ID names has
+	// ended: the scan finished, the change was cancelled, the approval was
+	// withdrawn. Control revokes the grant that window became, which ends the
+	// sessions it backed (M10), audited with the credential that pushed.
+	//
+	// With Ended, Control reads ID, and records Reference, IssuedAt and
+	// AdditionalContext when they are set; it ignores every other field and
+	// requires none of them. An end is never refused for its age, its scope
+	// or its window, because ending access cannot widen it.
+	//
+	// An ended window stays ended. An end that arrives before its window was
+	// opened is kept, and the open is refused when it comes, because pushes
+	// are not delivered in order; a ticket reopened or a scan re-run is a new
+	// window under a new ID. Ending a window already ended or already expired
+	// changes nothing, and is answered as such.
+	//
+	// The zero value is an open, which is what every push meant before this
+	// field existed.
+	Ended bool
 }
 
 // AccessContextProvider supplies evidence from a system outside Hoplock about
@@ -246,7 +266,10 @@ type WindowAssertion struct {
 //     to, which targets it may name, the longest window it may open, whether
 //     it may open privileged access at all — and refuses anything outside it
 //     as an attempted privilege escalation, audited as one. What it admits is
-//     a grant with origin `external`, created and audited like any other.
+//     a grant with origin `external`, created and audited like any other. A
+//     push may also end a window the same system opened (WindowAssertion's
+//     Ended), and Control revokes the grant it became, which ends the
+//     sessions it backed.
 //   - Probe: Control asks the external system, on the authorize path, whether
 //     a window is open for this subject on this target now. A confirmed
 //     window counts as a grant for that decision; with a push in front of it

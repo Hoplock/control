@@ -20,6 +20,12 @@ import (
 // because the text is displayed verbatim (the contract's disclosure rule).
 const DefaultRevokeReason = "Your temporary access grant was revoked by an administrator."
 
+// ExternalEndReason is what the holder is shown when the external system
+// that opened their window ended it. It is Control's text, never the
+// system's: it is displayed verbatim as the session ends (the contract's
+// disclosure rule), and the references it does not name are in the record.
+const ExternalEndReason = "The access window this session depended on has ended."
+
 // settlePassTimeout bounds the second pass, which runs whether or not the
 // caller is still waiting: a revocation half-delivered because a client hung up
 // is the failure the pass exists to prevent.
@@ -63,10 +69,66 @@ func (s *Service) Revoke(ctx context.Context, tenant store.Tenant, actor Actor, 
 	if err != nil {
 		return Revocation{}, err
 	}
+	return s.revoke(ctx, tenant, actor, grantID, reason, nil)
+}
+
+// EndExternal revokes the grant a pushed window became because the external
+// system that asserted the window says it has ended (M16, 0017). The actor is
+// the integration's credential that pushed the end.
+//
+// It is Revoke — the same transaction, record, announcement, two passes and
+// ErrUndelivered — with ExternalEndReason as the reason the holder is shown and
+// what the end stated on the record. Two things differ, and both are about not
+// rewriting what is already true:
+//
+//   - A grant that EXPIRED before the end arrived, and was never revoked, is
+//     returned untouched: Revoked false, nothing written, published or
+//     announced. Revoking it would make Grant.State answer `revoked` — a
+//     second, false answer to when access stopped. Expiry is judged at the
+//     instant the revocation would be stamped with, so no revocation is ever
+//     recorded after the grant's own expiry.
+//   - A grant no push produced is refused as an outage, not a refusal: the
+//     push receiver only ever passes a grant it found by its assertion, so
+//     anything else is a wiring fault.
+//
+// A grant already revoked is handled exactly as Revoke handles one: the first
+// revocation's time, actor and reason stand, and the kill and the invalidation
+// are sent again — which is what makes an end whose delivery failed safe to
+// push again.
+func (s *Service) EndExternal(ctx context.Context, tenant store.Tenant, actor Actor, grantID string, end ExternalEnd) (Revocation, error) {
+	if err := actor.check(); err != nil {
+		return Revocation{}, err
+	}
+	if !AdditionalContextValid(end.AdditionalContext) {
+		return Revocation{}, &ValidationError{Field: "additional_context", Problem: ProblemInvalid}
+	}
+	return s.revoke(ctx, tenant, actor, grantID, ExternalEndReason, &end)
+}
+
+// revoke is the one revocation path, for an operator's revocation and for an
+// external system's end alike: two paths would be two places for the settle
+// pass to drift apart. end is nil for an operator's.
+func (s *Service) revoke(ctx context.Context, tenant store.Tenant, actor Actor, grantID, reason string, end *ExternalEnd) (Revocation, error) {
 	now := s.now().UTC()
 
 	var out Revocation
-	err = s.store.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+	untouched := false
+	err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		if end != nil {
+			g, err := tx.Grants().Get(ctx, tenant, grantID)
+			if err != nil {
+				return err
+			}
+			if g.External.AssertionID == "" {
+				return fmt.Errorf("access: grant %s was not produced by a push, and only a push's own system ends one", grantID)
+			}
+			if g.RevokedAt.IsZero() && !now.Before(g.ExpiresAt) {
+				// Over already, by its own window. Nothing to end,
+				// and nothing true to add.
+				out, untouched = Revocation{Grant: g}, true
+				return nil
+			}
+		}
 		revoked, err := tx.Grants().Revoke(ctx, tenant, grantID, store.GrantRevocation{
 			At: now, By: actor.grantActor(), Reason: reason,
 		})
@@ -85,14 +147,17 @@ func (s *Service) Revoke(ctx context.Context, tenant store.Tenant, actor Actor, 
 			return nil
 		}
 		return s.recorder.GrantEvent(ctx, tx, tenant, Event{
-			Name: EventGrantRevoked, Actor: actor, Grant: &g, At: now,
+			Name: EventGrantRevoked, Actor: actor, Grant: &g, Ended: end, At: now,
 		})
 	})
 	if err != nil {
 		return Revocation{}, err
 	}
+	if untouched {
+		return out, nil
+	}
 	if out.Revoked {
-		s.announce(ctx, tenant, Event{Name: EventGrantRevoked, Actor: actor, Grant: &out.Grant, At: now})
+		s.announce(ctx, tenant, Event{Name: EventGrantRevoked, Actor: actor, Grant: &out.Grant, Ended: end, At: now})
 	}
 
 	if err := s.withdraw(ctx, tenant, &out); err != nil {

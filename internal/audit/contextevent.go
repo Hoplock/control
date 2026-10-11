@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hoplock/control/internal/accessctx"
@@ -39,6 +40,7 @@ const (
 	AttrContextWindowStart = "access_context_window_start"
 	AttrContextWindowEnd   = "access_context_window_end"
 	AttrContextIssuedAt    = "access_context_issued_at"
+	AttrContextAdditional  = "access_context_additional_context"
 
 	AttrBindingMode           = "access_context_binding_mode"
 	AttrBindingScope          = "access_context_binding_scope"
@@ -90,6 +92,7 @@ func (e *Emitter) ContextEvent(ctx context.Context, tx *store.Store, tenant stor
 		if !a.IssuedAt.IsZero() {
 			attrs[AttrContextIssuedAt] = stamp(a.IssuedAt)
 		}
+		put(attrs, AttrContextAdditional, strings.TrimSpace(string(a.AdditionalContext)))
 	}
 	if b := ev.Binding; b != nil {
 		attrs[AttrBindingMode] = string(b.Mode)
@@ -156,6 +159,8 @@ func contextMessage(ev accessctx.Event) string {
 		return "escalation attempt through " + ev.Provider + ": " + ev.Code
 	case accessctx.EventPushRefused:
 		return "push from " + ev.Provider + " refused: " + ev.Code
+	case accessctx.EventWindowEnded:
+		return "end from " + ev.Provider + " recorded for an id with no window"
 	case accessctx.EventBindingPut:
 		return "scope binding for " + ev.Provider + " written"
 	case accessctx.EventBindingDeleted:

@@ -20,7 +20,8 @@ const (
 	// EventGrantCreated is a grant that now exists — an administrator's, or
 	// one a workflow approved.
 	EventGrantCreated = "grant.created"
-	// EventGrantRevoked is a grant an operator withdrew.
+	// EventGrantRevoked is a grant withdrawn: by an operator, or by the
+	// external system that asserted its window, ending it (M16).
 	EventGrantRevoked = "grant.revoked"
 	// EventGrantRequested is a request put to a registered workflow.
 	EventGrantRequested = "grant.requested"
@@ -78,6 +79,10 @@ type Event struct {
 	// ceiling applied to it and whether it bit. Nil for every act that was
 	// not an external system's push (M16).
 	External *ExternalAct
+	// Ended is what an external system stated when it ended the window a
+	// revoked grant was (M16, 0017). Nil for every revocation an operator
+	// made.
+	Ended *ExternalEnd
 	// At is when it happened.
 	At time.Time
 }
@@ -174,6 +179,9 @@ func notification(tenant store.Tenant, ev Event) ext.Notification {
 		}
 		if ev.Name == EventGrantRevoked {
 			attrs["revoke_reason"] = g.RevokeReason
+		}
+		if ev.Ended != nil {
+			attrs["window_ended"] = "true"
 		}
 	}
 	return n

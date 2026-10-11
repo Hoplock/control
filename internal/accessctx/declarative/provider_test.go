@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -349,6 +350,74 @@ func TestTheDeclarativePushMapping(t *testing.T) {
 	}
 	if _, err := json.Marshal(a); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// changeTickets is an ITSM integration whose change tickets open a window when
+// approved and end it when cancelled or closed (0017).
+func changeTickets() config.DeclarativeProviderConfig {
+	return config.DeclarativeProviderConfig{
+		Name: "itsm-changes",
+		Push: &config.DeclarativePushConfig{
+			ID:          "$.change.revision_id",
+			Reference:   "$.change.number",
+			Subject:     "$.change.implementer",
+			Targets:     "$.change.ci[*]",
+			WindowStart: "$.change.planned_start",
+			WindowEnd:   "$.change.planned_end",
+			IssuedAt:    "$.sent_at",
+			Ended:       []config.DeclarativeAssertion{{Path: "$.change.status", OneOf: []string{"Cancelled", "Closed"}}},
+		},
+	}
+}
+
+const changeBody = `{"sent_at":"2026-09-30T11:59:00Z","change":{"revision_id":"CHG-42/1","number":"CHG-42",
+  "status":"Approved","implementer":"alice@example.com","ci":["db01.example.com"],
+  "planned_start":"2026-09-30T12:00:00Z","planned_end":"2026-09-30T14:00:00Z"}}`
+
+// With `push.ended` configured, a ticket whose status says the change is over
+// reads as an end carrying only its id and reference — and the issue time it
+// was mapped — while one that says it is approved reads as an open.
+func TestTheDeclarativeProviderReadsAnEnd(t *testing.T) {
+	p := newProvider(t, changeTickets(), loopback())
+
+	open, err := p.Interpret(t.Context(), ext.AccessContextPush{Body: []byte(changeBody)})
+	if err != nil {
+		t.Fatalf("Interpret an approved change: %v", err)
+	}
+	if open.Ended || open.ID != "CHG-42/1" || open.Subject != "alice@example.com" || len(open.Targets) != 1 {
+		t.Errorf("an approved change = %+v, want an open", open)
+	}
+
+	cancelled := strings.Replace(changeBody, `"Approved"`, `"Cancelled"`, 1)
+	end, err := p.Interpret(t.Context(), ext.AccessContextPush{Body: []byte(cancelled)})
+	if err != nil {
+		t.Fatalf("Interpret a cancelled change: %v", err)
+	}
+	want := ext.WindowAssertion{
+		ID: "CHG-42/1", Reference: "CHG-42", IssuedAt: time.Date(2026, 9, 30, 11, 59, 0, 0, time.UTC), Ended: true,
+	}
+	if !reflect.DeepEqual(end, want) {
+		t.Errorf("a cancelled change = %+v, want %+v: an end reads its id, reference and issue time only", end, want)
+	}
+
+	// A "cancelled" body need not carry what an open needs — and one with no
+	// id is still malformed, because an end names the window by it.
+	bare := `{"change":{"revision_id":"CHG-42/1","status":"Closed"}}`
+	if a, err := p.Interpret(t.Context(), ext.AccessContextPush{Body: []byte(bare)}); err != nil || !a.Ended || a.ID != "CHG-42/1" {
+		t.Errorf("a closed change with no subject, targets or window = %+v, %v; want an end", a, err)
+	}
+	if _, err := p.Interpret(t.Context(), ext.AccessContextPush{Body: []byte(`{"change":{"status":"Closed"}}`)}); !ext.IsMalformed(err) {
+		t.Errorf("an end with no id = %v; want malformed", err)
+	}
+
+	// An ended assertion with a placeholder is refused when the provider is
+	// built, as configuration refuses it at load.
+	c := changeTickets()
+	c.Push.Ended = []config.DeclarativeAssertion{{Path: "$.change.ci", Contains: ptr("{{target.hostname}}")}}
+	if _, err := declarative.New(c, loopback(), declarative.Options{Getenv: env}); err == nil ||
+		!strings.Contains(err.Error(), "push.ended[0]") {
+		t.Errorf("an ended assertion with a placeholder = %v; want it refused, naming the key", err)
 	}
 }
 

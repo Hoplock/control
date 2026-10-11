@@ -14,8 +14,9 @@ import (
 
 // The acts this package records (M8). An accepted push is recorded by
 // internal/access as the grant it became (`grant.created`, with the push's
-// details); what is recorded here is everything a push or a binding change
-// produced that is NOT a grant.
+// details), and an end that revoked one as `grant.revoked`; what is recorded
+// here is everything a push or a binding change produced that is NOT an act on
+// a grant.
 const (
 	// EventEscalation is a push outside its integration's scope, or from a
 	// credential the binding does not name. It is filed critical: the
@@ -26,6 +27,12 @@ const (
 	// integration with no binding, a binding that is off, a reused id, a
 	// stale assertion.
 	EventPushRefused = "access_context.push_refused"
+	// EventWindowEnded is an end naming an id no grant was made under,
+	// recorded because it changes what a later open may do: an open under
+	// the id is refused. An end that revoked a grant is recorded by
+	// internal/access as `grant.revoked`, the way an admitted open is
+	// recorded as `grant.created`.
+	EventWindowEnded = "access_context.window_ended"
 	// EventBindingPut is a scope binding created or replaced.
 	EventBindingPut = "access_context.binding_put"
 	// EventBindingDeleted is a scope binding removed.

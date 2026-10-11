@@ -211,6 +211,23 @@ type AccessContextBindingRepository interface {
 	Delete(ctx context.Context, tenant Tenant, provider string) (bool, error)
 }
 
+// AccessContextWindowEndRepository keeps the ends an external system pushed for
+// windows that never became grants (M16, 0017), so that an open under an ended
+// id is refused. Rows are never deleted: a missing row is exactly what would
+// let an ended window reopen.
+type AccessContextWindowEndRepository interface {
+	// Lock takes the assertion's transaction-scoped advisory lock: the one
+	// both an open and an end of one id hold while they read and write, so
+	// that a grant made under an id and an end kept for it never both exist.
+	// It is valid only inside a transaction, and refused outside one. It is
+	// the first lock either path takes, before the audit chain's.
+	Lock(ctx context.Context, tenant Tenant, system, assertionID string) error
+	// Get returns the end kept for an id. Absent is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, system, assertionID string) (AccessContextWindowEnd, error)
+	// Insert keeps an end. An id already kept is ErrConflict.
+	Insert(ctx context.Context, tenant Tenant, e AccessContextWindowEnd) error
+}
+
 // GrantRequestRepository stores the requests a registered grant workflow is
 // deciding (ext.GrantWorkflow). It is a separate table from grants on purpose:
 // a request is not access, and the decision path reads nothing here.
