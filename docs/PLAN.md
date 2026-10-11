@@ -105,7 +105,7 @@ decision.
 | **M7** | identity is federated and short-lived | live | §6, §10 |
 | **M8** | audit is append-only and tamper-evident | live | §3, §7, §10 |
 | **M9** | revocation is fan-out with replay, and the kill switch | live | §3, §5, §10, §11 |
-| **M10** | JIT grants are policy inputs, not a bolt-on | live | §3, §5, §10 |
+| **M10** | JIT grants are policy inputs, not a bolt-on | live | §3, §5, §6, §10 |
 | **M11** | `401` means deny; everything else means outage | live | §3, §4, §8 |
 | **M12** | tenancy is in the schema from day one | amended by M18 | §10 |
 | **M13** | tech choices (Go, Postgres, closed enum kinds) | live | §3 |
@@ -321,8 +321,30 @@ decision.
   With an approval workflow registered (`ext.GrantWorkflow`, Enterprise E8), an
   administrator's grant is a *request* the workflow decides: requests live apart
   from grants, so a pending one is never a decision input, and a workflow's "no"
-  creates nothing. Notifications go out through a notifier interface (Slack,
-  Teams, email) that has no other job, beside Control's own webhook.
+  creates nothing.
+
+  A registered workflow also opens the door this decision's first clause
+  describes: **a developer asks for access for themselves.** A person holding
+  `grant:request` (the `requester` role) raises a request whose holder is
+  resolved from their credential, never named by them (§6), and reads and
+  withdraws their own requests the same way — without `grant:write`, which would
+  also let them revoke any grant in the tenant. The door exists **only** while a
+  workflow is registered: with none, a requester's own request is refused
+  (`grant_workflow_not_registered`) and nothing is stored, because a request
+  nobody decides is a self-grant; an administrator grants directly instead.
+  Either way the workflow is told whether the credential that raised a request
+  was minted on the break-glass path (`ext.GrantRequest.BreakGlass`, M7), so an
+  override — an IdP outage is when break-glass is used and when approvers may
+  not be able to sign in — is designed inside the workflow, never as a route
+  around it. And a decision is applied in **every tenant a proxy is live in**:
+  the poller learns a tenant when one of its proxies opens its event
+  subscription (M9, whose credential names the tenant, M22), so after a restart
+  an approval there takes effect within one poll interval, though nobody read
+  the request — and still without the cross-tenant read M18 rules out.
+  `Status` stays the only answer a workflow gives; there is no push.
+
+  Notifications go out through a notifier interface (Slack, Teams, email) that
+  has no other job, beside Control's own webhook.
 
   A grant's **origin varies and is recorded**: an administrator created it by
   hand, an approval workflow produced it (Enterprise E8), or an external system
@@ -1123,9 +1145,13 @@ for nothing.
   route is registered with an access class and, where it resolves a tenant, one
   permission, and one middleware authenticates, resolves exactly one tenant from
   the principal's scope, and checks that permission before a handler runs. A
-  handler reads the tenant from the request context or not at all, and the
-  isolation test enumerates the router rather than a hand-written list — so a
-  route added in a later phase without isolation fails it on the day it is added.
+  self-scoped route (`AccessSelf`, 0016: a requester's own grant requests, under
+  `…/me/`) then resolves the subject from the principal as well, and refuses a
+  credential with no person behind it. A handler reads the tenant — and on a
+  self route the subject — from the request context or not at all, and the
+  isolation tests enumerate the router rather than a hand-written list — so a
+  route added in a later phase without isolation fails them on the day it is
+  added.
   Its errors carry a stable code, typed parameters, an English message and the
   correlation id (M21), which is also why it owns its own 404 and 405 rather than
   letting `http.ServeMux` answer them in prose.
@@ -1146,13 +1172,20 @@ for nothing.
   body rather than by being in it.
 - **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
 - **`internal/access`** — grants: create, read and revoke them, and the requests
-  a registered approval workflow decides (M10). It is the only writer of
+  a registered approval workflow decides (M10) — an administrator's, and a
+  requester's own (0016), which it refuses while no workflow is registered and
+  reads only by a query that names the holder. It is the only writer of
   `grants` and `grant_requests`, and it owns the one translation of a grant into
   the engine's input (`PolicyGrants`), which has no branch on origin. Every act
   is audited through `audit.Emitter` inside the act's own transaction.
   Revocation publishes through `internal/revoke` twice: once at once, and once
   more after one decision budget, so a session whose authorize raced the
-  revocation is ended as well.
+  revocation is ended as well. Its workflow poller walks the tenants this
+  process has seen, because the store cannot enumerate them (M18): the
+  configured one, every tenant a proxy has opened its event subscription in —
+  reported by `internal/daemon`, which wraps the stream the south-bound listener
+  is handed, so neither that listener nor `internal/revoke` imports this
+  package — and any in which a request was raised or read.
 - **`internal/accessctx`** — external access context (M16): the provider set
   keyed by external system, the per-tenant scope bindings and their internal
   API, the push receiver that admits a window through its binding and creates
@@ -2133,8 +2166,8 @@ are among them before it evaluates:
   nothing downstream records which half was which.
 
   **The role set is fixed and lives in code** (`internal/identity/rbac.go`):
-  integration, auditor, policy-author, grant-admin, fleet-admin, admin, over a
-  closed permission enum. There is no `roles` table, because a role whose permissions
+  integration, requester, auditor, policy-author, grant-admin, fleet-admin,
+  admin, over a closed permission enum. There is no `roles` table, because a role whose permissions
   are rows is a role whose permissions can be widened by an UPDATE. What *is*
   data is who holds which role, per tenant: a role granted in tenant A confers
   nothing in tenant B, including to an administrator, and that is the binding's
@@ -2149,6 +2182,25 @@ are among them before it evaluates:
   read the tenant from the path itself. The console (0021) reaches it through the
   API, so there is no second enforcement point to keep in step.
 
+  **"Own" is an access class, never a branch in a handler (0016).** A route
+  about the caller's own records in a tenant — a requester's grant requests —
+  is `AccessSelf`: the same one tenant and one permission, and then the
+  **subject resolved from the principal**, never asserted by the caller, which
+  is M18's rule for the tenant applied to the subject. Whose record a row is
+  cannot be known until it is read, so a permission that depended on it would be
+  one the handler decides; instead no path, query or body on such a route
+  carries a subject, the store answers with the subject in its `WHERE` clause,
+  and somebody else's record is not found rather than found and refused. A
+  machine token has no own records and is refused (`subject_required`).
+
+  **Two roles hold none of the read set** every other role carries, for
+  different reasons. `integration` is somebody else's software and reads
+  nothing on purpose (M16). `requester` holds exactly `grant:request`: it asks
+  the registered workflow for access for itself, and reads and withdraws its
+  own requests through the self routes and nowhere else — so it never changes
+  anything blind, and it reads none of the tenant's audit, decisions or
+  identities, which nobody needs in order to ask.
+
   **A host names a permission; Control defines it (M15).** A host binary's
   routes (0015) name one of these codes and never declare one: declaring a code
   would also mean saying which fixed roles grant it, and then what `admin` means
@@ -2156,8 +2208,9 @@ are among them before it evaluates:
   Hoplock Enterprise's routes need and Control's own do not — `report:write`
   (changing report schedules and campaigns: `admin` only, because the auditor
   changes nothing and no narrower role's meaning covers it) and `license:read`
-  (licence and entitlement state: every role a person holds, because it is data
-  about no one, while `integration` still reads nothing). Control serves no route
+  (licence and entitlement state: every role that holds the read set, because
+  it is data about no one; `integration` and `requester` hold no read beyond
+  their one permission). Control serves no route
   that needs either. A host surface no defined code fits is an upstream request
   for a new one, never a reason to open the set.
 
@@ -2605,7 +2658,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0013 | External access context | `ext.AccessContextProvider` — `Describe`, `Probe`, `Interpret`, three answers; scope bindings per provider per tenant and their internal API; the push receiver behind the `integration` role, with replay, skew and a clamping ceiling; the probe path inside a fixed share of the authorize budget; a policy's `scopes:` declaration (`privileged`, `unanswered`); the declarative HTTP provider as the default (M16) |
 | 0014 | Tagged releases | what Enterprise pins (its E3), at every phase rather than once. M23: a release is an immutable `vMAJOR.MINOR.PATCH` tag of the one module, cut by CI from the merged PR whose `CHANGELOG.md` names a version with no tag; every phase is a release; MINOR for a phase or an incompatible change to a public package, PATCH otherwise; a bad release is retracted and never moved. `CHANGELOG.md`; `make release-check`, which diffs the derived public packages against the latest release with a pinned `apidiff` and counts an added interface method as a break, and its guard against a throwaway repository; the `release` job, the only one that writes, which tags the merge that introduced a version once every other job has passed on it, publishes a GitHub Release, and proves the version resolves through the module proxy; one version per build, Control's own even inside a host's binary; `v0.1.0`, cut by this phase's own merge (M23, M15, M14, M19). Raised by `Hoplock/enterprise#8` |
 | 0015 | Public server package & host routes | `server/`, a public package beside `ext/` and the "server package" M15 names: `server.Main`, Control's whole command line, which `cmd/hoplock-control` becomes one call to, and `server.Run`, the daemon alone, with the wiring moved to `internal/daemon`; host configuration sections accepted by the strict decoder in every subcommand and handed to the host by the daemon before its registry is sealed; a host's north-bound routes mounted in the one route table as `AccessTenant`, naming a permission Control defines (`report:write` and `license:read` added), seen through `server.CallerFrom` and answering through `server.WriteError` in the M21 envelope with codes the host declares, never a `401`; everything a host can get wrong refused before a file is read or a port bound; no cross-tenant host route; import guards holding one start-up path; `v0.2.0` (M15, M2, M18, M11, M21, M23). Raised by `Hoplock/enterprise#11` |
-| 0016 | Self-service grant requests | a requester's own door into a registered approval workflow — `grant:request`, the `requester` role, the self-scoped `…/me/grant-requests` routes whose subject is resolved from the caller, refused `403 grant_workflow_not_registered` while no workflow is registered; `ext.GrantRequest.BreakGlass`; the poller learning every tenant a proxy subscribes in, so a decision is applied across a restart without a cross-tenant read (M10, M15, M18). Raised by `Hoplock/enterprise#10`; depends only on merged phases (0011, 0012, 0013), and Enterprise's approval phase builds around it until it lands |
+| 0016 | Self-service grant requests | a requester's own door into a registered approval workflow — `grant:request`, the `requester` role holding exactly that and no read set (and so not `license:read`), the `AccessSelf` class whose subject the middleware resolves from the credential (`subject_required` for a machine token), and four routes under `/api/v1/tenants/{tenant}/me/grant-requests` — create (`202`/`201`/`403 grant_request_denied`/`502 grant_workflow_failed`, and `403 grant_workflow_not_registered` with nothing stored while no workflow is registered), list, read and cancel, where somebody else's request is `404`; the subject a `WHERE` predicate (`GetForSubject`, `ListForSubject`, migration `0010`); `ext.GrantRequest.BreakGlass`, copied from the stored request so a resubmission keeps it; the poller learning every tenant a proxy subscribes in, wired in `internal/daemon` around the event stream, so a decision is applied across a restart without a cross-tenant read; `v0.3.0` (M10, M15, M18, M7, M11, M2, M9, M22, M23). Raised by `Hoplock/enterprise#10`; depends only on merged phases (0011, 0012, 0013) |
 | 0017 | Ending an external window | `ext.WindowAssertion.Ended`: a push that ends the window its id opened, revoking the grant it became through 0012's revocation — its sessions ended with a reason Control writes, never the vendor's text, audited with the credential that pushed; read by id alone and never refused for its age, scope or window; an end that arrives before its open kept, and the open refused (`window_closed`); an expired window never rewritten as revoked; the declarative provider's `push.ended`; a probe that stops confirming still revokes nothing (M16, M10, M9, M5, M15). Raised by `Hoplock/enterprise#12`; depends only on merged phases (0009, 0012, 0013), and Enterprise's access-context phase builds around it until it lands |
 | 0018 | Cross-tenant access class | one north-bound route class that spans tenants, for a host's reads (M24, new): `AccessCrossTenant`, mounted at `/api/v1/cross-tenant/<pattern>` and nowhere else, with the middleware resolving every tenant in the caller's scope where it holds the route's permission, narrowed by a selector and never widened, a named tenant that fails refused rather than dropped, and the set handed to the handler as `server.Caller.Tenants`; `server.Route.Access`; reads only — a permission the auditor role holds; Control registers none of its own; the isolation test class extended to it (M18, M15, M2, M11, M8, M23). Raised by `Hoplock/enterprise#19`; depends only on merged phases (0011, 0015), and Enterprise's cross-tenant reporting (its 0013) builds around it until it lands |
 | 0019 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.7.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, an emptied axis judged per proxy from what each build declares its profiles offer (`Hoplock/proxy#72`, which met the cross-repo dependency `Hoplock/control#41` raised) and shown to the author as a per-build finding, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |
