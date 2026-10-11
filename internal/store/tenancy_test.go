@@ -258,6 +258,14 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 				State: GrantRequestDenied, At: nowForTest(),
 			})
 		},
+		"GrantRequests.GetForSubject": func() error {
+			_, err := s.GrantRequests().GetForSubject(ctx, "", "s", "r")
+			return err
+		},
+		"GrantRequests.ListForSubject": func() error {
+			_, err := s.GrantRequests().ListForSubject(ctx, "", "s", GrantRequestQuery{})
+			return err
+		},
 		"Decisions.ListByGrant": func() error { _, err := s.Decisions().ListByGrant(ctx, "", "g", 1); return err },
 		"Decisions.SessionsByGrant": func() error {
 			_, _, err := s.Decisions().SessionsByGrant(ctx, "", "g", 1)

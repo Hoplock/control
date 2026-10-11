@@ -55,6 +55,11 @@ const (
 	// request that named none. It is never defaulted: a default would
 	// silently pick one.
 	CodeTenantAmbiguous = "tenant_ambiguous"
+	// CodeSubjectRequired is a credential with no person behind it — a
+	// machine token — on a route about the caller's own records (AccessSelf,
+	// 0016). A token has no "own" requests, and one it raised for "itself"
+	// would name nobody.
+	CodeSubjectRequired = "subject_required"
 	// CodeNotFound is a route or a resource that is not there.
 	CodeNotFound = "not_found"
 	// CodeInvalidRequest is a body or a parameter this server will not act
@@ -84,6 +89,15 @@ const (
 	CodeGrantWorkflowFailed = "grant_workflow_failed"
 	// CodeGrantRequestNotPending is a cancel of a request already decided.
 	CodeGrantRequestNotPending = "grant_request_not_pending"
+	// CodeGrantWorkflowNotRegistered is a requester's own request on a
+	// deployment with no approval workflow registered (0016). Nothing would
+	// decide it, and a request nobody decides is a self-grant, so nothing is
+	// stored. It is a 403 and a refusal made on purpose, like 0013's
+	// push_not_supported, never a 5xx: asking again gets the same answer
+	// until a workflow is registered, and a deployment with none is working
+	// as designed (M15). It is not grant_request_denied, because no workflow
+	// said no.
+	CodeGrantWorkflowNotRegistered = "grant_workflow_not_registered"
 	// CodeGrantRevocationUndelivered is a grant that IS revoked — no new
 	// session can use it, and the revocation is recorded — whose
 	// session_kill could not be published. Revoking it again re-sends.
@@ -114,10 +128,11 @@ const (
 // one is deliberate and that none is reused for a different condition.
 var AllCodes = []string{
 	CodeUnauthenticated, CodeForbidden, CodeTenantOutOfScope, CodeTenantAmbiguous,
+	CodeSubjectRequired,
 	CodeNotFound, CodeInvalidRequest, CodeLoginRefused, CodeInternal, CodeMethodNotAllowed,
 	CodeCANotConfigured,
 	CodeGrantRequestDenied, CodeGrantWorkflowFailed, CodeGrantRequestNotPending,
-	CodeGrantRevocationUndelivered,
+	CodeGrantRevocationUndelivered, CodeGrantWorkflowNotRegistered,
 	CodeProviderNotFound, CodePushNotSupported, CodeBindingNotFound, CodeBindingDisabled,
 	CodePushNotPermitted, CodePushNotAccepted, CodeRateLimited, CodeAssertionMalformed,
 	CodeOutsideScope, CodeAssertionConflict, CodeAssertionStale, CodeAssertionFromFuture,

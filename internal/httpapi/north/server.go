@@ -251,10 +251,10 @@ func answer(w http.ResponseWriter, status int, body any) { writeJSON(w, status, 
 
 // requireTenant reads the tenant the middleware resolved.
 //
-// A handler on an AccessTenant route can rely on it being there; the branch
-// exists so that a handler wired onto the wrong access class fails loudly rather
-// than operating on the empty tenant, which `store.checkTenant` would then
-// refuse one layer down with a much less obvious message.
+// A handler on an AccessTenant or AccessSelf route can rely on it being there;
+// the branch exists so that a handler wired onto the wrong access class fails
+// loudly rather than operating on the empty tenant, which `store.checkTenant`
+// would then refuse one layer down with a much less obvious message.
 func (s *Server) requireTenant(w http.ResponseWriter, r *http.Request) (store.Tenant, bool) {
 	tenant, ok := TenantFrom(r.Context())
 	if !ok {

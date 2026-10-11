@@ -36,6 +36,10 @@ func TestEveryRoleCanReadWhatItCanChange(t *testing.T) {
 	// lookup table keyed by an enum for every member, and this table is
 	// deliberately partial — only the write permissions have a read to pair
 	// with (PLAN M13 says why that check is in the set at all).
+	//
+	// grant:request has no pair, because no tenant-wide read matches it: a
+	// requester reads exactly its own requests, through the same self-scoped
+	// routes it changes them through (0016), and never the tenant's.
 	pairs := []struct{ write, read identity.Permission }{
 		{identity.PermPolicyWrite, identity.PermPolicyRead},
 		{identity.PermPolicyPublish, identity.PermPolicyRead},
@@ -60,7 +64,7 @@ func TestTheAuditorChangesNothing(t *testing.T) {
 		identity.PermPolicyWrite, identity.PermPolicyPublish,
 		identity.PermGrantWrite, identity.PermGrantApprove,
 		identity.PermFleetWrite, identity.PermIdentityWrite, identity.PermCARotate,
-		identity.PermReportWrite,
+		identity.PermReportWrite, identity.PermGrantRequest,
 	}
 	for _, perm := range writes {
 		if identity.RoleAuditor.Can(perm) {
@@ -102,9 +106,12 @@ func TestReportWriteIsTheAdminsAlone(t *testing.T) {
 	}
 }
 
-func TestLicenseReadIsHeldByEveryRoleAPersonHolds(t *testing.T) {
+// Every role but the two that hold no read set: integration, which is somebody
+// else's software, and requester, which reads only its own requests (0016).
+func TestLicenseReadIsHeldByEveryRoleThatReadsTheTenant(t *testing.T) {
 	for _, role := range identity.AllRoles {
-		if got, want := role.Can(identity.PermLicenseRead), role != identity.RoleIntegration; got != want {
+		want := role != identity.RoleIntegration && role != identity.RoleRequester
+		if got := role.Can(identity.PermLicenseRead); got != want {
 			t.Errorf("%s holds license:read = %v, want %v", role, got, want)
 		}
 	}
@@ -228,5 +235,32 @@ func TestTheIntegrationRoleCanOnlyPush(t *testing.T) {
 	}
 	if r, err := identity.ParseRole("integration"); err != nil || r != identity.RoleIntegration {
 		t.Errorf("ParseRole(integration) = %v, %v", r, err)
+	}
+}
+
+// The requester asks for access for itself and does nothing else (0016). It
+// holds no read set: it reads its own requests through the routes it raises
+// them through, and the tenant's audit, decisions and identities are not
+// needed to ask.
+func TestTheRequesterRoleCanOnlyAsk(t *testing.T) {
+	got := identity.RoleRequester.Permissions()
+	if !slices.Equal(got, []identity.Permission{identity.PermGrantRequest}) {
+		t.Errorf("the requester role holds %v, want only %s", got, identity.PermGrantRequest)
+	}
+	for _, role := range identity.AllRoles {
+		if role != identity.RoleRequester && role != identity.RoleAdmin && role.Can(identity.PermGrantRequest) {
+			t.Errorf("%s holds %s; only the requester (and the admin) may", role, identity.PermGrantRequest)
+		}
+	}
+	if !identity.RoleAdmin.Can(identity.PermGrantRequest) {
+		t.Error("the admin does not hold grant:request")
+	}
+	if r, err := identity.ParseRole("requester"); err != nil || r != identity.RoleRequester {
+		t.Errorf("ParseRole(requester) = %v, %v", r, err)
+	}
+	// Least privilege first: after integration, before auditor.
+	i := slices.Index(identity.AllRoles, identity.RoleRequester)
+	if i < 1 || identity.AllRoles[i-1] != identity.RoleIntegration || identity.AllRoles[i+1] != identity.RoleAuditor {
+		t.Errorf("AllRoles = %v, want requester between integration and auditor", identity.AllRoles)
 	}
 }

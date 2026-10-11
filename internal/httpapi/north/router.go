@@ -49,6 +49,19 @@ const (
 	// that principal's scope, and checks one permission in that tenant. It
 	// is the class almost every route belongs to.
 	AccessTenant
+	// AccessSelf is AccessTenant narrowed to the caller (0016): a live
+	// principal WITH A PERSON BEHIND IT, exactly one tenant resolved and one
+	// permission checked as AccessTenant does, and then the subject resolved
+	// from the principal and put on the context ([SubjectFrom]). It is for a
+	// caller's own records in a tenant — a requester's own grant requests.
+	//
+	// "Own" is part of the route's definition, never a branch inside a
+	// handler: whose record it is cannot be known until the row is read, and
+	// a permission that depended on that would be one the handler decides
+	// (§6). So the subject is resolved here from the credential, the way M18
+	// resolves the tenant, and no path, query or body carries one. A machine
+	// token has no own records and is refused (`subject_required`).
+	AccessSelf
 )
 
 // String renders the class for logs and for the route listing.
@@ -60,6 +73,8 @@ func (a Access) String() string {
 		return "authenticated"
 	case AccessTenant:
 		return "tenant"
+	case AccessSelf:
+		return "self"
 	}
 	return "unknown"
 }
@@ -85,8 +100,8 @@ type Route struct {
 	Pattern string
 	// Access is the class. See the constants.
 	Access Access
-	// Permission is required when Access is AccessTenant, and must be empty
-	// otherwise: a permission on an anonymous route is a permission nobody
+	// Permission is required when Access is AccessTenant or AccessSelf, and
+	// must be empty otherwise: a permission on an anonymous route is a permission nobody
 	// checks, which reads like protection and is not.
 	Permission identity.Permission
 	// Summary is one line for the route listing and the startup log.
@@ -165,7 +180,7 @@ func (r *Router) Register(route Route) error {
 		return fmt.Errorf("httpapi/north: route %s %s has no handler", route.Method, route.Pattern)
 	}
 	switch route.Access {
-	case AccessTenant:
+	case AccessTenant, AccessSelf:
 		if route.Permission == "" {
 			return fmt.Errorf(
 				"httpapi/north: route %s %s resolves a tenant but names no permission; an unchecked route is not a protected one",

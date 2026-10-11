@@ -5,6 +5,7 @@ package north
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,10 +28,24 @@ import (
 // with the grant when it exists, 202 with the request while it is pending, 403
 // `grant_request_denied` when the workflow said no. There is no route around a
 // registered workflow — an administrator's grant goes through it.
+//
+// A requester reaches the same workflow through a door of its own (0016):
+// `…/me/grant-requests`, under `grant:request`, where the holder is the caller
+// and the routes are AccessSelf. It answers as an administrator's create does
+// with a workflow registered, and with none it is refused
+// (`grant_workflow_not_registered`): a request nobody decides is a self-grant.
 
-// grantRequestBody is a create.
+// grantRequestBody is an administrator's create: who would hold the grant, and
+// what it would be.
 type grantRequestBody struct {
-	Subject     string         `json:"subject"`
+	Subject string `json:"subject"`
+	grantSpecBody
+}
+
+// grantSpecBody is what a grant would be, without its holder. It is the whole
+// of a requester's own create (0016), whose holder is the caller: it has no
+// `subject` field, so strict decoding refuses a body that names one.
+type grantSpecBody struct {
 	Scope       grantScopeView `json:"scope"`
 	NotBefore   time.Time      `json:"not_before"`
 	ExpiresAt   time.Time      `json:"expires_at"`
@@ -38,6 +53,29 @@ type grantRequestBody struct {
 	Reason      string         `json:"reason"`
 	ReasonCode  string         `json:"reason_code"`
 	ExternalRef string         `json:"external_ref"`
+}
+
+// spec renders the body for the grant service, which validates it.
+func (b grantSpecBody) spec() (access.Spec, error) {
+	spec := access.Spec{
+		Scope: access.Scope{
+			Name: b.Scope.Name, Targets: b.Scope.Targets,
+			Labels: b.Scope.Labels, Zones: b.Scope.Zones,
+		},
+		NotBefore:   b.NotBefore,
+		ExpiresAt:   b.ExpiresAt,
+		Reason:      b.Reason,
+		ReasonCode:  b.ReasonCode,
+		ExternalRef: b.ExternalRef,
+	}
+	if raw := strings.TrimSpace(b.Duration); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return access.Spec{}, &access.ValidationError{Field: "duration", Problem: access.ProblemInvalid}
+		}
+		spec.Duration = d
+	}
+	return spec, nil
 }
 
 type grantScopeView struct {
@@ -163,26 +201,12 @@ func (s *Server) handleGrantCreate(w http.ResponseWriter, r *http.Request) {
 		s.invalid(w, r, "body", access.ProblemInvalid, "")
 		return
 	}
-	spec := access.Spec{
-		Subject: body.Subject,
-		Scope: access.Scope{
-			Name: body.Scope.Name, Targets: body.Scope.Targets,
-			Labels: body.Scope.Labels, Zones: body.Scope.Zones,
-		},
-		NotBefore:   body.NotBefore,
-		ExpiresAt:   body.ExpiresAt,
-		Reason:      body.Reason,
-		ReasonCode:  body.ReasonCode,
-		ExternalRef: body.ExternalRef,
+	spec, err := body.spec()
+	if err != nil {
+		s.grantFailure(w, r, "create grant", err)
+		return
 	}
-	if strings.TrimSpace(body.Duration) != "" {
-		d, err := time.ParseDuration(strings.TrimSpace(body.Duration))
-		if err != nil {
-			s.invalid(w, r, "duration", access.ProblemInvalid, "")
-			return
-		}
-		spec.Duration = d
-	}
+	spec.Subject = body.Subject
 
 	out, err := s.grants.Create(r.Context(), tenant, actor, spec)
 	if err != nil {
@@ -391,14 +415,29 @@ func (s *Server) handleGrantRequestCancel(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	body, ok := s.cancelBodyFrom(w, r)
+	if !ok {
+		return
+	}
+	out, err := s.grants.Cancel(r.Context(), tenant, actor, r.PathValue("request"), body.Reason)
+	s.answerCancel(w, r, tenant, out, err)
+}
+
+// cancelBodyFrom reads a cancel's optional body.
+func (s *Server) cancelBodyFrom(w http.ResponseWriter, r *http.Request) (cancelBody, bool) {
 	var body cancelBody
 	if r.ContentLength != 0 {
 		if err := decodeJSON(r, &body); err != nil {
 			s.invalid(w, r, "body", access.ProblemInvalid, "")
-			return
+			return cancelBody{}, false
 		}
 	}
-	out, err := s.grants.Cancel(r.Context(), tenant, actor, r.PathValue("request"), body.Reason)
+	return body, true
+}
+
+// answerCancel renders what a cancel produced: the closed request, or a
+// request that had already been decided.
+func (s *Server) answerCancel(w http.ResponseWriter, r *http.Request, tenant store.Tenant, out access.Created, err error) {
 	if errors.Is(err, access.ErrNotPending) {
 		state := ""
 		if out.Request != nil {
@@ -416,6 +455,142 @@ func (s *Server) handleGrantRequestCancel(w http.ResponseWriter, r *http.Request
 		return
 	}
 	answer(w, http.StatusOK, s.outcomeView(tenant, out))
+}
+
+// --- a requester's own (0016) ---------------------------------------------
+//
+// Every handler below runs on an AccessSelf route: the tenant AND the subject
+// were resolved by the middleware, and the subject is read from the context
+// and from nowhere else. Somebody else's request answers 404 on read and on
+// cancel — the same answer as one that does not exist — because the service
+// reads it with the subject in the query; a 403 would confirm it exists.
+
+// selfActor is the actor on a self route: the authenticated principal, with
+// the subject the middleware resolved for it.
+func (s *Server) selfActor(w http.ResponseWriter, r *http.Request) (access.Actor, string, bool) {
+	subject, ok := SubjectFrom(r.Context())
+	if !ok {
+		s.fail(w, r, "resolve subject",
+			fmt.Errorf("httpapi/north: %s %s ran without a resolved subject; its access class is wrong",
+				r.Method, r.URL.Path))
+		return access.Actor{}, "", false
+	}
+	actor, ok := s.actorFrom(w, r)
+	if !ok {
+		return access.Actor{}, "", false
+	}
+	actor.Subject = subject
+	return actor, subject, true
+}
+
+func (s *Server) handleOwnRequestCreate(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	actor, _, ok := s.selfActor(w, r)
+	if !ok {
+		return
+	}
+	var body grantSpecBody
+	if err := decodeJSON(r, &body); err != nil {
+		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		return
+	}
+	spec, err := body.spec()
+	if err != nil {
+		s.grantFailure(w, r, "request own grant", err)
+		return
+	}
+	out, err := s.grants.RequestOwn(r.Context(), tenant, actor, spec)
+	if errors.Is(err, access.ErrNoWorkflow) {
+		writeError(w, http.StatusForbidden, Error{
+			Code: CodeGrantWorkflowNotRegistered, CorrelationID: CorrelationIDFrom(r.Context()),
+			Message: "no approval workflow is registered to decide a request for yourself, so none was taken; " +
+				"a grant administrator can grant access directly",
+			Parameters: map[string]any{"tenant": tenant.String()},
+		})
+		return
+	}
+	if err != nil {
+		s.grantFailure(w, r, "request own grant", err)
+		return
+	}
+	s.answerOutcome(w, r, tenant, out)
+}
+
+func (s *Server) handleOwnRequestList(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	_, subject, ok := s.selfActor(w, r)
+	if !ok {
+		return
+	}
+	var q store.GrantRequestQuery
+	if state := strings.TrimSpace(r.URL.Query().Get("state")); state != "" {
+		switch st := store.GrantRequestState(state); st {
+		case store.GrantRequestPending, store.GrantRequestApproved, store.GrantRequestDenied,
+			store.GrantRequestExpired, store.GrantRequestCancelled, store.GrantRequestFailed:
+			q.State = st
+		default:
+			s.invalid(w, r, "state", access.ProblemInvalid, "")
+			return
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			s.invalid(w, r, "limit", access.ProblemInvalid, "")
+			return
+		}
+		q.Limit = n
+	}
+	rows, err := s.grants.OwnRequests(r.Context(), tenant, subject, q)
+	if err != nil {
+		s.grantFailure(w, r, "list own grant requests", err)
+		return
+	}
+	out := make([]requestView, 0, len(rows))
+	for _, req := range rows {
+		out = append(out, viewRequest(tenant, req, s.grants.WorkflowProvider()))
+	}
+	answer(w, http.StatusOK, map[string]any{"tenant": tenant.String(), "requests": out})
+}
+
+func (s *Server) handleOwnRequestGet(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	_, subject, ok := s.selfActor(w, r)
+	if !ok {
+		return
+	}
+	out, err := s.grants.OwnRequest(r.Context(), tenant, subject, r.PathValue("request"))
+	if err != nil {
+		s.grantFailure(w, r, "read own grant request", err)
+		return
+	}
+	answer(w, http.StatusOK, s.outcomeView(tenant, out))
+}
+
+func (s *Server) handleOwnRequestCancel(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	actor, _, ok := s.selfActor(w, r)
+	if !ok {
+		return
+	}
+	body, ok := s.cancelBodyFrom(w, r)
+	if !ok {
+		return
+	}
+	out, err := s.grants.CancelOwn(r.Context(), tenant, actor, r.PathValue("request"), body.Reason)
+	s.answerCancel(w, r, tenant, out, err)
 }
 
 // grantFailure classifies an error from the grant service: a refusal the

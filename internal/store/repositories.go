@@ -230,6 +230,14 @@ type GrantRequestRepository interface {
 	// not pending is ErrConflict: a decision is taken once, and two nodes
 	// polling the same workflow cannot both apply one.
 	Resolve(ctx context.Context, tenant Tenant, requestID string, r GrantRequestResolution) error
+	// GetForSubject returns one request, and only when subjectID is the
+	// subject it would grant to (0016). Somebody else's request is
+	// ErrNotFound, exactly as one that does not exist: the subject is a
+	// predicate in the query, never a check on the row it returned.
+	GetForSubject(ctx context.Context, tenant Tenant, subjectID, requestID string) (GrantRequest, error)
+	// ListForSubject returns the requests that would grant to subjectID,
+	// newest first, bounded (GrantRequestQuery).
+	ListForSubject(ctx context.Context, tenant Tenant, subjectID string, q GrantRequestQuery) ([]GrantRequest, error)
 }
 
 // UIDCursorRepository owns the uid non-reuse floor (PLAN §4).

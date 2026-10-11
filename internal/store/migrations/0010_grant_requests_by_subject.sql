@@ -1,0 +1,21 @@
+-- 0010 — a requester's own requests (prompt 0016, PLAN M10, M18).
+--
+-- Scope: one index on `grant_requests`. No column and no table: what 0016 adds
+-- is a way to read the requests ONE SUBJECT holds, and the rows already say who
+-- that is.
+--
+-- ---------------------------------------------------------------------------
+-- THE SUBJECT IS A PREDICATE, NEVER A FILTER APPLIED AFTER THE READ
+-- ---------------------------------------------------------------------------
+--
+-- A requester reads and withdraws their own requests through routes whose
+-- subject is resolved from the credential, never named by the caller (0016's
+-- `AccessSelf`). The store answers those reads with `subject_id` in the WHERE
+-- clause, for the same reason M18 puts the tenant there: a read that fetched
+-- the tenant's requests and dropped somebody else's in Go is one forgotten `if`
+-- away from handing them over. This index is what makes that predicate cheap.
+--
+-- Newest first, because that is the order the list is read in: what did I ask
+-- for, and what happened to it.
+CREATE INDEX grant_requests_by_subject_idx
+    ON grant_requests (tenant, subject_id, requested_at DESC);

@@ -342,8 +342,14 @@ func (s *Service) Request(ctx context.Context, tenant store.Tenant, requestID st
 	if err != nil {
 		return Created{}, err
 	}
+	return s.read(ctx, tenant, req)
+}
+
+// read answers a request that has been found, advancing it first while it is
+// pending.
+func (s *Service) read(ctx context.Context, tenant store.Tenant, req store.GrantRequest) (Created, error) {
 	if req.State != store.GrantRequestPending {
-		return s.current(ctx, tenant, requestID)
+		return s.current(ctx, tenant, req.ID)
 	}
 	s.Track(tenant)
 	out, err := s.advance(ctx, tenant, req)
@@ -353,7 +359,7 @@ func (s *Service) Request(ctx context.Context, tenant store.Tenant, requestID st
 		s.log.WarnContext(ctx, "a pending grant request could not be advanced on read",
 			"event", "grant_request_advance_failed",
 			"tenant", tenant.String(),
-			"request_id", requestID,
+			"request_id", req.ID,
 			"error", err.Error(),
 		)
 		return Created{Request: &req, Unconfirmed: req.WorkflowRef == ""}, nil
@@ -377,8 +383,13 @@ func (s *Service) Cancel(ctx context.Context, tenant store.Tenant, actor Actor, 
 	if err != nil {
 		return Created{}, err
 	}
+	return s.cancel(ctx, tenant, actor, req, reason)
+}
+
+// cancel withdraws a request that has been found, telling the workflow.
+func (s *Service) cancel(ctx context.Context, tenant store.Tenant, actor Actor, req store.GrantRequest, reason string) (Created, error) {
 	if req.State != store.GrantRequestPending {
-		out, err := s.current(ctx, tenant, requestID)
+		out, err := s.current(ctx, tenant, req.ID)
 		if err != nil {
 			return Created{}, err
 		}
@@ -392,7 +403,7 @@ func (s *Service) Cancel(ctx context.Context, tenant store.Tenant, actor Actor, 
 			s.log.WarnContext(ctx, "the grant workflow was not told a request was cancelled",
 				"event", "grant_workflow_cancel_failed",
 				"tenant", tenant.String(),
-				"request_id", requestID,
+				"request_id", req.ID,
 				"error", err.Error(),
 			)
 		}
@@ -546,6 +557,9 @@ func (s *Service) workflowRequest(ctx context.Context, tenant store.Tenant, req 
 		ReasonCode:  req.ReasonCode,
 		ReasonText:  req.Reason,
 		RequestedBy: requester,
+		// From the STORED request, so a request the poller resubmits after
+		// an outage still carries it, though the poller's actor is empty.
+		BreakGlass:  req.RequestedBy.BreakGlass,
 		RequestedAt: req.RequestedAt,
 		ExternalRef: req.ExternalRef,
 	}, nil

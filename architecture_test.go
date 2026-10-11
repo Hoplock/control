@@ -171,6 +171,59 @@ func TestExtImportsNothingInternal(t *testing.T) {
 	}
 }
 
+// The south-bound listener and the revocation broker do not import the grant
+// service (0016). The workflow poller learns a tenant when one of its proxies
+// opens its event subscription, and that report is wired in internal/daemon by
+// wrapping the stream the listener is handed: the authorize path gains nothing
+// (M5), and the two packages a proxy talks to stay ignorant of grants. Tests are
+// scanned too — a test that needs the grant service there is a test of wiring
+// that lives somewhere else.
+func grantServiceImportsFromTheSouth(t *testing.T, root string) []importViolation {
+	t.Helper()
+	var found []importViolation
+	for _, dir := range []string{"internal/httpapi/south", "internal/revoke"} {
+		path := filepath.Join(root, filepath.FromSlash(dir))
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		for _, v := range scanImports(t, path, func(p string) bool {
+			return underModule(p, modulePath+"/internal/access")
+		}) {
+			v.File = dir + "/" + filepath.ToSlash(v.File)
+			found = append(found, v)
+		}
+	}
+	return found
+}
+
+func TestTheSouthBoundSideDoesNotImportTheGrantService(t *testing.T) {
+	for _, v := range grantServiceImportsFromTheSouth(t, ".") {
+		t.Errorf("%s imports %s: the poller learns a proxy's tenant through the event stream "+
+			"internal/daemon wraps, so neither the south-bound listener nor the broker needs the "+
+			"grant service (0016, M5).", v.File, v.Import)
+	}
+}
+
+func TestTheGrantServiceGuardActuallyCatchesOne(t *testing.T) {
+	dir := t.TempDir()
+	for rel, pkg := range map[string]string{
+		"internal/httpapi/south/x.go": "south",
+		"internal/revoke/y_test.go":   "revoke_test",
+	} {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		source := "package " + pkg + "\n\nimport _ \"" + modulePath + "/internal/access\"\n"
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	if got := grantServiceImportsFromTheSouth(t, dir); len(got) != 2 {
+		t.Fatalf("the guard found %+v, want both planted imports", got)
+	}
+}
+
 // phaseNumber matches a four-digit phase number as PLAN §10 and the prompt
 // filenames spell one.
 var phaseNumber = regexp.MustCompile(`\b0\d{3}\b`)

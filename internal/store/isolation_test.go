@@ -86,6 +86,10 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 			return err
 		},
 		"GrantRequests.Get": func() error { _, err := st.GrantRequests().Get(ctx, tenantA, bOnly); return err },
+		"GrantRequests.GetForSubject": func() error {
+			_, err := st.GrantRequests().GetForSubject(ctx, tenantA, bOnly, bOnly)
+			return err
+		},
 		"GrantRequests.Resolve": func() error {
 			return st.GrantRequests().Resolve(ctx, tenantA, bOnly, store.GrantRequestResolution{
 				State: store.GrantRequestDenied, At: now,
@@ -129,6 +133,10 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 		},
 		"Grants.List": func() (int, error) {
 			got, err := st.Grants().List(ctx, tenantA, store.GrantQuery{SubjectID: bOnly})
+			return len(got), err
+		},
+		"GrantRequests.ListForSubject": func() (int, error) {
+			got, err := st.GrantRequests().ListForSubject(ctx, tenantA, bOnly, store.GrantRequestQuery{})
 			return len(got), err
 		},
 		"GrantRequests.ListPending": func() (int, error) {

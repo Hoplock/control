@@ -167,6 +167,45 @@ func (s *Server) routes() []Route {
 			Handler:    s.handleAccessContextPush,
 		},
 
+		// --- a requester's own (M10, 0016) ---
+		//
+		// A developer asks the registered approval workflow for access for
+		// themselves, without holding grant:write — which would also let
+		// them revoke any grant and cancel any request in the tenant. The
+		// family is AccessSelf: the holder is the caller, resolved from the
+		// credential by the middleware, and no path, query or body names
+		// one. With no workflow registered the create is refused
+		// (grant_workflow_not_registered), because a request nobody decides
+		// is a self-grant. The tenant-wide routes above are untouched.
+		{
+			Method: "POST", Pattern: APIPrefix + "/tenants/{tenant}/me/grant-requests",
+			Access:     AccessSelf,
+			Permission: identity.PermGrantRequest,
+			Summary:    "ask the registered workflow for a grant for yourself",
+			Handler:    s.handleOwnRequestCreate,
+		},
+		{
+			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/me/grant-requests",
+			Access:     AccessSelf,
+			Permission: identity.PermGrantRequest,
+			Summary:    "your own requests, newest first",
+			Handler:    s.handleOwnRequestList,
+		},
+		{
+			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/me/grant-requests/{request}",
+			Access:     AccessSelf,
+			Permission: identity.PermGrantRequest,
+			Summary:    "one of your own, asked about again while it is pending",
+			Handler:    s.handleOwnRequestGet,
+		},
+		{
+			Method: "POST", Pattern: APIPrefix + "/tenants/{tenant}/me/grant-requests/{request}/cancel",
+			Access:     AccessSelf,
+			Permission: identity.PermGrantRequest,
+			Summary:    "withdraw one of your own pending requests",
+			Handler:    s.handleOwnRequestCancel,
+		},
+
 		// --- the claim mapping (read; authoring is 0019's) ---
 		{
 			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/identity/claim-mapping",
