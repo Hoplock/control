@@ -207,6 +207,13 @@ type DeclarativeAuthConfig struct {
 
 // DeclarativePushConfig maps what an external system pushes onto a window, by
 // JSON path. ID, Subject, Targets and WindowEnd are required.
+//
+// Ended, when set, says which pushes END a window rather than open one (0017):
+// assertions over the push body, ALL of which must hold, in the vocabulary a
+// probe's `confirm` uses. A push that reads as an end is read by ID alone, plus
+// Reference, IssuedAt and AdditionalContext when they are mapped; Subject,
+// Targets, Scope and the window are not read, because a vendor's "cancelled"
+// body need not carry them. Absent or empty, every push is an open.
 type DeclarativePushConfig struct {
 	ID                string `yaml:"id"`
 	Reference         string `yaml:"reference"`
@@ -217,6 +224,10 @@ type DeclarativePushConfig struct {
 	WindowEnd         string `yaml:"window_end"`
 	IssuedAt          string `yaml:"issued_at"`
 	AdditionalContext string `yaml:"additional_context"`
+	// Ended are the assertions that make a push an end. Each names a path
+	// and exactly one predicate, and none holds a placeholder: a push names
+	// no access to expand one against.
+	Ended []DeclarativeAssertion `yaml:"ended"`
 }
 
 func (a *AccessContextConfig) applyDefaults() {
@@ -355,9 +366,31 @@ func (a AccessContextConfig) validate(decision DecisionConfig, grants GrantsConf
 					return &FieldError{Field: at("push." + name), Msg: "is required"}
 				}
 			}
+			for j, c := range pu.Ended {
+				switch {
+				case strings.TrimSpace(c.Path) == "" || c.predicates() != 1:
+					return &FieldError{Field: at(fmt.Sprintf("push.ended[%d]", j)),
+						Msg: "names a path and exactly one of equals, not_equals, one_of, exists, contains"}
+				case c.placeholder():
+					return &FieldError{Field: at(fmt.Sprintf("push.ended[%d]", j)),
+						Msg: "holds a placeholder (`{{`), and a push names no access to expand one against"}
+				}
+			}
 		}
 	}
 	return nil
+}
+
+// placeholder reports whether any value the assertion compares holds a
+// template placeholder.
+func (c DeclarativeAssertion) placeholder() bool {
+	values := slices.Clone(c.OneOf)
+	for _, v := range []*string{c.Equals, c.NotEquals, c.Contains} {
+		if v != nil {
+			values = append(values, *v)
+		}
+	}
+	return slices.ContainsFunc(values, func(v string) bool { return strings.Contains(v, "{{") })
 }
 
 func (c DeclarativeAssertion) predicates() int {

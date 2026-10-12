@@ -26,6 +26,13 @@ import (
 // A refusal is a decision about the push and is answered as one, with
 // accessctx's code; anything else is an outage, CodeInternal, and the
 // integration may retry (M11).
+//
+// An END (0017) is answered 200 whatever it did — revoked, already ended, or
+// recorded for an id no window was opened under — after the settle pass when
+// it revokes, as the revoke route is: the 200 is the integration's evidence
+// that the sessions were told. "Recorded" is an answer, not an error: a vendor
+// whose webhook is refused retries it, or disables the webhook, and an error
+// status here would cost the next end.
 
 // pushView is what an admitted push is answered with: the grant the window
 // became, and how it was bounded. Not the whole grant — the integration role
@@ -39,6 +46,16 @@ type pushView struct {
 	Replayed       bool      `json:"replayed"`
 	Clamped        bool      `json:"clamped"`
 	CeilingSeconds int64     `json:"ceiling_seconds,omitempty"`
+}
+
+// endView is what an end is answered with: which window it named, and what
+// became of it. Like pushView, it answers the integration's own act and
+// nothing more.
+type endView struct {
+	AssertionID string `json:"assertion_id"`
+	Outcome     string `json:"outcome"`         // revoked | already_ended | recorded
+	Grant       string `json:"grant,omitempty"` // the grant the window became, if it became one
+	State       string `json:"state,omitempty"` // that grant's state now
 }
 
 func (s *Server) handleAccessContextPush(w http.ResponseWriter, r *http.Request) {
@@ -77,8 +94,27 @@ func (s *Server) handleAccessContextPush(w http.ResponseWriter, r *http.Request)
 	case errors.As(err, &verr):
 		s.invalid(w, r, verr.Field, verr.Problem, verr.Limit)
 		return
+	case access.IsUndelivered(err):
+		// An end whose revocation is recorded and not published, answered
+		// exactly as the revoke route answers one.
+		writeError(w, http.StatusServiceUnavailable, Error{
+			Code: CodeGrantRevocationUndelivered, CorrelationID: CorrelationIDFrom(r.Context()),
+			Message: "the window's grant is revoked and no new session can use it, but ending its sessions could " +
+				"not be published; push the end again to re-send",
+			Parameters: map[string]any{"grant_id": res.Grant.ID, "revoked": true},
+		})
+		return
 	case err != nil:
 		s.fail(w, r, "access-context push", err)
+		return
+	}
+
+	if res.Ended != "" {
+		view := endView{AssertionID: res.AssertionID, Outcome: string(res.Ended)}
+		if res.Grant.ID != "" {
+			view.Grant, view.State = res.Grant.ID, string(res.Grant.State(s.now()))
+		}
+		writeJSON(w, http.StatusOK, view)
 		return
 	}
 

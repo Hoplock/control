@@ -503,6 +503,26 @@ type AccessContextBinding struct {
 	UpdatedAt time.Time
 }
 
+// AccessContextWindowEnd is an end an external system pushed for a window that
+// never became a grant (M16, 0017): it arrived before its open, or for an id
+// the system never opened. It is kept so that an open pushed under the id
+// afterwards is refused — an ended window stays ended, whatever order the
+// pushes arrived in.
+type AccessContextWindowEnd struct {
+	// System is the provider's name, and AssertionID the id it ended. The
+	// pair is the key, as it is on a grant.
+	System      string
+	AssertionID string
+	// Reference is the end's own reference, when it stated one, and IssuedAt
+	// when it says it ended the window. Both are recorded, never judged.
+	Reference string
+	IssuedAt  time.Time
+	// EndedAt is when this server kept it.
+	EndedAt time.Time
+	// EndedBy is the credential that pushed it.
+	EndedBy GrantActor
+}
+
 // GrantState is where a grant stands at an instant. Three of the four are a
 // function of the clock and are never stored: a column somebody has to update
 // is a column a stuck job leaves saying "active".

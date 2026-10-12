@@ -52,6 +52,19 @@ type ExternalSpec struct {
 	Clamped bool
 }
 
+// ExternalEnd is what an external system said when it ended a window
+// (M16). It is recorded with the revocation and never shown to the holder.
+type ExternalEnd struct {
+	// Reference is the end's own reference, when it stated one.
+	Reference string
+	// IssuedAt is when the external system says it ended the window. It is
+	// recorded, never judged.
+	IssuedAt time.Time
+	// AdditionalContext is a JSON string or a JSON object, verbatim, or
+	// empty.
+	AdditionalContext json.RawMessage
+}
+
 // ExternalAct is what the audit record of an external grant carries beyond the
 // grant itself: the bound that was applied, and whether it bit.
 type ExternalAct struct {
@@ -70,6 +83,13 @@ type ExternalAct struct {
 // two, and a revocation is not undone by the external system saying it again.
 // The caller compares what was pushed with what is stored; this method does
 // not, because "the same id with different content" is the caller's to refuse.
+//
+// An id its system has already ENDED — an end that arrived before this open
+// (0017) — is refused with an *EndedError wrapping ErrAssertionEnded, with
+// nothing inserted or recorded. That check is made under the assertion's lock,
+// the first thing the transaction takes, which the end path holds while it
+// reads the grant and keeps the end: so a grant made under an id and an end kept
+// for it never both exist, however an open and an end race.
 func (s *Service) CreateExternal(ctx context.Context, tenant store.Tenant, actor Actor, spec ExternalSpec) (store.Grant, bool, error) {
 	if err := actor.check(); err != nil {
 		return store.Grant{}, false, err
@@ -92,6 +112,18 @@ func (s *Service) CreateExternal(ctx context.Context, tenant store.Tenant, actor
 	act := &ExternalAct{Ceiling: spec.Ceiling, Clamped: spec.Clamped}
 
 	err = s.store.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		// The assertion's lock first, before the audit append takes the
+		// chain's: one order everywhere is what keeps the open and the end
+		// from deadlocking.
+		if err := tx.AccessContextWindowEnds().Lock(ctx, tenant, g.External.System, g.External.AssertionID); err != nil {
+			return err
+		}
+		switch ended, err := tx.AccessContextWindowEnds().Get(ctx, tenant, g.External.System, g.External.AssertionID); {
+		case err == nil:
+			return &EndedError{End: ended}
+		case !store.IsNotFound(err):
+			return err
+		}
 		if err := tx.Grants().Insert(ctx, tenant, g); err != nil {
 			return err
 		}

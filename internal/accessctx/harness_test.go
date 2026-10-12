@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -78,6 +79,7 @@ rules:
 type harness struct {
 	t         *testing.T
 	store     *store.Store
+	revoker   *recordingRevoker
 	decisions *decision.Service
 	grants    *access.Service
 	context   *accessctx.Service
@@ -205,8 +207,9 @@ func newHarness(t *testing.T, opts ...option) *harness {
 	if err != nil {
 		t.Fatalf("emitter: %v", err)
 	}
+	h.revoker = &recordingRevoker{next: bus}
 	h.grants, err = access.New(access.Options{
-		Store: st, Recorder: emitter, Revoker: bus, Settle: time.Millisecond, Logger: log, Now: h.now,
+		Store: st, Recorder: emitter, Revoker: h.revoker, Settle: time.Millisecond, Logger: log, Now: h.now,
 	})
 	if err != nil {
 		t.Fatalf("access: %v", err)
@@ -424,7 +427,7 @@ func (f *fakeProvider) Interpret(_ context.Context, p ext.AccessContextPush) (ex
 	return ext.WindowAssertion{
 		ID: body.ID, Reference: body.Reference, Subject: body.Subject, Targets: body.Targets, Scope: body.Scope,
 		Window:   ext.Window{NotBefore: body.NotBefore, NotAfter: body.NotAfter},
-		IssuedAt: body.IssuedAt, AdditionalContext: body.Additional,
+		IssuedAt: body.IssuedAt, AdditionalContext: body.Additional, Ended: body.Ended,
 	}, nil
 }
 
@@ -450,6 +453,7 @@ type pushBody struct {
 	NotAfter   time.Time       `json:"not_after,omitzero"`
 	IssuedAt   time.Time       `json:"issued_at,omitzero"`
 	Additional json.RawMessage `json:"additional_context,omitempty"`
+	Ended      bool            `json:"ended,omitempty"`
 }
 
 func (b pushBody) bytes() []byte {
@@ -488,6 +492,82 @@ func confirm(ref string, until time.Time) func(ext.AccessContextQuery) (ext.Acce
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// recordingRevoker passes publications to the real bus and remembers them, and
+// can be made to refuse them — the stream that is down.
+type recordingRevoker struct {
+	next access.Revoker
+
+	mu    sync.Mutex
+	fail  error
+	kills []kill
+	invs  []revoke.Invalidation
+}
+
+type kill struct {
+	aud revoke.Audience
+	k   revoke.Kill
+}
+
+func (r *recordingRevoker) Kill(ctx context.Context, tenant store.Tenant, aud revoke.Audience, k revoke.Kill) (revoke.Receipt, error) {
+	r.mu.Lock()
+	if r.fail != nil {
+		defer r.mu.Unlock()
+		return revoke.Receipt{}, r.fail
+	}
+	r.kills = append(r.kills, kill{aud: aud, k: k})
+	r.mu.Unlock()
+	return r.next.Kill(ctx, tenant, aud, k)
+}
+
+func (r *recordingRevoker) Invalidate(ctx context.Context, tenant store.Tenant, aud revoke.Audience, inv revoke.Invalidation) (revoke.Receipt, error) {
+	r.mu.Lock()
+	if r.fail != nil {
+		defer r.mu.Unlock()
+		return revoke.Receipt{}, r.fail
+	}
+	r.invs = append(r.invs, inv)
+	r.mu.Unlock()
+	return r.next.Invalidate(ctx, tenant, aud, inv)
+}
+
+func (r *recordingRevoker) failWith(err error) {
+	r.mu.Lock()
+	r.fail = err
+	r.mu.Unlock()
+}
+
+// killsOf are the session_kills addressed to proxyID that named sessionID.
+func (r *recordingRevoker) killsOf(proxyID, sessionID string) []revoke.Kill {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []revoke.Kill
+	for _, k := range r.kills {
+		if slices.Contains(k.aud.ProxyIDs, proxyID) && slices.Contains(k.k.SessionIDs, sessionID) {
+			out = append(out, k.k)
+		}
+	}
+	return out
+}
+
+// invalidationsOf are the cache_invalidates for one subject.
+func (r *recordingRevoker) invalidationsOf(subject string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, inv := range r.invs {
+		if inv.Subject == subject {
+			n++
+		}
+	}
+	return n
+}
+
+func (r *recordingRevoker) published() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.kills) + len(r.invs)
+}
 
 func unreachable(q ext.AccessContextQuery) (ext.AccessEvidence, error) {
 	return ext.AccessEvidence{}, ext.Errorf(ext.PointAccessContextProvider, "fake", "Probe", ext.KindUnavailable, "connection refused")

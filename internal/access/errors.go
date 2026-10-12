@@ -6,6 +6,9 @@ package access
 import (
 	"errors"
 	"fmt"
+	"time"
+
+	"github.com/hoplock/control/internal/store"
 )
 
 // ValidationError is a grant, request or revocation this server will not act
@@ -63,6 +66,27 @@ var ErrNotPending = errors.New("access: the request has already been decided")
 // answer until a workflow is registered, and a deployment with none is
 // working as designed (M15) — an administrator grants access directly.
 var ErrNoWorkflow = errors.New("access: no approval workflow is registered to decide a request")
+
+// ErrAssertionEnded is an open pushed under an id its external system has
+// already ended (M16, 0017): the end arrived first, because pushes are not
+// delivered in order, and an ended window stays ended. Nothing is stored. It is
+// a refusal made on purpose, never an outage (M11); CreateExternal returns it
+// as an *EndedError, which says when.
+var ErrAssertionEnded = errors.New("access: the external system ended this window before it was opened")
+
+// EndedError is ErrAssertionEnded with the end that was kept.
+type EndedError struct {
+	// End is the end the external system pushed for the id.
+	End store.AccessContextWindowEnd
+}
+
+// Error implements error.
+func (e *EndedError) Error() string {
+	return fmt.Sprintf("%v (at %s)", ErrAssertionEnded, e.End.EndedAt.UTC().Format(time.RFC3339))
+}
+
+// Unwrap makes errors.Is(err, ErrAssertionEnded) hold.
+func (e *EndedError) Unwrap() error { return ErrAssertionEnded }
 
 // ErrUndelivered is a revocation that is RECORDED and could not be published.
 //

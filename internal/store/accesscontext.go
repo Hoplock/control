@@ -144,3 +144,103 @@ func scanAccessContextBinding(op string, row rowScanner) (AccessContextBinding, 
 	b.MaxWindow = time.Duration(seconds) * time.Second
 	return b, nil
 }
+
+// ---------------------------------------------------------------------------
+// ends that named no window (0017)
+// ---------------------------------------------------------------------------
+
+type accessContextWindowEndRepo struct{ s *Store }
+
+const accessContextWindowEndColumns = `external_system, assertion_id, external_ref, issued_at, ` +
+	`ended_at, ended_by, ended_by_principal`
+
+// assertionKeySeparator joins the three parts of an assertion's lock key. An
+// assertion id carries no control character (the push receiver refuses one),
+// so a separator from that range keeps two different triples from joining to
+// the same text in practice — and a collision would only serialize them.
+const assertionKeySeparator = "\x1f"
+
+func (r accessContextWindowEndRepo) Lock(ctx context.Context, tenant Tenant, system, assertionID string) error {
+	const op = "store.AccessContextWindowEnds.Lock"
+	if err := checkTenant(op, tenant); err != nil {
+		return err
+	}
+	if r.s.pool != nil {
+		// A transaction-scoped lock taken outside a transaction is released
+		// the instant the statement ends, which is a lock that serializes
+		// nothing — and the reason this exists is that two paths must not
+		// interleave.
+		return invalid(op, "the assertion's lock is taken inside a transaction")
+	}
+	if system == "" || assertionID == "" {
+		return invalid(op, "a system and an assertion id are required")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	// One bigint key. Postgres keeps the one-bigint key space apart from the
+	// two-int4 space the audit chain locks in (AppendChain), so the two never
+	// contend; a collision of the hash only serializes two assertions.
+	_, err := r.s.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		string(tenant)+assertionKeySeparator+system+assertionKeySeparator+assertionID)
+	return wrap(op, err)
+}
+
+func (r accessContextWindowEndRepo) Get(ctx context.Context, tenant Tenant, system, assertionID string) (AccessContextWindowEnd, error) {
+	const op = "store.AccessContextWindowEnds.Get"
+	if err := checkTenant(op, tenant); err != nil {
+		return AccessContextWindowEnd{}, err
+	}
+	if system == "" || assertionID == "" {
+		return AccessContextWindowEnd{}, invalid(op, "a system and an assertion id are required")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	var (
+		e      AccessContextWindowEnd
+		issued *time.Time
+	)
+	err := r.s.db.QueryRow(ctx, `
+		SELECT `+accessContextWindowEndColumns+`
+		FROM access_context_window_ends
+		WHERE tenant = $1 AND external_system = $2 AND assertion_id = $3`,
+		tenant, system, assertionID).Scan(&e.System, &e.AssertionID, &e.Reference, &issued,
+		&e.EndedAt, &e.EndedBy.Subject, &e.EndedBy.Principal)
+	if err != nil {
+		return AccessContextWindowEnd{}, wrap(op, err)
+	}
+	e.IssuedAt = timeOrZero(issued)
+	if !e.IssuedAt.IsZero() {
+		e.IssuedAt = e.IssuedAt.UTC()
+	}
+	e.EndedAt = e.EndedAt.UTC()
+	return e, nil
+}
+
+func (r accessContextWindowEndRepo) Insert(ctx context.Context, tenant Tenant, e AccessContextWindowEnd) error {
+	const op = "store.AccessContextWindowEnds.Insert"
+	if err := checkTenant(op, tenant); err != nil {
+		return err
+	}
+	switch {
+	case e.System == "" || e.AssertionID == "":
+		return invalid(op, "a system and an assertion id are required")
+	case e.EndedAt.IsZero():
+		return invalid(op, "when the end was kept is required")
+	case e.EndedBy.Principal == "":
+		return invalid(op, "the credential that pushed the end is required")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	_, err := r.s.db.Exec(ctx, `
+		INSERT INTO access_context_window_ends (tenant, `+accessContextWindowEndColumns+`)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		tenant, e.System, e.AssertionID, e.Reference, nullableTime(e.IssuedAt),
+		e.EndedAt, e.EndedBy.Subject, e.EndedBy.Principal)
+	return wrap(op, err)
+}

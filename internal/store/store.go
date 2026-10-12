@@ -230,6 +230,12 @@ func (s *Store) AccessContextBindings() AccessContextBindingRepository {
 	return accessContextBindingRepo{s}
 }
 
+// AccessContextWindowEnds returns the repository of ends that named no window
+// (0017).
+func (s *Store) AccessContextWindowEnds() AccessContextWindowEndRepository {
+	return accessContextWindowEndRepo{s}
+}
+
 // GrantRequests returns the workflow request repository (0012).
 func (s *Store) GrantRequests() GrantRequestRepository { return grantRequestRepo{s} }
 
