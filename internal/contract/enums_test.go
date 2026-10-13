@@ -134,7 +134,25 @@ func TestEnumsMatchContract(t *testing.T) {
 		{"RequestPolicy.types[]", "RequestPolicy", "types", true,
 			strs(RequestTypePTYReq, RequestTypeShell, RequestTypeExec, RequestTypeEnv, RequestTypeX11Req, RequestTypeAuthAgentReq)},
 		{"TargetAuth.method", "TargetAuth", "method", false,
-			strs(TargetAuthEphemeralUser, TargetAuthBrokeredKey, TargetAuthEphemeralAccount, TargetAuthStaticKey)},
+			strs(TargetAuthEphemeralUser, TargetAuthBrokeredKey, TargetAuthEphemeralAccount, TargetAuthStaticKey,
+				TargetAuthBrokeredCertificate)},
+		// The four enums Hoplock/proxy#69 and #72 added. Nothing fails until
+		// a case names them, because this test walks this list rather than
+		// every enum in the document — so each is here deliberately, and
+		// AlgorithmProfileCapability.profile has its own case even though it
+		// reuses the AlgorithmProfile constants: two schemas carrying one
+		// enum are two places it can drift.
+		{"AuthorizeResponse.algorithm_floor", "AuthorizeResponse", "algorithm_floor", false,
+			strs(AlgorithmFloorModernKex, AlgorithmFloorPQHybridKex)},
+		{"AlgorithmFloorCapability.level", "AlgorithmFloorCapability", "level", false,
+			strs(AlgorithmFloorModernKex, AlgorithmFloorPQHybridKex)},
+		{"KexObservation.floor_met", "KexObservation", "floor_met", false,
+			strs(FloorMetNone, FloorMetModernKex, FloorMetPQHybridKex)},
+		{"AlgorithmProfileCapability.profile", "AlgorithmProfileCapability", "profile", false,
+			strs(AlgorithmProfileDefault, AlgorithmProfileLegacyRSASHA1, AlgorithmProfileLegacyDevice)},
+		// Hoplock/proxy#65's report state, on the same terms.
+		{"ProxyConfigReport.state", "ProxyConfigReport", "state", false,
+			strs(ConfigStateApplied, ConfigStatePendingRestart, ConfigStateRejected, ConfigStateFetchFailed)},
 		{"EnforcementPolicy.execution", "EnforcementPolicy", "execution", false,
 			strs(ExecutionProxyInspected, ExecutionNoInteractiveShell, ExecutionAccountRestricted,
 				ExecutionAccountConfined, ExecutionPlatformAuthorized, ExecutionPlatformAttested)},
@@ -143,7 +161,8 @@ func TestEnumsMatchContract(t *testing.T) {
 		{"HopMetadata.connection", "HopMetadata", "connection", false,
 			strs(HopConnectionDial, HopConnectionRelay)},
 		{"RevocationEvent.type", "RevocationEvent", "type", false,
-			strs(EventTypeSessionKill, EventTypeCacheInvalidate, EventTypeHeartbeat, EventTypeResync)},
+			strs(EventTypeSessionKill, EventTypeCacheInvalidate, EventTypeHeartbeat, EventTypeResync,
+				EventTypeConfigChanged)},
 		{"FilterPolicy.mode", "FilterPolicy", "mode", false,
 			strs(FilterModeWhitelist, FilterModeBlacklist)},
 		{"FilterPolicy.exec_mode", "FilterPolicy", "exec_mode", false,
@@ -224,6 +243,7 @@ func TestPathsMatchContract(t *testing.T) {
 		PathAuthCert, PathAuthPassword, PathAuthMFAPoll, PathAuthorize,
 		PathHostKeyReport, PathCapabilitiesReport, PathUIDLease,
 		PathLogsBatch, PathLogsPriority, PathProxyEvents,
+		PathCredentialCertificate, PathProxyConfig, PathProxyConfigReport,
 	}
 	document := make([]string, 0, len(doc.Paths))
 	for p := range doc.Paths {

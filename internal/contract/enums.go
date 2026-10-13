@@ -21,8 +21,34 @@ package contract
 // /v1/authorize and nothing else, so a field on another endpoint, a whole new
 // endpoint, and a tightening all move the document without moving this number
 // — and upstream Hoplock/proxy#53 moved the document version DOWN, 4.3.0 to
-// 4.0.0, while this stood still at 4.
-const PolicyVersion int32 = 4
+// 4.0.0, while this stood still at 4. A version string therefore identifies no
+// document; the checksum in contract/UPSTREAM does.
+//
+// It is the vocabulary of the vendored document, and nothing ties the two
+// together but this line until phase 0024: a re-vendor that moves the number
+// must move this constant in the same change, or this server hands a proxy a
+// field it refuses the whole response over.
+const PolicyVersion int32 = VocabularyAlgorithmFloor
+
+// The vocabulary tiers: the policy_version that first carried each field a
+// response may hold (PLAN §4). Each is a constant of its own and never an
+// offset from PolicyVersion, because a later revision moves PolicyVersion and
+// leaves every earlier tier where it was — Hoplock/proxy#69 moved it to 6 and
+// `brokered-certificate` stayed a 5. The decision path's requiredVersion picks
+// one per response; the proxy's cmd/mock-control keeps the same three
+// (baselineVocabulary, vocabularyBrokeredCertificate, vocabularyAlgorithmFloor).
+const (
+	// VocabularyBaseline is the vocabulary every response this server can
+	// build without either of the fields below needs.
+	VocabularyBaseline int32 = 4
+	// VocabularyBrokeredCertificate added the `brokered-certificate` method
+	// (Hoplock/proxy#68). An unknown method refuses the whole response,
+	// exactly as an unknown field does, which is why a method moves it.
+	VocabularyBrokeredCertificate int32 = 5
+	// VocabularyAlgorithmFloor added `algorithm_floor` and `algorithm_bans`
+	// (Hoplock/proxy#69).
+	VocabularyAlgorithmFloor int32 = 6
+)
 
 // The paths the contract defines.
 const (
@@ -35,8 +61,17 @@ const (
 	PathUIDLease           = "/v1/uids/lease"
 	PathLogsBatch          = "/v1/logs/batch"
 	PathLogsPriority       = "/v1/logs/priority"
+	// PathCredentialCertificate issues one brokered certificate per session
+	// (Hoplock/proxy#68).
+	PathCredentialCertificate = "/v1/credentials/certificate"
 	// PathProxyEvents is a template: {proxy_id} is the subscribing proxy.
 	PathProxyEvents = "/v1/proxies/{proxy_id}/events"
+	// PathProxyConfig is the proxy's desired configuration document (proxy
+	// D18). A template, like PathProxyEvents.
+	PathProxyConfig = "/v1/proxies/{proxy_id}/config"
+	// PathProxyConfigReport is what the proxy runs, and what became of its
+	// desired document (proxy D18).
+	PathProxyConfigReport = "/v1/proxies/{proxy_id}/config/report"
 )
 
 // MediaTypeNDJSON is the content type of the revocation stream: one
@@ -84,14 +119,106 @@ const (
 	RequestTypeAuthAgentReq RequestType = "auth-agent-req"
 )
 
-// AlgorithmProfile is AuthorizeResponse.algorithm_profile. Absent means
-// AlgorithmProfileDefault, which is the only one that is not a weakening.
+// AlgorithmProfile is AuthorizeResponse.algorithm_profile, and
+// AlgorithmProfileCapability.profile. Absent means AlgorithmProfileDefault,
+// which is the only one that is not a weakening. What each offers is the
+// contract's to say (its `algorithm_profile` description) and each proxy build's
+// to declare (`capabilities.algorithm_profiles`); no list of it is copied here.
 type AlgorithmProfile string
 
 const (
 	AlgorithmProfileDefault       AlgorithmProfile = "default"
 	AlgorithmProfileLegacyRSASHA1 AlgorithmProfile = "legacy-rsa-sha1"
 	AlgorithmProfileLegacyDevice  AlgorithmProfile = "legacy-device"
+)
+
+// WidensKeyExchange reports whether the profile widens the key-exchange axis,
+// which is the axis an algorithm_floor narrows. The proxy refuses a floor with
+// such a profile, because the pair describes a leg that can never connect; the
+// rule is the axis, not the word "legacy" — legacy-rsa-sha1 changes only
+// signatures and takes a floor.
+func (p AlgorithmProfile) WidensKeyExchange() bool {
+	switch p {
+	case AlgorithmProfileLegacyDevice:
+		return true
+	case AlgorithmProfileDefault, AlgorithmProfileLegacyRSASHA1:
+		return false
+	default:
+		return false
+	}
+}
+
+// AlgorithmFloor is AuthorizeResponse.algorithm_floor and
+// AlgorithmFloorCapability.level: the minimum key exchange the proxy→target
+// leg must negotiate. Absent means no floor. The levels are an ordered ladder
+// compared by [AlgorithmFloor.Rank] alone; which exchanges each accepts is each
+// proxy build's declaration and never a list here.
+type AlgorithmFloor string
+
+const (
+	AlgorithmFloorModernKex   AlgorithmFloor = "modern-kex"
+	AlgorithmFloorPQHybridKex AlgorithmFloor = "pq-hybrid-kex"
+)
+
+// Rank orders the levels: absent 0, modern-kex 1, pq-hybrid-kex 2. A level
+// added later goes above the top (the contract's nesting rule), so it takes the
+// next number. An unknown level ranks -1, which nothing compares above.
+func (f AlgorithmFloor) Rank() int {
+	switch f {
+	case "":
+		return 0
+	case AlgorithmFloorModernKex:
+		return 1
+	case AlgorithmFloorPQHybridKex:
+		return 2
+	default:
+		return -1
+	}
+}
+
+// FloorMet is KexObservation.floor_met: the highest floor level a target was
+// observed to meet, or FloorMetNone.
+type FloorMet string
+
+const (
+	FloorMetNone        FloorMet = "none"
+	FloorMetModernKex   FloorMet = FloorMet(AlgorithmFloorModernKex)
+	FloorMetPQHybridKex FloorMet = FloorMet(AlgorithmFloorPQHybridKex)
+)
+
+// Rank places an observation on the floor's ladder: none 0, then each level's
+// own rank. An unknown value ranks -1, below everything.
+func (f FloorMet) Rank() int {
+	if f == FloorMetNone {
+		return 0
+	}
+	if r := AlgorithmFloor(f).Rank(); r > 0 {
+		return r
+	}
+	return -1
+}
+
+// The algorithm axes, as AlgorithmBans, OfferableAlgorithms and
+// AlgorithmProfileCapability name them. A ban is per axis because some
+// identifiers live on more than one: ssh-rsa is a host-key and a public-key
+// algorithm.
+const (
+	AxisKeyExchanges  = "key_exchanges"
+	AxisCiphers       = "ciphers"
+	AxisMACs          = "macs"
+	AxisHostKeys      = "host_keys"
+	AxisPublicKeyAuth = "public_key_auth"
+)
+
+// Axes is every axis, in the contract's order.
+var Axes = []string{AxisKeyExchanges, AxisCiphers, AxisMACs, AxisHostKeys, AxisPublicKeyAuth}
+
+// The two spellings of one key exchange. The proxy's SSH library offers the
+// second immediately after the first and cannot offer either alone, so a ban on
+// either removes both, and every judgement treats them as one.
+const (
+	KexCurve25519       = "curve25519-sha256"
+	KexCurve25519LibSSH = "curve25519-sha256@libssh.org"
 )
 
 // TargetAuthMethod is TargetAuth.method.
@@ -102,6 +229,12 @@ const (
 	TargetAuthBrokeredKey      TargetAuthMethod = "brokered-key"
 	TargetAuthEphemeralAccount TargetAuthMethod = "ephemeral-account"
 	TargetAuthStaticKey        TargetAuthMethod = "static-key"
+	// TargetAuthBrokeredCertificate has the proxy present a per-session SSH
+	// user certificate this server signs over a key the proxy generates
+	// (Hoplock/proxy#68, proxy D6a). The ladder entry carries policy only —
+	// username, key_type, lifetime_seconds — and the certificate comes from
+	// POST /v1/credentials/certificate, once per session.
+	TargetAuthBrokeredCertificate TargetAuthMethod = "brokered-certificate"
 )
 
 // Provisions reports whether this method has the proxy administer the account on
@@ -111,6 +244,11 @@ func (m TargetAuthMethod) Provisions() bool {
 	case TargetAuthEphemeralUser, TargetAuthEphemeralAccount:
 		return true
 	case TargetAuthBrokeredKey, TargetAuthStaticKey:
+		return false
+	case TargetAuthBrokeredCertificate:
+		// It creates nothing on the target: the account exists and trusts
+		// the tenant CA already. So a route that names only this method can
+		// reach only an attested rung.
 		return false
 	default:
 		return false
@@ -250,6 +388,20 @@ const (
 	EventTypeCacheInvalidate EventType = "cache_invalidate"
 	EventTypeHeartbeat       EventType = "heartbeat"
 	EventTypeResync          EventType = "resync"
+	// EventTypeConfigChanged names the proxy's desired configuration
+	// document; it never carries it (proxy D18).
+	EventTypeConfigChanged EventType = "config_changed"
+)
+
+// ConfigState is ProxyConfigReport.state: what became of a proxy's desired
+// configuration document (proxy D18).
+type ConfigState string
+
+const (
+	ConfigStateApplied        ConfigState = "applied"
+	ConfigStatePendingRestart ConfigState = "pending_restart"
+	ConfigStateRejected       ConfigState = "rejected"
+	ConfigStateFetchFailed    ConfigState = "fetch_failed"
 )
 
 // FilterMode is FilterPolicy.mode: what happens to a command no rule matched.
@@ -326,4 +478,18 @@ const (
 	ErrCodeExhausted          = "uid_range_exhausted"
 	ErrCodeInternal           = "internal_error"
 	ErrCodeVersionUnsupported = "policy_version_unsupported"
+	// ErrCodeNotEnrolled is a configuration fetch or report for a proxy id
+	// the registry does not hold in the caller's tenant. A registry fact,
+	// answered 404 and never 401 (M11).
+	ErrCodeNotEnrolled = "not_enrolled"
+	// ErrCodeUnknownDecision and ErrCodeDecisionMismatch are a refusal to
+	// mint a brokered certificate: the decision cited is not one this server
+	// made for the method, or the target or account does not match it. The
+	// proxy's mock uses the same two codes.
+	ErrCodeUnknownDecision  = "unknown_decision"
+	ErrCodeDecisionMismatch = "decision_mismatch"
+	// ErrCodeNoAuthority is an issuance with no certificate authority behind
+	// it — a tenant with none, or a deployment that configured none. 503: an
+	// operator's fix, not a deny and not a 500.
+	ErrCodeNoAuthority = "no_authority"
 )

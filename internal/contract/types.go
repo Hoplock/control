@@ -106,11 +106,141 @@ type AuthenticateResponse struct {
 	MFA      *MFAChallenge `json:"mfa,omitempty"`
 }
 
-// ProxyCapabilities is the enforcement rungs a proxy BUILD can provide at all.
-// Absent declares nothing, which is the fail-safe reading.
+// ProxyCapabilities is what a proxy BUILD can provide at all: the enforcement
+// rungs, and since Hoplock/proxy#69 and #72 the algorithm floor levels it
+// enforces, what each profile offers per axis, and every identifier it can
+// offer. Absent declares nothing, which is the fail-safe reading, and that
+// holds per field: an absent `algorithm_floors` declares no level, so no floor
+// may be sent at all.
+//
+// The JSON keys are the contract's exactly. The south-bound decoder accepts
+// unknown fields, so a key spelled differently here would be dropped without an
+// error and every judgement that reads it would read "nothing declared";
+// TestProxyCapabilitiesDecodeUpstreamShape decodes a fixture in upstream's
+// rendering to hold that.
 type ProxyCapabilities struct {
-	Execution []string `json:"execution,omitempty"`
-	Reach     []string `json:"reach,omitempty"`
+	Execution         []string                     `json:"execution,omitempty"`
+	Reach             []string                     `json:"reach,omitempty"`
+	AlgorithmFloors   []AlgorithmFloorCapability   `json:"algorithm_floors,omitempty"`
+	AlgorithmProfiles []AlgorithmProfileCapability `json:"algorithm_profiles,omitempty"`
+	Algorithms        *OfferableAlgorithms         `json:"algorithms,omitempty"`
+}
+
+// AlgorithmFloorCapability is one floor level a proxy build enforces, with the
+// key exchanges that level accepts IN THAT BUILD — alias-complete, so both
+// curve25519 spellings appear wherever either does.
+type AlgorithmFloorCapability struct {
+	Level        AlgorithmFloor `json:"level"`
+	KeyExchanges []string       `json:"key_exchanges"`
+}
+
+// AlgorithmProfileCapability is one profile a proxy build accepts, and what it
+// offers on each axis before any floor narrows it or any ban subtracts from it
+// (Hoplock/proxy#72). Every axis is present and none is empty.
+type AlgorithmProfileCapability struct {
+	Profile       AlgorithmProfile `json:"profile"`
+	KeyExchanges  []string         `json:"key_exchanges"`
+	Ciphers       []string         `json:"ciphers"`
+	MACs          []string         `json:"macs"`
+	HostKeys      []string         `json:"host_keys"`
+	PublicKeyAuth []string         `json:"public_key_auth"`
+}
+
+// Axis returns the profile's offer on one axis (see [Axes]); an unknown axis is
+// nil.
+func (p AlgorithmProfileCapability) Axis(axis string) []string {
+	switch axis {
+	case AxisKeyExchanges:
+		return p.KeyExchanges
+	case AxisCiphers:
+		return p.Ciphers
+	case AxisMACs:
+		return p.MACs
+	case AxisHostKeys:
+		return p.HostKeys
+	case AxisPublicKeyAuth:
+		return p.PublicKeyAuth
+	}
+	return nil
+}
+
+// OfferableAlgorithms is every identifier a proxy build can put in an offer,
+// per axis, under any profile or level: the union of the profile lists. It is
+// the source of the "this ban matches nothing anywhere" warning and of nothing
+// else.
+type OfferableAlgorithms struct {
+	KeyExchanges  []string `json:"key_exchanges,omitempty"`
+	Ciphers       []string `json:"ciphers,omitempty"`
+	MACs          []string `json:"macs,omitempty"`
+	HostKeys      []string `json:"host_keys,omitempty"`
+	PublicKeyAuth []string `json:"public_key_auth,omitempty"`
+}
+
+// Axis returns the build's offerable identifiers on one axis.
+func (o *OfferableAlgorithms) Axis(axis string) []string {
+	if o == nil {
+		return nil
+	}
+	switch axis {
+	case AxisKeyExchanges:
+		return o.KeyExchanges
+	case AxisCiphers:
+		return o.Ciphers
+	case AxisMACs:
+		return o.MACs
+	case AxisHostKeys:
+		return o.HostKeys
+	case AxisPublicKeyAuth:
+		return o.PublicKeyAuth
+	}
+	return nil
+}
+
+// AlgorithmBans is the identifiers the proxy MUST NOT offer on the
+// proxy→target leg of a route, one optional list per axis, applied last: a ban
+// always wins. Absent means nothing is banned, and so does an object whose
+// lists are all empty — which is why a server emits it only when some axis is
+// non-empty ([AlgorithmBans.Empty]): to a proxy that does not know the field,
+// even an empty object is an unknown field, refused whole.
+type AlgorithmBans struct {
+	KeyExchanges  []string `json:"key_exchanges,omitempty"`
+	Ciphers       []string `json:"ciphers,omitempty"`
+	MACs          []string `json:"macs,omitempty"`
+	HostKeys      []string `json:"host_keys,omitempty"`
+	PublicKeyAuth []string `json:"public_key_auth,omitempty"`
+}
+
+// Axis returns the bans on one axis.
+func (b *AlgorithmBans) Axis(axis string) []string {
+	if b == nil {
+		return nil
+	}
+	switch axis {
+	case AxisKeyExchanges:
+		return b.KeyExchanges
+	case AxisCiphers:
+		return b.Ciphers
+	case AxisMACs:
+		return b.MACs
+	case AxisHostKeys:
+		return b.HostKeys
+	case AxisPublicKeyAuth:
+		return b.PublicKeyAuth
+	}
+	return nil
+}
+
+// Empty reports whether nothing is banned on any axis.
+func (b *AlgorithmBans) Empty() bool {
+	if b == nil {
+		return true
+	}
+	for _, axis := range Axes {
+		if len(b.Axis(axis)) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // AuthorizeRequest is POST /v1/authorize.
@@ -143,6 +273,8 @@ type AuthorizeResponse struct {
 	PermittedGlobalRequests *GlobalRequestPolicy `json:"permitted_global_requests,omitempty"`
 	TargetAuthLadder        TargetAuthLadder     `json:"target_auth_ladder,omitempty"`
 	AlgorithmProfile        AlgorithmProfile     `json:"algorithm_profile,omitempty"`
+	AlgorithmFloor          AlgorithmFloor       `json:"algorithm_floor,omitempty"`
+	AlgorithmBans           *AlgorithmBans       `json:"algorithm_bans,omitempty"`
 	FilterPolicy            FilterPolicy         `json:"filter_policy"`
 	Enforcement             *EnforcementPolicy   `json:"enforcement,omitempty"`
 	SessionDeadline         string               `json:"session_deadline,omitempty"`
@@ -327,6 +459,45 @@ type RevocationEvent struct {
 	HeartbeatIntervalSeconds int32                 `json:"heartbeat_interval_seconds,omitempty"`
 	SessionKill              *SessionKillEvent     `json:"session_kill,omitempty"`
 	CacheInvalidate          *CacheInvalidateEvent `json:"cache_invalidate,omitempty"`
+	ConfigChanged            *ConfigChangedEvent   `json:"config_changed,omitempty"`
+}
+
+// ConfigChangedEvent names a proxy's desired configuration document and never
+// carries it: the stream is replayable, and a replayed document would be a
+// stale one applied as if current (proxy D18). Version is opaque to the proxy
+// and Hash is compared only for equality.
+type ConfigChangedEvent struct {
+	Version string `json:"version"`
+	Hash    string `json:"hash"`
+}
+
+// ProxyConfigDocument is GET /v1/proxies/{proxy_id}/config: one desired
+// configuration, applied whole or not at all. Settings are fleet-owned keys
+// only, by their dotted bootstrap names.
+type ProxyConfigDocument struct {
+	Version  string         `json:"version"`
+	Hash     string         `json:"hash"`
+	Settings map[string]any `json:"settings"`
+}
+
+// ProxyConfigReport is POST /v1/proxies/{proxy_id}/config/report: what the
+// proxy runs, and what became of its desired document. Absent running_* means
+// the proxy runs on its bootstrap file alone — never version zero.
+type ProxyConfigReport struct {
+	RunningVersion  string      `json:"running_version,omitempty"`
+	RunningHash     string      `json:"running_hash,omitempty"`
+	DesiredVersion  string      `json:"desired_version,omitempty"`
+	DesiredHash     string      `json:"desired_hash,omitempty"`
+	State           ConfigState `json:"state"`
+	RestartRequired []string    `json:"restart_required,omitempty"`
+	LastError       string      `json:"last_error,omitempty"`
+	ReportedAt      string      `json:"reported_at"`
+}
+
+// ProxyConfigReportResponse acknowledges a report once it is durably recorded,
+// and never before.
+type ProxyConfigReportResponse struct {
+	Accepted bool `json:"accepted"`
 }
 
 // SessionKillEvent ends sessions that are already in flight.
@@ -404,15 +575,37 @@ type HostKeyReportResponse struct {
 	Cache    *CacheHint      `json:"cache,omitempty"`
 }
 
-// TargetCapabilities is the enforcement rungs one TARGET can take, as the proxy
-// found them by connecting to it.
+// TargetCapabilities is what one TARGET was observed to be. It carries two
+// observations, each with its own date, and the server merges them
+// independently (Hoplock/proxy#69):
+//
+//   - the RUNG observation — Execution, Reach and Detail — present exactly
+//     when ObservedAt is;
+//   - the KEY-EXCHANGE observation — Kex — present exactly when Kex is.
+//
+// A stored observation is replaced only by one a report carries, and an absent
+// one leaves the stored one untouched. Rungs or Detail without ObservedAt is a
+// 400, and so is a report carrying neither observation.
 type TargetCapabilities struct {
-	Execution []string `json:"execution,omitempty"`
-	Reach     []string `json:"reach,omitempty"`
-	// ObservedAt is required: a record with no observation time is treated as
-	// stale, because a capability with no date has no shelf life.
-	ObservedAt string            `json:"observed_at"`
+	Execution  []string          `json:"execution,omitempty"`
+	Reach      []string          `json:"reach,omitempty"`
+	ObservedAt string            `json:"observed_at,omitempty"`
 	Detail     map[string]string `json:"detail,omitempty"`
+	Kex        *KexObservation   `json:"kex,omitempty"`
+}
+
+// HasRungObservation reports whether the report carries the rung observation,
+// which is exactly whether it is dated.
+func (c *TargetCapabilities) HasRungObservation() bool { return c.ObservedAt != "" }
+
+// KexObservation is one target's key exchange, as the proxy saw it on a
+// handshake. It grants nothing: the authorize response is the authority for a
+// floor and the handshake re-checks it every time.
+type KexObservation struct {
+	FloorMet   FloorMet `json:"floor_met"`
+	Negotiated string   `json:"negotiated,omitempty"`
+	Offered    []string `json:"offered,omitempty"`
+	ObservedAt string   `json:"observed_at"`
 }
 
 // CapabilityReportRequest is POST /v1/capabilities/report.
@@ -457,6 +650,29 @@ type UIDLeaseResponse struct {
 	// grant a non-empty block answers 409 instead.
 	UIDTo       int32 `json:"uid_to"`
 	TermSeconds int32 `json:"term_seconds,omitempty"`
+}
+
+// CertificateRequest is POST /v1/credentials/certificate: one issuance per
+// session, over a key pair the proxy generated (Hoplock/proxy#68). Only
+// SessionID and PublicKey are required on the wire; this server also requires
+// DecisionID, which every answer it gives carries (M4).
+type CertificateRequest struct {
+	SessionID  string `json:"session_id"`
+	DecisionID string `json:"decision_id,omitempty"`
+	Target     string `json:"target,omitempty"`
+	Username   string `json:"username,omitempty"`
+	PublicKey  string `json:"public_key"`
+}
+
+// CertificateResponse is one OpenSSH user certificate over the submitted key.
+// Serial is a DECIMAL STRING and never a JSON number: an SSH serial is a uint64
+// and JSON numbers are not safely integral above 2^53. ValidBefore is the
+// certificate's own instant, to the second.
+type CertificateResponse struct {
+	Certificate  string   `json:"certificate"`
+	Serial       string   `json:"serial"`
+	ValidBefore  string   `json:"valid_before"`
+	CAPublicKeys []string `json:"ca_public_keys,omitempty"`
 }
 
 // LogRecord is one structured session log record.
