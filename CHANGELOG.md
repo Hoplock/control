@@ -26,6 +26,39 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.5.0
+
+A host serves a read that spans tenants, and Control resolves which tenants it
+covers.
+
+- **Phase:** 0018, the cross-tenant access class.
+- **Public packages:** `server.Access` is added, with `server.AccessTenant`
+  (the zero value: what every host route was before) and
+  `server.AccessCrossTenant`. `server.Route.Access` is added; a `Route` that
+  does not set it is unchanged. `server.Caller.Tenants` is added: the set
+  Control resolved on a cross-tenant route, sorted and never empty, and nil on
+  a tenant route, where `Caller.Tenant` is the one; `Caller.Tenant` is empty
+  on a cross-tenant route. `ext` is unchanged.
+- **North-bound routes:** Control adds none of its own. A host's
+  `AccessCrossTenant` route is mounted at `/api/v1/cross-tenant/<Pattern>`.
+  With no selector it covers every tenant in the caller's scope where the
+  caller holds the route's permission, and `403 forbidden` naming the
+  permission when there is none. A `tenant` query value or an
+  `X-Hoplock-Tenant` header narrows that set, never widens it: a named tenant
+  out of scope is `403 tenant_out_of_scope`, and one in scope without the
+  permission `403 forbidden` naming both — refused, never dropped. No error
+  code is added, and no role gains a permission.
+- **Start-up refusals:** a host route whose `Access` is neither class; a
+  cross-tenant route whose permission the auditor role does not hold
+  (`grant:write`, `report:write`, `access-context:push`, ...); and a
+  cross-tenant pattern naming `{tenant}`. Each names the route, before a file
+  is read or a port bound.
+- **Behaviour no API diff shows:** a session covers the one tenant it signed
+  in through, so on a cross-tenant route it covers that tenant; a principal
+  spans tenants only as a token minted with `identity token-issue --scope`
+  naming several. The north-bound access log line of a cross-tenant request
+  carries `tenants`, the sorted set, and no `tenant`.
+
 ## v0.4.0
 
 An external system ends a window it opened, and the sessions it backed end

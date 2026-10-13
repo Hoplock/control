@@ -113,12 +113,13 @@ decision.
 | **M15** | Enterprise extends this repository; it never forks it | live | §3, §6, §8, §10, §11 |
 | **M16** | external access context is an input; its integrations are extensions | live | §3, §5, §7, §10, §11 |
 | **M17** | the fleet graph carries capabilities, not just reachability | live | §4, §5, §10 |
-| **M18** | tenancy is a request dimension, not a process constant | live | §10, §11 |
+| **M18** | tenancy is a request dimension, not a process constant | amended by M24 | §10, §11 |
 | **M19** | a deployment has an identity and can be supervised | live | §3, §10, §11 |
 | **M20** | the console is a product surface with a specified design | live | §3, §10 |
 | **M21** | the console is localisable; English is the only catalogue | live | §3, §10 |
 | **M22** | a south-bound credential carries its tenant and names its proxy | live | §3, §10 |
 | **M23** | Control is released as immutable tags of one module, and every phase is a release | live | §8, §10 |
+| **M24** | a cross-tenant read is a route class the middleware resolves, and only a host serves one | live | §3, §6, §10, §11 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -342,7 +343,8 @@ decision.
   the poller learns a tenant when one of its proxies opens its event
   subscription (M9, whose credential names the tenant, M22), so after a restart
   an approval there takes effect within one poll interval, though nobody read
-  the request — and still without the cross-tenant read M18 rules out.
+  the request — and still without a store query spanning tenants, which M18
+  rules out.
   `Status` stays the only answer a workflow gives; there is no push.
 
   Notifications go out through a notifier interface (Slack, Teams, email) that
@@ -432,10 +434,11 @@ decision.
   the public **`server/`** package (phase 0015): `server.Main` is Control's
   whole command line, and `server.Options` hands it the host's populated
   registry, the top-level configuration sections the host owns, and the
-  host's north-bound routes — mounted in Control's own route table behind its
-  authentication, tenant resolution and RBAC (M2, M18), naming permissions
-  Control defines, and answering in Control's error envelope with codes the
-  host declares. `hoplock-control` is the same call with nothing added, so
+  host's north-bound routes — tenant routes, or cross-tenant reads whose set
+  of tenants Control resolves (M24) — mounted in Control's own route table
+  behind its authentication, tenant resolution and RBAC (M2, M18), naming
+  permissions Control defines, and answering in Control's error envelope with
+  codes the host declares. `hoplock-control` is the same call with nothing added, so
   there is one start-up path and not two that drift. Two invariants make that
   work, and both are enforced by tests rather than by intention:
 
@@ -651,7 +654,7 @@ decision.
   enforcement claim rather than dropping to "none available".
 
 - **M18 — Tenancy is a request dimension, not a process constant (amends M12,
-  new).** M12 put the tenant column on every table and a filter on every query,
+  new; amended by M24, the cross-tenant read).** M12 put the tenant column on every table and a filter on every query,
   and it was right about the cheap half. The expensive half is that
   `config.example.yaml` binds a whole *process* to one tenant — "the tenant this
   deployment operates as" — so the column is currently a constant the server
@@ -664,9 +667,11 @@ decision.
 
   - **North-bound** — from the authenticated principal's scope. A token or an
     OIDC session names the tenants it may act in; a tenant in a path or a body is
-    a selector *within* that set, never a widening of it. A caller that can name
-    a tenant it was not granted is the whole vulnerability class this decision
-    exists to close.
+    a selector *within* that set, never a widening of it. A request resolves
+    one tenant — or, on a cross-tenant read (M24), a set resolved by the same
+    rule: every tenant in scope where the route's permission is held, narrowed
+    by a selector and never widened. A caller that can name a tenant it was
+    not granted is the whole vulnerability class this decision exists to close.
   - **South-bound** — from the proxy's enrolled identity. A proxy belongs to a
     tenant at enrollment and **the contract carries no tenant field**: a proxy
     asserting its own tenancy would be a caller asserting its own authority, and
@@ -701,9 +706,12 @@ decision.
   each carry a two-tenant test that asserts one cannot reach the other.
 
   Governance on top of this — delegated administration, per-tenant entitlements,
-  cross-tenant reporting — is Enterprise's (its E11). The mechanism is here
+  cross-tenant reporting — is Enterprise's (its E11). The mechanism is here,
+  including the one route class a cross-tenant report is served from (M24),
   because the queries are here, and a seam that hands another module the job of
-  filtering correctly is a seam that will eventually be used incorrectly.
+  filtering correctly is a seam that will eventually be used incorrectly. So a
+  cross-tenant read's set is resolved by Control's middleware and handed to the
+  handler, which never chooses, widens or filters it.
 
 - **M19 — A deployment has an identity, and it can be supervised (new).** A
   Control deployment currently has no name for itself. That is fine while it is
@@ -994,6 +1002,59 @@ decision.
   into another program it reports the version of Control that program depends
   on, never the program's own.
 
+- **M24 — A cross-tenant read is a route class the middleware resolves, and only
+  a host serves one (amends M18, new).** E11 makes reporting across the
+  divisions one instance hosts Enterprise's, and before this decision every
+  north-bound request resolved exactly one tenant, so the aggregate had nowhere
+  to be served. This decision gives it one place, and keeps the property M18
+  exists for: the set a request covers is resolved by Control's middleware from
+  the caller's own scope, and the handler never chooses it.
+
+  1. **The instance operator is not a role or a principal kind.** No role spans
+     tenants (`RoleSet` stays per tenant, §6). An instance operator is a
+     principal holding a read in each tenant a report covers, granted tenant by
+     tenant. Today that is an API token an operator mints on the box with a
+     scope naming several tenants
+     (`hoplock-control identity token-issue --scope 'a=auditor;b=auditor'`). A
+     session, federated or break-glass, is scoped to the one tenant it signed in
+     through, so on a cross-tenant read it covers that tenant. A session
+     spanning tenants needs one identity linked across tenants that may
+     federate from different IdPs — delegated administration, E11's governance
+     on M18's mechanism, and a request of its own.
+  2. **One class, `AccessCrossTenant`, at `/api/v1/cross-tenant/<pattern>`.**
+     That prefix holds this class and nothing else, and registration refuses
+     the class outside it and every other class inside it, so an operator
+     reading a log line can tell from the path which class answered. A pattern
+     there never carries `{tenant}`: the set is not a path segment. It is
+     named `AccessCrossTenant` and not `AccessTenants` because the two would
+     differ by one letter on the line the isolation property lives on.
+  3. **The middleware resolves the set; the handler is handed it.** With no
+     selector, the set is every tenant in the caller's scope where it holds the
+     route's permission; none is `403 forbidden` naming the permission. A
+     selector — every `tenant` query value and every `X-Hoplock-Tenant` value —
+     narrows it and never widens it, and **a named tenant that fails is
+     refused, never dropped**: out of scope is `403 tenant_out_of_scope`, in
+     scope without the permission `403 forbidden`, exactly as on a tenant
+     route. Dropping it would answer a report that covers fewer tenants than
+     were asked for and looks complete. No error code is added. The set
+     reaches a handler sorted and never empty, and the access log names it.
+  4. **Reads only: a permission the auditor role holds.** A write across
+     tenants is one request making N changes, with N records in N independent
+     chains (M8, M18's third consequence); nothing makes them atomic, and a
+     partial outcome is neither a success nor a refusal M11 can name. The
+     auditor is defined as "can read everything and change nothing", so its
+     set is the definition of a read, and a list of this class's own would be
+     a second definition that could drift. Every read rather than only
+     `audit:read`, because the class grants nothing a caller could not get
+     with N requests — the permission is held in every tenant the set
+     contains — and the danger it adds, a missing filter, the middleware
+     removes whichever read it is.
+  5. **Only a host serves one (M15, E11).** Control registers none of its own,
+     and registration refuses one with no provider; aggregating is
+     Enterprise's. The isolation test class extends to it: the table tests
+     enumerate the router, and a source test fails the build if anything but
+     the middleware asks a principal for its set.
+
 ---
 
 ## 3. Architecture & repository layout
@@ -1136,9 +1197,12 @@ for nothing.
   is an allow-list (§6). `Role`, `Permission` and `RoleSet` are the whole of
   RBAC's vocabulary, as constants rather than rows. `Principal` is what the
   north-bound middleware puts on a request: its scope map is **unexported**, so
-  the only questions a caller can ask are "may this principal act in tenant T"
-  and "what roles does it hold there" — which is what stops a cross-tenant
-  aggregate route from being easy to write (M18).
+  the questions a handler can ask are "may this principal act in tenant T" and
+  "what roles does it hold there" — which is what stops a cross-tenant
+  aggregate route from being easy to write (M18). The one question whose answer
+  is a set, "in which tenants does it hold P" (`TenantsWith`), is the
+  middleware's alone, for the cross-tenant read class, and a source test holds
+  it to one caller (M24).
 - **`internal/credential`** — the per-tenant SSH certificate authority (proxy
   D6a, §6). It mints over a public key the proxy generated, so no private key
   crosses this API; it holds its own through the `ext.KeyStore` seam, so custody
@@ -1165,8 +1229,12 @@ for nothing.
   the principal's scope, and checks that permission before a handler runs. A
   self-scoped route (`AccessSelf`, 0016: a requester's own grant requests, under
   `…/me/`) then resolves the subject from the principal as well, and refuses a
-  credential with no person behind it. A handler reads the tenant — and on a
-  self route the subject — from the request context or not at all, and the
+  credential with no person behind it. A cross-tenant read (`AccessCrossTenant`,
+  M24, under `/api/v1/cross-tenant/` and only there) resolves a set instead of
+  one tenant: every tenant in scope where the permission is held, narrowed by a
+  selector and never widened, a named tenant that fails refused rather than
+  dropped. A handler reads the tenant — on a self route the subject, on a
+  cross-tenant read the set — from the request context or not at all, and the
   isolation tests enumerate the router rather than a hand-written list — so a
   route added in a later phase without isolation fails them on the day it is
   added.
@@ -1176,7 +1244,10 @@ for nothing.
 
   A host binary's routes (M15) enter **the same table**, after Control's and
   through the same registration: each is `AccessTenant` under
-  `/api/v1/tenants/{tenant}/`, names a permission Control defines, and answers
+  `/api/v1/tenants/{tenant}/`, or a cross-tenant read under
+  `/api/v1/cross-tenant/` naming a permission the auditor holds (M24) — the
+  only routes of that class, since Control serves none of its own — names a
+  permission Control defines, and answers
   through a writer that renders Control's codes and the ones the host declared
   — never a `401`, which is the middleware's alone (M11). There is no second
   router and no second chain, so the isolation test enumerates a host's routes
@@ -1231,13 +1302,14 @@ for nothing.
   through it, which today is the single-node cluster coordinator.
 - **`server`** — how a host binary starts Control (M15), and the second of the
   module's two public packages: a compatibility promise exactly as `ext` is. It
-  is a façade — `Main`, `Run`, `Options`, `Route`, `Caller`, `CallerFrom` and
-  `WriteError`, forwarding into `internal/daemon`, where every check a host can
+  is a façade — `Main`, `Run`, `Options`, `Route`, `Access`, `Caller`,
+  `CallerFrom` and `WriteError`, forwarding into `internal/daemon`, where every check a host can
   fail lives. A host gets Control's whole command line, top-level configuration
   sections of its own, north-bound routes of its own behind Control's
-  middleware, and Control's error envelope. It does not get a cross-tenant
-  route, a permission or role of its own, a `401`, a south-bound route, or a
-  write into Control's audit chain. Nothing in this module but
+  middleware — tenant routes and cross-tenant reads (M24) — and Control's
+  error envelope. It does not get a cross-tenant write, a permission or role of
+  its own, a `401`, a south-bound route, or a write into Control's audit
+  chain. Nothing in this module but
   `cmd/hoplock-control` imports it, that command imports nothing else of the
   module's, and `ext` imports nothing from it: three import-graph tests.
 - **`internal/daemon`** — the command line and the bring-up behind `server`:
@@ -2198,10 +2270,11 @@ are among them before it evaluates:
   **RBAC is enforced in one place**: the north-bound route table
   (`internal/httpapi/north`). Every route is registered with an access class and,
   where it resolves a tenant, one permission; the middleware authenticates,
-  resolves exactly one tenant from the principal's scope, and checks that
-  permission before a handler runs. A handler is never asked, because M18's
-  failure mode is not a wrong decision in the middleware — it is one handler that
-  read the tenant from the path itself. The console (0021) reaches it through the
+  resolves exactly one tenant from the principal's scope — or, on a
+  cross-tenant read, the set of tenants where the permission is held (M24) —
+  and checks that permission before a handler runs. A handler is never asked,
+  because M18's failure mode is not a wrong decision in the middleware — it is
+  one handler that read the tenant from the path itself, or chose its own set. The console (0021) reaches it through the
   API, so there is no second enforcement point to keep in step.
 
   **"Own" is an access class, never a branch in a handler (0016).** A route
@@ -2685,7 +2758,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0015 | Public server package & host routes | `server/`, a public package beside `ext/` and the "server package" M15 names: `server.Main`, Control's whole command line, which `cmd/hoplock-control` becomes one call to, and `server.Run`, the daemon alone, with the wiring moved to `internal/daemon`; host configuration sections accepted by the strict decoder in every subcommand and handed to the host by the daemon before its registry is sealed; a host's north-bound routes mounted in the one route table as `AccessTenant`, naming a permission Control defines (`report:write` and `license:read` added), seen through `server.CallerFrom` and answering through `server.WriteError` in the M21 envelope with codes the host declares, never a `401`; everything a host can get wrong refused before a file is read or a port bound; no cross-tenant host route; import guards holding one start-up path; `v0.2.0` (M15, M2, M18, M11, M21, M23). Raised by `Hoplock/enterprise#11` |
 | 0016 | Self-service grant requests | a requester's own door into a registered approval workflow — `grant:request`, the `requester` role holding exactly that and no read set (and so not `license:read`), the `AccessSelf` class whose subject the middleware resolves from the credential (`subject_required` for a machine token), and four routes under `/api/v1/tenants/{tenant}/me/grant-requests` — create (`202`/`201`/`403 grant_request_denied`/`502 grant_workflow_failed`, and `403 grant_workflow_not_registered` with nothing stored while no workflow is registered), list, read and cancel, where somebody else's request is `404`; the subject a `WHERE` predicate (`GetForSubject`, `ListForSubject`, migration `0010`); `ext.GrantRequest.BreakGlass`, copied from the stored request so a resubmission keeps it; the poller learning every tenant a proxy subscribes in, wired in `internal/daemon` around the event stream, so a decision is applied across a restart without a cross-tenant read; `v0.3.0` (M10, M15, M18, M7, M11, M2, M9, M22, M23). Raised by `Hoplock/enterprise#10`; depends only on merged phases (0011, 0012, 0013) |
 | 0017 | Ending an external window | `ext.WindowAssertion.Ended`: a push that ends the window its id opened, through the open's door (credential, binding, rate) and nothing else, revoking the grant it became through 0012's revocation (`access.Service.EndExternal`, one body with `Revoke`) — its sessions ended with `ExternalEndReason`, never the vendor's text, audited as `grant.revoked` with the credential that pushed and `grant_external_ended_*`; read by id alone and never refused for its age, scope or window; answered `200` `revoked` · `already_ended` · `recorded`, or `503 grant_revocation_undelivered`, push again to re-send; an end that arrives before its open kept (`access_context_window_ends`, migration `0011`, `access_context.window_ended`), and the open refused (`400 window_closed` on `id`) — both written under the assertion's advisory lock, so an id never has a grant and a kept end; an expired window never rewritten as revoked; the declarative provider's `push.ended`; a probe that stops confirming still revokes nothing; `v0.4.0` (M16, M10, M9, M5, M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#12`; depends only on merged phases (0009, 0012, 0013) |
-| 0018 | Cross-tenant access class | one north-bound route class that spans tenants, for a host's reads (M24, new): `AccessCrossTenant`, mounted at `/api/v1/cross-tenant/<pattern>` and nowhere else, with the middleware resolving every tenant in the caller's scope where it holds the route's permission, narrowed by a selector and never widened, a named tenant that fails refused rather than dropped, and the set handed to the handler as `server.Caller.Tenants`; `server.Route.Access`; reads only — a permission the auditor role holds; Control registers none of its own; the isolation test class extended to it (M18, M15, M2, M11, M8, M23). Raised by `Hoplock/enterprise#19`; depends only on merged phases (0011, 0015), and Enterprise's cross-tenant reporting (its 0013) builds around it until it lands |
+| 0018 | Cross-tenant access class | one north-bound route class that spans tenants, for a host's reads (M24, new): `AccessCrossTenant`, mounted at `/api/v1/cross-tenant/<pattern>` and nowhere else, with the middleware resolving every tenant in the caller's scope where it holds the route's permission (`identity.Principal.TenantsWith`, one caller, held by a source test), narrowed by a `tenant` query or `X-Hoplock-Tenant` selector and never widened, a named tenant that fails refused rather than dropped (`403 tenant_out_of_scope` / `403 forbidden`, no new code), and the set handed to the handler as `server.Caller.Tenants` and logged as `tenants`; `server.Access` (`AccessTenant`, the zero value, and `AccessCrossTenant`) and `server.Route.Access`; reads only — a permission the auditor role holds; Control registers none of its own; a session covers the one tenant it signed in through, so today a token minted on the box is the instance operator; the isolation test class extended to it; `v0.5.0` (M24, M18, M15, M2, M11, M8, M23). Raised by `Hoplock/enterprise#19`; depends only on merged phases (0011, 0015) |
 | 0019 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.7.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, an emptied axis judged per proxy from what each build declares its profiles offer (`Hoplock/proxy#72`, which met the cross-repo dependency `Hoplock/control#41` raised) and shown to the author as a per-build finding, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |
 | 0020 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
 | 0021 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's per-build finding (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
@@ -2896,8 +2969,10 @@ Genuinely out of scope for now:
 - Editing the contract here (M1 — it is upstream, always).
 - Multi-tenant **governance** — delegated administration, per-tenant
   entitlements, cross-tenant reporting. The *mechanism* is here (M18: tenancy
-  resolved from the caller, per-tenant graph, program, chain and CA); the
-  governance on top of it is Enterprise's (its E11).
+  resolved from the caller, per-tenant graph, program, chain and CA; M24: the
+  cross-tenant read class a host's report is served from, its set resolved by
+  the middleware); the governance on top of it — the reporting itself, and a
+  person holding scope across tenants — is Enterprise's (its E11).
 - The **supervisory plane** itself — the thing that manages many deployments.
   This repository makes a deployment identifiable and supervisable (M19) and
   ships the registration client as its real default; aggregating a fleet of
