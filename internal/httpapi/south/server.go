@@ -34,8 +34,9 @@ type Server struct {
 	log      *slog.Logger
 	now      func() time.Time
 
-	maxBodyBytes   int64
-	requestTimeout time.Duration
+	maxBodyBytes    int64
+	maxLogBodyBytes int64
+	requestTimeout  time.Duration
 
 	handler http.Handler
 	routes  []string
@@ -65,9 +66,11 @@ type Options struct {
 	CA *credential.CA
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
-	// MaxBodyBytes and RequestTimeout override the chain's bounds.
-	MaxBodyBytes   int64
-	RequestTimeout time.Duration
+	// MaxBodyBytes and RequestTimeout override the chain's bounds, and
+	// MaxLogBodyBytes the body bound on the two log paths.
+	MaxBodyBytes    int64
+	MaxLogBodyBytes int64
+	RequestTimeout  time.Duration
 	// Now overrides the clock. Tests use it; nothing in production should.
 	Now func() time.Time
 }
@@ -111,16 +114,17 @@ func New(o Options) (*Server, error) {
 	}
 
 	s := &Server{
-		identity:       o.Identity,
-		fleet:          o.Fleet,
-		decision:       o.Decision,
-		events:         o.Events,
-		logs:           o.Logs,
-		ca:             o.CA,
-		log:            o.Logger,
-		now:            o.Now,
-		maxBodyBytes:   o.MaxBodyBytes,
-		requestTimeout: o.RequestTimeout,
+		identity:        o.Identity,
+		fleet:           o.Fleet,
+		decision:        o.Decision,
+		events:          o.Events,
+		logs:            o.Logs,
+		ca:              o.CA,
+		log:             o.Logger,
+		now:             o.Now,
+		maxBodyBytes:    o.MaxBodyBytes,
+		maxLogBodyBytes: o.MaxLogBodyBytes,
+		requestTimeout:  o.RequestTimeout,
 	}
 	if s.log == nil {
 		s.log = slog.Default()
@@ -130,6 +134,9 @@ func New(o Options) (*Server, error) {
 	}
 	if s.maxBodyBytes <= 0 {
 		s.maxBodyBytes = DefaultMaxBodyBytes
+	}
+	if s.maxLogBodyBytes <= 0 {
+		s.maxLogBodyBytes = DefaultMaxLogBodyBytes
 	}
 	if s.requestTimeout <= 0 {
 		s.requestTimeout = DefaultRequestTimeout

@@ -67,3 +67,74 @@ CREATE TABLE target_kex_observations (
 
     PRIMARY KEY (tenant, hostname, target_port)
 );
+
+-- ---------------------------------------------------------------------------
+-- audit_records — the records the proxy emits since its phases 0043–0046
+-- (Hoplock/proxy#66, #68, #69, #71)
+-- ---------------------------------------------------------------------------
+--
+-- ONE NAME PER FIELD. The credential method and its rung are recorded under the
+-- only names the proxy emits, `credential_method` and `credential_rung`, and
+-- the rung counts FROM 1 exactly as it arrived. The `target_auth_*` pair came
+-- from the proxy's own contract text, which published it by mistake (#66
+-- corrects it), and no producer has ever sent anything but `credential_rung`
+-- counting from 1 — so this is a rename and no row is rewritten.
+ALTER TABLE audit_records RENAME COLUMN target_auth_method TO credential_method;
+ALTER TABLE audit_records RENAME COLUMN target_auth_rung TO credential_rung;
+
+-- Every column below is a projection of the hashed body (migration 0006): it is
+-- derived from the record's attributes when the record is ingested, holds
+-- nothing the body does not, and is recomputable from it. A key that is absent
+-- or does not parse projects nothing — the record is stored as it arrived.
+--
+-- Rows ingested before this migration project nothing on these columns. The
+-- product ships its proxy and its server together and has no installed base to
+-- backfill (PLAN §10, on 0024), so no UPDATE runs here.
+ALTER TABLE audit_records
+    -- The brokered certificate a session presented (#68), as the canonical
+    -- decimal of the record's `credential_certificate_serial`. Text, joined to
+    -- ssh_certificates.serial::text: the serial is a uint64 on the wire and
+    -- is parsed as one, never through a float, and its canonical decimal is
+    -- the one rendering both sides agree on.
+    ADD COLUMN credential_certificate_serial text NOT NULL DEFAULT '',
+    -- The policy in force on a target leg (#69): the floor (empty means NONE,
+    -- never a floor), the bans as `axis:name` entries so each axis is a filter
+    -- of its own and never a substring search, and the banned names no build
+    -- implemented, as the proxy recorded them.
+    ADD COLUMN algorithm_floor          text   NOT NULL DEFAULT '',
+    ADD COLUMN algorithm_bans           text[] NOT NULL DEFAULT '{}',
+    ADD COLUMN algorithm_bans_unmatched text[] NOT NULL DEFAULT '{}',
+    -- What the target leg negotiated (#69), as `axis:value` entries: the key
+    -- exchange (`target_kex_algorithm`), the host key, and the ciphers and
+    -- MACs in both directions. The runbook's third step finds running
+    -- sessions by these.
+    ADD COLUMN negotiated text[] NOT NULL DEFAULT '{}',
+    -- The drift feed (#66): one `device.config.change` per change the proxy
+    -- made on a device, filtered by the object and the operation.
+    ADD COLUMN device_change_op   text NOT NULL DEFAULT '',
+    ADD COLUMN target_account     text NOT NULL DEFAULT '',
+    ADD COLUMN device_object_kind text NOT NULL DEFAULT '',
+    -- What a proxy could not deliver (#71): `logging.gap`, by cause, by span
+    -- (the MISSING records' own timestamps, never the gap record's), by the
+    -- record ids a refusal named, by kind and by how many were critical.
+    ADD COLUMN gap_cause      text        NOT NULL DEFAULT '',
+    ADD COLUMN gap_records    bigint,
+    ADD COLUMN gap_bytes      bigint,
+    ADD COLUMN gap_first_at   timestamptz,
+    ADD COLUMN gap_last_at    timestamptz,
+    ADD COLUMN gap_kinds      text[]      NOT NULL DEFAULT '{}',
+    ADD COLUMN gap_critical   bigint,
+    ADD COLUMN gap_record_ids text[]      NOT NULL DEFAULT '{}';
+
+CREATE INDEX audit_records_certificate_idx
+    ON audit_records (tenant, credential_certificate_serial)
+    WHERE credential_certificate_serial <> '';
+CREATE INDEX audit_records_negotiated_idx
+    ON audit_records USING gin (negotiated);
+CREATE INDEX audit_records_bans_idx
+    ON audit_records USING gin (algorithm_bans);
+CREATE INDEX audit_records_gap_span_idx
+    ON audit_records (tenant, gap_first_at, gap_last_at)
+    WHERE gap_cause <> '';
+CREATE INDEX audit_records_gap_ids_idx
+    ON audit_records USING gin (gap_record_ids);

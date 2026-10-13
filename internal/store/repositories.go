@@ -166,6 +166,9 @@ type AuditRepository interface {
 	// BlockedCommands is the showcase join: blocked commands on targets
 	// carrying a label, resolved to the decision that permitted the access.
 	BlockedCommands(ctx context.Context, tenant Tenant, q BlockedCommandQuery) ([]BlockedCommand, error)
+	// GapLoss sums one session's `logging.gap` reports per cause
+	// (Hoplock/proxy#71). An empty session id is refused: it is no session.
+	GapLoss(ctx context.Context, tenant Tenant, sessionID string) ([]GapLoss, error)
 	// PutCapture stores a session capture's bytes; Capture reads them back.
 	// They are a separate table because a pty stream is large and no query
 	// over the records wants to drag it along.

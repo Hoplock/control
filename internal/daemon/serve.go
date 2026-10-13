@@ -168,15 +168,16 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	}
 
 	handler, err := south.New(south.Options{
-		CA:             ca,
-		Identity:       auth,
-		Fleet:          registry,
-		Decision:       decisions,
-		Events:         trackSubscriptions(bus, grants),
-		Logs:           ingest,
-		Logger:         log,
-		MaxBodyBytes:   cfg.South.MaxBodyBytes,
-		RequestTimeout: cfg.South.RequestTimeout,
+		CA:              ca,
+		Identity:        auth,
+		Fleet:           registry,
+		Decision:        decisions,
+		Events:          trackSubscriptions(bus, grants),
+		Logs:            ingest,
+		Logger:          log,
+		MaxBodyBytes:    cfg.South.MaxBodyBytes,
+		MaxLogBodyBytes: cfg.South.MaxLogBodyBytes,
+		RequestTimeout:  cfg.South.RequestTimeout,
 	})
 	if err != nil {
 		return err

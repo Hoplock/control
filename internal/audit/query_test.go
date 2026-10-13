@@ -219,7 +219,7 @@ func TestTheStoreReturnsTheRungInForceNotTheRungRequested(t *testing.T) {
 	reader := audit.NewReader(st)
 	ctx := t.Context()
 
-	// Policy asked for `account-confined` at rung 0 of the ladder. The
+	// Policy asked for `account-confined` at rung 1 of the ladder. The
 	// deployment could not provide it, so the session ran attested at rung
 	// 2. The record carries what happened.
 	degraded := record("rec-degraded", "sess-degraded")
@@ -230,19 +230,21 @@ func TestTheStoreReturnsTheRungInForceNotTheRungRequested(t *testing.T) {
 		audit.AttrEnforcementReach:           "unrestricted",
 		audit.AttrEnforcementVerified:        "false",
 		audit.AttrEnforcementAttestedBy:      "network-team",
-		audit.AttrTargetAuthMethod:           "static-password",
-		audit.AttrTargetAuthRung:             "2",
-		audit.AttrAlgorithmProfile:           "legacy-sha1",
+		audit.AttrCredentialMethod:           "static-key",
+		audit.AttrCredentialRung:             "2",
+		audit.AttrAlgorithmProfile:           "legacy-device",
 		audit.AttrDeviceFieldPrefix + "vdom": "global",
 	}
 
 	preferred := record("rec-preferred", "sess-preferred")
 	preferred.Attributes = map[string]string{
-		audit.AttrTargetAuthMethod: "ephemeral-key",
-		audit.AttrTargetAuthRung:   "0",
+		audit.AttrCredentialMethod: "ephemeral-user",
+		audit.AttrCredentialRung:   "1",
 	}
+	// A record with no rung at all is not degraded either.
+	unranked := record("rec-unranked", "sess-unranked")
 
-	mustIngest(ctx, t, in, tenantA, proxyA, degraded, preferred)
+	mustIngest(ctx, t, in, tenantA, proxyA, degraded, preferred, unranked)
 
 	got, err := reader.Get(ctx, tenantA, "rec-degraded")
 	if err != nil {
@@ -257,14 +259,15 @@ func TestTheStoreReturnsTheRungInForceNotTheRungRequested(t *testing.T) {
 	if got.Enforcement.AttestedBy != "network-team" {
 		t.Errorf("attested_by = %q, want it intact so a reader can go and ask", got.Enforcement.AttestedBy)
 	}
-	if got.TargetAuthMethod != "static-password" || got.TargetAuthRung == nil || *got.TargetAuthRung != 2 {
-		t.Errorf("credential = %q rung %v, want static-password at rung 2", got.TargetAuthMethod, got.TargetAuthRung)
+	if got.CredentialMethod != "static-key" || got.CredentialRung == nil || *got.CredentialRung != 2 {
+		t.Errorf("credential = %q rung %v, want static-key at rung 2", got.CredentialMethod, got.CredentialRung)
 	}
-	if got.AlgorithmProfile != "legacy-sha1" {
+	if got.AlgorithmProfile != "legacy-device" {
 		t.Errorf("algorithm profile = %q: an operator learns a route runs on SHA-1 from the record", got.AlgorithmProfile)
 	}
 
-	// The degradation query: rung above 0, across the estate.
+	// The degradation query: rung above 1 — the first choice is rung 1 — and
+	// neither rung 1 nor a record with no rung.
 	degradedRows, err := reader.DegradedCredentials(ctx, tenantA, time.Time{}, time.Time{}, 0)
 	if err != nil {
 		t.Fatalf("DegradedCredentials: %v", err)
@@ -324,7 +327,7 @@ func TestTheAccountMappingEventIsQueryableOnItsOwn(t *testing.T) {
 		t.Error("the mapping event lost the attribution it exists to carry")
 	}
 
-	changes, err := reader.DeviceConfigChanges(ctx, tenantA, time.Time{}, time.Time{}, 0)
+	changes, err := reader.DeviceConfigChanges(ctx, tenantA, audit.DriftQuery{})
 	if err != nil {
 		t.Fatalf("DeviceConfigChanges: %v", err)
 	}

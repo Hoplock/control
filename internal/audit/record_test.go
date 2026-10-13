@@ -36,7 +36,6 @@ func TestParseRefusesWhatItCannotClassify(t *testing.T) {
 
 	cases := map[string]func(*contract.LogRecord){
 		"no record id":      func(r *contract.LogRecord) { r.RecordID = "" },
-		"no session id":     func(r *contract.LogRecord) { r.SessionID = "" },
 		"no kind":           func(r *contract.LogRecord) { r.Kind = "" },
 		"an unknown kind":   func(r *contract.LogRecord) { r.Kind = "exfiltration" },
 		"an unknown sev":    func(r *contract.LogRecord) { r.Severity = "urgent" },
@@ -62,18 +61,46 @@ func TestParseRefusesWhatItCannotClassify(t *testing.T) {
 	}
 }
 
-// An `error` record may belong to no session — a device sweep failure belongs
-// to the fleet rather than to anybody's connection — and refusing it would
-// lose the one record class that reports a failure nobody was present for.
-func TestAnErrorRecordMayHaveNoSession(t *testing.T) {
+// `session_id: ""` means the record belongs to NO session, and the contract
+// requires a server to accept it on every kind (Hoplock/proxy#71). Today's
+// proxy sends three such records — an orphan sweep's device.config.change, the
+// sweep's own failure, and a logging.gap over session-less records — and a
+// refusal no longer costs latency: the proxy sets the record aside, so it is
+// lost to this store.
+func TestARecordOfEveryKindMayHaveNoSession(t *testing.T) {
 	t.Parallel()
+	for _, kind := range Kinds {
+		rec := aRecord()
+		rec.Kind = kind
+		rec.SessionID = ""
+		if kind == "stream" {
+			rec.Payload = base64.StdEncoding.EncodeToString([]byte("$ "))
+		}
+		got, err := Parse(rec, testTenant, 0, DefaultLimits)
+		if err != nil {
+			t.Fatalf("a session-less %s record was refused: %v", kind, err)
+		}
+		if got.SessionID != "" {
+			t.Errorf("a session-less %s record was given session %q", kind, got.SessionID)
+		}
+	}
 
-	rec := aRecord()
-	rec.Kind = "error"
-	rec.SessionID = ""
+	// The sweep failure by name: policy_decision, critical, priority path,
+	// and no subject or login. It is the record the old rule refused.
+	sweep := aRecord()
+	sweep.Kind, sweep.Severity, sweep.SessionID = "policy_decision", contract.SeverityCritical, ""
+	sweep.Subject, sweep.Login = "", ""
+	sweep.Attributes = map[string]string{AttrEvent: EventSweepFailed, AttrPlatform: "fortios"}
+	if _, err := Parse(sweep, testTenant, -1, DefaultLimits); err != nil {
+		t.Fatalf("the sweep failure was refused: %v", err)
+	}
 
-	if _, err := Parse(rec, testTenant, 0, DefaultLimits); err != nil {
-		t.Fatalf("Parse: %v, want it accepted", err)
+	// A kind outside the list is still refused, session or not.
+	bad := aRecord()
+	bad.Kind, bad.SessionID = "exfiltration", ""
+	var malformed *MalformedError
+	if _, err := Parse(bad, testTenant, 0, DefaultLimits); !errors.As(err, &malformed) {
+		t.Fatalf("a session-less record of an unknown kind = %v, want MalformedError", err)
 	}
 }
 
@@ -228,44 +255,64 @@ func TestTheEnforcementRungIsProjectedAsFourFields(t *testing.T) {
 	})
 }
 
-// proxy D14: the credential method and its 0-based ladder index are what make
-// degradation queryable, and the proxy emits them under names PLAN §7 does not
-// use. Both are read; both land in the same column.
-func TestTheCredentialMethodIsReadUnderBothNames(t *testing.T) {
+// proxy D14: the credential method and its rung are what make degradation
+// queryable. One name per field, the proxy's, and the rung counts from 1 exactly
+// as it arrived (Hoplock/proxy#66).
+func TestTheCredentialIsReadUnderTheProxysNamesOnly(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]map[string]string{
-		"the plan's names": {AttrTargetAuthMethod: "ephemeral-key", AttrTargetAuthRung: "2"},
-		"the proxy's":      {AttrCredentialMethod: "ephemeral-key", AttrCredentialRung: "2"},
+	rec := aRecord()
+	rec.Attributes = map[string]string{AttrCredentialMethod: "brokered-key", AttrCredentialRung: "2"}
+	row := mustRow(t, rec)
+	if row.CredentialMethod != "brokered-key" {
+		t.Errorf("method = %q, want brokered-key", row.CredentialMethod)
 	}
-	for name, attrs := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			rec := aRecord()
-			rec.Attributes = attrs
-			row := mustRow(t, rec)
-
-			if row.TargetAuthMethod != "ephemeral-key" {
-				t.Errorf("method = %q, want ephemeral-key", row.TargetAuthMethod)
-			}
-			if row.TargetAuthRung == nil || *row.TargetAuthRung != 2 {
-				t.Fatalf("rung = %v, want 2", row.TargetAuthRung)
-			}
-		})
+	if row.CredentialRung == nil || *row.CredentialRung != 2 {
+		t.Fatalf("rung = %v, want 2 — kept as it arrived, counting from 1", row.CredentialRung)
 	}
 
-	t.Run("rung 0 is not the same fact as no rung", func(t *testing.T) {
-		t.Parallel()
-		rec := aRecord()
-		rec.Attributes = map[string]string{AttrTargetAuthMethod: "ephemeral-key", AttrTargetAuthRung: "0"}
-		row := mustRow(t, rec)
-		if row.TargetAuthRung == nil || *row.TargetAuthRung != 0 {
-			t.Fatalf("rung = %v, want an explicit 0 — the method policy preferred", row.TargetAuthRung)
-		}
-		if mustRow(t, aRecord()).TargetAuthRung != nil {
-			t.Error("a record with no rung produced one")
-		}
-	})
+	// The retired 0-based pair projects nothing.
+	old := aRecord()
+	old.Attributes = map[string]string{"target_auth_method": "brokered-key", "target_auth_rung": "1"}
+	if got := mustRow(t, old); got.CredentialRung != nil || got.CredentialMethod != "" {
+		t.Errorf("a record carrying only target_auth_* projected method %q rung %v", got.CredentialMethod, got.CredentialRung)
+	}
+	if mustRow(t, aRecord()).CredentialRung != nil {
+		t.Error("a record with no rung produced one")
+	}
+}
+
+func TestTheCertificateSerialIsParsedAsAnUnsignedInteger(t *testing.T) {
+	t.Parallel()
+	rec := aRecord()
+	rec.Attributes = map[string]string{AttrCertificateSerial: "18446744073709551615"}
+	if got := mustRow(t, rec).CertificateSerial; got != "18446744073709551615" {
+		t.Errorf("serial = %q, want the uint64 maximum, exactly", got)
+	}
+	rec.Attributes = map[string]string{AttrCertificateSerial: "1e3"}
+	if got := mustRow(t, rec).CertificateSerial; got != "" {
+		t.Errorf("an unparseable serial projected %q", got)
+	}
+}
+
+// A gap record is never refused over its gap keys: one that is absent or does
+// not parse projects nothing, and the record is stored as it arrived
+// (Hoplock/proxy#71).
+func TestAGapRecordIsReadLeniently(t *testing.T) {
+	t.Parallel()
+	rec := aRecord()
+	rec.Kind, rec.Severity, rec.SessionID = "error", contract.SeverityWarn, ""
+	rec.Attributes = map[string]string{
+		AttrEvent: EventLoggingGap, AttrGapCause: "evicted",
+		AttrGapRecords: "lots", AttrGapFirstAt: "yesterday", AttrGapKinds: "command,stream",
+	}
+	row := mustRow(t, rec)
+	if row.Gap.Cause != "evicted" || row.Gap.Records != nil || row.Gap.FirstAt != nil || row.Gap.LastAt != nil {
+		t.Errorf("gap = %+v, want the cause and nothing from the keys that do not parse", row.Gap)
+	}
+	if len(row.Gap.Kinds) != 2 {
+		t.Errorf("kinds = %v", row.Gap.Kinds)
+	}
 }
 
 // M16: additional_context is a JSON string OR a JSON object and the store

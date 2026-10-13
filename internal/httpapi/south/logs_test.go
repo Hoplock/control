@@ -176,3 +176,63 @@ func containsAll(haystack string, needles ...string) bool {
 	}
 	return true
 }
+
+// A 400 from either log endpoint now costs the proxy the record rather than its
+// latency: it isolates the refused record by halving the batch, delivers the
+// rest, and sets the record aside for good (Hoplock/proxy#71). So a 400 is
+// answered only for a record this server will never store, or for a request
+// bound that halving cures — and anything this server suffered is a 5xx, which
+// the proxy retries.
+func TestAStoreFailureOnEitherLogPathIsNeverA400(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	if _, err := h.store.Pool().Exec(t.Context(), `ALTER TABLE audit_records RENAME TO audit_records_gone`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path string
+		body any
+	}{
+		{contract.PathLogsBatch, contract.LogBatchRequest{Records: []contract.LogRecord{logRecord("store-down-1")}}},
+		{contract.PathLogsPriority, contract.LogPriorityRequest{Record: logRecord("store-down-2")}},
+	} {
+		res := h.post(t, tc.path, tc.body)
+		if res.Code < 500 {
+			t.Errorf("%s with the store failing = %d, want a 5xx the proxy retries: %s", tc.path, res.Code, res.Body)
+		}
+	}
+}
+
+// The request bound halving cures: a body over the log paths' own limit, or a
+// batch over max_batch_records, is a 400 — every record is delivered once the
+// proxy halves it, and none is set aside. A body between the listener's general
+// limit and the log paths' is not refused at all.
+func TestALogBodyBetweenTheTwoLimitsIsAccepted(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	big := logRecord("big-capture")
+	big.Kind = "stream"
+	big.Payload = strings.Repeat("A", 1<<20) // ~1 MiB of base64, above the 1 MiB general limit
+	res := h.post(t, contract.PathLogsBatch, contract.LogBatchRequest{Records: []contract.LogRecord{big}})
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("a 1 MiB capture batch = %d: %s", res.Code, res.Body)
+	}
+}
+
+// A tenant mismatch names the record by its index and id, because the proxy
+// copies the message into refusal_message and an operator reads it there.
+func TestARefusalNamesTheRecordByIndexAndID(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	crossed := logRecord("crossed")
+	crossed.Attributes = map[string]string{"tenant": "someone-else"}
+	res := h.post(t, contract.PathLogsBatch, contract.LogBatchRequest{Records: []contract.LogRecord{logRecord("fine"), crossed}})
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("crossed batch = %d", res.Code)
+	}
+	var env contract.ErrorResponse
+	decode(t, res, &env)
+	if !strings.Contains(env.Error.Message, "record 1") || !strings.Contains(env.Error.Message, "crossed") {
+		t.Errorf("message %q does not name the record by index and id", env.Error.Message)
+	}
+}

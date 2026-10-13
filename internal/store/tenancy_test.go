@@ -240,6 +240,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.Audit().BlockedCommands(ctx, "", BlockedCommandQuery{LabelName: "env"})
 			return err
 		},
+		"Audit.GapLoss": func() error { _, err := s.Audit().GapLoss(ctx, "", "sess"); return err },
 		"Audit.PutCapture": func() error { return s.Audit().PutCapture(ctx, "", "r", []byte("x")) },
 		"Audit.Capture":    func() error { _, err := s.Audit().Capture(ctx, "", "r"); return err },
 		"Grants.Insert": func() error {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/fleet"
 )
 
@@ -36,6 +37,9 @@ const (
 	// a small JSON object; the largest is a log batch, which this phase
 	// does not serve.
 	DefaultMaxBodyBytes int64 = 1 << 20
+	// DefaultMaxLogBodyBytes caps a body on the two log paths, which carry
+	// session capture (config.DefaultSouthMaxLogBodyBytes says why).
+	DefaultMaxLogBodyBytes int64 = 4 << 20
 	// DefaultRequestTimeout bounds a single request. A server-side timeout
 	// that ANSWERS is strictly better than a slow answer that looks like an
 	// outage (M5), so this is a deadline on the handler rather than a
@@ -217,7 +221,11 @@ func (s *Server) withRecovery(next http.Handler) http.Handler {
 // on a stream is a peer that has stopped reading, not one that is idle.
 func (s *Server) withLimits(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, s.maxBodyBytes)
+		limit := s.maxBodyBytes
+		if r.URL.Path == contract.PathLogsBatch || r.URL.Path == contract.PathLogsPriority {
+			limit = s.maxLogBodyBytes
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 		if isEventStream(r.URL.Path) {
 			next.ServeHTTP(w, r)

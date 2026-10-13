@@ -103,8 +103,15 @@ fleet:
 # field has the default shown.
 south:
   # The largest request body this listener accepts. Every south-bound payload
-  # is a small JSON object. Defaults to 1048576 (1 MiB).
+  # but a log batch is a small JSON object. Defaults to 1048576 (1 MiB).
   max_body_bytes: 1048576
+
+  # The largest body the two log paths accept. They carry session capture: a
+  # full default batch of a busy session's terminal output is about 2.7 MiB of
+  # JSON, and a body over this limit is answered 400, which the proxy cures by
+  # halving the batch — costing requests and protecting nothing the per-record
+  # bounds in `audit:` do not. Defaults to 4194304 (4 MiB).
+  max_log_body_bytes: 4194304
 
   # How long one request may take before this server ANSWERS rather than
   # hangs. A proxy holds a user's SSH handshake open while it waits, and a
@@ -255,8 +262,12 @@ events:
 audit:
   # The bounds on one ingest request. An unbounded ingest path is a
   # memory-exhaustion surface reachable by any enrolled proxy, and a batch too
-  # large to answer inside the request timeout is a batch the proxy retries
-  # forever. A zero takes the default.
+  # large to answer inside the request timeout is one the proxy retries — a
+  # timeout is retried, never set aside — with its drain waiting behind that
+  # batch until its disk window evicts it, which it never does for a pinned
+  # session. A record over a bound is refused (400) and set aside by the proxy
+  # for good, reported as a `logging.gap`; a batch over max_batch_records is a
+  # 400 the proxy cures by halving it. A zero takes the default.
   #
   # `max_capture_bytes` is the one with a number behind it rather than a round
   # guess: a pty stream arrives as raw chunks, one per read off the wire, so a

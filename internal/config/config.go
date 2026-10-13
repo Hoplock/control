@@ -61,6 +61,13 @@ const (
 const (
 	// DefaultSouthMaxBodyBytes caps a south-bound request body.
 	DefaultSouthMaxBodyBytes int64 = 1 << 20
+	// DefaultSouthMaxLogBodyBytes caps a body on the two log paths. A full
+	// default batch of a busy session's capture is 64 records of up to
+	// 32 KiB each — about 2.7 MiB once base64-encoded — and since
+	// Hoplock/proxy#71 a body over the limit is halved by the proxy until
+	// it fits, costing requests and protecting nothing the per-record
+	// bounds do not.
+	DefaultSouthMaxLogBodyBytes int64 = 4 << 20
 	// DefaultSouthRequestTimeout bounds one south-bound request. A
 	// server-side timeout that ANSWERS is strictly better than a slow
 	// answer that looks like an outage (M5).
@@ -287,9 +294,14 @@ type DecisionConfig struct {
 
 // SouthConfig bounds the south-bound listener (PLAN M2, M5).
 type SouthConfig struct {
-	// MaxBodyBytes caps a request body. Every south-bound payload is a
-	// small JSON object.
+	// MaxBodyBytes caps a request body. Every south-bound payload but a log
+	// batch is a small JSON object.
 	MaxBodyBytes int64 `yaml:"max_body_bytes"`
+	// MaxLogBodyBytes caps a body on the two log paths, which carry session
+	// capture. A body over it is a 400 the proxy cures by halving the batch
+	// (Hoplock/proxy#71), so it is sized to let a full default batch land in
+	// one request.
+	MaxLogBodyBytes int64 `yaml:"max_log_body_bytes"`
 	// RequestTimeout bounds a single request. It is a deadline on the
 	// handler rather than a suggestion: a timeout the proxy classifies as
 	// an outage is strictly better than a held connection.
@@ -543,6 +555,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.South.MaxBodyBytes == 0 {
 		c.South.MaxBodyBytes = DefaultSouthMaxBodyBytes
+	}
+	if c.South.MaxLogBodyBytes == 0 {
+		c.South.MaxLogBodyBytes = DefaultSouthMaxLogBodyBytes
 	}
 	if c.South.RequestTimeout == 0 {
 		c.South.RequestTimeout = DefaultSouthRequestTimeout
@@ -984,6 +999,9 @@ func (a AuditConfig) validate(l ListenersConfig, e EventsConfig) error {
 func (s SouthConfig) validate() error {
 	if s.MaxBodyBytes <= 0 {
 		return &FieldError{Field: "south.max_body_bytes", Msg: "must be a positive number of bytes"}
+	}
+	if s.MaxLogBodyBytes <= 0 {
+		return &FieldError{Field: "south.max_log_body_bytes", Msg: "must be a positive number of bytes"}
 	}
 	if s.RequestTimeout <= 0 {
 		return &FieldError{Field: "south.request_timeout", Msg: "must not be negative"}
