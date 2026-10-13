@@ -26,14 +26,23 @@ import (
 // there is no second router, no second chain, and the isolation test enumerates
 // host routes on the day they are mounted.
 //
+// A host route is one of two classes, and the middleware resolves what each
+// covers before the handler runs:
+//
+//   - AccessTenant, at /api/v1/tenants/{tenant}/<pattern>: the middleware
+//     authenticates, resolves exactly one tenant from the principal's scope
+//     and checks the route's permission in it.
+//   - AccessCrossTenant, at /api/v1/cross-tenant/<pattern> (M24): the
+//     middleware authenticates and resolves the set of tenants in the
+//     principal's scope where it holds the route's permission, narrowed by the
+//     request's selector and never widened. The permission must be a read.
+//
 // Three things a host does NOT get, each on purpose:
 //
-//   - a route outside a tenant. Every host route is AccessTenant at
-//     /api/v1/tenants/{tenant}/<pattern>: the middleware authenticates, resolves
-//     exactly one tenant from the principal's scope and checks the route's
-//     permission before the handler runs. A cross-tenant route needs an access
-//     class this surface does not have, and creating one is a decision of its
-//     own (M18), not a side effect of a plugin seam.
+//   - a cross-tenant write, or any route outside these two classes. A write
+//     across tenants is N records in N audit chains (M8) with no atomicity and
+//     an outcome M11 cannot name, and anonymous, authenticated-only and
+//     self-scoped routes are Control's own.
 //   - a permission of its own. A host NAMES one of identity.AllPermissions;
 //     the role set is fixed and lives in code, so what "admin" means does not
 //     depend on which binary is running.
@@ -44,10 +53,16 @@ import (
 type HostRoute struct {
 	// Method is one of hostMethods.
 	Method string
-	// Pattern is relative to /api/v1/tenants/{tenant}/: no leading "/", no
-	// "{tenant}", no "..", no method prefix.
+	// Pattern is relative to the class's prefix — [HostPrefix] or
+	// [CrossTenantPrefix]: no leading "/", no "{tenant}", no "..", no
+	// method prefix.
 	Pattern string
-	// Permission is one of identity.AllPermissions.
+	// Access is AccessTenant or AccessCrossTenant. Every other class,
+	// including the zero value, is refused: a host gets no anonymous,
+	// authenticated-only or self-scoped route.
+	Access Access
+	// Permission is one of identity.AllPermissions; on a cross-tenant route,
+	// one the auditor role holds.
 	Permission identity.Permission
 	// Summary is one line for the route listing.
 	Summary string
@@ -60,15 +75,19 @@ var hostMethods = []string{
 	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
 }
 
-// HostPrefix is where every host route lives.
+// HostPrefix is where every AccessTenant host route lives.
 const HostPrefix = APIPrefix + "/tenants/{" + TenantPathParam + "}/"
 
 // HostCaller is who Control authenticated for a host route: a public
 // projection of the principal, never the principal itself, whose scope map
 // stays unreachable (M18).
 type HostCaller struct {
-	// Tenant is the one tenant the middleware resolved.
+	// Tenant is the one tenant the middleware resolved on a tenant route,
+	// and empty on a cross-tenant one.
 	Tenant ext.Tenant
+	// Tenants is the set the middleware resolved on a cross-tenant route:
+	// sorted, never empty. Nil on a tenant route.
+	Tenants []ext.Tenant
 	// Subject is the person behind a session — ID and Groups. Zero for a
 	// machine token. Username and ExternalID are empty: the principal
 	// carries neither, and they are never guessed.
@@ -98,6 +117,7 @@ func HostCallerFrom(ctx context.Context) (HostCaller, bool) {
 		return HostCaller{}, false
 	}
 	c := hr.caller
+	c.Tenants = slices.Clone(c.Tenants)
 	c.Subject.Groups = slices.Clone(c.Subject.Groups)
 	return c, true
 }
@@ -206,10 +226,23 @@ func (s *Server) hostRoute(provider string, hr HostRoute, control map[string]boo
 	case !slices.Contains(identity.AllPermissions, hr.Permission):
 		return Route{}, fmt.Errorf("httpapi/north: %s names permission %q, which Control does not define; a host names a permission and never declares one", name, hr.Permission)
 	}
-	if err := checkHostPattern(hr.Pattern); err != nil {
+	var prefix string
+	switch hr.Access {
+	case AccessTenant:
+		prefix = HostPrefix
+	case AccessCrossTenant:
+		prefix = CrossTenantPrefix
+	case AccessAnonymous, AccessAuthenticated, AccessSelf:
+		return Route{}, fmt.Errorf("httpapi/north: %s is %s; a host route is %s or %s",
+			name, hr.Access, AccessTenant, AccessCrossTenant)
+	default:
+		return Route{}, fmt.Errorf("httpapi/north: %s has no access class Control defines; a host route is %s or %s",
+			name, AccessTenant, AccessCrossTenant)
+	}
+	if err := checkHostPattern(prefix, hr.Pattern); err != nil {
 		return Route{}, fmt.Errorf("httpapi/north: %s: %w", name, err)
 	}
-	pattern := HostPrefix + hr.Pattern
+	pattern := prefix + hr.Pattern
 	if control[pattern] {
 		return Route{}, fmt.Errorf("httpapi/north: %s collides with Control's route at %s", name, pattern)
 	}
@@ -218,7 +251,7 @@ func (s *Server) hostRoute(provider string, hr HostRoute, control map[string]boo
 	return Route{
 		Method:     hr.Method,
 		Pattern:    pattern,
-		Access:     AccessTenant,
+		Access:     hr.Access,
 		Permission: hr.Permission,
 		Summary:    hr.Summary,
 		Provider:   provider,
@@ -228,27 +261,20 @@ func (s *Server) hostRoute(provider string, hr HostRoute, control map[string]boo
 	}, nil
 }
 
-// checkHostPattern refuses a pattern that is not a plain path under the host
+// checkHostPattern refuses a pattern that is not a plain path under its class's
 // prefix.
-func checkHostPattern(pattern string) error {
+func checkHostPattern(prefix, pattern string) error {
 	switch {
 	case pattern == "":
 		return fmt.Errorf("the pattern is empty")
 	case strings.HasPrefix(pattern, "/"):
-		return fmt.Errorf("the pattern is relative to %s and may not start with /", HostPrefix)
+		return fmt.Errorf("the pattern is relative to %s and may not start with /", prefix)
 	case strings.ContainsAny(pattern, " \t"):
 		return fmt.Errorf("the pattern carries a method prefix or a space; the method is a field of its own")
-	}
-	for _, segment := range strings.Split(pattern, "/") {
-		if segment == ".." {
-			return fmt.Errorf("the pattern climbs out of the tenant with a .. segment")
-		}
-		if strings.HasPrefix(segment, "{") {
-			name := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(segment, "{"), "}"), "...")
-			if name == TenantPathParam {
-				return fmt.Errorf("the pattern names {%s}; Control resolves the tenant and prefixes it", TenantPathParam)
-			}
-		}
+	case slices.Contains(strings.Split(pattern, "/"), ".."):
+		return fmt.Errorf("the pattern climbs out of %s with a .. segment", prefix)
+	case namesTenantParam(pattern):
+		return fmt.Errorf("the pattern names {%s}; Control resolves the tenant, or the set, before the handler runs", TenantPathParam)
 	}
 	return nil
 }
@@ -260,6 +286,12 @@ func (s *Server) withHostRequest(r *http.Request, provider string) context.Conte
 	caller := HostCaller{CorrelationID: CorrelationIDFrom(ctx)}
 	if t, ok := TenantFrom(ctx); ok {
 		caller.Tenant = ext.Tenant(t)
+	}
+	if ts, ok := TenantsFrom(ctx); ok {
+		caller.Tenants = make([]ext.Tenant, 0, len(ts))
+		for _, t := range ts {
+			caller.Tenants = append(caller.Tenants, ext.Tenant(t))
+		}
 	}
 	if p, ok := PrincipalFrom(ctx); ok {
 		caller.Principal = p.ID

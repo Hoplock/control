@@ -5,6 +5,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -27,7 +28,7 @@ func (a *archive) Search(context.Context, ext.ArchiveQuery) (ext.ArchivePage, er
 }
 
 // A host binary's main: register an extension, declare a configuration section
-// and a route, and start Control. A real host calls server.Main instead of
+// and a route of each class, and start Control. A real host calls server.Main instead of
 // server.Run, so that its binary carries Control's subcommands too.
 func Example() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -65,20 +66,37 @@ func Example() {
 			return nil
 		},
 
-		// GET /api/v1/tenants/{tenant}/archive/{record}, for a caller holding
-		// audit:read in the tenant Control resolved.
-		Routes: []server.Route{{
-			Method:     http.MethodGet,
-			Pattern:    "archive/{record}",
-			Permission: "audit:read",
-			Summary:    "one archived record",
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				caller, _ := server.CallerFrom(r.Context())
-				server.WriteError(w, r, http.StatusNotFound, "archive_record_not_found",
-					map[string]any{"record": r.PathValue("record"), "tenant": string(caller.Tenant)},
-					"the archive holds no such record")
-			}),
-		}},
+		Routes: []server.Route{
+			// GET /api/v1/tenants/{tenant}/archive/{record}, for a caller
+			// holding audit:read in the tenant Control resolved.
+			{
+				Method:     http.MethodGet,
+				Pattern:    "archive/{record}",
+				Permission: "audit:read",
+				Summary:    "one archived record",
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					caller, _ := server.CallerFrom(r.Context())
+					server.WriteError(w, r, http.StatusNotFound, "archive_record_not_found",
+						map[string]any{"record": r.PathValue("record"), "tenant": string(caller.Tenant)},
+						"the archive holds no such record")
+				}),
+			},
+			// GET /api/v1/cross-tenant/archive/summary, for a caller holding
+			// audit:read in each tenant it covers. Control resolves the set —
+			// narrowed by ?tenant=, never widened — and the answer names it.
+			{
+				Method:     http.MethodGet,
+				Pattern:    "archive/summary",
+				Permission: "audit:read",
+				Access:     server.AccessCrossTenant,
+				Summary:    "the archive, summarised across tenants",
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					caller, _ := server.CallerFrom(r.Context())
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{"tenants": caller.Tenants, "records": 0})
+				}),
+			},
+		},
 		ErrorCodes: []string{"archive_record_not_found"},
 	})
 	if err != nil {

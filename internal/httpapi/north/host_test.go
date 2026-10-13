@@ -25,23 +25,36 @@ import (
 
 const testHostProvider = "test/host"
 
-// testHostRoutes are the two routes every test server carries. The report
-// handler's behaviour is chosen by its {report} segment, so one route can
-// exercise every way a host answers.
+// testHostRoutes are the three routes every test server carries: two tenant
+// routes and one cross-tenant read (M24). The report handler's behaviour is
+// chosen by its {report} segment, so one route can exercise every way a host
+// answers. Every cross-tenant route here answers with its caller, which is what
+// lets the tests that enumerate that class read the set it was handed.
 func testHostRoutes() []north.HostRoute {
 	return []north.HostRoute{
 		{
 			Method: "GET", Pattern: "reports/{report}",
+			Access:     north.AccessTenant,
 			Permission: identity.PermAuditRead,
 			Summary:    "a test host's report",
 			Handler:    http.HandlerFunc(hostReport),
 		},
 		{
 			Method: "POST", Pattern: "reports/schedules",
+			Access:     north.AccessTenant,
 			Permission: identity.PermReportWrite,
 			Summary:    "a test host's report schedule",
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				answerCaller(w, r, http.StatusCreated)
+			}),
+		},
+		{
+			Method: "GET", Pattern: "reports/privileged-access",
+			Access:     north.AccessCrossTenant,
+			Permission: identity.PermAuditRead,
+			Summary:    "a test host's report across tenants",
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				answerCaller(w, r, http.StatusOK)
 			}),
 		},
 	}
@@ -269,8 +282,11 @@ func TestTheRouteListingNamesWhoseEveryRouteIs(t *testing.T) {
 		switch {
 		case route.Provider == testHostProvider:
 			host = append(host, route.String())
-			if !strings.HasPrefix(route.Pattern, north.HostPrefix) || route.Access != "tenant" {
-				t.Errorf("host route %s is not a tenant route under %s", route, north.HostPrefix)
+			tenant := strings.HasPrefix(route.Pattern, north.HostPrefix) && route.Access == "tenant"
+			cross := strings.HasPrefix(route.Pattern, north.CrossTenantPrefix) && route.Access == "cross-tenant"
+			if !tenant && !cross {
+				t.Errorf("host route %s is neither a tenant route under %s nor a cross-tenant read under %s",
+					route, north.HostPrefix, north.CrossTenantPrefix)
 			}
 		case route.Provider != "":
 			t.Errorf("%s names provider %q", route, route.Provider)
@@ -279,6 +295,7 @@ func TestTheRouteListingNamesWhoseEveryRouteIs(t *testing.T) {
 	want := []string{
 		"GET " + north.HostPrefix + "reports/{report}",
 		"POST " + north.HostPrefix + "reports/schedules",
+		"GET " + north.CrossTenantPrefix + "reports/privileged-access",
 	}
 	if !slices.Equal(host, want) {
 		t.Errorf("host routes in the listing = %v, want %v", host, want)
@@ -290,7 +307,17 @@ func TestTheRouteListingNamesWhoseEveryRouteIs(t *testing.T) {
 func TestAHostRouteControlWillNotMountIsRefusedAtStartUp(t *testing.T) {
 	ok := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	route := func(method, pattern string, perm identity.Permission) north.HostRoute {
-		return north.HostRoute{Method: method, Pattern: pattern, Permission: perm, Summary: "x", Handler: ok}
+		return north.HostRoute{Method: method, Pattern: pattern, Access: north.AccessTenant, Permission: perm, Summary: "x", Handler: ok}
+	}
+	cross := func(pattern string, perm identity.Permission) north.HostRoute {
+		r := route("GET", pattern, perm)
+		r.Access = north.AccessCrossTenant
+		return r
+	}
+	class := func(a north.Access) north.HostRoute {
+		r := route("GET", "reports", identity.PermAuditRead)
+		r.Access = a
+		return r
 	}
 	read := identity.PermAuditRead
 
@@ -305,12 +332,30 @@ func TestAHostRouteControlWillNotMountIsRefusedAtStartUp(t *testing.T) {
 		"an empty pattern":            {route("GET", "", read)},
 		"an undefined permission":     {route("GET", "reports", "report:invent")},
 		"no permission":               {route("GET", "reports", "")},
-		"no handler":                  {{Method: "GET", Pattern: "reports", Permission: read}},
+		"no handler":                  {{Method: "GET", Pattern: "reports", Access: north.AccessTenant, Permission: read}},
 		"a duplicate host route":      {route("GET", "reports", read), route("GET", "reports", read)},
 		"a duplicate Control route":   {route("GET", "grants", read)},
 		"a method on Control's path":  {route("PUT", "grants", read)},
 		"a mux conflict with Control": {route("GET", "grants/{id}", read)},
 		"a mux conflict between two":  {route("GET", "zz/{a}/end", read), route("GET", "zz/start/{b}", read)},
+
+		// A host route is one of two classes (M24).
+		"no class at all":               {class(north.Access(0))},
+		"an anonymous route":            {class(north.AccessAnonymous)},
+		"an authenticated-only route":   {class(north.AccessAuthenticated)},
+		"a self-scoped route":           {class(north.AccessSelf)},
+		"a class Control does not have": {class(north.Access(99))},
+
+		// A cross-tenant route is a read, under its own prefix.
+		"a cross-tenant grant:write":          {cross("grants", identity.PermGrantWrite)},
+		"a cross-tenant report:write":         {cross("reports/schedules", identity.PermReportWrite)},
+		"a cross-tenant access-context:push":  {cross("push", identity.PermAccessContextPush)},
+		"a cross-tenant route naming tenant":  {cross("{tenant}/reports", read)},
+		"a cross-tenant tenant remainder":     {cross("reports/{tenant...}", read)},
+		"a cross-tenant climb out":            {cross("../tenants/x/ca", read)},
+		"a cross-tenant leading slash":        {cross("/reports", read)},
+		"a cross-tenant duplicate":            {cross("reports", read), cross("reports", read)},
+		"a cross-tenant route with no permit": {cross("reports", "")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := north.CheckHost(testHostProvider, routes, nil)

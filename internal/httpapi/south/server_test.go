@@ -118,8 +118,9 @@ func TestNoRouteOfTheNorthBoundTableIsReachableHere(t *testing.T) {
 
 	ok := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	routes, err := north.Table("test/host", []north.HostRoute{
-		{Method: "GET", Pattern: "reports/{report}", Permission: identity.PermAuditRead, Summary: "a report", Handler: ok},
-		{Method: "POST", Pattern: "reports/schedules", Permission: identity.PermReportWrite, Summary: "a schedule", Handler: ok},
+		{Method: "GET", Pattern: "reports/{report}", Access: north.AccessTenant, Permission: identity.PermAuditRead, Summary: "a report", Handler: ok},
+		{Method: "POST", Pattern: "reports/schedules", Access: north.AccessTenant, Permission: identity.PermReportWrite, Summary: "a schedule", Handler: ok},
+		{Method: "GET", Pattern: "reports/privileged-access", Access: north.AccessCrossTenant, Permission: identity.PermAuditRead, Summary: "a report across tenants", Handler: ok},
 	}, nil)
 	if err != nil {
 		t.Fatalf("the north-bound table: %v", err)
@@ -138,8 +139,8 @@ func TestNoRouteOfTheNorthBoundTableIsReachableHere(t *testing.T) {
 		}
 		h.requireEnvelope(t, res)
 	}
-	if hostRoutes != 2 {
-		t.Fatalf("enumerated %d host routes, want 2: the table this walks must include a host's", hostRoutes)
+	if hostRoutes != 3 {
+		t.Fatalf("enumerated %d host routes, want 3: the table this walks must include a host's, of both classes", hostRoutes)
 	}
 }
 

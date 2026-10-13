@@ -203,16 +203,22 @@ func TestEveryRegisteredRouteRefusesATenantOutsideTheCallersScope(t *testing.T) 
 		"tenant-a": {identity.RoleAdmin},
 	})
 
-	tenantRoutes, selfRoutes, hostRoutes := 0, 0, 0
+	tenantRoutes, selfRoutes, crossRoutes, hostRoutes := 0, 0, 0, 0
 	for _, route := range f.server.Routes() {
 		// A self route resolves its tenant exactly as a tenant route does,
 		// and refuses one outside scope before it ever asks whose records
-		// they are (0016).
+		// they are (0016). A cross-tenant read has no tenant in its path,
+		// so it is named in the selector, which narrows its set and never
+		// widens it (M24).
+		path := samplePath(route.Pattern, "tenant-b")
 		switch route.Access {
 		case "tenant":
 			tenantRoutes++
 		case "self":
 			selfRoutes++
+		case "cross-tenant":
+			crossRoutes++
+			path += "?" + north.TenantQueryParam + "=tenant-b"
 		default:
 			continue
 		}
@@ -220,7 +226,6 @@ func TestEveryRegisteredRouteRefusesATenantOutsideTheCallersScope(t *testing.T) 
 			hostRoutes++
 		}
 		t.Run(route.Method+" "+route.Pattern, func(t *testing.T) {
-			path := samplePath(route.Pattern, "tenant-b")
 			resp := f.do(t, route.Method, path, token, bytes.NewReader([]byte(`{}`)))
 			if resp.StatusCode != http.StatusForbidden {
 				t.Fatalf("answered %d, want 403: a tenant-a credential reached tenant-b", resp.StatusCode)
@@ -234,9 +239,9 @@ func TestEveryRegisteredRouteRefusesATenantOutsideTheCallersScope(t *testing.T) 
 			}
 		})
 	}
-	if tenantRoutes == 0 || selfRoutes == 0 {
-		t.Fatalf("%d tenant and %d self routes are registered, so this test asserted nothing about one class",
-			tenantRoutes, selfRoutes)
+	if tenantRoutes == 0 || selfRoutes == 0 || crossRoutes == 0 {
+		t.Fatalf("%d tenant, %d self and %d cross-tenant routes are registered, so this test asserted nothing about one class",
+			tenantRoutes, selfRoutes, crossRoutes)
 	}
 	if hostRoutes != len(testHostRoutes()) {
 		t.Fatalf("enumerated %d host routes, want %d: a host's routes are in the table this test walks",
@@ -286,6 +291,18 @@ func TestEveryRouteDeclaresAnAccessClassAndATenantRouteDeclaresAPermission(t *te
 			if self := strings.Contains(route.Pattern, "/me/") || strings.HasSuffix(route.Pattern, "/me"); self != (route.Access == "self") {
 				t.Errorf("%s is %s, but its path says otherwise", route, route.Access)
 			}
+		case "cross-tenant":
+			// A read, a host's, and resolved rather than selected by path
+			// (M24).
+			if !identity.RoleAuditor.Can(route.Permission) {
+				t.Errorf("%s names permission %q, which is not a read the auditor holds", route, route.Permission)
+			}
+			if route.Provider == "" {
+				t.Errorf("%s is Control's own; Control serves no cross-tenant route", route)
+			}
+			if north.SelectsTenantInPath(route.Pattern) {
+				t.Errorf("%s carries a tenant selector in its path", route)
+			}
 		case "authenticated":
 			// A route about the CALLER rather than about a tenant's data.
 			// One carrying a tenant selector in its path would be a route
@@ -302,6 +319,11 @@ func TestEveryRouteDeclaresAnAccessClassAndATenantRouteDeclaresAPermission(t *te
 			}
 		default:
 			t.Errorf("%s has access class %q", route, route.Access)
+		}
+		// The cross-tenant prefix holds that class and nothing else, so the
+		// path alone says which class answered.
+		if under := strings.HasPrefix(route.Pattern, north.CrossTenantPrefix); under != (route.Access == "cross-tenant") {
+			t.Errorf("%s is %s, but its path says otherwise", route, route.Access)
 		}
 		if route.Summary == "" {
 			t.Errorf("%s has no summary, so the startup log and the route listing say nothing", route)
@@ -338,6 +360,50 @@ func TestARouteThatIsNotFullyClassifiedIsRefusedAtRegistration(t *testing.T) {
 		"no method": {
 			Pattern: "/x", Access: north.AccessAnonymous, Handler: handler,
 		},
+
+		// The cross-tenant class (M24): a host's read, under its prefix.
+		"cross-tenant route with no permission": {
+			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessCrossTenant,
+			Provider: "test/host", Handler: handler,
+		},
+		"cross-tenant route with a write": {
+			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessCrossTenant,
+			Permission: identity.PermGrantWrite, Provider: "test/host", Handler: handler,
+		},
+		"cross-tenant route with an unknown permission": {
+			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessCrossTenant,
+			Permission: "audit:invent", Provider: "test/host", Handler: handler,
+		},
+		"cross-tenant route of Control's own": {
+			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessCrossTenant,
+			Permission: identity.PermAuditRead, Handler: handler,
+		},
+		"cross-tenant route outside its prefix": {
+			Method: "GET", Pattern: north.APIPrefix + "/reports", Access: north.AccessCrossTenant,
+			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
+		},
+		"cross-tenant route that is the bare prefix": {
+			Method: "GET", Pattern: north.CrossTenantPrefix, Access: north.AccessCrossTenant,
+			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
+		},
+		"cross-tenant route naming the tenant": {
+			Method: "GET", Pattern: north.CrossTenantPrefix + "{tenant}/x", Access: north.AccessCrossTenant,
+			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
+		},
+		"cross-tenant route naming a tenant remainder": {
+			Method: "GET", Pattern: north.CrossTenantPrefix + "x/{tenant...}", Access: north.AccessCrossTenant,
+			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
+		},
+		"tenant route under the cross-tenant prefix": {
+			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessTenant,
+			Permission: identity.PermAuditRead, Handler: handler,
+		},
+		"anonymous route under the cross-tenant prefix": {
+			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessAnonymous, Handler: handler,
+		},
+		"authenticated route at the cross-tenant root": {
+			Method: "GET", Pattern: north.APIPrefix + "/cross-tenant", Access: north.AccessAuthenticated, Handler: handler,
+		},
 	} {
 		router := north.NewRouter(wrap)
 		if err := router.Register(route); err == nil {
@@ -351,6 +417,13 @@ func TestARouteThatIsNotFullyClassifiedIsRefusedAtRegistration(t *testing.T) {
 	route := north.Route{Method: "GET", Pattern: "/x", Access: north.AccessAnonymous, Handler: handler}
 	if err := router.Register(route); err != nil {
 		t.Fatalf("first registration: %v", err)
+	}
+	// And a host's cross-tenant read, fully classified, is accepted.
+	if err := router.Register(north.Route{
+		Method: "GET", Pattern: north.CrossTenantPrefix + "reports", Access: north.AccessCrossTenant,
+		Permission: identity.PermLicenseRead, Provider: "test/host", Handler: handler,
+	}); err != nil {
+		t.Fatalf("a well-formed cross-tenant read was refused: %v", err)
 	}
 	if err := router.Register(route); err == nil {
 		t.Error("a duplicate route registered")
@@ -959,7 +1032,8 @@ func TestTheAccessLogNamesThePrincipalAndTheTenantItResolved(t *testing.T) {
 	server, err := north.New(north.Options{
 		Federation: federation, CA: ca, Grants: newGrants(t, st, access.Options{}),
 		DefaultTenant: "tenant-a", InsecureCookies: true,
-		Logger: slog.New(slog.NewJSONHandler(&buf, nil)),
+		Logger:       slog.New(slog.NewJSONHandler(&buf, nil)),
+		HostProvider: testHostProvider, HostRoutes: testHostRoutes(),
 	})
 	if err != nil {
 		t.Fatalf("server: %v", err)
@@ -998,5 +1072,47 @@ func TestTheAccessLogNamesThePrincipalAndTheTenantItResolved(t *testing.T) {
 	// And what it must NOT carry.
 	if strings.Contains(line, cred.Secret) {
 		t.Error("the access log carries the credential")
+	}
+
+	// A cross-tenant read names the SET it resolved, sorted, and no one
+	// tenant: the line says "these", never "some of them" (M24).
+	buf.Reset()
+	cross, _, err := federation.IssueToken(context.Background(), "tenant-b", identity.TokenRequest{
+		DisplayName: "auditor",
+		Scopes: map[store.Tenant]identity.RoleSet{
+			"tenant-b": {identity.RoleAuditor}, "tenant-a": {identity.RoleAuditor},
+		},
+	})
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	req, err = http.NewRequest("GET", ts.URL+north.CrossTenantPrefix+"reports/privileged-access", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+cross.String())
+	resp2, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("cross-tenant status %d", resp2.StatusCode)
+	}
+	var entry map[string]any
+	for _, l := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var e map[string]any
+		if json.Unmarshal([]byte(l), &e) == nil && e["event"] == "northbound_request" {
+			entry = e
+		}
+	}
+	if entry == nil {
+		t.Fatalf("no access log line for the cross-tenant read:\n%s", buf.String())
+	}
+	if got, _ := entry["tenants"].([]any); !slices.Equal(got, []any{"tenant-a", "tenant-b"}) {
+		t.Errorf("tenants = %v, want the sorted set [tenant-a tenant-b]", entry["tenants"])
+	}
+	if _, named := entry["tenant"]; named {
+		t.Errorf("a cross-tenant read logged one tenant, %v, beside its set", entry["tenant"])
 	}
 }

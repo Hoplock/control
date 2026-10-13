@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,8 +23,9 @@ import (
 // proxy token that can reach a policy-authoring endpoint is privilege escalation
 // from "can ask about decisions" to "can author them".
 //
-// THE TENANT IS RESOLVED HERE AND NOWHERE ELSE (M18). A handler reads it from
-// the context or not at all.
+// THE TENANT IS RESOLVED HERE AND NOWHERE ELSE (M18) — and so is the set a
+// cross-tenant read covers (M24). A handler reads either from the context or not
+// at all.
 
 // CorrelationHeader is the request header a caller may set to tie its own logs
 // to this server's. The value is echoed on every response, including errors.
@@ -54,6 +56,7 @@ const (
 	ctxKeyFacts
 	ctxKeyHost
 	ctxKeySubject
+	ctxKeyTenants
 )
 
 // requestFacts is what the access log learns from a middleware INSIDE it.
@@ -63,9 +66,13 @@ const (
 // placed on the way down and filled on the way through is the alternative to
 // either logging before the answer is known (no principal, no tenant) or moving
 // authentication above the log (no line at all for a request that fails it).
+//
+// A request fills tenant or tenants, never both: a cross-tenant read resolves
+// a set and no one tenant (M24).
 type requestFacts struct {
 	principal *identity.Principal
 	tenant    store.Tenant
+	tenants   []store.Tenant
 }
 
 func factsFrom(ctx context.Context) *requestFacts {
@@ -81,9 +88,10 @@ func CorrelationIDFrom(ctx context.Context) string {
 
 // PrincipalFrom returns the authenticated caller.
 //
-// It is the ONLY thing a handler may consult about who is calling. There is no
-// accessor that answers "which tenants could this caller reach" — a handler that
-// needs a tenant uses [TenantFrom], which is the one the middleware resolved.
+// It is the ONLY thing a handler may consult about who is calling. A handler
+// never asks it "which tenants could this caller reach" — one that needs a
+// tenant uses [TenantFrom], and one on a cross-tenant read uses [TenantsFrom]:
+// what the middleware resolved, never what the handler would choose.
 func PrincipalFrom(ctx context.Context) (*identity.Principal, bool) {
 	p, ok := ctx.Value(ctxKeyPrincipal).(*identity.Principal)
 	return p, ok && p != nil
@@ -91,13 +99,29 @@ func PrincipalFrom(ctx context.Context) (*identity.Principal, bool) {
 
 // TenantFrom returns the ONE tenant this request resolved to.
 //
-// Every request resolves to exactly one, so an audit record never has to say
-// "some of them" (M18). A handler on an AccessTenant or AccessSelf route can
-// rely on it; on any other class it is empty, and that is deliberate — a route that needs a
-// tenant is a route that declares it needs one.
+// A request on an AccessTenant or AccessSelf route resolves exactly one, so an
+// audit record never has to say "some of them" (M18), and its handler can rely
+// on it. On any other class it is empty, and that is deliberate — a route that
+// needs a tenant is a route that declares it needs one. That includes
+// AccessCrossTenant, which resolves a set rather than one: [TenantsFrom].
 func TenantFrom(ctx context.Context) (store.Tenant, bool) {
 	t, ok := ctx.Value(ctxKeyTenant).(store.Tenant)
 	return t, ok && t != ""
+}
+
+// TenantsFrom returns the set of tenants an AccessCrossTenant route resolved:
+// sorted, never empty, each one in the caller's scope with the route's
+// permission (M24). It returns a copy, so a handler cannot change what the
+// request covers by changing what it was handed.
+//
+// It is the ONLY way a handler reads that set, mirroring [TenantFrom]. On any
+// other class it is false.
+func TenantsFrom(ctx context.Context) ([]store.Tenant, bool) {
+	ts, ok := ctx.Value(ctxKeyTenants).([]store.Tenant)
+	if !ok || len(ts) == 0 {
+		return nil, false
+	}
+	return slices.Clone(ts), true
 }
 
 // SubjectFrom returns the subject an AccessSelf route resolved: the person
@@ -125,7 +149,8 @@ type Authenticator interface {
 //
 // It is the function the router's wrap resolves to, and it is the whole of
 // M18's north-bound half. Read it top to bottom: correlation, credential,
-// tenant, permission, and on a self route the subject — and note that each
+// tenant, permission, and on a self route the subject — or, on a cross-tenant
+// read, the set of tenants in place of the one (M24) — and note that each
 // step's failure has its own code, because "you are not signed in", "you
 // cannot do that here", "that is not your tenant" and "there is nobody behind
 // this credential" are four different operator problems.
@@ -168,6 +193,22 @@ func (s *Server) enforce(route Route) http.Handler {
 		}
 
 		if route.Access == AccessAuthenticated {
+			route.Handler(w, r.WithContext(ctx))
+			return
+		}
+
+		// A CROSS-TENANT READ RESOLVES A SET, by the same rule a tenant
+		// route resolves one: from the principal's scope, with any tenant
+		// the request names a selector within it and never a widening.
+		if route.Access == AccessCrossTenant {
+			tenants, ok := s.resolveTenantSet(ctx, w, r, principal, route.Permission)
+			if !ok {
+				return
+			}
+			ctx = context.WithValue(ctx, ctxKeyTenants, tenants)
+			if facts := factsFrom(ctx); facts != nil {
+				facts.tenants = tenants
+			}
 			route.Handler(w, r.WithContext(ctx))
 			return
 		}
@@ -238,6 +279,74 @@ func (s *Server) enforce(route Route) http.Handler {
 		}
 		route.Handler(w, r.WithContext(ctx))
 	})
+}
+
+// resolveTenantSet is the cross-tenant half of enforce (M24): the set of
+// tenants a cross-tenant read covers, or a refusal written and false.
+//
+// With no selector the set is every tenant in the principal's scope where it
+// holds perm, and none is a refusal: the handler never runs on an empty set.
+// With a selector, each named tenant is checked in sorted order and the first
+// that fails is refused — never dropped, because dropping it would answer a
+// report that covers fewer tenants than were asked for and looks complete. The
+// refusals are this surface's existing ones, because they are the same operator
+// problems as on a tenant route.
+func (s *Server) resolveTenantSet(ctx context.Context, w http.ResponseWriter, r *http.Request, principal *identity.Principal, perm identity.Permission) ([]store.Tenant, bool) {
+	id := CorrelationIDFrom(ctx)
+	named := selectedTenants(r)
+	if len(named) == 0 {
+		tenants := principal.TenantsWith(perm)
+		if len(tenants) == 0 {
+			s.logRefusal(ctx, r, principal, "", CodeForbidden)
+			writeError(w, http.StatusForbidden, Error{
+				Code: CodeForbidden, CorrelationID: id,
+				Message:    "this credential does not hold the permission this route needs in any tenant",
+				Parameters: map[string]any{"permission": string(perm)},
+			})
+			return nil, false
+		}
+		return tenants, true
+	}
+	for _, tenant := range named {
+		if !principal.MayActIn(tenant) {
+			s.logRefusal(ctx, r, principal, tenant, CodeTenantOutOfScope)
+			writeError(w, http.StatusForbidden, Error{
+				Code: CodeTenantOutOfScope, CorrelationID: id,
+				Message:    "this credential cannot act in that tenant",
+				Parameters: map[string]any{"tenant": tenant.String()},
+			})
+			return nil, false
+		}
+		if !principal.Can(tenant, perm) {
+			s.logRefusal(ctx, r, principal, tenant, CodeForbidden)
+			writeError(w, http.StatusForbidden, Error{
+				Code: CodeForbidden, CorrelationID: id,
+				Message: "this credential does not hold the permission this route needs",
+				Parameters: map[string]any{
+					"tenant":     tenant.String(),
+					"permission": string(perm),
+				},
+			})
+			return nil, false
+		}
+	}
+	return named, true
+}
+
+// selectedTenants reads a cross-tenant read's selector: every non-empty
+// `tenant` query value and every X-Hoplock-Tenant header value, trimmed,
+// de-duplicated and sorted. A path never carries one — a cross-tenant pattern
+// may not name {tenant} — and every value is read, because a value this
+// function skipped would be a named tenant dropped rather than checked.
+func selectedTenants(r *http.Request) []store.Tenant {
+	var out []store.Tenant
+	for _, v := range append(r.URL.Query()[TenantQueryParam], r.Header.Values(TenantHeader)...) {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, store.Tenant(v))
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // selectedTenant reads the selector, in the order a caller would expect.
@@ -343,6 +452,9 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 		}
 		if facts.tenant != "" {
 			attrs = append(attrs, "tenant", facts.tenant.String())
+		}
+		if len(facts.tenants) > 0 {
+			attrs = append(attrs, "tenants", tenantStrings(facts.tenants))
 		}
 		if rec.status >= http.StatusInternalServerError {
 			s.log.ErrorContext(r.Context(), "north-bound request failed", attrs...)

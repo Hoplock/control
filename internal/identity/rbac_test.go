@@ -191,6 +191,36 @@ func TestSoleTenantIsOnlyAnAnswerWhenThereIsExactlyOne(t *testing.T) {
 	}
 }
 
+func TestTenantsWithIsTheSortedSetWhereThePermissionIsHeld(t *testing.T) {
+	// The set a cross-tenant read covers (M24): sorted, every tenant in scope
+	// where the permission is held, and nothing else.
+	p := identity.NewPrincipal("tok-5", store.PrincipalToken, "c",
+		map[store.Tenant]identity.RoleSet{
+			"c": {identity.RoleAuditor},
+			"a": {identity.RoleFleetAdmin},
+			"b": {identity.RoleIntegration}, // in scope, without the read
+		})
+	if got := p.TenantsWith(identity.PermAuditRead); !slices.Equal(got, []store.Tenant{"a", "c"}) {
+		t.Errorf("audit:read in %v, want [a c]: sorted, and not b, which lacks it", got)
+	}
+	if got := p.TenantsWith(identity.PermFleetWrite); !slices.Equal(got, []store.Tenant{"a"}) {
+		t.Errorf("fleet:write in %v, want [a]", got)
+	}
+	if got := p.TenantsWith(identity.PermIdentityWrite); got != nil {
+		t.Errorf("identity:write in %v, want none", got)
+	}
+	// A tenant out of scope is never in the set, whatever the permission.
+	for _, perm := range identity.AllPermissions {
+		if slices.Contains(p.TenantsWith(perm), "d") {
+			t.Errorf("%s answered a tenant out of scope", perm)
+		}
+	}
+	var none *identity.Principal
+	if got := none.TenantsWith(identity.PermAuditRead); got != nil {
+		t.Errorf("a nil principal answered %v", got)
+	}
+}
+
 func TestARoleSetUnionsItsPermissions(t *testing.T) {
 	set := identity.RoleSet{identity.RolePolicyAuthor, identity.RoleFleetAdmin}
 	if !set.Can(identity.PermPolicyPublish) || !set.Can(identity.PermFleetWrite) {

@@ -134,22 +134,33 @@ func (fakeArchive) Search(context.Context, ext.ArchiveQuery) (ext.ArchivePage, e
 	return ext.ArchivePage{}, nil
 }
 
-// hostRoutes are the test host's two routes.
+// answerCaller is a host handler that answers with what CallerFrom said.
+var answerCaller = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	caller, ok := server.CallerFrom(r.Context())
+	if !ok {
+		server.WriteError(w, r, http.StatusInternalServerError, "internal", nil, "no caller")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(caller)
+})
+
+// hostRoutes are the test host's three routes: two tenant routes, the first
+// written as every route was before Access existed, and one cross-tenant read.
 func hostRoutes() []server.Route {
 	return []server.Route{
 		{
 			Method: "GET", Pattern: "licence",
 			Permission: "license:read",
 			Summary:    "the deployment's licence",
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				caller, ok := server.CallerFrom(r.Context())
-				if !ok {
-					server.WriteError(w, r, http.StatusInternalServerError, "internal", nil, "no caller")
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(caller)
-			}),
+			Handler:    answerCaller,
+		},
+		{
+			Method: "GET", Pattern: "reports/privileged-access",
+			Permission: "audit:read",
+			Access:     server.AccessCrossTenant,
+			Summary:    "privileged access, across tenants",
+			Handler:    answerCaller,
 		},
 		{
 			Method: "POST", Pattern: "reports/schedules",
@@ -426,6 +437,178 @@ func TestCallerFromOutsideAHostRouteSaysSo(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// a cross-tenant read (M24)
+// ---------------------------------------------------------------------------
+
+// startHost migrates a fresh database, starts the test host through Main and
+// waits for it to serve. It returns the north-bound base URL and a federation
+// over the same database to mint credentials with.
+func startHost(t *testing.T) (string, *identity.Federation) {
+	t.Helper()
+	dsn := testDatabase(t)
+	south, north := freeAddr(t), freeAddr(t)
+	path := writeFile(t, configDoc(south, north, dsn)+hostSection)
+	o := hostOptions(&sectionRecorder{}, nil)
+	migrate(t, path, o)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	logs := &lockedBuffer{}
+	done := make(chan error, 1)
+	go func() { done <- server.Main(ctx, []string{"--config", path}, io.Discard, logs, o) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Error("Main did not return after its context ended")
+		}
+	})
+	base := "http://" + north
+	waitServing(t, base+"/api/v1/session/methods", done, logs)
+
+	st, err := store.Open(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	t.Cleanup(st.Close)
+	federation, err := identity.NewFederation(st)
+	if err != nil {
+		t.Fatalf("federation: %v", err)
+	}
+	return base, federation
+}
+
+func issue(t *testing.T, federation *identity.Federation, home store.Tenant, scopes map[store.Tenant]identity.RoleSet) string {
+	t.Helper()
+	cred, _, err := federation.IssueToken(context.Background(), home, identity.TokenRequest{DisplayName: "test", Scopes: scopes})
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	return cred.String()
+}
+
+func TestACrossTenantReadIsHandedTheSetControlResolvedAndNoMore(t *testing.T) {
+	base, federation := startHost(t)
+	report := base + "/api/v1/cross-tenant/reports/privileged-access"
+
+	// audit:read in a and b; in scope in c without it; d out of scope.
+	token := issue(t, federation, "a", map[store.Tenant]identity.RoleSet{
+		"a": {identity.RoleAuditor}, "b": {identity.RoleAuditor}, "c": {identity.RoleIntegration},
+	})
+
+	for _, c := range []struct {
+		name, query, header string
+		tenants             []ext.Tenant
+		code                string
+		params              map[string]any
+	}{
+		{name: "no selector", tenants: []ext.Tenant{"a", "b"}},
+		{name: "one named", query: "?tenant=b", tenants: []ext.Tenant{"b"}},
+		{name: "two named", query: "?tenant=a&tenant=b", tenants: []ext.Tenant{"a", "b"}},
+		{name: "a header and a query", query: "?tenant=b", header: "a", tenants: []ext.Tenant{"a", "b"}},
+		{name: "named twice", query: "?tenant=b&tenant=+b", header: "b", tenants: []ext.Tenant{"b"}},
+		{name: "in scope without the read", query: "?tenant=c", code: "forbidden",
+			params: map[string]any{"tenant": "c", "permission": "audit:read"}},
+		{name: "out of scope", query: "?tenant=d", code: "tenant_out_of_scope",
+			params: map[string]any{"tenant": "d"}},
+		{name: "one readable, one not", query: "?tenant=a&tenant=c", code: "forbidden",
+			params: map[string]any{"tenant": "c", "permission": "audit:read"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			resp := doWith(t, http.MethodGet, report+c.query, token, c.header)
+			if c.code == "" {
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("answered %d, want 200", resp.StatusCode)
+				}
+				caller := decodeCaller(t, resp)
+				if !slices.Equal(caller.Tenants, c.tenants) || caller.Tenant != "" {
+					t.Errorf("the handler saw Tenants %v and Tenant %q, want %v and none", caller.Tenants, caller.Tenant, c.tenants)
+				}
+				return
+			}
+			// The handler would have answered 200 with a caller; a
+			// refusal with a code is the middleware's.
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("answered %d, want 403", resp.StatusCode)
+			}
+			e := envelope(t, resp)
+			if e.Code != c.code {
+				t.Errorf("code %q, want %q", e.Code, c.code)
+			}
+			for k, v := range c.params {
+				if e.Parameters[k] != v {
+					t.Errorf("parameter %s = %v, want %v", k, e.Parameters[k], v)
+				}
+			}
+		})
+	}
+
+	// Holding the read in no tenant is refused, and names the permission.
+	none := issue(t, federation, "a", map[store.Tenant]identity.RoleSet{"a": {identity.RoleIntegration}})
+	resp := get(t, report, none)
+	if e := envelope(t, resp); resp.StatusCode != http.StatusForbidden || e.Code != "forbidden" || e.Parameters["permission"] != "audit:read" {
+		t.Errorf("a token holding the read nowhere answered %d %+v, want 403 forbidden naming audit:read", resp.StatusCode, e)
+	}
+
+	// A single-tenant deployment never names a tenant, here either.
+	single := issue(t, federation, "default", map[store.Tenant]identity.RoleSet{"default": {identity.RoleAuditor}})
+	resp = get(t, report, single)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a single-tenant deployment answered %d", resp.StatusCode)
+	}
+	if caller := decodeCaller(t, resp); !slices.Equal(caller.Tenants, []ext.Tenant{"default"}) {
+		t.Errorf("a single-tenant deployment's handler saw %v, want [default]", caller.Tenants)
+	}
+
+	// The same host's tenant route is unchanged: one tenant, and no set.
+	resp = get(t, base+"/api/v1/tenants/a/licence", token)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the tenant route answered %d", resp.StatusCode)
+	}
+	if caller := decodeCaller(t, resp); caller.Tenant != "a" || caller.Tenants != nil {
+		t.Errorf("the tenant route saw Tenant %q and Tenants %v, want a and nil", caller.Tenant, caller.Tenants)
+	}
+}
+
+// Each of these is a host that can never start, refused at start-up, naming
+// the route, with both ports still free.
+func TestAHostRouteThatIsNeitherClassOrACrossTenantWriteIsRefusedWithBothPortsFree(t *testing.T) {
+	route := func(pattern, perm string, access server.Access) server.Route {
+		return server.Route{Method: "GET", Pattern: pattern, Permission: perm, Access: access, Summary: "x", Handler: answerCaller}
+	}
+	for name, r := range map[string]server.Route{
+		"a cross-tenant grant:write":         route("everything/grants", "grant:write", server.AccessCrossTenant),
+		"a cross-tenant report:write":        route("everything/schedules", "report:write", server.AccessCrossTenant),
+		"a cross-tenant access-context:push": route("everything/push", "access-context:push", server.AccessCrossTenant),
+		"an Access Control does not define":  route("everything/unknown", "audit:read", server.Access(7)),
+		"a cross-tenant pattern naming it":   route("{tenant}/everything", "audit:read", server.AccessCrossTenant),
+	} {
+		t.Run(name, func(t *testing.T) {
+			south, north := freeAddr(t), freeAddr(t)
+			doc := configDoc(south, north, "postgres://nobody@127.0.0.1:1/none?sslmode=disable") + hostSection
+			o := hostOptions(&sectionRecorder{}, nil)
+			o.Routes = append(o.Routes, r)
+
+			err := server.Run(context.Background(), strings.NewReader(doc), o)
+			if err == nil {
+				t.Fatal("Run accepted the host")
+			}
+			if !strings.Contains(err.Error(), r.Pattern) || !strings.Contains(err.Error(), hostProvider) {
+				t.Errorf("the refusal does not name the route and its host: %v", err)
+			}
+			for _, addr := range []string{south, north} {
+				l, err := net.Listen("tcp", addr)
+				if err != nil {
+					t.Errorf("%s was bound by a host that refused to start: %v", addr, err)
+					continue
+				}
+				_ = l.Close()
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -462,12 +645,21 @@ func post(t *testing.T, url, token string) *http.Response {
 
 func do(t *testing.T, method, url, token string) *http.Response {
 	t.Helper()
+	return doWith(t, method, url, token, "")
+}
+
+// doWith is do with a tenant selector in the X-Hoplock-Tenant header.
+func doWith(t *testing.T, method, url, token, tenantHeader string) *http.Response {
+	t.Helper()
 	req, err := http.NewRequest(method, url, strings.NewReader(`{}`))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if tenantHeader != "" {
+		req.Header.Set("X-Hoplock-Tenant", tenantHeader)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -479,13 +671,30 @@ func do(t *testing.T, method, url, token string) *http.Response {
 
 func envelopeCode(t *testing.T, resp *http.Response) string {
 	t.Helper()
-	var e struct {
-		Code string `json:"code"`
-	}
+	return envelope(t, resp).Code
+}
+
+type errorEnvelope struct {
+	Code       string         `json:"code"`
+	Parameters map[string]any `json:"parameters"`
+}
+
+func envelope(t *testing.T, resp *http.Response) errorEnvelope {
+	t.Helper()
+	var e errorEnvelope
 	if err := json.NewDecoder(resp.Body).Decode(&e); err != nil {
 		t.Fatalf("envelope: %v", err)
 	}
-	return e.Code
+	return e
+}
+
+func decodeCaller(t *testing.T, resp *http.Response) server.Caller {
+	t.Helper()
+	var c server.Caller
+	if err := json.NewDecoder(resp.Body).Decode(&c); err != nil {
+		t.Fatalf("caller: %v", err)
+	}
+	return c
 }
 
 // logLine returns the first JSON log line whose message is msg.

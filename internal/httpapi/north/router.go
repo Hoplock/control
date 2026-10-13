@@ -17,8 +17,9 @@ import (
 //
 // Every north-bound route is registered here with an ACCESS CLASS, and the
 // class — not the handler — decides whether the caller is authenticated, which
-// tenant the request resolves to, and which permission it needs. A handler
-// cannot forget any of it, because a handler is never asked.
+// tenant the request resolves to (or, on a cross-tenant read, which set: M24),
+// and which permission it needs. A handler cannot forget any of it, because a
+// handler is never asked.
 //
 // That shape exists because of how this fails otherwise. M18's vulnerability
 // class is "a caller names a tenant it was not granted", and the way it ships is
@@ -62,6 +63,21 @@ const (
 	// resolves the tenant, and no path, query or body carries one. A machine
 	// token has no own records and is refused (`subject_required`).
 	AccessSelf
+	// AccessCrossTenant is a read that spans tenants (M24), mounted under
+	// [CrossTenantPrefix] and nowhere else. It needs a live principal, and
+	// then resolves a SET: every tenant in the principal's scope where it
+	// holds the route's permission, narrowed by the request's tenant
+	// selector and never widened by it. A named tenant that fails is
+	// refused rather than dropped, so a report never covers fewer tenants
+	// than were asked for while looking complete. A handler reads the set
+	// with [TenantsFrom] and never chooses it.
+	//
+	// It is reads only — a permission the auditor role holds — because a
+	// write across tenants is N records in N independent audit chains (M8)
+	// with nothing making them atomic, and a partial outcome is neither a
+	// success nor a refusal (M11). And only a host serves one: Control's
+	// own routes stay per tenant, and aggregating is Enterprise's (its E11).
+	AccessCrossTenant
 )
 
 // String renders the class for logs and for the route listing.
@@ -75,8 +91,38 @@ func (a Access) String() string {
 		return "tenant"
 	case AccessSelf:
 		return "self"
+	case AccessCrossTenant:
+		return "cross-tenant"
 	}
 	return "unknown"
+}
+
+// CrossTenantPrefix is where every AccessCrossTenant route lives, and it holds
+// that class and nothing else. It sits beside /api/v1/tenants/ and
+// /api/v1/session so that an operator reading a log line can tell from the path
+// alone which class answered (M24).
+const CrossTenantPrefix = APIPrefix + "/cross-tenant/"
+
+// underCrossTenant reports whether a pattern is in the cross-tenant subtree,
+// including the bare prefix a ServeMux would treat as that subtree's root.
+func underCrossTenant(pattern string) bool {
+	return strings.HasPrefix(pattern, CrossTenantPrefix) ||
+		pattern == strings.TrimSuffix(CrossTenantPrefix, "/")
+}
+
+// namesTenantParam reports whether a pattern carries the tenant path
+// parameter, as a single segment or as a remainder.
+func namesTenantParam(pattern string) bool {
+	for _, segment := range strings.Split(pattern, "/") {
+		if !strings.HasPrefix(segment, "{") {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(segment, "{"), "}"), "...")
+		if name == TenantPathParam {
+			return true
+		}
+	}
+	return false
 }
 
 // TenantPathParam is the path segment a route may carry to select a tenant. A
@@ -100,14 +146,16 @@ type Route struct {
 	Pattern string
 	// Access is the class. See the constants.
 	Access Access
-	// Permission is required when Access is AccessTenant or AccessSelf, and
-	// must be empty otherwise: a permission on an anonymous route is a permission nobody
-	// checks, which reads like protection and is not.
+	// Permission is required when Access is AccessTenant, AccessSelf or
+	// AccessCrossTenant — on the last, one the auditor role holds — and must
+	// be empty otherwise: a permission on an anonymous route is a permission
+	// nobody checks, which reads like protection and is not.
 	Permission identity.Permission
 	// Summary is one line for the route listing and the startup log.
 	Summary string
-	// Handler serves the request. It reads the caller and the tenant from
-	// the context and never from the request.
+	// Handler serves the request. It reads the caller and the tenant — or on
+	// a cross-tenant read the set — from the context and never from the
+	// request.
 	Handler http.HandlerFunc
 	// Provider names the host binary a route came from (M15), and is empty
 	// for Control's own. It travels into the listing so that an operator can
@@ -171,7 +219,9 @@ func (r *Router) SetNotFound(h http.Handler) {
 //
 // The refusals are the point. A route with no access class, a tenant route with
 // no permission, and an anonymous route carrying one are all configuration
-// mistakes that would otherwise ship as "it seemed to work".
+// mistakes that would otherwise ship as "it seemed to work". The cross-tenant
+// prefix holds that class and nothing else, in both directions, so it stays off
+// Control's paths structurally rather than by convention (M24).
 func (r *Router) Register(route Route) error {
 	if route.Method == "" || route.Pattern == "" {
 		return fmt.Errorf("httpapi/north: a route needs a method and a pattern")
@@ -179,7 +229,16 @@ func (r *Router) Register(route Route) error {
 	if route.Handler == nil {
 		return fmt.Errorf("httpapi/north: route %s %s has no handler", route.Method, route.Pattern)
 	}
+	if route.Access != AccessCrossTenant && underCrossTenant(route.Pattern) {
+		return fmt.Errorf(
+			"httpapi/north: route %s %s is %s but sits under %s, which holds cross-tenant reads and nothing else",
+			route.Method, route.Pattern, route.Access, CrossTenantPrefix)
+	}
 	switch route.Access {
+	case AccessCrossTenant:
+		if err := checkCrossTenant(route); err != nil {
+			return err
+		}
 	case AccessTenant, AccessSelf:
 		if route.Permission == "" {
 			return fmt.Errorf(
@@ -223,6 +282,37 @@ func (r *Router) Register(route Route) error {
 		Summary:    route.Summary,
 		Provider:   route.Provider,
 	})
+	return nil
+}
+
+// checkCrossTenant refuses a cross-tenant route that is not a host's read under
+// the cross-tenant prefix (M24).
+//
+// "A read" is a permission the auditor role holds, rather than a list of its
+// own: the auditor is defined as "can read everything and change nothing", and a
+// second list would be a second definition of "read" that could drift from it.
+func checkCrossTenant(route Route) error {
+	name := route.Method + " " + route.Pattern
+	switch {
+	case route.Permission == "":
+		return fmt.Errorf(
+			"httpapi/north: route %s is cross-tenant but names no permission; an unchecked route is not a protected one",
+			name)
+	case !identity.RoleAuditor.Can(route.Permission):
+		return fmt.Errorf(
+			"httpapi/north: route %s is cross-tenant but names permission %q, which is not a read: a cross-tenant route names a permission the %s role holds",
+			name, route.Permission, identity.RoleAuditor)
+	case route.Provider == "":
+		return fmt.Errorf(
+			"httpapi/north: route %s is cross-tenant and is Control's own; Control serves no cross-tenant route, only a host does (M24)",
+			name)
+	case !strings.HasPrefix(route.Pattern, CrossTenantPrefix) || len(route.Pattern) == len(CrossTenantPrefix):
+		return fmt.Errorf("httpapi/north: route %s is cross-tenant but is not under %s", name, CrossTenantPrefix)
+	case namesTenantParam(route.Pattern):
+		return fmt.Errorf(
+			"httpapi/north: route %s is cross-tenant but names {%s}; the set it covers is resolved, never a path segment",
+			name, TenantPathParam)
+	}
 	return nil
 }
 
