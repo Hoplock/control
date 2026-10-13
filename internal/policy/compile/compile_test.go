@@ -873,6 +873,42 @@ rules:
 `),
 	},
 
+	{
+		// brokered-certificate creates nothing on the target (Provisions is
+		// false), so an applied rung on a ladder of only that method has no
+		// account to be rendered onto (Hoplock/proxy#68).
+		name:  "applied rung on a brokered-certificate ladder",
+		code:  model.CodeEnforcementAppliedUnprovisioned,
+		rule:  "r",
+		wants: []string{"account-restricted", "brokered-certificate"},
+		src: header(`rules:
+  - id: r
+    effect: allow
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+      enforcement: {execution: account-restricted}
+      credentials:
+        - {method: brokered-certificate, username: netadmin, key_type: ed25519, lifetime_seconds: 300}
+`),
+	},
+	{
+		name:  "a parameter brokered-certificate does not take",
+		code:  model.CodeCredentialParamWrongMethod,
+		rule:  "r",
+		wants: []string{"credential_ref", "brokered-certificate"},
+		src: header(`rules:
+  - id: r
+    effect: allow
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+      credentials: [{method: brokered-certificate, username: svc, credential_ref: vault://a}]
+`),
+	},
+
 	// -- obligations -------------------------------------------------------
 	{
 		name:  "duplicate obligation",
@@ -1062,4 +1098,20 @@ rules:
 			t.Fatalf("rejections are not in source order: %v", rs)
 		}
 	}
+}
+
+// A brokered-certificate entry may author exactly the two optional names the
+// contract gives it, beside username (Hoplock/proxy#68).
+func TestBrokeredCertificateTakesKeyTypeAndLifetime(t *testing.T) {
+	mustCompile(t, header(`rules:
+  - id: r
+    effect: allow
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+      credentials:
+        - {method: brokered-certificate, username: netadmin, key_type: rsa, lifetime_seconds: 600}
+        - {method: brokered-key, username: netadmin, credential_ref: vault://a}
+`))
 }

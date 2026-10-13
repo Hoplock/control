@@ -435,8 +435,11 @@ func (c *compiler) checkCredentialEntry(r *model.Rule, index int, e model.Creden
 	case model.UsernameSubject, model.UsernameSubjectLocalPart:
 	}
 
+	// Nothing a bundle can spell names a certificate, its serial or a CA
+	// bundle: a brokered-certificate entry is policy, and the artifacts are
+	// minted per session (Hoplock/proxy#68). Keep it that way.
 	c.checkParamScope(r, idx, method, "key_type", e.KeyType != "",
-		e.Method == model.CredentialEphemeralUser)
+		e.Method == model.CredentialEphemeralUser || e.Method == model.CredentialBrokeredCertificate)
 	c.checkParamScope(r, idx, method, "credential_ref", e.CredentialRef != "",
 		e.Method == model.CredentialBrokeredKey)
 	c.checkParamScope(r, idx, method, "platform", e.Platform != "",
@@ -446,7 +449,8 @@ func (c *compiler) checkCredentialEntry(r *model.Rule, index int, e model.Creden
 	c.checkParamScope(r, idx, method, "expiry_posture", e.ExpiryPosture != model.ExpiryPostureUnset,
 		e.Method == model.CredentialEphemeralAccount)
 	c.checkParamScope(r, idx, method, "lifetime_seconds", e.LifetimeSeconds != 0,
-		e.Method == model.CredentialEphemeralUser || e.Method == model.CredentialEphemeralAccount)
+		e.Method == model.CredentialEphemeralUser || e.Method == model.CredentialEphemeralAccount ||
+			e.Method == model.CredentialBrokeredCertificate)
 
 	if e.LifetimeSeconds < 0 {
 		c.add(model.CodeCredentialLifetimeInvalid, r.ID, r.Line(),

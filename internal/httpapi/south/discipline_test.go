@@ -40,15 +40,31 @@ import (
 // answer first is whether the thing being refused is a decision this server
 // made on purpose or a failure it suffered. If it is the second, it is a 5xx
 // and it belongs nowhere near this list.
-var deniers = []string{"deny", "rejectCredential"}
+//
+// [refuseToMint] is the third, added by 0019 as a decision: a brokered-
+// certificate issuance this server refuses because the decision it cites is not
+// one it made for the method, or does not match (Hoplock/proxy#68). It refuses
+// neither the user's credential nor the proxy's token — the session was
+// already authorized — so by this comment's own reasoning it is a denier of its
+// own rather than a reuse of [deny].
+var deniers = []string{"deny", "rejectCredential", "refuseToMint"}
 
 func TestOnlyOneFunctionCanProduceA401(t *testing.T) {
 	t.Parallel()
 
 	var offenders []string
-	forEachCall(t, "contract", "Denied", func(file, fn string, pos token.Position) {
-		if !slices.Contains(deniers, fn) {
-			offenders = append(offenders, pos.String()+" in "+fn)
+	for _, ctor := range []string{"Denied", "RefusedToMint"} {
+		forEachCall(t, "contract", ctor, func(file, fn string, pos token.Position) {
+			if !slices.Contains(deniers, fn) {
+				offenders = append(offenders, pos.String()+" in "+fn)
+			}
+		})
+	}
+	// And nothing builds the class by hand: the mapper reads it, and only
+	// the constructors above produce it.
+	forEachSelector(t, "contract", func(sel, file, fn string, pos token.Position) {
+		if sel == "ErrDenied" && fn != "statusFor" {
+			offenders = append(offenders, pos.String()+": contract.ErrDenied in "+fn)
 		}
 	})
 	if len(offenders) > 0 {

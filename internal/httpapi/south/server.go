@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/identity"
@@ -29,6 +30,7 @@ type Server struct {
 	decision *decision.Service
 	events   EventStream
 	logs     LogIngest
+	ca       *credential.CA
 	log      *slog.Logger
 	now      func() time.Time
 
@@ -55,6 +57,12 @@ type Options struct {
 	// Logs is the audit ingester behind the two log paths
 	// (`internal/audit`, M8).
 	Logs LogIngest
+	// CA mints the per-session certificate `/v1/credentials/certificate`
+	// answers (Hoplock/proxy#68). Nil when this deployment configured no
+	// key-encryption key: the route is still served, and answers 503
+	// `no_authority`, which is an operator's fix rather than a listener that
+	// will not bind.
+	CA *credential.CA
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -108,6 +116,7 @@ func New(o Options) (*Server, error) {
 		decision:       o.Decision,
 		events:         o.Events,
 		logs:           o.Logs,
+		ca:             o.CA,
 		log:            o.Logger,
 		now:            o.Now,
 		maxBodyBytes:   o.MaxBodyBytes,
@@ -146,6 +155,7 @@ var servedPaths = []string{
 	contract.PathLogsBatch,
 	contract.PathLogsPriority,
 	contract.PathProxyEvents,
+	contract.PathCredentialCertificate,
 }
 
 func (s *Server) build() {
@@ -159,6 +169,7 @@ func (s *Server) build() {
 	mux.Handle("POST "+contract.PathHostKeyReport, s.endpoint(h.reportHostKey))
 	mux.Handle("POST "+contract.PathCapabilitiesReport, s.endpoint(h.reportCapabilities))
 	mux.Handle("POST "+contract.PathUIDLease, s.endpoint(h.leaseUIDs))
+	mux.Handle("POST "+contract.PathCredentialCertificate, s.endpoint(h.issueCertificate))
 
 	// The one 202. It is the contract's own distinction between the two log
 	// paths — a batch is ACCEPTED FOR STORAGE and a priority record is

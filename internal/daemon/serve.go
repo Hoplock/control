@@ -158,7 +158,17 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
+	// The certificate authority (0011) serves both listeners: the north-bound
+	// surface manages it, and the south-bound one mints the per-session
+	// certificates `brokered-certificate` routes ask for (Hoplock/proxy#68).
+	// Nil when no key-encryption key is configured; both answer for that.
+	ca, err := buildCA(cfg, st, log)
+	if err != nil {
+		return err
+	}
+
 	handler, err := south.New(south.Options{
+		CA:             ca,
 		Identity:       auth,
 		Fleet:          registry,
 		Decision:       decisions,
@@ -201,7 +211,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
-	northSrv, northHandler, err := buildNorth(ctx, cfg, st, emitter, grants, pushes, h, log)
+	northSrv, northHandler, err := buildNorth(ctx, cfg, st, ca, emitter, grants, pushes, h, log)
 	if err != nil {
 		return err
 	}

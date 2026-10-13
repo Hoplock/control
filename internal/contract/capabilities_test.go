@@ -83,3 +83,18 @@ func TestFloorRanks(t *testing.T) {
 		}
 	}
 }
+
+func TestSerialsRoundTripAboveTheFloatLimit(t *testing.T) {
+	// 2^53 + 1 is the first integer a float64 cannot hold.
+	for _, v := range []uint64{0, 10427, 1<<53 + 1, ^uint64(0)} {
+		got, err := ParseSerial(FormatSerial(v))
+		if err != nil || got != v {
+			t.Errorf("serial %d round-tripped to %d (%v)", v, got, err)
+		}
+	}
+	for _, bad := range []string{"", "-1", "1e3", "12.0", "18446744073709551616", " 1"} {
+		if _, err := ParseSerial(bad); err == nil {
+			t.Errorf("ParseSerial(%q) accepted a value that is not a decimal serial", bad)
+		}
+	}
+}

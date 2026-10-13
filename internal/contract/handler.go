@@ -92,6 +92,21 @@ type EventPublisher interface {
 // Southbound is everything the contract's ten operations need, for a server
 // that implements all of them. A phase that implements one embeds the narrow
 // interface instead.
+// CertificateIssuer serves POST /v1/credentials/certificate: one brokered
+// certificate per session (Hoplock/proxy#68).
+type CertificateIssuer interface {
+	IssueCertificate(context.Context, *CertificateRequest) (*CertificateResponse, error)
+}
+
+// FleetConfigServer serves the two fleet-configuration routes (proxy D18).
+// proxyID is the path's {proxy_id}; ifNoneMatch is the request's entity tag,
+// empty when it sent none. A nil document with a nil error means nothing is
+// published for the proxy.
+type FleetConfigServer interface {
+	FetchConfig(ctx context.Context, proxyID, ifNoneMatch string) (doc *ProxyConfigDocument, notModified bool, err error)
+	ReportConfig(ctx context.Context, proxyID string, report *ProxyConfigReport) (*ProxyConfigReportResponse, error)
+}
+
 type Southbound interface {
 	Authenticator
 	Authorizer
@@ -100,6 +115,8 @@ type Southbound interface {
 	UIDLeaser
 	LogIngester
 	EventPublisher
+	CertificateIssuer
+	FleetConfigServer
 }
 
 // The classified failures the transport turns into status codes. M11 is the
@@ -120,6 +137,10 @@ var (
 	// the vocabulary the proxy declared. 5xx, on purpose: it is a rollout
 	// problem, not a statement about the user.
 	ErrPolicyVersionUnsupported = errors.New("policy version unsupported")
+	// ErrUnavailable is a request this server cannot serve until an operator
+	// configures something — a certificate authority, today. 503: not a
+	// deny, and not a 500 that reads as a defect.
+	ErrUnavailable = errors.New("unavailable")
 )
 
 // StatusError carries a classified failure together with the envelope the
@@ -152,6 +173,23 @@ func Denied(message string) *StatusError {
 }
 
 // Invalid builds the 400 answer for a malformed request.
+// RefusedToMint is the 401 for a brokered-certificate issuance this server
+// refuses (Hoplock/proxy#68): the decision cited is not one it made for the
+// method, or the request does not match it. It is a DECISION, like Denied, and
+// a different one — neither the user's credential nor the proxy's token is
+// being refused — so it carries its own code. The proxy treats every non-200
+// from that endpoint as an outage; that changes what it does with the answer,
+// not what this server may send.
+func RefusedToMint(code, message string) *StatusError {
+	return &StatusError{Class: ErrDenied, Code: code, Message: message}
+}
+
+// Unavailable is the 503 for a request that needs something an operator has
+// not configured.
+func Unavailable(code, message string) *StatusError {
+	return &StatusError{Class: ErrUnavailable, Code: code, Message: message}
+}
+
 func Invalid(message string) *StatusError {
 	return &StatusError{Class: ErrInvalidRequest, Code: ErrCodeInvalidRequest, Message: message}
 }

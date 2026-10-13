@@ -90,7 +90,7 @@ func TestARouteThatSaysNothingEmitsNothing(t *testing.T) {
 		t.Fatal("the fixture bundle denied; it is supposed to allow")
 	}
 
-	resp := assembleSnapshot(snap, routed{
+	resp := mustAssemble(t, snap, routed{
 		routeType: contract.RouteTypeDirect,
 		target:    "host.example.com",
 	}, "d_test")
@@ -187,7 +187,7 @@ func TestARouteThatSaysSomethingEmitsItInTheContractsShape(t *testing.T) {
 	if snap == nil {
 		t.Fatal("the fixture bundle denied; it is supposed to allow")
 	}
-	resp := assembleSnapshot(snap, routed{routeType: contract.RouteTypeDirect, target: "host.example.com"}, "d_test")
+	resp := mustAssemble(t, snap, routed{routeType: contract.RouteTypeDirect, target: "host.example.com"}, "d_test")
 
 	// An ABSOLUTE instant, not a duration.
 	deadline, ok := resp.Deadline()
@@ -238,7 +238,7 @@ func TestARouteThatSaysSomethingEmitsItInTheContractsShape(t *testing.T) {
 func TestOneMethodIsAOneEntryLadderAndNeverABareObject(t *testing.T) {
 	t.Parallel()
 	snap, _ := evaluateFixture(t, minimalBundle, baseInput())
-	resp := assembleSnapshot(snap, routed{routeType: contract.RouteTypeDirect, target: "h"}, "d_test")
+	resp := mustAssemble(t, snap, routed{routeType: contract.RouteTypeDirect, target: "h"}, "d_test")
 
 	body, err := json.Marshal(resp)
 	if err != nil {
@@ -507,7 +507,7 @@ func TestAdditionalContextRoundTripsAsBothShapes(t *testing.T) {
 			if snap == nil {
 				t.Fatal("the grant rule denied")
 			}
-			resp := assembleSnapshot(snap, routed{routeType: contract.RouteTypeDirect, target: "h"}, "d_test")
+			resp := mustAssemble(t, snap, routed{routeType: contract.RouteTypeDirect, target: "h"}, "d_test")
 			if resp.GrantContext == nil {
 				t.Fatal("no grant_context on a route a grant supplied")
 			}
@@ -529,4 +529,13 @@ func TestAdditionalContextRoundTripsAsBothShapes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustAssemble(t *testing.T, snap *model.Snapshot, rt routed, id string) *contract.AuthorizeResponse {
+	t.Helper()
+	resp, err := assembleSnapshot(snap, rt, id)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	return resp
 }

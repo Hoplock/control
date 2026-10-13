@@ -33,6 +33,7 @@ func buildNorth(
 	ctx context.Context,
 	cfg *config.Config,
 	st *store.Store,
+	ca *credential.CA,
 	emitter identity.AuditSink,
 	grants *access.Service,
 	pushes *accessctx.Service,
@@ -40,11 +41,6 @@ func buildNorth(
 	log *slog.Logger,
 ) (*http.Server, *north.Server, error) {
 	federation, err := buildFederation(cfg, st, emitter, log)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	ca, err := buildCA(cfg, st, log)
 	if err != nil {
 		return nil, nil, err
 	}

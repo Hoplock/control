@@ -232,7 +232,9 @@ type CredentialEntry struct {
 	// contract defines, and never derived from the identity's `login`.
 	Username Username `yaml:"username"`
 
-	// KeyType is `ephemeral-user`'s key type; empty leaves the proxy's default.
+	// KeyType is the algorithm of the key the proxy generates — for
+	// `ephemeral-user` and `brokered-certificate`; empty leaves the proxy's
+	// default.
 	KeyType string `yaml:"key_type,omitempty"`
 	// CredentialRef is `brokered-key`'s opaque handle for local material on
 	// the proxy. No credential material travels on this API.
@@ -245,8 +247,11 @@ type CredentialEntry struct {
 	CredentialKind CredentialKind `yaml:"credential_kind,omitempty"`
 	// ExpiryPosture is `ephemeral-account`'s expiry posture. Required.
 	ExpiryPosture ExpiryPosture `yaml:"expiry_posture,omitempty"`
-	// LifetimeSeconds bounds the provisioned credential's life. Required on
-	// `ephemeral-account` unless the posture is `accepted-risk`.
+	// LifetimeSeconds bounds the provisioned credential's life on
+	// `ephemeral-user` and `ephemeral-account` (required on the latter unless
+	// the posture is `accepted-risk`), and on `brokered-certificate` is an
+	// UPPER BOUND on the certificate's validity: this server may shorten it
+	// and never lengthens a certificate to it.
 	LifetimeSeconds int32 `yaml:"lifetime_seconds,omitempty"`
 
 	// DeviceFields is the open `device_field.<name>` namespace that sits

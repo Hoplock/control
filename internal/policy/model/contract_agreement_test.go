@@ -52,6 +52,7 @@ func TestVocabularyAgreesWithTheContract(t *testing.T) {
 	agree(t, "credential method", credentialMethods, []contract.TargetAuthMethod{
 		contract.TargetAuthEphemeralUser, contract.TargetAuthEphemeralAccount,
 		contract.TargetAuthBrokeredKey, contract.TargetAuthStaticKey,
+		contract.TargetAuthBrokeredCertificate,
 	})
 	agree(t, "credential kind", credentialKinds, []contract.CredentialKind{
 		contract.CredentialKindPassword, contract.CredentialKindPublicKey,

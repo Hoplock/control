@@ -69,6 +69,7 @@ func TestTheListenerServesExactlyTheContractPaths(t *testing.T) {
 		contract.PathLogsBatch,
 		contract.PathLogsPriority,
 		contract.PathProxyEvents,
+		contract.PathCredentialCertificate,
 	}
 	got := h.server.Routes()
 	slices.Sort(want)
@@ -783,6 +784,9 @@ type harness struct {
 	// under a reconnect and under a drain is the thing being served, and a
 	// fake that always had the answer would grade the fake.
 	bus *revoke.Bus
+	// opts are the options the server was built with, so a test can
+	// rebuild it with one more dependency (rebuild).
+	opts south.Options
 }
 
 func newHarness(t *testing.T) *harness { return newHarnessWith(t, nil) }
@@ -865,7 +869,22 @@ func newHarnessWith(t *testing.T, tweak func(*south.Options)) *harness {
 		t.Fatalf("south.New: %v", err)
 	}
 	h.server = srv
+	h.opts = opts
 	return h
+}
+
+// rebuild rebuilds the server with the options it was built with, changed by
+// tweak — for a dependency that needs the harness's store to exist first.
+func (h *harness) rebuild(t *testing.T, tweak func(*south.Options)) {
+	t.Helper()
+	opts := h.opts
+	tweak(&opts)
+	srv, err := south.New(opts)
+	if err != nil {
+		t.Fatalf("south.New: %v", err)
+	}
+	h.server = srv
+	h.opts = opts
 }
 
 // newHarnessWithFleet is the one variation that needs a different fleet, for

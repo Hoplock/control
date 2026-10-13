@@ -309,7 +309,10 @@ func (s *Service) serve(
 	rec.expl.RouteType = string(rt.routeType)
 	rec.expl.NextProxyID = rt.nextProxyID
 
-	resp := assembleSnapshot(snap, rt, rec.id)
+	resp, err := assembleSnapshot(snap, rt, rec.id)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	if err := checkServeable(resp, snap.Rule); err != nil {
 		return nil, nil, err

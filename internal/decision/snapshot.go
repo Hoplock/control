@@ -6,10 +6,10 @@ package decision
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/policy/model"
 )
 
@@ -34,7 +34,11 @@ import (
 // the routing layer. What it does do is refuse to write a response that the
 // proxy would refuse — see [checkServeable], which runs after this and before
 // anything is returned.
-func assembleSnapshot(snap *model.Snapshot, rt routed, decisionID string) *contract.AuthorizeResponse {
+func assembleSnapshot(snap *model.Snapshot, rt routed, decisionID string) (*contract.AuthorizeResponse, error) {
+	auth, err := ladder(snap.Credentials)
+	if err != nil {
+		return nil, err
+	}
 	resp := &contract.AuthorizeResponse{
 		RouteType:               rt.routeType,
 		Target:                  rt.target,
@@ -43,7 +47,7 @@ func assembleSnapshot(snap *model.Snapshot, rt routed, decisionID string) *contr
 		PermittedRequests:       requests(snap.Requests),
 		PermittedForwards:       forwards(snap.Forwards),
 		PermittedGlobalRequests: globalRequests(snap.GlobalRequests),
-		TargetAuthLadder:        ladder(snap.Credentials),
+		TargetAuthLadder:        auth,
 		FilterPolicy:            filterPolicy(snap.Filter),
 		Enforcement:             enforcement(snap.Enforcement),
 		GrantContext:            grantContext(snap.GrantContext),
@@ -77,7 +81,7 @@ func assembleSnapshot(snap *model.Snapshot, rt routed, decisionID string) *contr
 		required := true
 		resp.RequireSessionCapture = &required
 	}
-	return resp
+	return resp, nil
 }
 
 // channels always renders a list, never null: the contract requires the field,
@@ -150,54 +154,26 @@ func globalRequests(p *model.GlobalRequestPermissions) *contract.GlobalRequestPo
 // in front of a user rather than a deny. So a policy naming exactly one method
 // yields a ONE-ENTRY LADDER, never a bare object, and nothing here synthesises
 // a fallback entry the policy did not write.
-func ladder(entries []model.CredentialEntry) contract.TargetAuthLadder {
+//
+// Each entry is rendered by [credential.LadderEntry], the one renderer there
+// is: for `brokered-certificate` that is policy only, and the certificate comes
+// back from POST /v1/credentials/certificate once per session.
+func ladder(entries []model.CredentialEntry) (contract.TargetAuthLadder, error) {
 	if entries == nil {
 		// Absent leaves the proxy its locally configured method. It is
 		// distinct from an empty ladder, which is a denial written as a
 		// list, and the engine keeps the two apart.
-		return nil
+		return nil, nil
 	}
 	out := make(contract.TargetAuthLadder, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, credentialEntry(e))
+		entry, err := credential.LadderEntry(e)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, entry)
 	}
-	return out
-}
-
-func credentialEntry(e model.CredentialEntry) contract.TargetAuth {
-	params := make(map[string]string, 4+len(e.DeviceFields))
-	// Required on EVERY method the contract defines. The engine resolved it
-	// against the subject; what travels is a concrete account name, because
-	// that is what the target's own audit trail and file ownership will be
-	// made of.
-	params[contract.ParamUsername] = e.Username.Resolve("")
-	if e.KeyType != "" {
-		params[contract.ParamKeyType] = e.KeyType
-	}
-	if e.CredentialRef != "" {
-		params[contract.ParamCredentialRef] = e.CredentialRef
-	}
-	if e.Platform != "" {
-		params[contract.ParamPlatform] = e.Platform
-	}
-	if e.CredentialKind != "" {
-		params[contract.ParamCredentialKind] = string(e.CredentialKind)
-	}
-	if e.ExpiryPosture != "" {
-		params[contract.ParamExpiryPosture] = string(e.ExpiryPosture)
-	}
-	if e.LifetimeSeconds != 0 {
-		params[contract.ParamLifetimeSeconds] = strconv.Itoa(int(e.LifetimeSeconds))
-	}
-	// The open namespace, carried through as DATA this server does not
-	// interpret. `device_field.vdom` on a FortiGate scopes the provisioned
-	// administrator to one virtual domain, and its ABSENCE makes that
-	// administrator global — the strongest account the device has — so a
-	// field is never dropped on the way through and never invented here.
-	for name, value := range e.DeviceFields {
-		params[contract.DeviceFieldPrefix+name] = value
-	}
-	return contract.TargetAuth{Method: contract.TargetAuthMethod(e.Method), Params: params}
+	return out, nil
 }
 
 func filterPolicy(f model.FilterPolicy) contract.FilterPolicy {

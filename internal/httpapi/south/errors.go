@@ -27,9 +27,9 @@ import (
 //     only branch that produces one requires a [contract.StatusError] whose
 //     class is [contract.ErrDenied], and the only way to build one of those is
 //     [contract.Denied].
-//   - the two places that call [contract.Denied] are [deny] and
-//     [rejectCredential], both below, and `TestOnlyOneFunctionCanProduceA401`
-//     fails the build if a third appears.
+//   - the three places that build a 401 are [deny], [rejectCredential] and
+//     [refuseToMint], all below, and `TestOnlyOneFunctionCanProduceA401`
+//     fails the build if a fourth appears.
 //
 // The layers beneath keep the same shape for the same reason: `identity`
 // returns a typed [identity.Outcome] whose `Deny` field is the only refusal,
@@ -51,6 +51,22 @@ func deny(message string) error { return contract.Denied(message) }
 // of the two happened.
 func rejectCredential() error {
 	return contract.Denied("the proxy credential was rejected")
+}
+
+// refuseToMint builds the 401 for a brokered-certificate issuance this server
+// refuses to make (Hoplock/proxy#68): the decision cited is not one it made for
+// the method, or the target or account does not match it. It is the third
+// denier, and a decision rather than a reuse of [deny]: it refuses neither the
+// user's credential nor the proxy's token — the session was already authorized
+// — and an operator reading the log line needs to know that. A store failure
+// reading the decision never arrives here; it is a 5xx.
+func refuseToMint(code, message string) error { return contract.RefusedToMint(code, message) }
+
+// noAuthority builds the 503 for an issuance with no certificate authority
+// behind it: a tenant with none, or a deployment that configured none. It is an
+// operator's fix, so it is neither a deny nor a 500.
+func noAuthority(message string) error {
+	return contract.Unavailable(contract.ErrCodeNoAuthority, message)
 }
 
 // statusFor maps a handler's error onto the status code and envelope the
@@ -76,6 +92,8 @@ func statusFor(err error, correlationID string) (int, contract.ErrorResponse) {
 		// plain-text default, and so that it is not silently a 500 that an
 		// operator would read as an outage.
 		return http.StatusNotFound, se.Envelope()
+	case errors.Is(se.Class, contract.ErrUnavailable):
+		return http.StatusServiceUnavailable, se.Envelope()
 	case errors.Is(se.Class, contract.ErrPolicyVersionUnsupported):
 		// A proxy this server cannot serve within the vocabulary it
 		// declared is a ROLLOUT problem, and saying so with a 5xx is the

@@ -176,11 +176,18 @@ const (
 	CredentialBrokeredKey CredentialMethod = "brokered-key"
 	// CredentialStaticKey uses material the proxy already holds.
 	CredentialStaticKey CredentialMethod = "static-key"
+	// CredentialBrokeredCertificate has the proxy generate a key pair for
+	// the session and present a user certificate this server signs over its
+	// public half (proxy D6a, Hoplock/proxy#68). The entry is policy only —
+	// the certificate is minted per session at POST
+	// /v1/credentials/certificate and is never a parameter. It needs policy
+	// vocabulary 5.
+	CredentialBrokeredCertificate CredentialMethod = "brokered-certificate"
 )
 
 var credentialMethods = []CredentialMethod{
 	CredentialEphemeralUser, CredentialEphemeralAccount,
-	CredentialBrokeredKey, CredentialStaticKey,
+	CredentialBrokeredKey, CredentialStaticKey, CredentialBrokeredCertificate,
 }
 
 // UnmarshalYAML decodes a CredentialMethod.
@@ -197,6 +204,11 @@ func (m CredentialMethod) Provisions() bool {
 	case CredentialEphemeralUser, CredentialEphemeralAccount:
 		return true
 	case CredentialBrokeredKey, CredentialStaticKey:
+		return false
+	case CredentialBrokeredCertificate:
+		// It logs into an account that already exists and already trusts
+		// the tenant CA; it creates nothing, so it carries attested rungs
+		// only.
 		return false
 	}
 	return false
