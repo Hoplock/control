@@ -41,6 +41,8 @@ type Registry struct {
 	// answer has no rule, so this server states its own. Zero takes
 	// DefaultHostKeyCacheTTL.
 	hostKeyCacheTTL time.Duration
+	// configTenants are the tenants the announcer walks (TrackConfigTenant).
+	configTenants sync.Map
 	// declared is the digest of each proxy's algorithm declaration as this
 	// process last wrote it (tenant + "\x00" + proxy id → digest), so the
 	// decision path writes only when a build changed (M5).
@@ -61,9 +63,10 @@ func WithSubscriptionState(s SubscriptionState) Option {
 	return func(r *Registry) { r.subs = s }
 }
 
-// WithConfigPublisher supplies the configuration delivery path (0009 implements
-// it). Without one, a publish is durable and visible but not pushed — see
-// [ConfigPublisher] for why that is the honest state today.
+// WithConfigPublisher supplies the configuration delivery path: the event
+// stream's `config_changed` (proxy D18), which the daemon wires to the
+// revocation bus. Without one a publish is durable and every announcement is
+// owed, which the rollout view shows.
 func WithConfigPublisher(p ConfigPublisher) Option {
 	return func(r *Registry) {
 		if p != nil {
@@ -378,10 +381,6 @@ type HeartbeatReport struct {
 	// stops reporting has dropped, and a relay edge over a dropped registration
 	// must leave routing at once rather than hang a session.
 	RelayRegistrations []string
-	// RunningConfigVersion and RunningConfigHash are what it is actually
-	// running. Zero leaves the stored value alone.
-	RunningConfigVersion int64
-	RunningConfigHash    string
 }
 
 // Heartbeat records a report.
@@ -423,13 +422,6 @@ func (r *Registry) Heartbeat(ctx context.Context, tenant store.Tenant, h Heartbe
 		}
 		if err := tx.RelayRegistrations().ReplaceForUpstream(ctx, tenant, h.ProxyID, h.RelayRegistrations, now); err != nil {
 			return err
-		}
-		if h.RunningConfigVersion != 0 {
-			err := tx.ProxyConfigs().ReportRunning(ctx, tenant, h.ProxyID,
-				h.RunningConfigVersion, h.RunningConfigHash, now)
-			if err != nil && !store.IsNotFound(err) {
-				return err
-			}
 		}
 		return nil
 	})
@@ -569,13 +561,11 @@ type ProxyHealth struct {
 	// RelayRegistrations are the downstream proxies currently registered with
 	// it, live ones only, in id order.
 	RelayRegistrations []string
-	// DesiredConfigVersion, RunningConfigVersion and ConfigDrift are the
-	// rollout. Drift is a value rather than something the reader derives,
-	// because silent drift across a fleet is indistinguishable from a broken
-	// rollout.
-	DesiredConfigVersion int64
-	RunningConfigVersion int64
-	ConfigDrift          bool
+	// Config is its place in the configuration rollout, derived from its
+	// report (proxy D18). Drift is a value rather than something the reader
+	// derives, because silent drift across a fleet is indistinguishable from
+	// a broken rollout.
+	Config ConfigRollout
 	// SessionCount, LastError and LastErrorAt are the rest of the picture.
 	SessionCount int
 	LastError    string
@@ -626,22 +616,21 @@ func (r *Registry) Health(ctx context.Context, tenant store.Tenant) ([]ProxyHeal
 	out := make([]ProxyHealth, 0, len(proxies))
 	for _, p := range proxies {
 		cfg := byProxy[p.ID]
+		cfg.ProxyID = p.ID
 		out = append(out, ProxyHealth{
-			ProxyID:              p.ID,
-			Zone:                 Zone(p.Zone),
-			State:                p.State,
-			Live:                 r.isLive(p, subs, now),
-			LastHeartbeatAt:      p.LastHeartbeatAt,
-			SubscriptionSeenAt:   subs[p.ID],
-			ContractVersion:      p.ContractVersion,
-			Capabilities:         UnmarshalCapabilities(p.DeclaredCapabilities),
-			RelayRegistrations:   relays[p.ID],
-			DesiredConfigVersion: cfg.DesiredVersion,
-			RunningConfigVersion: cfg.RunningVersion,
-			ConfigDrift:          cfg.Drifted(),
-			SessionCount:         p.SessionCount,
-			LastError:            p.LastError,
-			LastErrorAt:          p.LastErrorAt,
+			ProxyID:            p.ID,
+			Zone:               Zone(p.Zone),
+			State:              p.State,
+			Live:               r.isLive(p, subs, now),
+			LastHeartbeatAt:    p.LastHeartbeatAt,
+			SubscriptionSeenAt: subs[p.ID],
+			ContractVersion:    p.ContractVersion,
+			Capabilities:       UnmarshalCapabilities(p.DeclaredCapabilities),
+			RelayRegistrations: relays[p.ID],
+			Config:             rolloutOf(cfg),
+			SessionCount:       p.SessionCount,
+			LastError:          p.LastError,
+			LastErrorAt:        p.LastErrorAt,
 		})
 	}
 	return out, nil

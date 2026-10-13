@@ -16,6 +16,7 @@ import (
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/south"
 	"github.com/hoplock/control/internal/notify"
 	"github.com/hoplock/control/internal/revoke"
@@ -139,8 +140,15 @@ func buildGrants(
 //
 // It is wired here, not in the listener or the broker: neither imports the
 // grant service, and the authorize path gains nothing (M5).
-func trackSubscriptions(events south.EventStream, grants *access.Service) south.EventStream {
-	return trackedEvents{EventStream: events, track: grants.Track}
+//
+// The fleet registry learns the tenant the same way, for the configuration
+// announcer (proxy D18): there is no store read that lists tenants (M18), so a
+// tenant whose proxies subscribe is one whose owed announcements are retried.
+func trackSubscriptions(events south.EventStream, grants *access.Service, registry *fleet.Registry) south.EventStream {
+	return trackedEvents{EventStream: events, track: func(t store.Tenant) {
+		grants.Track(t)
+		registry.TrackConfigTenant(t)
+	}}
 }
 
 type trackedEvents struct {

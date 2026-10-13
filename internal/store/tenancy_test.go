@@ -240,7 +240,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.Audit().BlockedCommands(ctx, "", BlockedCommandQuery{LabelName: "env"})
 			return err
 		},
-		"Audit.GapLoss": func() error { _, err := s.Audit().GapLoss(ctx, "", "sess"); return err },
+		"Audit.GapLoss":    func() error { _, err := s.Audit().GapLoss(ctx, "", "sess"); return err },
 		"Audit.PutCapture": func() error { return s.Audit().PutCapture(ctx, "", "r", []byte("x")) },
 		"Audit.Capture":    func() error { _, err := s.Audit().Capture(ctx, "", "r"); return err },
 		"Grants.Insert": func() error {
@@ -332,9 +332,14 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		},
 		"ProxyConfigs.GetState":   func() error { _, err := s.ProxyConfigs().GetState(ctx, "", "p"); return err },
 		"ProxyConfigs.ListStates": func() error { _, err := s.ProxyConfigs().ListStates(ctx, ""); return err },
-		"ProxyConfigs.ReportRunning": func() error {
-			return s.ProxyConfigs().ReportRunning(ctx, "", "p", 1, "h", nowForTest())
+		"ProxyConfigs.PutReport": func() error {
+			return s.ProxyConfigs().PutReport(ctx, "", "p", ConfigReport{LastHeardAt: nowForTest()}, 1, "h")
 		},
+		"ProxyConfigs.TouchReport": func() error { return s.ProxyConfigs().TouchReport(ctx, "", "p", nowForTest()) },
+		"ProxyConfigs.MarkAnnounced": func() error {
+			return s.ProxyConfigs().MarkAnnounced(ctx, "", "p", "h", nowForTest())
+		},
+		"ProxyConfigs.LockState": func() error { _, err := s.ProxyConfigs().LockState(ctx, "", "p"); return err },
 		"TargetCapabilities.Put": func() error {
 			return s.TargetCapabilities().Put(ctx, "", TargetCapabilityRecord{Hostname: "h"})
 		},

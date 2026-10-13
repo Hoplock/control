@@ -13,6 +13,7 @@ import (
 	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/config"
+	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/south"
@@ -56,6 +57,9 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 
 	registry := fleet.New(st,
 		fleet.WithSubscriptionState(bus),
+		// Configuration delivery reuses the stream (proxy D18): a publish
+		// announces each moved proxy's composed document on it.
+		fleet.WithConfigPublisher(busConfigPublisher{bus}),
 		fleet.WithLiveness(fleet.Liveness{
 			HeartbeatTTL:         cfg.Fleet.HeartbeatTTL,
 			RelayRegistrationTTL: cfg.Fleet.RelayRegistrationTTL,
@@ -172,7 +176,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		Identity:        auth,
 		Fleet:           registry,
 		Decision:        decisions,
-		Events:          trackSubscriptions(bus, grants),
+		Events:          trackSubscriptions(bus, grants, registry),
 		Logs:            ingest,
 		Logger:          log,
 		MaxBodyBytes:    cfg.South.MaxBodyBytes,
@@ -203,6 +207,12 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	pollCtx, stopPolling := context.WithCancel(ctx)
 	defer stopPolling()
 	go grants.Watch(pollCtx, cfg.Grants.WorkflowPollInterval)
+
+	// Owed configuration announcements are retried until the stream takes
+	// them — once now, for a publish a crash interrupted between its commit
+	// and its announcement, and then on a timer (proxy D18).
+	registry.TrackConfigTenant(store.Tenant(cfg.Tenant))
+	go registry.WatchAnnouncements(pollCtx, fleet.DefaultAnnounceInterval)
 
 	// The push receiver (0013): an admitted window becomes a grant through
 	// the grant service, and whether a scope is privileged is the active
@@ -373,4 +383,13 @@ func startAuditReadListener(cfg *config.Config, st *store.Store, log *slog.Logge
 		Handler:           ar.handler(),
 		ReadHeaderTimeout: cfg.South.RequestTimeout,
 	}, nil
+}
+
+// busConfigPublisher is the fleet registry's configuration publisher over the
+// revocation bus: one `config_changed` to one proxy (proxy D18).
+type busConfigPublisher struct{ bus *revoke.Bus }
+
+func (p busConfigPublisher) PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) error {
+	_, err := p.bus.ConfigChanged(ctx, tenant, proxyID, ev)
+	return err
 }

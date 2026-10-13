@@ -163,6 +163,8 @@ var servedPaths = []string{
 	contract.PathLogsPriority,
 	contract.PathProxyEvents,
 	contract.PathCredentialCertificate,
+	contract.PathProxyConfig,
+	contract.PathProxyConfigReport,
 }
 
 func (s *Server) build() {
@@ -189,6 +191,12 @@ func (s *Server) build() {
 	// [Server.endpoint]: it answers a stream rather than a document, so it
 	// writes its own status line and its own content type (see events.go).
 	mux.Handle("GET "+contract.PathProxyEvents, http.HandlerFunc(h.subscribeEvents))
+
+	// Fleet configuration (proxy D18). The fetch writes its own status line
+	// for the same reason the stream does — its success is 200, 304 or 204 —
+	// and the report is an ordinary endpoint.
+	mux.Handle("GET "+contract.PathProxyConfig, http.HandlerFunc(h.serveConfig))
+	mux.Handle("POST "+contract.PathProxyConfigReport, s.endpoint(h.reportConfig))
 
 	// The catch-all answers the contract's envelope for anything else,
 	// INCLUDING a north-bound path somebody pointed at the wrong port. It

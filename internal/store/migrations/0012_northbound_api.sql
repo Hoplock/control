@@ -138,3 +138,46 @@ CREATE INDEX audit_records_gap_span_idx
     WHERE gap_cause <> '';
 CREATE INDEX audit_records_gap_ids_idx
     ON audit_records USING gin (gap_record_ids);
+
+-- ---------------------------------------------------------------------------
+-- proxy_config_state — the report, and what was announced (proxy D18,
+-- Hoplock/proxy#65)
+-- ---------------------------------------------------------------------------
+--
+-- 0006 kept only the running version and hash, from a heartbeat field the
+-- contract never carried. `POST /v1/proxies/{proxy_id}/config/report` is now the
+-- only call that says what a proxy runs, and drift is derived from it: a proxy
+-- reporting `pending_restart` holds the new document and has not finished; one
+-- reporting `rejected` needs an operator; one reporting `fetch_failed` is
+-- retrying. The report's strings are kept as they arrived, beside the parsed
+-- running version 0006's columns hold (0 when the proxy runs on its bootstrap
+-- file, or reports a version that is not one of this server's — which is drift,
+-- not a 400).
+--
+-- Reports repeat — the proxy reports after every sync, every reconnect and
+-- every 304 — so an unchanged one moves `last_reported_at` and nothing else,
+-- and one older than the stored `report_reported_at` overwrites nothing.
+ALTER TABLE proxy_config_state
+    ADD COLUMN report_running_version text        NOT NULL DEFAULT '',
+    ADD COLUMN report_running_hash    text        NOT NULL DEFAULT '',
+    ADD COLUMN report_desired_version text        NOT NULL DEFAULT '',
+    ADD COLUMN report_desired_hash    text        NOT NULL DEFAULT '',
+    ADD COLUMN report_state           text        NOT NULL DEFAULT '',
+    ADD COLUMN restart_required       text[]      NOT NULL DEFAULT '{}',
+    -- Keys, never values: the proxy names settings and never quotes one.
+    ADD COLUMN last_error             text        NOT NULL DEFAULT '',
+    -- The proxy's own reported_at: when it reached this state.
+    ADD COLUMN report_reported_at     timestamptz,
+    -- When this server last heard any report, changed or not.
+    ADD COLUMN last_reported_at       timestamptz,
+    -- DELIVERY WITHOUT RECONNECT. The hash of the composed document this
+    -- server last announced with a `config_changed` that the stream took. A
+    -- publish commits the desired document first and announces after; a
+    -- failed announcement — or a crash between the two — leaves this behind
+    -- the desired hash, and the announcer re-emits every such proxy, at start
+    -- and on a timer, until it is announced or a report confirms it. The
+    -- proxy has no periodic fetch, so without this a notification lost while
+    -- the stream stays healthy leaves it on the old document until something
+    -- makes it reconnect.
+    ADD COLUMN announced_hash         text        NOT NULL DEFAULT '',
+    ADD COLUMN announced_at           timestamptz;

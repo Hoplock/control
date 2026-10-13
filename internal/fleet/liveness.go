@@ -5,8 +5,10 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -137,37 +139,28 @@ type SubscriptionState interface {
 // Delivery REUSES THE EVENT STREAM rather than inventing a second channel:
 // proxies already hold one outbound subscription and must not need a second
 // inbound path, which is the same reasoning that made the revocation stream
-// outbound in the first place (proxy §6.4).
-//
-// **This seam cannot be connected to the wire yet, and that is a finding rather
-// than an omission.** `contract/control.yaml` enumerates the event types
-// `session_kill`, `cache_invalidate`, `heartbeat` and `resync`, and NONE of them
-// can carry a configuration change. The contract is owned upstream and vendored
-// read-only (M1), so adding one is a change in `hoplock/proxy` — an event type
-// (or a field on the heartbeat event) naming the proxy's desired config version
-// and hash, which the proxy answers by fetching and then reporting what it
-// runs. Until that lands, everything below the wire is built and tested here and
-// the publisher is a no-op an operator can see: the desired version is stored,
-// the drift is visible in the fleet view and in the API, and a proxy that has
-// not caught up is reported rather than assumed current.
-//
-// Inventing the event type locally was the alternative, and it is the one M1
-// exists to prevent: it would make CI green here while the two components
-// silently disagreed about what a `config` event is.
+// outbound in the first place (proxy §6.4). The event is the contract's
+// `config_changed` (proxy D18, Hoplock/proxy#65): it NAMES the proxy's composed
+// document by version and hash and never carries it, because the stream is
+// replayable and a replayed document would be a stale one applied as if
+// current. The daemon wires it to the revocation bus.
 type ConfigPublisher interface {
-	// PublishConfigChange tells a proxy that its desired configuration moved.
-	PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, version int64, hash string) error
+	// PublishConfigChange tells one proxy that its desired configuration
+	// moved. A nil error means the stream took the event — queued to the
+	// proxy's subscription or retained for its replay — and nothing more.
+	PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) error
 }
 
-// noopConfigPublisher is what a Registry uses when none is supplied.
+// noopConfigPublisher is what a Registry uses when none is supplied: a
+// Registry built without a stream, in a test or a tool that publishes nothing.
 //
-// It returns nil rather than an error: a configuration publish that failed
-// because nothing is wired up must not fail the publish itself, or an operator
-// could not stage a rollout before the stream exists. What makes that safe is
-// that the desired version is durable and the drift is visible — the proxy finds
-// out late rather than never.
+// It answers an error rather than nil, so an announcement it could not make is
+// never recorded as made: the marker stays behind and the announcer owes it,
+// which is the honest state for a registry with no stream to announce on.
 type noopConfigPublisher struct{}
 
-func (noopConfigPublisher) PublishConfigChange(context.Context, store.Tenant, string, int64, string) error {
-	return nil
+func (noopConfigPublisher) PublishConfigChange(context.Context, store.Tenant, string, contract.ConfigChangedEvent) error {
+	return errNoConfigPublisher
 }
+
+var errNoConfigPublisher = errors.New("fleet: no event stream is wired to announce configuration on")

@@ -99,7 +99,12 @@ func TestOnlyTheMapperNamesAStatusCode(t *testing.T) {
 	// "durable", and naming that beside the route is what keeps it
 	// reviewable in one place. It still cannot choose what a caller is told
 	// on a FAILURE, which is what this test is really about.
-	allowed := []string{"statusFor", "withRecovery", "endpoint", "writeError", "Write", "withLogging", "openStream", "build"}
+	//
+	// `serveConfig` is the fleet configuration fetch (proxy D18), whose
+	// success is a 200 with the document, a 304 naming the held hash, or a
+	// 204 with nothing published; every refusal on it goes through the
+	// mapper.
+	allowed := []string{"statusFor", "withRecovery", "endpoint", "writeError", "Write", "withLogging", "openStream", "build", "serveConfig"}
 
 	var offenders []string
 	forEachSelector(t, "http", func(sel, file, fn string, pos token.Position) {

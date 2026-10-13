@@ -484,9 +484,17 @@ type ProxyConfigRepository interface {
 	// read off it, and silent drift across a fleet is indistinguishable from
 	// a broken rollout.
 	ListStates(ctx context.Context, tenant Tenant) ([]ProxyConfigState, error)
-	// ReportRunning records what a proxy says it is running. Absent is
-	// ErrNotFound.
-	ReportRunning(ctx context.Context, tenant Tenant, proxyID string, version int64, hash string, at time.Time) error
+	// LockState takes one proxy's state row for the rest of a transaction,
+	// creating it empty when absent. Outside a transaction it is refused.
+	LockState(ctx context.Context, tenant Tenant, proxyID string) (ProxyConfigState, error)
+	// PutReport records a substantive configuration report (proxy D18).
+	// Absent is ErrNotFound.
+	PutReport(ctx context.Context, tenant Tenant, proxyID string, rep ConfigReport, runningVersion int64, runningHash string) error
+	// TouchReport records only that a report was heard.
+	TouchReport(ctx context.Context, tenant Tenant, proxyID string, at time.Time) error
+	// MarkAnnounced records that the stream took a `config_changed` naming
+	// a hash, or a report confirmed it; never for a hash no longer desired.
+	MarkAnnounced(ctx context.Context, tenant Tenant, proxyID, hash string, at time.Time) error
 }
 
 // TargetCapabilityRepository stores what one TARGET can take (M17).

@@ -70,6 +70,8 @@ func TestTheListenerServesExactlyTheContractPaths(t *testing.T) {
 		contract.PathLogsPriority,
 		contract.PathProxyEvents,
 		contract.PathCredentialCertificate,
+		contract.PathProxyConfig,
+		contract.PathProxyConfigReport,
 	}
 	got := h.server.Routes()
 	slices.Sort(want)

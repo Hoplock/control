@@ -801,3 +801,41 @@ func TestLiveSubscriptionsIsTheSignalTheCacheHintGateReads(t *testing.T) {
 		return !ok
 	}, "the subscription to be forgotten once it ends")
 }
+
+// config_changed (proxy D18) names a document and never carries it, reaches
+// only the proxy it names, and is retained for replay: a proxy that missed it
+// learns of it on reconnect, and fetches the CURRENT document either way.
+func TestAConfigChangeReachesOnlyItsProxyAndReplays(t *testing.T) {
+	t.Parallel()
+	b := newBus(t, revoke.Options{HeartbeatInterval: time.Second})
+	target := subscribe(t, b, "proxy-1", "")
+	other := subscribe(t, b, "proxy-2", "")
+
+	ev := contract.ConfigChangedEvent{Version: "v3", Hash: "sha256:" + strings.Repeat("a", 64)}
+	if _, err := b.ConfigChanged(context.Background(), testTenant, "proxy-1", ev); err != nil {
+		t.Fatalf("ConfigChanged: %v", err)
+	}
+	got := target.next(time.Second)
+	if got.Type != contract.EventTypeConfigChanged || got.ConfigChanged == nil || *got.ConfigChanged != ev {
+		t.Fatalf("got %+v, want the config_changed naming %+v", got, ev)
+	}
+	if got.SessionKill != nil || got.CacheInvalidate != nil {
+		t.Error("a config_changed carried a revocation payload")
+	}
+	other.nothing(100 * time.Millisecond)
+
+	// Missed while disconnected, and replayed on reconnect.
+	last := got.EventID
+	target.cancel()
+	if _, err := b.ConfigChanged(context.Background(), testTenant, "proxy-1", ev); err != nil {
+		t.Fatal(err)
+	}
+	resumed := subscribe(t, b, "proxy-1", last)
+	if replayed := resumed.next(time.Second); replayed.Type != contract.EventTypeConfigChanged {
+		t.Fatalf("replayed %+v, want the config_changed", replayed)
+	}
+
+	if _, err := b.ConfigChanged(context.Background(), testTenant, "proxy-1", contract.ConfigChangedEvent{}); err == nil {
+		t.Error("a config_changed naming nothing was published")
+	}
+}

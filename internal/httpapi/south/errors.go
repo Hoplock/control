@@ -84,6 +84,8 @@ func statusFor(err error, correlationID string) (int, contract.ErrorResponse) {
 		return http.StatusBadRequest, se.Envelope()
 	case errors.Is(se.Class, contract.ErrUIDRangeExhausted):
 		return http.StatusConflict, se.Envelope()
+	case errors.Is(se.Class, errNotEnrolled):
+		return http.StatusNotFound, se.Envelope()
 	case errors.Is(se.Class, errNoSuchRoute):
 		// Not a status the contract enumerates, because no conformant proxy
 		// asks for a path this server does not serve. It exists so that a
@@ -119,6 +121,16 @@ func internalEnvelope(correlationID string) contract.ErrorResponse {
 	return contract.ErrorResponse{
 		Error: contract.ErrorBody{Code: contract.ErrCodeInternal, Message: msg},
 	}
+}
+
+// errNotEnrolled classifies a configuration call for a proxy the registry does
+// not hold in the caller's tenant (proxy D18): a registry fact, so a 404 and
+// never a 401.
+var errNotEnrolled = errors.New("south: not enrolled")
+
+func notEnrolled(proxyID string) error {
+	return &contract.StatusError{Class: errNotEnrolled, Code: contract.ErrCodeNotEnrolled,
+		Message: "no proxy " + proxyID + " is enrolled for this credential's tenant"}
 }
 
 // errNoSuchRoute classifies a path this listener does not serve.
