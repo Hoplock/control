@@ -127,9 +127,10 @@ func ParseCredential(presented string) (Credential, bool) {
 // Principal is an authenticated north-bound caller.
 //
 // It is what the middleware puts on the request context, and the ONLY thing a
-// handler may consult about who is calling. There is deliberately no accessor
-// that answers "all the tenants this request covers": every request resolves to
-// exactly one tenant, so an audit record never has to say "some of them" (M18).
+// handler may consult about who is calling. A handler never asks it "all the
+// tenants this request covers": a request resolves one tenant, or on a
+// cross-tenant read a set, and the middleware resolves either before the
+// handler runs, so an audit record never has to say "some of them" (M18, M24).
 type Principal struct {
 	// ID identifies the credential. Safe to log.
 	ID string
@@ -163,9 +164,11 @@ type Principal struct {
 
 	// scopes is the set of tenants this principal may act in, with the roles
 	// it holds in each. It is unexported so that the only way to ask a
-	// question of it is through the two methods below — a handler cannot
-	// iterate it, which is what stops a cross-tenant aggregate route from
-	// being easy to write.
+	// question of it is through the methods below — a handler cannot iterate
+	// it, which is what stops a cross-tenant aggregate route from being easy
+	// to write. The one route class that may aggregate (M24) has its set
+	// resolved by [Principal.TenantsWith], whose only caller is the
+	// north-bound middleware, and a source test holds it to that.
 	scopes map[store.Tenant]RoleSet
 }
 
@@ -221,6 +224,24 @@ func (p *Principal) SoleTenant() (store.Tenant, bool) {
 		return t, true
 	}
 	return "", false
+}
+
+// TenantsWith returns the tenants in this principal's scope in which it holds
+// perm, sorted. It is the one question about the scope map whose answer is a
+// set, and the north-bound middleware is its only caller (M24): a handler is
+// handed the set and never asks.
+func (p *Principal) TenantsWith(perm Permission) []store.Tenant {
+	if p == nil {
+		return nil
+	}
+	var out []store.Tenant
+	for t, roles := range p.scopes {
+		if roles.Can(perm) {
+			out = append(out, t)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // ScopedTenants returns the tenants in scope, sorted. It exists for the

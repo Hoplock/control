@@ -223,7 +223,7 @@ half of the promise. A host binary's `main` registers what it brings into an
 | `Provider` | names the host in the route listing and the start-up log; required with any of the fields below, and never `hoplock/control` |
 | `Registry` | registers Control's defaults into it, seals it — an extension beats a default — and serves with the sealed set |
 | `HostSections`, `HostConfig` | the strict decoder accepts those top-level keys, and `Run` hands each one present to `HostConfig` as YAML, before sealing and before anything serves; a key Control defines is refused, and every other unknown key is still an error |
-| `Routes` | mounted on the north-bound listener only, at `/api/v1/tenants/{tenant}/<Pattern>`, behind Control's authentication, tenant resolution and RBAC; `Permission` names one of Control's codes, never a new one |
+| `Routes` | mounted on the north-bound listener only, behind Control's authentication, tenant resolution and RBAC: by default (`server.AccessTenant`) at `/api/v1/tenants/{tenant}/<Pattern>`, resolving one tenant; with `Access: server.AccessCrossTenant`, at `/api/v1/cross-tenant/<Pattern>`, resolving a set (M24). `Permission` names one of Control's codes, never a new one, and on a cross-tenant route one the auditor role holds: a read |
 | `ErrorCodes` | the codes `server.WriteError` will render beside Control's own; anything else, and any `401`, renders `500 internal` |
 
 A handler reads who is calling with `server.CallerFrom` — the tenant Control
@@ -231,6 +231,17 @@ resolved, the subject, the credential, the break-glass flag and the correlation
 id — and answers a failure with `server.WriteError`, in the envelope every
 north-bound error carries (M21). Everything a host can get wrong is refused
 before the configuration is read, a database is opened or a port is bound.
+
+On a cross-tenant read, `Caller.Tenant` is empty and `Caller.Tenants` is the
+set: every tenant in the caller's scope where it holds the route's permission,
+or, when the request names tenants (`?tenant=a&tenant=b`, or the
+`X-Hoplock-Tenant` header), exactly those. A named tenant the caller cannot read
+is refused — `403 tenant_out_of_scope` outside its scope, `403 forbidden`
+without the permission — and never dropped, so the handler is never handed
+fewer tenants than were asked for. Read the set from `Caller.Tenants` only, and
+say in the response which tenants it covers. Today a principal holds scope in
+several tenants only as an API token an operator mints on the box; a signed-in
+session covers the one tenant it signed in through.
 
 ```go
 // archive is a host's extension: a long-term archive Control does not ship
@@ -244,7 +255,7 @@ func (a *archive) Search(context.Context, ext.ArchiveQuery) (ext.ArchivePage, er
 }
 
 // A host binary's main: register an extension, declare a configuration section
-// and a route, and start Control. A real host calls server.Main instead of
+// and a route of each class, and start Control. A real host calls server.Main instead of
 // server.Run, so that its binary carries Control's subcommands too.
 func Example() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -282,20 +293,37 @@ func Example() {
 			return nil
 		},
 
-		// GET /api/v1/tenants/{tenant}/archive/{record}, for a caller holding
-		// audit:read in the tenant Control resolved.
-		Routes: []server.Route{{
-			Method:     http.MethodGet,
-			Pattern:    "archive/{record}",
-			Permission: "audit:read",
-			Summary:    "one archived record",
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				caller, _ := server.CallerFrom(r.Context())
-				server.WriteError(w, r, http.StatusNotFound, "archive_record_not_found",
-					map[string]any{"record": r.PathValue("record"), "tenant": string(caller.Tenant)},
-					"the archive holds no such record")
-			}),
-		}},
+		Routes: []server.Route{
+			// GET /api/v1/tenants/{tenant}/archive/{record}, for a caller
+			// holding audit:read in the tenant Control resolved.
+			{
+				Method:     http.MethodGet,
+				Pattern:    "archive/{record}",
+				Permission: "audit:read",
+				Summary:    "one archived record",
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					caller, _ := server.CallerFrom(r.Context())
+					server.WriteError(w, r, http.StatusNotFound, "archive_record_not_found",
+						map[string]any{"record": r.PathValue("record"), "tenant": string(caller.Tenant)},
+						"the archive holds no such record")
+				}),
+			},
+			// GET /api/v1/cross-tenant/archive/summary, for a caller holding
+			// audit:read in each tenant it covers. Control resolves the set —
+			// narrowed by ?tenant=, never widened — and the answer names it.
+			{
+				Method:     http.MethodGet,
+				Pattern:    "archive/summary",
+				Permission: "audit:read",
+				Access:     server.AccessCrossTenant,
+				Summary:    "the archive, summarised across tenants",
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					caller, _ := server.CallerFrom(r.Context())
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{"tenants": caller.Tenants, "records": 0})
+				}),
+			},
+		},
 		ErrorCodes: []string{"archive_record_not_found"},
 	})
 	if err != nil {

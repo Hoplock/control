@@ -15,6 +15,7 @@
 package control_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -384,5 +385,107 @@ func TestTheServerGuardsActuallyCatchOne(t *testing.T) {
 	}
 	if want := []string{"github.com/hoplock/control/internal/daemon", "golang.org/x/sys/unix"}; !slices.Equal(beside, want) {
 		t.Errorf("the command guard found %v, want %v: server, the standard library and test files are allowed", beside, want)
+	}
+}
+
+// THE SET A CROSS-TENANT READ COVERS IS RESOLVED IN ONE PLACE (M24).
+//
+// `identity.Principal.TenantsWith` is the one question about a principal's
+// scope whose answer is a set of tenants. A handler that could ask it would be
+// a handler that chose what an aggregate covers, which is the missing filter
+// M18 exists to rule out — so it has exactly one caller, the north-bound
+// middleware, and this is the same kind of check as the south-bound one that
+// fails if a third function can build a 401. Its own package's tests are the
+// only other place allowed to name it.
+
+// tenantSetResolver is the one file that may resolve a cross-tenant set.
+const tenantSetResolver = "internal/httpapi/north/middleware.go"
+
+// referencesTo walks every Go file under root and returns each place a
+// selector names a method or field called name, as "file:line" with the file
+// relative to root. A method value is a reference as much as a call is. The
+// test files directly in exemptTests (relative to root) are skipped.
+func referencesTo(t *testing.T, root, name, exemptTests string) []string {
+	t.Helper()
+	var found []string
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "testdata", "node_modules":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			rel = path
+		}
+		rel = filepath.ToSlash(rel)
+		if strings.HasSuffix(rel, "_test.go") && filepath.ToSlash(filepath.Dir(rel)) == exemptTests {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Errorf("parse %s: %v", path, err)
+			return nil
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == name {
+				found = append(found, rel+":"+strconv.Itoa(fset.Position(sel.Pos()).Line))
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	sort.Strings(found)
+	return found
+}
+
+func TestOnlyTheMiddlewareResolvesACrossTenantSet(t *testing.T) {
+	refs := referencesTo(t, ".", "TenantsWith", "internal/identity")
+	if len(refs) != 1 || !strings.HasPrefix(refs[0], tenantSetResolver+":") {
+		t.Fatalf("TenantsWith is referenced at %v, want exactly once, in %s.\n\n"+
+			"The set a cross-tenant read covers is resolved by the middleware and handed to the "+
+			"handler, which never chooses it (M24, M18). A handler that needs the set reads "+
+			"north.TenantsFrom, or server.Caller.Tenants for a host.",
+			refs, tenantSetResolver)
+	}
+}
+
+func TestTheTenantSetGuardActuallyCatchesOne(t *testing.T) {
+	dir := t.TempDir()
+	for rel, pkg := range map[string]string{
+		tenantSetResolver:                     "north",
+		"internal/httpapi/north/report.go":    "north",
+		"internal/identity/principal_test.go": "identity_test",
+		"internal/identity/principal.go":      "identity",
+	} {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		source := "package " + pkg + "\n\nfunc f(p interface{ TenantsWith(string) []string }) { _ = p.TenantsWith(\"audit:read\") }\n"
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	got := referencesTo(t, dir, "TenantsWith", "internal/identity")
+	want := []string{
+		"internal/httpapi/north/middleware.go:3",
+		"internal/httpapi/north/report.go:3",
+		"internal/identity/principal.go:3",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the guard found %v, want %v: only the identity package's tests are exempt", got, want)
 	}
 }

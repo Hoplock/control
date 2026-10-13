@@ -17,7 +17,8 @@
 //     ([Options.HostSections]), handed to it undecoded.
 //  3. North-bound routes of its own ([Options.Routes]), behind Control's
 //     authentication, tenant resolution and RBAC, on the north-bound listener
-//     and nowhere else (M2, M18).
+//     and nowhere else (M2, M18): tenant routes, and cross-tenant reads whose
+//     set of tenants Control resolves ([AccessCrossTenant], M24).
 //  4. Control's error envelope ([WriteError]), with codes it declares (M21).
 //
 // THIS PACKAGE IS A COMPATIBILITY PROMISE, exactly as ext is: every exported
@@ -110,6 +111,7 @@ func (o Options) host() daemon.Host {
 		routes = append(routes, north.HostRoute{
 			Method:     r.Method,
 			Pattern:    r.Pattern,
+			Access:     r.Access.north(),
 			Permission: identity.Permission(r.Permission),
 			Summary:    r.Summary,
 			Handler:    r.Handler,
@@ -123,4 +125,18 @@ func (o Options) host() daemon.Host {
 		Routes:     routes,
 		ErrorCodes: o.ErrorCodes,
 	}
+}
+
+// north maps each class explicitly onto the internal one. A value outside the
+// set maps onto none of Control's classes, and the one check every host route
+// goes through refuses it at start-up, naming the route, before a file is read
+// or a port is bound.
+func (a Access) north() north.Access {
+	switch a {
+	case AccessTenant:
+		return north.AccessTenant
+	case AccessCrossTenant:
+		return north.AccessCrossTenant
+	}
+	return north.Access(-1)
 }

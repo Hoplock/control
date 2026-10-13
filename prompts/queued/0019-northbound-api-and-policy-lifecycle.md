@@ -5,7 +5,8 @@
   endpoint may not outlive the phase that needed it. **This phase is limb 4 of
   that rule for two debug paths** (below): the removals are obligations here,
   not suggestions.
-- `docs/PLAN.md` — especially **§2 (M2, M3, M4, M9, M15, M16, M17)**, §5 (the
+- `docs/PLAN.md` — especially **§2 (M2, M3, M4, M9, M15, M16, M17, and M18
+  with M24 for "Tenancy on the surface")**, §5 (the
   bundle and the explanation, including §5.2's enforcement rungs and session
   deadline, §5.4's cache-hint invariants, and §5.5's external access context —
   what a decision record says about a window a provider pushed or probed), §7
@@ -1556,8 +1557,9 @@ The same operations from a terminal: `validate`, `diff`, `simulate`, `apply`,
 it becomes a second implementation of the rules.
 
 ### Tenancy on the surface (M18)
-Every north-bound route resolves exactly one tenant from the caller's scope
-(0011) before it does anything else. Three rules keep that honest:
+Every north-bound route **of Control's own** resolves exactly one tenant from
+the caller's scope (0011) before it does anything else. Three rules keep that
+honest:
 
 - **A tenant is a selector, never a widening.** The middleware refuses a tenant
   outside the principal's set before a handler runs.
@@ -1565,10 +1567,14 @@ Every north-bound route resolves exactly one tenant from the caller's scope
   a required parameter and no response gains a field an operator must care
   about. Tenancy that is visible to someone who does not use it is a tax on the
   common case.
-- **Cross-tenant reads do not exist on this surface.** A caller with scope in
-  three tenants makes three requests. Aggregating them is a governance feature
-  and it is Enterprise's (its E11); an aggregate route here would be the one
-  place where a missing filter leaks everything at once.
+- **Control serves no cross-tenant route of its own.** A caller with scope in
+  three tenants makes three requests to Control's routes. Aggregating them is
+  Enterprise's (its E11), served as a host's cross-tenant read (M24, 0018),
+  whose set the middleware resolves. No route this phase adds is
+  `AccessCrossTenant`, and registration refuses one with no provider: an
+  aggregate route whose handler chose its own set would be the one place where
+  a missing filter leaks everything at once, which is why only the middleware
+  resolves a set.
 
 ### Errors are machine-readable (M21)
 Every error this surface returns carries a **stable `code`**, typed
