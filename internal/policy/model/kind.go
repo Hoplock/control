@@ -302,6 +302,55 @@ func (p *AlgorithmProfile) UnmarshalYAML(n *yaml.Node) error {
 	return decodeEnum(n, p, algorithmProfiles, "algorithm profile")
 }
 
+// AlgorithmFloor is the minimum key exchange a route's proxy→target leg must
+// negotiate (Hoplock/proxy#69). Unset means no floor. The levels are an ordered
+// ladder compared by rank alone; which exchanges each accepts is each proxy
+// build's to declare, and is never encoded here. An unknown level is refused at
+// authoring time and never coerced.
+type AlgorithmFloor string
+
+const (
+	AlgorithmFloorUnset       AlgorithmFloor = ""
+	AlgorithmFloorModernKex   AlgorithmFloor = "modern-kex"
+	AlgorithmFloorPQHybridKex AlgorithmFloor = "pq-hybrid-kex"
+)
+
+var algorithmFloors = []AlgorithmFloor{AlgorithmFloorModernKex, AlgorithmFloorPQHybridKex}
+
+// UnmarshalYAML decodes an AlgorithmFloor.
+func (f *AlgorithmFloor) UnmarshalYAML(n *yaml.Node) error {
+	return decodeEnum(n, f, algorithmFloors, "algorithm floor")
+}
+
+// Rank orders the levels: unset 0, modern-kex 1, pq-hybrid-kex 2. A later level
+// goes above the top, because every exchange a level accepts is accepted by
+// every level below it (the contract's nesting rule).
+func (f AlgorithmFloor) Rank() int {
+	switch f {
+	case AlgorithmFloorUnset:
+		return 0
+	case AlgorithmFloorModernKex:
+		return 1
+	case AlgorithmFloorPQHybridKex:
+		return 2
+	}
+	return -1
+}
+
+// WidensKeyExchange reports whether a profile widens the key-exchange axis a
+// floor narrows. The proxy refuses such a profile with any floor; the rule is
+// the axis and not the word "legacy" — legacy-rsa-sha1 changes only signatures
+// and takes a floor.
+func (p AlgorithmProfile) WidensKeyExchange() bool {
+	switch p {
+	case AlgorithmProfileLegacyDevice:
+		return true
+	case AlgorithmProfileUnset, AlgorithmProfileDefault, AlgorithmProfileLegacyRSASHA1:
+		return false
+	}
+	return false
+}
+
 // FilterMode is what happens to a command no filter rule matched. It is
 // required on every route: a policy with no defined default is one that can
 // fail open by omission.

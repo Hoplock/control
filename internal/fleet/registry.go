@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/hoplock/control/internal/contract"
@@ -40,6 +41,10 @@ type Registry struct {
 	// answer has no rule, so this server states its own. Zero takes
 	// DefaultHostKeyCacheTTL.
 	hostKeyCacheTTL time.Duration
+	// declared is the digest of each proxy's algorithm declaration as this
+	// process last wrote it (tenant + "\x00" + proxy id → digest), so the
+	// decision path writes only when a build changed (M5).
+	declared sync.Map
 }
 
 // Option configures a Registry.
@@ -662,10 +667,16 @@ func (r *Registry) ReportTargetCapabilities(ctx context.Context, tenant store.Te
 	if rec.Key.Hostname == "" {
 		return 0, fmt.Errorf("fleet.ReportTargetCapabilities: hostname is required")
 	}
-	// An undated report is stored undated. Stamping it with arrival time would
-	// make a record the proxy could not date look fresh, which is exactly the
-	// fail-open the rule exists to prevent — and the proxy's own clock is the
-	// only one that saw the target.
+	// A rung observation reaches here DATED: the contract's merge rule has
+	// the south-bound handler refuse rungs or detail without observed_at,
+	// because an undated observation cannot be placed against the stored one
+	// (Hoplock/proxy#69). It is never stamped with arrival time — the proxy's
+	// own clock is the only one that saw the target — and a record stored
+	// undated before that rule still reads as stale (M17).
+	//
+	// This replaces the RUNG observation only. The key-exchange observation
+	// is stored beside it (ReportTargetKex) and a rung report never touches
+	// it, nor it a rung one.
 	if err := r.st.TargetCapabilities().Put(ctx, tenant, targetCapabilitiesToStore(rec, r.now())); err != nil {
 		return 0, err
 	}

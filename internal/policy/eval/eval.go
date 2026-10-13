@@ -173,6 +173,8 @@ func snapshot(rule *compile.Rule, in model.Input, grant *model.Grant) *model.Sna
 		Filter:           cloneFilter(rt.Filter),
 		Credentials:      resolveLadder(rt.Credentials, in.Subject.ID),
 		AlgorithmProfile: rt.AlgorithmProfile,
+		AlgorithmFloor:   rt.AlgorithmFloor,
+		AlgorithmBans:    rt.AlgorithmBans.Merge(nil),
 		Enforcement:      cloneEnforcement(rt.Enforcement),
 		SessionDeadline:  deadline(rt, in, grant),
 		Concurrency:      rt.Concurrency,

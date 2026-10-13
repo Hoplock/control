@@ -556,35 +556,80 @@ func TestACapabilityReportIsStoredAndAcknowledgedTruthfully(t *testing.T) {
 	}
 }
 
-// Stale, undated and absent are ONE case (M17), so a report with no
-// observation time is stored undated rather than refused or stamped with
-// arrival — stamping arrival would make a record the proxy could not date look
-// fresh, which is the fail-open the rule exists to prevent.
-func TestAnUndatedCapabilityReportReadsBackAsStale(t *testing.T) {
+// The contract's merge rule (Hoplock/proxy#69) refuses what cannot be placed
+// against a stored observation: rungs or detail with no observed_at, a report
+// carrying neither observation, and a kex without floor_met or observed_at. An
+// observed_at that does not parse is refused by the same rule. Before it, an
+// undated report was stored undated; a stored record with no date still reads
+// as stale (M17), which fleet's own tests hold.
+func TestAMalformedCapabilityReportIs400(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
+	for name, caps := range map[string]contract.TargetCapabilities{
+		"rungs without observed_at":  {Execution: []string{string(contract.ExecutionAccountConfined)}},
+		"detail without observed_at": {Detail: map[string]string{"init": "systemd"}},
+		"neither observation":        {},
+		"kex without floor_met":      {Kex: &contract.KexObservation{ObservedAt: nowRFC3339()}},
+		"kex without observed_at":    {Kex: &contract.KexObservation{FloorMet: contract.FloorMetModernKex}},
+		"kex with an unknown level":  {Kex: &contract.KexObservation{FloorMet: "fips", ObservedAt: nowRFC3339()}},
+		"an unparseable observed_at": {Execution: []string{"proxy-inspected"}, ObservedAt: "yesterday"},
+	} {
+		res := h.post(t, contract.PathCapabilitiesReport, contract.CapabilityReportRequest{
+			Target: "undated.example.com", Capabilities: caps,
+		})
+		if res.Code != http.StatusBadRequest {
+			t.Errorf("%s: report = %d, want 400: %s", name, res.Code, res.Body)
+		}
+	}
+	if recs, err := h.store.TargetCapabilities().List(t.Context(), testTenant); err != nil || len(recs) != 0 {
+		t.Errorf("a refused report stored %d records (%v)", len(recs), err)
+	}
+}
 
-	res := h.post(t, contract.PathCapabilitiesReport, contract.CapabilityReportRequest{
-		Target: "undated.example.com",
-		Capabilities: contract.TargetCapabilities{
-			Execution: []string{string(contract.ExecutionAccountConfined)},
-		},
-	})
+// A report carrying only kex is accepted, and the two observations replace
+// only themselves.
+func TestTheTwoObservationsAreMergedNeverClobbered(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := t.Context()
+
+	rung := contract.CapabilityReportRequest{Target: "merge.example.com", Capabilities: contract.TargetCapabilities{
+		Execution: []string{string(contract.ExecutionAccountRestricted)}, ObservedAt: nowRFC3339(),
+	}}
+	kex := contract.CapabilityReportRequest{Target: "merge.example.com", Capabilities: contract.TargetCapabilities{
+		Kex: &contract.KexObservation{FloorMet: contract.FloorMetModernKex, Negotiated: "curve25519-sha256", ObservedAt: nowRFC3339()},
+	}}
+	if res := h.post(t, contract.PathCapabilitiesReport, rung); res.Code != http.StatusOK {
+		t.Fatalf("rung report = %d: %s", res.Code, res.Body)
+	}
+	res := h.post(t, contract.PathCapabilitiesReport, kex)
 	if res.Code != http.StatusOK {
-		t.Fatalf("undated report = %d: %s", res.Code, res.Body)
+		t.Fatalf("kex-only report = %d: %s", res.Code, res.Body)
+	}
+	var ack contract.CapabilityReportResponse
+	decode(t, res, &ack)
+	if !ack.Accepted {
+		t.Fatal("a stored kex report was not acknowledged")
 	}
 
-	rungs, err := h.fleet.TargetRungs(t.Context(), testTenant, fleet.TargetCapabilityKey{
-		Hostname: "undated.example.com",
-	})
+	rec, err := h.store.TargetCapabilities().Get(ctx, testTenant, "merge.example.com", 0, "")
 	if err != nil {
-		t.Fatalf("TargetRungs: %v", err)
+		t.Fatal(err)
 	}
-	if rungs.Observed {
-		t.Error("an undated record was treated as a fresh observation")
+	if len(rec.Execution) != 1 || rec.ObservedAt.IsZero() {
+		t.Fatalf("the key-exchange report clobbered the rung observation: %+v", rec)
 	}
-	if rungs.AllowsExecution(contract.ExecutionAccountConfined) {
-		t.Error("an undated record contributed a rung that needs the target to have been provisioned")
+
+	// And a rung report leaves the key-exchange observation untouched.
+	if res := h.post(t, contract.PathCapabilitiesReport, rung); res.Code != http.StatusOK {
+		t.Fatalf("second rung report = %d", res.Code)
+	}
+	obs, err := h.store.TargetKexObservations().Get(ctx, testTenant, "merge.example.com", 0)
+	if err != nil {
+		t.Fatalf("the rung report erased the key-exchange observation: %v", err)
+	}
+	if obs.FloorMet != string(contract.FloorMetModernKex) || obs.Negotiated != "curve25519-sha256" {
+		t.Errorf("key-exchange observation = %+v", obs)
 	}
 }
 

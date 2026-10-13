@@ -6,6 +6,7 @@ package compile_test
 import (
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1114,4 +1115,129 @@ func TestBrokeredCertificateTakesKeyTypeAndLifetime(t *testing.T) {
         - {method: brokered-certificate, username: netadmin, key_type: rsa, lifetime_seconds: 600}
         - {method: brokered-key, username: netadmin, credential_ref: vault://a}
 `))
+}
+
+// ---------------------------------------------------------------------------
+// algorithm floor and bans (Hoplock/proxy#69)
+// ---------------------------------------------------------------------------
+
+func floorRoute(profile, floor string) string {
+	return header(`rules:
+  - id: r
+    effect: allow
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+      algorithm_profile: ` + profile + `
+      algorithm_floor: ` + floor + `
+`)
+}
+
+// The rule is the AXIS, not the word "legacy": legacy-device widens the key
+// exchanges a floor narrows and is refused with any floor; legacy-rsa-sha1
+// changes only signatures and is accepted, as is default. A compiler that
+// refuses every legacy profile with a floor is the plausible bug, so the
+// acceptances are asserted beside the refusal.
+func TestTheFloorMatchesTheProxysProfileRule(t *testing.T) {
+	for _, floor := range []string{"modern-kex", "pq-hybrid-kex"} {
+		rs := compileSource(t, floorRoute("legacy-device", floor))
+		if !rs.Has(model.CodeRouteFloorProfileConflict) {
+			t.Fatalf("legacy-device with %s compiled; got %v", floor, rs.Codes())
+		}
+		for _, r := range rs {
+			if r.Code == model.CodeRouteFloorProfileConflict {
+				msg := r.Message()
+				if !strings.Contains(msg, floor) || !strings.Contains(msg, "legacy-device") {
+					t.Errorf("the refusal does not name both values: %s", msg)
+				}
+			}
+		}
+		for _, accepted := range []string{"legacy-rsa-sha1", "default"} {
+			if rs := compileSource(t, floorRoute(accepted, floor)); rs != nil {
+				t.Errorf("%s with %s was refused: %v", accepted, floor, rs)
+			}
+		}
+	}
+}
+
+func TestAnUnknownFloorLevelIsRefusedNeverCoerced(t *testing.T) {
+	rs := compileSource(t, floorRoute("default", "fips-kex"))
+	if !rs.Has(model.CodeDocumentMalformed) {
+		t.Fatalf("an unknown floor level compiled: %v", rs.Codes())
+	}
+}
+
+func banRoute(bans string) string {
+	return header(`rules:
+  - id: r
+    effect: allow
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+      algorithm_bans: ` + bans + `
+`)
+}
+
+func TestABanRefusesOnlyWhatEveryBuildRefuses(t *testing.T) {
+	if rs := compileSource(t, banRoute(`{ciphers: [aes128-cbc, ""]}`)); !rs.Has(model.CodeRouteBanIdentifierEmpty) {
+		t.Errorf("an empty identifier compiled: %v", rs.Codes())
+	}
+	if rs := compileSource(t, banRoute(`{macs: [hmac-sha1, hmac-sha1]}`)); !rs.Has(model.CodeRouteBanIdentifierRepeated) {
+		t.Errorf("a repeated identifier compiled: %v", rs.Codes())
+	}
+	// The same name on two axes is two bans, not a repeat: ssh-rsa is both
+	// a host-key and a public-key algorithm.
+	if rs := compileSource(t, banRoute(`{host_keys: [ssh-rsa], public_key_auth: [ssh-rsa]}`)); rs != nil {
+		t.Errorf("one name on two axes was refused: %v", rs)
+	}
+	// A name no build implements is NOT refused: banning what is never
+	// offered is already satisfied, and refusing it would make a same-day
+	// advisory ban an outage.
+	if rs := compileSource(t, banRoute(`{key_exchanges: [sntrup761x25519-sha512, no-such-kex]}`)); rs != nil {
+		t.Errorf("a ban on a name no build offers was refused: %v", rs)
+	}
+}
+
+// A ban everywhere is the bundle's own algorithm_bans, added to every allow
+// route's at compile time.
+func TestABundleWideBanReachesEveryRoute(t *testing.T) {
+	prog := mustCompile(t, header(`algorithm_bans: {key_exchanges: [diffie-hellman-group14-sha256], ciphers: [aes128-ctr]}
+rules:
+  - id: own
+    effect: allow
+    match: {target: {hostnames: [a.example.com]}}
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+      algorithm_bans: {ciphers: [aes128-ctr, aes192-ctr]}
+  - id: none
+    effect: allow
+    route: `+allowRoute+`
+`))
+	for i := range prog.Len() {
+		r := prog.Rule(i)
+		b := r.Route().AlgorithmBans
+		if !slices.Contains(b.Axis("key_exchanges"), "diffie-hellman-group14-sha256") {
+			t.Errorf("rule %s does not carry the bundle-wide key-exchange ban: %+v", r.ID(), b)
+		}
+		if got := b.Axis("ciphers"); len(got) != len(slices.Compact(slices.Sorted(slices.Values(got)))) {
+			t.Errorf("rule %s carries aes128-ctr twice after the merge: %v", r.ID(), got)
+		}
+	}
+	if b := prog.Rule(0).Route().AlgorithmBans; !slices.Contains(b.Ciphers, "aes192-ctr") {
+		t.Errorf("the route's own ban was lost in the merge: %+v", b)
+	}
+}
+
+func TestABundleWideBanIsCheckedLikeARoutes(t *testing.T) {
+	rs := compileSource(t, header(`algorithm_bans: {ciphers: [""]}
+rules:
+  - {id: r, effect: allow, route: `+allowRoute+`}
+`))
+	if !rs.Has(model.CodeRouteBanIdentifierEmpty) {
+		t.Fatalf("an empty bundle-wide ban compiled: %v", rs.Codes())
+	}
 }

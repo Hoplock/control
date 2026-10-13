@@ -391,59 +391,91 @@ func (h handlers) ReportCapabilities(ctx context.Context, req *contract.Capabili
 		return nil, invalid("target is required")
 	}
 
-	rec := fleet.TargetCapabilities{
-		Key: fleet.TargetCapabilityKey{
-			Hostname: req.Target,
-			Port:     req.TargetPort,
-			Platform: req.Platform,
-		},
-		Detail:     req.Capabilities.Detail,
-		ReportedBy: reporter(caller, req.Conn),
+	// THE MERGE RULE (Hoplock/proxy#69). A report carries the rung
+	// observation exactly when it carries observed_at, and the key-exchange
+	// observation exactly when it carries kex; each replaces only its own
+	// stored observation. Before this rule a key-exchange report — no rungs,
+	// no observed_at — was stored as an undated, empty rung observation over
+	// the fresh one, and every route naming an applied rung on that target
+	// failed as a capability 5xx until the next probe.
+	caps := req.Capabilities
+	carriesRungs := len(caps.Execution) > 0 || len(caps.Reach) > 0 || len(caps.Detail) > 0
+	switch {
+	case carriesRungs && caps.ObservedAt == "":
+		return nil, invalid("execution, reach or detail without observed_at: an undated observation cannot be placed against the stored one")
+	case caps.ObservedAt == "" && caps.Kex == nil:
+		return nil, invalid("the report carries neither the rung observation (observed_at) nor the key-exchange observation (kex)")
 	}
-	for _, r := range req.Capabilities.Execution {
-		rec.Execution = append(rec.Execution, contract.ExecutionRung(r))
-	}
-	for _, r := range req.Capabilities.Reach {
-		rec.Reach = append(rec.Reach, contract.ReachRung(r))
-	}
-	rec.ObservedAt = h.observedAt(ctx, req)
 
-	reportAfter, err := h.s.fleet.ReportTargetCapabilities(ctx, caller.Tenant, rec)
-	if err != nil {
-		return nil, err
+	var rungs *fleet.TargetCapabilities
+	if caps.HasRungObservation() {
+		// An observed_at that does not parse cannot be placed against a
+		// stored observation any more than an absent one can, so it is
+		// refused by the same rule rather than stored undated.
+		observed, err := time.Parse(time.RFC3339, caps.ObservedAt)
+		if err != nil {
+			return nil, invalid("observed_at is not an RFC 3339 instant")
+		}
+		rungs = &fleet.TargetCapabilities{
+			Key: fleet.TargetCapabilityKey{
+				Hostname: req.Target,
+				Port:     req.TargetPort,
+				Platform: req.Platform,
+			},
+			Detail:     caps.Detail,
+			ReportedBy: reporter(caller, req.Conn),
+			ObservedAt: observed,
+		}
+		for _, r := range caps.Execution {
+			rungs.Execution = append(rungs.Execution, contract.ExecutionRung(r))
+		}
+		for _, r := range caps.Reach {
+			rungs.Reach = append(rungs.Reach, contract.ReachRung(r))
+		}
+	}
+
+	var kex *fleet.KexObservation
+	if caps.Kex != nil {
+		if caps.Kex.FloorMet.Rank() < 0 {
+			return nil, invalid("kex.floor_met is required and must be none, modern-kex or pq-hybrid-kex")
+		}
+		observed, err := time.Parse(time.RFC3339, caps.Kex.ObservedAt)
+		if err != nil {
+			return nil, invalid("kex.observed_at is required and must be an RFC 3339 instant")
+		}
+		// Keyed by host and port, never by platform: the proxy's reports
+		// carry only target and target_port, so an observation filed under
+		// a platform would be one a lookup for its route never finds.
+		kex = &fleet.KexObservation{
+			Hostname:   req.Target,
+			Port:       req.TargetPort,
+			FloorMet:   caps.Kex.FloorMet,
+			Negotiated: caps.Kex.Negotiated,
+			Offered:    caps.Kex.Offered,
+			ObservedAt: observed,
+			ReportedBy: reporter(caller, req.Conn),
+		}
+	}
+
+	var reportAfter time.Duration
+	if rungs != nil {
+		after, err := h.s.fleet.ReportTargetCapabilities(ctx, caller.Tenant, *rungs)
+		if err != nil {
+			return nil, err
+		}
+		reportAfter = after
+	}
+	if kex != nil {
+		after, err := h.s.fleet.ReportTargetKex(ctx, caller.Tenant, *kex)
+		if err != nil {
+			return nil, err
+		}
+		reportAfter = after
 	}
 	return &contract.CapabilityReportResponse{
 		Accepted:           true,
 		ReportAfterSeconds: int32(reportAfter.Seconds()),
 	}, nil
-}
-
-// observedAt reads the report's observation time.
-//
-// AN UNREADABLE OR ABSENT TIME IS STORED UNDATED, not refused and not stamped
-// with arrival. Undated reads back as STALE, and stale, undated and absent are
-// deliberately one case (M17): each provides nothing that has to be applied
-// and leaves untouched every rung that needs nothing of the target. Stamping
-// arrival time instead would make a record the proxy could not date look
-// fresh, which is precisely the fail-open the rule exists to prevent — and
-// refusing the whole report would cost the proxy a retry loop over a field
-// this server does not need in order to fail safe.
-func (h handlers) observedAt(ctx context.Context, req *contract.CapabilityReportRequest) time.Time {
-	raw := req.Capabilities.ObservedAt
-	if raw == "" {
-		return time.Time{}
-	}
-	t, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		h.s.log.WarnContext(ctx, "capability report carried an unreadable observed_at",
-			"event", "capability_report_undated",
-			"target", req.Target,
-			"platform", req.Platform,
-			"correlation_id", correlationIDFrom(ctx),
-		)
-		return time.Time{}
-	}
-	return t
 }
 
 // ---------------------------------------------------------------------------

@@ -77,6 +77,9 @@ const (
 	CodeRouteRestrictedCmdInvalid  Code = "route.restricted_command_invalid"
 	CodeRouteDeadlineInvalid       Code = "route.session_deadline_invalid"
 	CodeRouteConcurrencyInvalid    Code = "route.concurrency_invalid"
+	CodeRouteFloorProfileConflict  Code = "route.algorithm_floor_profile_conflict"
+	CodeRouteBanIdentifierEmpty    Code = "route.algorithm_ban_empty"
+	CodeRouteBanIdentifierRepeated Code = "route.algorithm_ban_repeated"
 )
 
 // Cache-scope codes (PLAN §5.4).
@@ -177,6 +180,9 @@ var messages = map[Code]string{
 	CodeRouteRestrictedCmdInvalid:  "restricted-exec command {index} ({executable}) is not usable: {detail}",
 	CodeRouteDeadlineInvalid:       "session deadline {duration} is not a positive duration; use a form such as `8h` or `45m`",
 	CodeRouteConcurrencyInvalid:    "concurrency cap {field} is negative; use a positive cap, or 0 for uncapped",
+	CodeRouteFloorProfileConflict:  "the route sets algorithm_floor {floor} with algorithm_profile {profile}, which widens the key-exchange axis the floor narrows; the proxy refuses the pair because the leg could never connect — drop the floor, or use `default` or `legacy-rsa-sha1`",
+	CodeRouteBanIdentifierEmpty:    "algorithm_bans.{axis} entry {index} is empty; name the algorithm exactly as SSH spells it",
+	CodeRouteBanIdentifierRepeated: "algorithm_bans.{axis} lists {name} twice; list each identifier once — the record shows a ban exactly as it was issued",
 
 	CodeCacheKeyEmpty:            "the rule's cache hint names no key components; a hint with no key is not cacheable — list the components the key is derived from, or remove the hint",
 	CodeCacheKeyNotIdentityBound: "the rule's cache key does not include `subject`; a key shared across identities serves one user another user's policy",

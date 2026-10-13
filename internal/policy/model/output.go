@@ -68,6 +68,16 @@ type Route struct {
 	// AlgorithmProfile is the per-route algorithm profile, for targets that
 	// speak something x/crypto does not enable by default.
 	AlgorithmProfile AlgorithmProfile `yaml:"algorithm_profile,omitempty"`
+	// AlgorithmFloor is the minimum key exchange the proxy→target leg must
+	// negotiate: a sibling of the profile, never a value inside it, because
+	// a profile only weakens and a floor is a minimum (Hoplock/proxy#69).
+	AlgorithmFloor AlgorithmFloor `yaml:"algorithm_floor,omitempty"`
+	// AlgorithmBans are identifiers the proxy must not offer on the leg, per
+	// axis, applied last: a ban always wins. A bundle's own top-level
+	// `algorithm_bans` is added to every allow route's at compile time,
+	// which is how a ban "everywhere" is stated — no proxy setting can apply
+	// or lift one.
+	AlgorithmBans *AlgorithmBans `yaml:"algorithm_bans,omitempty"`
 
 	// Enforcement is where this route's claim is actually enforced, on each
 	// of two independent axes. It is a property of the route, never of a
@@ -86,6 +96,92 @@ type Route struct {
 	// Concurrency caps live sessions per subject and per target. Only the
 	// proxy can count them; exceeding one is a policy denial, not an outage.
 	Concurrency Concurrency `yaml:"concurrency,omitempty"`
+}
+
+// AlgorithmBans are SSH algorithm identifiers a route's proxy→target leg must
+// not offer, one optional list per axis, each spelled exactly as SSH spells it
+// (Hoplock/proxy#69). A ban only removes: it is subtracted from what the profile
+// and the floor would offer, never from a library's "supported" set, and
+// curve25519-sha256 and curve25519-sha256@libssh.org are one exchange.
+type AlgorithmBans struct {
+	KeyExchanges  []string `yaml:"key_exchanges,omitempty"`
+	Ciphers       []string `yaml:"ciphers,omitempty"`
+	MACs          []string `yaml:"macs,omitempty"`
+	HostKeys      []string `yaml:"host_keys,omitempty"`
+	PublicKeyAuth []string `yaml:"public_key_auth,omitempty"`
+}
+
+// BanAxes is every ban axis, in the contract's order and spelling.
+var BanAxes = []string{"key_exchanges", "ciphers", "macs", "host_keys", "public_key_auth"}
+
+// Axis returns the bans on one axis, by its contract name.
+func (b *AlgorithmBans) Axis(axis string) []string {
+	if b == nil {
+		return nil
+	}
+	switch axis {
+	case "key_exchanges":
+		return b.KeyExchanges
+	case "ciphers":
+		return b.Ciphers
+	case "macs":
+		return b.MACs
+	case "host_keys":
+		return b.HostKeys
+	case "public_key_auth":
+		return b.PublicKeyAuth
+	}
+	return nil
+}
+
+func (b *AlgorithmBans) set(axis string, names []string) {
+	switch axis {
+	case "key_exchanges":
+		b.KeyExchanges = names
+	case "ciphers":
+		b.Ciphers = names
+	case "macs":
+		b.MACs = names
+	case "host_keys":
+		b.HostKeys = names
+	case "public_key_auth":
+		b.PublicKeyAuth = names
+	}
+}
+
+// Empty reports whether nothing is banned on any axis.
+func (b *AlgorithmBans) Empty() bool {
+	for _, axis := range BanAxes {
+		if len(b.Axis(axis)) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// Merge returns the union of two ban sets, axis by axis: this one's names in
+// their order, then the other's that this one lacks. Nil when both are empty.
+// A name repeated across the two is not a repeat: a route may ban what the
+// bundle already bans everywhere.
+func (b *AlgorithmBans) Merge(other *AlgorithmBans) *AlgorithmBans {
+	if b.Empty() && other.Empty() {
+		return nil
+	}
+	out := &AlgorithmBans{}
+	for _, axis := range BanAxes {
+		var names []string
+		seen := map[string]bool{}
+		for _, list := range [][]string{b.Axis(axis), other.Axis(axis)} {
+			for _, name := range list {
+				if !seen[name] {
+					seen[name] = true
+					names = append(names, name)
+				}
+			}
+		}
+		out.set(axis, names)
+	}
+	return out
 }
 
 // RequestPermissions is which in-channel requests a session may make.
@@ -439,6 +535,10 @@ type Snapshot struct {
 
 	Credentials      []CredentialEntry
 	AlgorithmProfile AlgorithmProfile
+	AlgorithmFloor   AlgorithmFloor
+	// AlgorithmBans is the route's bans merged with the bundle's; nil when
+	// nothing is banned.
+	AlgorithmBans *AlgorithmBans
 
 	Enforcement Enforcement
 

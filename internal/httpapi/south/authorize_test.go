@@ -301,3 +301,81 @@ func TestABoundTokenCannotAuthorizeForAnotherProxy(t *testing.T) {
 		t.Fatalf("a bound token asking for itself = %d, want 200: %s", res.Code, res.Body)
 	}
 }
+
+// THE CLOBBERING BUG, asserted where it bites: on the decision path. A
+// key-exchange report used to be stored as an undated, empty rung observation
+// over a fresh one, and every route naming an applied rung on that target then
+// failed as a capability 5xx until the next probe (Hoplock/proxy#69).
+func TestAKeyExchangeReportLeavesAnAppliedRungServable(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedAuthorize(t, h)
+	ctx := t.Context()
+	const restricted = `
+schema_version: 1
+tenant: acme
+groups: [sre]
+rules:
+  - id: restricted
+    effect: allow
+    match:
+      target:
+        hostnames: [edge-host.example.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: whitelist
+        exec_mode: restricted
+        restricted_exec:
+          commands:
+            - executable: /usr/bin/uptime
+              form: exact
+              argv: ["-p"]
+      credentials:
+        - method: ephemeral-user
+          username: svc
+      enforcement:
+        execution: account-restricted
+`
+	version, err := h.store.PolicyBundles().NextVersion(ctx, testTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.PolicyBundles().Insert(ctx, testTenant, store.PolicyBundle{
+		Version: version, Source: []byte(restricted), Hash: "sha256:restricted", UploadedBy: "south_test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.PolicyBundles().Activate(ctx, testTenant, version); err != nil {
+		t.Fatal(err)
+	}
+
+	observed := h.clock.Format(time.RFC3339)
+	if res := h.post(t, contract.PathCapabilitiesReport, contract.CapabilityReportRequest{
+		Target: "edge-host.example.com",
+		Capabilities: contract.TargetCapabilities{
+			Execution: []string{string(contract.ExecutionAccountRestricted)}, ObservedAt: observed,
+		},
+	}); res.Code != http.StatusOK {
+		t.Fatalf("rung report = %d: %s", res.Code, res.Body)
+	}
+	authorize := func() *httptest.ResponseRecorder {
+		req := authorizeRequest("edge-host.example.com", "proxy-1")
+		req.Capabilities = &contract.ProxyCapabilities{Execution: []string{string(contract.ExecutionAccountRestricted)}}
+		return h.post(t, contract.PathAuthorize, req)
+	}
+	decodeAuthorize(t, authorize())
+
+	if res := h.post(t, contract.PathCapabilitiesReport, contract.CapabilityReportRequest{
+		Target: "edge-host.example.com",
+		Capabilities: contract.TargetCapabilities{
+			Kex: &contract.KexObservation{FloorMet: contract.FloorMetModernKex, ObservedAt: observed},
+		},
+	}); res.Code != http.StatusOK {
+		t.Fatalf("kex report = %d: %s", res.Code, res.Body)
+	}
+	if res := authorize(); res.Code != http.StatusOK {
+		t.Fatalf("after a key-exchange report the applied rung answered %d: %s", res.Code, res.Body)
+	}
+}

@@ -98,3 +98,16 @@ func TestSerialsRoundTripAboveTheFloatLimit(t *testing.T) {
 		}
 	}
 }
+
+// A floor-only or a profiles-only declaration names no rung, so it declares no
+// rung.
+func TestAnAlgorithmOnlyDeclarationDeclaresNoRung(t *testing.T) {
+	floors := &ProxyCapabilities{AlgorithmFloors: []AlgorithmFloorCapability{{Level: AlgorithmFloorModernKex, KeyExchanges: []string{"curve25519-sha256"}}}}
+	profiles := &ProxyCapabilities{AlgorithmProfiles: []AlgorithmProfileCapability{{Profile: AlgorithmProfileDefault}}}
+	if floors.Declares() || profiles.Declares() {
+		t.Error("an algorithm-only declaration read as a rung declaration")
+	}
+	if !(&ProxyCapabilities{Execution: []string{"no-interactive-shell"}}).Declares() {
+		t.Error("a rung declaration did not declare")
+	}
+}

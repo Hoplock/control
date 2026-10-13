@@ -5,6 +5,7 @@ package decision
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -62,6 +63,26 @@ func assembleSnapshot(snap *model.Snapshot, rt routed, decisionID string) (*cont
 	if snap.AlgorithmProfile != model.AlgorithmProfileUnset &&
 		snap.AlgorithmProfile != model.AlgorithmProfileDefault {
 		resp.AlgorithmProfile = contract.AlgorithmProfile(snap.AlgorithmProfile)
+	}
+
+	// The floor is a sibling of the profile, emitted only when policy names
+	// one: absent means no floor, exactly the behaviour of a route that never
+	// had one (Hoplock/proxy#69).
+	if snap.AlgorithmFloor != model.AlgorithmFloorUnset {
+		resp.AlgorithmFloor = contract.AlgorithmFloor(snap.AlgorithmFloor)
+	}
+	// Bans are emitted only when some axis is non-empty. An object whose
+	// lists are all empty means "nothing banned" to a proxy that knows the
+	// field, and is an unknown field — refused whole — to one that does not.
+	if !snap.AlgorithmBans.Empty() {
+		b := snap.AlgorithmBans
+		resp.AlgorithmBans = &contract.AlgorithmBans{
+			KeyExchanges:  slices.Clone(b.KeyExchanges),
+			Ciphers:       slices.Clone(b.Ciphers),
+			MACs:          slices.Clone(b.MACs),
+			HostKeys:      slices.Clone(b.HostKeys),
+			PublicKeyAuth: slices.Clone(b.PublicKeyAuth),
+		}
 	}
 
 	// An ABSOLUTE instant, never a duration: a duration re-anchors at each

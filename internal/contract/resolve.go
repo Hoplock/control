@@ -154,8 +154,15 @@ func (e *RevocationEvent) AdvertisedHeartbeatInterval() (time.Duration, bool) {
 	return time.Duration(e.HeartbeatIntervalSeconds) * time.Second, true
 }
 
-// Declares resolves `capabilities` on the request: absent declares nothing, so a
-// server choosing from it may only choose a rung needing no capability at all.
+// Declares resolves `capabilities` on the request AS A RUNG DECLARATION: absent
+// declares nothing, so a server choosing from it may only choose a rung needing
+// no capability at all.
+//
+// A declaration naming only floor levels, or only profile offers
+// (Hoplock/proxy#69, #72), answers false, both for the same reason: neither
+// names a rung, so neither says which rungs the build provides. The algorithm
+// declarations are read where they are judged — the floor level and the ban
+// checks — and never through this.
 func (c *ProxyCapabilities) Declares() bool {
 	return c != nil && (len(c.Execution) > 0 || len(c.Reach) > 0)
 }

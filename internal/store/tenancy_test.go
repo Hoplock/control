@@ -57,6 +57,10 @@ var repositoryInterfaces = map[string]reflect.Type{
 	"ProxyConfigRepository":       reflect.TypeOf((*ProxyConfigRepository)(nil)).Elem(),
 	"TargetCapabilityRepository":  reflect.TypeOf((*TargetCapabilityRepository)(nil)).Elem(),
 
+	// What each build offers and each target negotiates (0019).
+	"ProxyAlgorithmDeclarationRepository": reflect.TypeOf((*ProxyAlgorithmDeclarationRepository)(nil)).Elem(),
+	"TargetKexObservationRepository":      reflect.TypeOf((*TargetKexObservationRepository)(nil)).Elem(),
+
 	// The south-bound API (0007).
 	"SubjectKeyRepository":      reflect.TypeOf((*SubjectKeyRepository)(nil)).Elem(),
 	"SubjectPasswordRepository": reflect.TypeOf((*SubjectPasswordRepository)(nil)).Elem(),
@@ -142,11 +146,13 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"SSHCertificateRepository":    s.SSHCertificates(),
 		"SoftwareKeyRepository":       s.SoftwareKeys(),
 
-		"ProxyEnrollmentRepository":   s.ProxyEnrollments(),
-		"ProxyEdgeRepository":         s.ProxyEdges(),
-		"RelayRegistrationRepository": s.RelayRegistrations(),
-		"ProxyConfigRepository":       s.ProxyConfigs(),
-		"TargetCapabilityRepository":  s.TargetCapabilities(),
+		"ProxyEnrollmentRepository":           s.ProxyEnrollments(),
+		"ProxyEdgeRepository":                 s.ProxyEdges(),
+		"RelayRegistrationRepository":         s.RelayRegistrations(),
+		"ProxyConfigRepository":               s.ProxyConfigs(),
+		"TargetCapabilityRepository":          s.TargetCapabilities(),
+		"ProxyAlgorithmDeclarationRepository": s.ProxyAlgorithmDeclarations(),
+		"TargetKexObservationRepository":      s.TargetKexObservations(),
 
 		"SubjectKeyRepository":      s.SubjectKeys(),
 		"SubjectPasswordRepository": s.SubjectPasswords(),
@@ -336,6 +342,24 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return err
 		},
 		"TargetCapabilities.List": func() error { _, err := s.TargetCapabilities().List(ctx, ""); return err },
+
+		// What each build offers and each target negotiates (0019).
+		"ProxyAlgorithmDeclarations.Put": func() error {
+			_, err := s.ProxyAlgorithmDeclarations().Put(ctx, "", ProxyAlgorithmDeclaration{ProxyID: "p", Digest: "d"})
+			return err
+		},
+		"ProxyAlgorithmDeclarations.List": func() error {
+			_, err := s.ProxyAlgorithmDeclarations().List(ctx, "")
+			return err
+		},
+		"TargetKexObservations.Put": func() error {
+			return s.TargetKexObservations().Put(ctx, "", TargetKexObservation{Hostname: "h", FloorMet: "none", ObservedAt: nowForTest()})
+		},
+		"TargetKexObservations.Get": func() error {
+			_, err := s.TargetKexObservations().Get(ctx, "", "h", 22)
+			return err
+		},
+		"TargetKexObservations.List": func() error { _, err := s.TargetKexObservations().List(ctx, ""); return err },
 
 		// The south-bound API (0007). These are the credential lookups, so
 		// a method here that read across tenants would authenticate one

@@ -48,7 +48,8 @@ import (
 // it anyway would run a session below the rung its own audit record claims,
 // which is the failure the whole enforcement vocabulary exists to prevent.
 type CapabilityError struct {
-	// Axis is `execution`, `reach`, `platform` or `device_field`.
+	// Axis is `execution`, `reach`, `platform`, `device_field`,
+	// `algorithm_floor` or `algorithm_bans`.
 	Axis string
 	// Value is the rung, platform or field name that cannot be served.
 	Value string
@@ -117,7 +118,47 @@ func (s *Service) checkCapabilities(
 		}
 	}
 
+	if err := checkAlgorithms(resp, declared, proxyID); err != nil {
+		return err
+	}
 	return s.checkLadderCapabilities(resp, proxyID, g)
+}
+
+// checkAlgorithms refuses a floor or a ban the asking proxy's own declaration
+// says it cannot take (Hoplock/proxy#69, #72), with the same refusal as an
+// undeclared rung: a CapabilityError and a 5xx, never a 401 (M11), and never the
+// floor or the ban stripped to fit — a dropped floor or ban is a dropped
+// restriction (PLAN §4).
+//
+//   - A floor level the request does not declare in
+//     `capabilities.algorithm_floors` is never sent. Absent declares nothing,
+//     so no floor may be sent at all.
+//   - A ban that, by the request's own declared lists, leaves an axis nothing
+//     to offer is refused to exactly that proxy; the proxy refuses it as a
+//     contract violation. A proxy whose lists leave every axis something is
+//     answered as usual, and one whose declaration omits the route's profile,
+//     or omits `algorithm_profiles`, is answered as authored: this server
+//     cannot tell that it refuses, and the proxy's own check is the backstop.
+//
+// It is a computation over the request and the assembled response, with no
+// read, so it fits M5. On a chained route each hop asks for its own leg and is
+// judged against its own declaration, exactly as the rungs are.
+func checkAlgorithms(resp *contract.AuthorizeResponse, declared *contract.ProxyCapabilities, proxyID string) error {
+	policy := fleet.AlgorithmPolicy{Profile: resp.AlgorithmProfile, Floor: resp.AlgorithmFloor, Bans: resp.AlgorithmBans}
+	if !policy.Constrains() {
+		return nil
+	}
+	j := fleet.JudgeAlgorithms(policy, declared)
+	if j.FloorUndeclared {
+		return &CapabilityError{Axis: "algorithm_floor", Value: string(resp.AlgorithmFloor), Source: "proxy", ProxyID: proxyID}
+	}
+	if len(j.Emptied) > 0 {
+		return &CapabilityError{
+			Axis: "algorithm_bans", Value: j.Emptied[0].Axis + " (the bans leave it nothing to offer)",
+			Source: "proxy", ProxyID: proxyID,
+		}
+	}
+	return nil
 }
 
 // checkLadderCapabilities holds the ladder to what the enforcing proxy's build
