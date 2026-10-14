@@ -188,3 +188,40 @@ events:
   # decisions, and this publishes the kill switch.
   publish_token: "ht.default.pdpconform-dev-publish-token"
   publish_body: '{"type":"cache_invalidate","all":true}'
+
+config:
+  # Seeded in control-seed.yaml, so enrolled; the unknown id is not, and a
+  # fetch for it is the tenancy leak this case exists to catch.
+  proxy_id: proxy-1
+  unknown_proxy_id: proxy-nobody-enrolled
+  # The north-bound publish route (0019), on the north-bound listener: a
+  # proxy-scoped document for proxy-1, which re-materialises exactly that
+  # proxy and announces it with one config_changed. Fleet-owned keys only.
+  publish_url: "http://127.0.0.1:8081/api/v1/tenants/default/fleet/config/proxy/proxy-1"
+  publish_method: PUT
+  publish_body: '{"settings":{"logging.batch_size":50}}'
+  # A scoped API token holding fleet:write (the fleet-admin role), seeded by
+  # control-seed.yaml.
+  publish_token: "ht.default.pdpconform-dev-fleet-token"
+
+certificate:
+  # `cert-host` in control-policy.yaml. The CA is the tenant's own, which the
+  # CI configuration enables with a key-encryption key.
+  route:
+    login: alice
+    subject: alice@example.com
+    target: cert.company.com
+  username: netadmin
+
+algorithms:
+  # `floor-host` and `ban-host` in control-policy.yaml.
+  floor:
+    login: alice
+    subject: alice@example.com
+    target: floor.company.com
+  floor_level: modern-kex
+  ban:
+    login: alice
+    subject: alice@example.com
+    target: ban.company.com
+  kex_target: floor.company.com

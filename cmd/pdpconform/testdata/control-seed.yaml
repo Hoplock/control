@@ -114,6 +114,18 @@ targets:
     hostname: crown-fw-01.company.com
     zone: edge
     labels: {env: prod, kind: appliance}
+  - id: cert-01
+    hostname: cert.company.com
+    zone: edge
+    labels: {env: prod, kind: host}
+  - id: floor-01
+    hostname: floor.company.com
+    zone: edge
+    labels: {env: prod, kind: host}
+  - id: ban-01
+    hostname: ban.company.com
+    zone: edge
+    labels: {env: prod, kind: host}
 
 proxies:
   # The proxy the suite presents itself as. Its edge into the deep zone is what

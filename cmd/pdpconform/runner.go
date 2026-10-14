@@ -150,6 +150,9 @@ type response struct {
 	// fields is the body decoded as a generic object, which is what makes
 	// "this key is not present" expressible.
 	fields map[string]any
+	// header is the response's headers: the configuration fetch's `ETag` is
+	// on the wire there, not in the body.
+	header http.Header
 }
 
 // has reports whether a top-level key is present on the wire, not whether the
@@ -181,7 +184,9 @@ func (s *Suite) postObject(path string, v any) (*response, error) {
 	return s.postJSON(path, b)
 }
 
-func (s *Suite) do(method, url string, body []byte, token string) (*response, error) {
+// do sends one request. headers are extra request headers, as alternating
+// names and values.
+func (s *Suite) do(method, url string, body []byte, token string, headers ...string) (*response, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -196,6 +201,9 @@ func (s *Suite) do(method, url string, body []byte, token string) (*response, er
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -206,7 +214,7 @@ func (s *Suite) do(method, url string, body []byte, token string) (*response, er
 	if err != nil {
 		return nil, err
 	}
-	out := &response{status: resp.StatusCode, body: raw}
+	out := &response{status: resp.StatusCode, body: raw, header: resp.Header}
 	// A body that is not a JSON object is not an error here: the events stream
 	// is NDJSON and an empty body is legal. Cases that need fields say so.
 	_ = json.Unmarshal(raw, &out.fields)

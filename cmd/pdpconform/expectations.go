@@ -29,13 +29,57 @@ type Expectations struct {
 	// cursor by proxy would look perfect to a single-proxy suite.
 	SecondProxyID string `yaml:"second_proxy_id"`
 
-	Auth         AuthExpectations       `yaml:"auth"`
-	Authorize    AuthorizeExpectations  `yaml:"authorize"`
-	HostKeys     HostKeyExpectations    `yaml:"hostkeys"`
-	Capabilities CapabilityExpectations `yaml:"capabilities"`
-	UIDs         UIDExpectations        `yaml:"uids"`
-	Logs         LogExpectations        `yaml:"logs"`
-	Events       EventExpectations      `yaml:"events"`
+	Auth         AuthExpectations        `yaml:"auth"`
+	Authorize    AuthorizeExpectations   `yaml:"authorize"`
+	HostKeys     HostKeyExpectations     `yaml:"hostkeys"`
+	Capabilities CapabilityExpectations  `yaml:"capabilities"`
+	UIDs         UIDExpectations         `yaml:"uids"`
+	Logs         LogExpectations         `yaml:"logs"`
+	Events       EventExpectations       `yaml:"events"`
+	Config       ConfigExpectations      `yaml:"config"`
+	Certificate  CertificateExpectations `yaml:"certificate"`
+	Algorithms   AlgorithmExpectations   `yaml:"algorithms"`
+}
+
+// ConfigExpectations describes the fleet configuration cases (proxy D18).
+type ConfigExpectations struct {
+	// ProxyID is an enrolled proxy: its fetch, its report, and the stream
+	// the publish is announced on.
+	ProxyID string `yaml:"proxy_id"`
+	// UnknownProxyID is an id the server has not enrolled: 404
+	// not_enrolled, never 401.
+	UnknownProxyID string `yaml:"unknown_proxy_id"`
+	// PublishURL, PublishMethod, PublishBody and PublishToken are how the
+	// suite makes the server publish a document. Publishing is not on the
+	// contract — an operator publishes, and no proxy calls it — so these are
+	// inputs, exactly as events.publish_url is, and nothing asserts their
+	// shape. PublishMethod defaults to POST; PublishToken to the proxy token.
+	PublishURL    string `yaml:"publish_url"`
+	PublishMethod string `yaml:"publish_method"`
+	PublishBody   string `yaml:"publish_body"`
+	PublishToken  string `yaml:"publish_token"`
+}
+
+// CertificateExpectations describes the brokered-certificate cases
+// (Hoplock/proxy#68).
+type CertificateExpectations struct {
+	// Route is a route whose ladder names `brokered-certificate`.
+	Route AuthorizeRoute `yaml:"route"`
+	// Username is the account the route names: the certificate's only
+	// principal.
+	Username string `yaml:"username"`
+}
+
+// AlgorithmExpectations describes the algorithm floor and ban cases
+// (Hoplock/proxy#69, #72).
+type AlgorithmExpectations struct {
+	// Floor is a route carrying `algorithm_floor` FloorLevel.
+	Floor      AuthorizeRoute `yaml:"floor"`
+	FloorLevel string         `yaml:"floor_level"`
+	// Ban is a route carrying `algorithm_bans` and no floor.
+	Ban AuthorizeRoute `yaml:"ban"`
+	// KexTarget is the target the key-exchange report is about.
+	KexTarget string `yaml:"kex_target"`
 }
 
 // KeyMaterial is a public key the suite offers. Blob may be empty: the contract
@@ -348,6 +392,15 @@ func (e *Expectations) validate() error {
 	need("logs.read_url", e.Logs.ReadURL)
 	need("events.proxy_id", e.Events.ProxyID)
 	need("events.publish_url", e.Events.PublishURL)
+	need("config.proxy_id", e.Config.ProxyID)
+	need("config.unknown_proxy_id", e.Config.UnknownProxyID)
+	need("config.publish_url", e.Config.PublishURL)
+	need("certificate.route.target", e.Certificate.Route.Target)
+	need("certificate.username", e.Certificate.Username)
+	need("algorithms.floor.target", e.Algorithms.Floor.Target)
+	need("algorithms.floor_level", e.Algorithms.FloorLevel)
+	need("algorithms.ban.target", e.Algorithms.Ban.Target)
+	need("algorithms.kex_target", e.Algorithms.KexTarget)
 
 	for name, pair := range map[string]DefaultPair{
 		"authorize.defaults.enforcement":             e.Authorize.Defaults.Enforcement,

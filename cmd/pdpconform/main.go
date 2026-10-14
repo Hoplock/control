@@ -67,6 +67,9 @@ func run(baseURL, token, expectPath, only string, timeout time.Duration, verbose
 		{groupUIDs, s.CheckUIDs},
 		{groupLogs, s.CheckLogs},
 		{groupEvents, s.CheckEvents},
+		{groupConfig, s.CheckConfig},
+		{groupCertificate, s.CheckCertificate},
+		{groupAlgorithms, s.CheckAlgorithms},
 		{groupErrors, s.CheckErrors},
 	} {
 		if !selected(g.name, only) {

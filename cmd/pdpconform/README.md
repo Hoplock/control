@@ -63,20 +63,29 @@ make conform BASE_URL=http://127.0.0.1:8080 TOKEN=pdpconform-dev-token
 ## Running it locally against THIS server
 
 The suite is pointed at the real implementation by a second pair of files and
-no Go at all. There is no north-bound API yet (0019), so the server is
-configured with `hoplock-control seed`:
+no Go at all. `hoplock-control seed` is the bootstrap path — the north-bound API
+cannot mint its own first credential — and it writes the fixtures, the policy
+and the scoped API tokens the suite publishes events, reads records back and
+publishes a fleet configuration through (all three over the north-bound
+listener, since 0019). The brokered-certificate cases need the tenant's CA, so
+the server runs with a key-encryption key:
 
 ```
 go run ./cmd/hoplock-control migrate --config config.yaml
 go run ./cmd/hoplock-control seed    --config config.yaml \
     --file cmd/pdpconform/testdata/control-seed.yaml
-go run ./cmd/hoplock-control --config config.yaml &
+HOPLOCK_KEK="$(head -c 32 /dev/urandom | base64)" \
+    go run ./cmd/hoplock-control --config config.yaml &   # credential.key_encryption_key_env: HOPLOCK_KEK
 
 make conform BASE_URL=http://127.0.0.1:8080 \
              TOKEN=default.pdpconform-dev-secret \
              EXPECT=cmd/pdpconform/testdata/control-expectations.yaml \
-             CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid'
+             CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid,logs,revocation,fleet,brokered,algorithm'
 ```
+
+Against the mock, the certificate authority's key is generated before it starts
+and never checked in: `mkdir -p .mock-ca && ssh-keygen -q -t ed25519 -N '' -f
+.mock-ca/ca_ed25519`.
 
 `testdata/control-seed.yaml`, `testdata/control-policy.yaml` and
 `testdata/control-expectations.yaml` are **one document in three parts**: the
@@ -192,6 +201,7 @@ label appended.
 
 | Key | Meaning |
 | --- | --- |
+| `read_token` | The credential the read path takes, when it is not the proxy token. This server's is a scoped north-bound API token holding `audit:read`. |
 | `read_url` | How the suite reads back what it ingested. **The contract deliberately defines no read path** — a proxy writes logs and never queries them, so an operator read API on `/v1` would be one every Hoplock Control implements and no proxy calls — and the priority ack means *durable*, so the only black-box way to grade that is to ask the server for the record straight after the ack. The implementation supplies the path; the assertion is that the record id appears in the response body, so any read path that names the record satisfies it. |
 | `batch_size` | How many records go in the batch that is then replayed. |
 
@@ -202,6 +212,32 @@ label appended.
 | `proxy_id` | The stream subscribed to. |
 | `heartbeat_interval_seconds` | **The fallback bound, not the bound.** The suite reads `RevocationEvent.heartbeat_interval_seconds` off the stream (upstream `Hoplock/proxy#56`) and grades the server against that claim. Absent is a legal answer — it means the reader stays on its own timers — and this key is what keeps such a server gradeable. A server that advertises nothing against a file that configures nothing is **ungradeable and therefore FAILS**, because a vacuous pass is worse than a failure. |
 | `publish_url`, `publish_body`, `publish_token` | How the suite makes the server emit an event. The contract deliberately defines no endpoint for this — publishing is an operator action, not a proxy-facing one — so the implementation supplies the path and the suite takes it as an input, asserting nothing about its shape. `publish_token` is for a server that keeps the operator surface on its own listener with its own credential; left empty, the suite presents the proxy token. |
+
+### `config` (proxy D18)
+
+The cases run in order, and the first assumes **nothing is published yet**: run
+the group against a server whose fixtures publish no document.
+
+| Key | Meaning |
+| --- | --- |
+| `proxy_id` | An enrolled proxy: its fetch, its report, and the stream its `config_changed` arrives on. |
+| `unknown_proxy_id` | An id the server has not enrolled: the fetch and the report answer `404 not_enrolled`, never `401`. |
+| `publish_url`, `publish_method`, `publish_body`, `publish_token` | How the suite makes the server publish a document. Publishing is not on the contract, so these are inputs exactly as `events.publish_url` is. `publish_method` defaults to `POST`; `publish_token` to the proxy token. The suite grades what the server answers afterwards — `version` and `hash` are opaque and compared with each other, never with a literal. |
+
+### `certificate` (`Hoplock/proxy#68`)
+
+| Key | Meaning |
+| --- | --- |
+| `route` | A route whose ladder names `brokered-certificate`. Below vocabulary 5 it must be refused with a `5xx` naming both numbers. |
+| `username` | The account the route names: the issued certificate's only principal. |
+
+### `algorithms` (`Hoplock/proxy#69`, `#72`)
+
+| Key | Meaning |
+| --- | --- |
+| `floor`, `floor_level` | A route carrying `algorithm_floor` at that level: refused below vocabulary 6, answered to a proxy declaring the level in `capabilities.algorithm_floors`, and a `5xx` — never stripped — to one that does not, or that sends no capabilities. |
+| `ban` | A route carrying `algorithm_bans` and no floor: refused below vocabulary 6, answered with the bans as authored at 6. |
+| `kex_target` | The target a key-exchange capability report is about. The report is accepted; a report with rungs and no `observed_at`, one carrying neither observation, and a `kex` with no `floor_met` answer `400`. |
 
 ## What the suite asserts, and what it deliberately does not
 
