@@ -38,6 +38,13 @@ first.
   route's bans as authored, one list per axis. A file without it is refused
   at start-up, as any missing key is, because the case that compares the
   answer with it would otherwise grade nothing.
+- **`south.max_log_body_bytes` below one storable record is refused at
+  start-up:** below `audit.max_capture_bytes` as base64, plus
+  `audit.max_record_bytes`, plus 4 KiB (`config.MinLogBodyBytes`). A body over
+  the limit is a `400` the proxy cures by halving the batch, which a batch of
+  one record cannot be, so such a limit lost that record. The shipped bounds
+  need about 1.4 MiB under the 4 MiB default, so a configuration that leaves
+  all three keys at their defaults is unchanged.
 
 - **Phase:** 0020, the audit of 0019's south-bound surface and decision path.
 - **Public packages:** no identifier is added, removed or changed. `ext` and
@@ -47,6 +54,11 @@ first.
     as `route.algorithm_ban_empty`, which the proxy reserves for the empty
     name; it is now a name no build offers, published with the
     `algorithm.ban_unmatched` warning like any other.
+  - `POST /v1/credentials/certificate` mints only on a decision inside the
+    window a session may be served under it: its cache hint's TTL, or none,
+    plus two minutes (`credential.DecisionSetupAllowance`). An older
+    `decision_id` is `401 unknown_decision`. A conforming proxy cites a
+    decision only while it may reuse it, so it never sees this.
   - A proxy's algorithm declaration, as `GET …/fleet/algorithms` and the
     publish-time report read it, follows the build the proxy runs within a
     minute on every node. A node used to remember its own last write for as
