@@ -12,6 +12,8 @@ import (
 
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/httpapi/south"
+	"github.com/hoplock/control/internal/store"
 )
 
 func logRecord(id string) contract.LogRecord {
@@ -216,6 +218,34 @@ func TestALogBodyBetweenTheTwoLimitsIsAccepted(t *testing.T) {
 	res := h.post(t, contract.PathLogsBatch, contract.LogBatchRequest{Records: []contract.LogRecord{big}})
 	if res.Code != http.StatusAccepted {
 		t.Fatalf("a 1 MiB capture batch = %d: %s", res.Code, res.Body)
+	}
+}
+
+// And the log paths' own limit is a limit: a body over it is the 400 halving
+// cures, on both paths, and nothing of it is stored.
+func TestALogBodyOverItsOwnLimitIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarnessWith(t, func(o *south.Options) { o.MaxLogBodyBytes = 2048 })
+	big := logRecord("over-the-limit")
+	big.Kind = "stream"
+	big.Payload = strings.Repeat("A", 4096)
+	for path, body := range map[string]any{
+		contract.PathLogsBatch:    contract.LogBatchRequest{Records: []contract.LogRecord{big}},
+		contract.PathLogsPriority: contract.LogPriorityRequest{Record: big},
+	} {
+		res := h.post(t, path, body)
+		if res.Code != http.StatusBadRequest {
+			t.Errorf("%s with a body over its limit = %d, want 400: %s", path, res.Code, res.Body)
+			continue
+		}
+		var env contract.ErrorResponse
+		decode(t, res, &env)
+		if !strings.Contains(env.Error.Message, "larger than") {
+			t.Errorf("%s: message %q does not say the body was too large", path, env.Error.Message)
+		}
+	}
+	if _, err := h.store.Audit().Get(t.Context(), testTenant, "over-the-limit"); !store.IsNotFound(err) {
+		t.Errorf("a refused body stored its record (%v)", err)
 	}
 }
 
