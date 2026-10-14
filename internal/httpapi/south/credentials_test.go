@@ -247,6 +247,41 @@ func TestTwoIssuancesForOneDecisionAreTwoCertificates(t *testing.T) {
 	}
 }
 
+// Nor by session, nor by key: the same request sent twice is two certificates.
+// One call per session is the PROXY's rule; this side never answers from
+// memory, so a cache keyed by either would be the first thing to break it.
+func TestTheSameRequestTwiceIsTwoCertificates(t *testing.T) {
+	t.Parallel()
+	h, _ := certHarness(t, true)
+	decisionID := decisionFor(t, h, "cert-host.example.com")
+	line, _ := sessionKey(t)
+	req := contract.CertificateRequest{
+		SessionID: "sess-again", DecisionID: decisionID, Target: "cert-host.example.com",
+		Username: "netadmin", PublicKey: line,
+	}
+
+	serials := map[string]bool{}
+	for range 2 {
+		res := issue(t, h, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("issue = %d: %s", res.Code, res.Body)
+		}
+		var out contract.CertificateResponse
+		decode(t, res, &out)
+		serials[out.Serial] = true
+	}
+	if len(serials) != 2 {
+		t.Fatalf("one request sent twice answered %d serial(s), want 2", len(serials))
+	}
+	rows, err := h.store.SSHCertificates().ListBySubject(t.Context(), testTenant, "alice@example.com", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("%d rows written, want 2", len(rows))
+	}
+}
+
 // A route's bound above the CA's default does not lengthen the certificate.
 func TestARouteBoundAboveTheDefaultDoesNotLengthenIt(t *testing.T) {
 	t.Parallel()
@@ -320,16 +355,69 @@ func TestARefusalToMintIs401ThroughItsOwnCode(t *testing.T) {
 	}
 }
 
-func TestAMalformedIssuanceIs400(t *testing.T) {
+// A credential bound to a proxy may cite only a decision made for that proxy
+// (M22): each leg of a chain asks for its own decision, so a bound token citing
+// another proxy's is asking on somebody else's session. An unbound token is held
+// to its tenant, which the cases above already exercise.
+func TestABoundCredentialMayCiteOnlyItsOwnProxysDecision(t *testing.T) {
 	t.Parallel()
 	h, _ := certHarness(t, true)
+	decisionID := decisionFor(t, h, "cert-host.example.com") // made for proxy-1
+
+	for _, tc := range []struct {
+		proxy string
+		want  int
+	}{
+		{"proxy-2", http.StatusUnauthorized},
+		{"proxy-1", http.StatusOK},
+	} {
+		token, _, err := h.fleet.IssueProxyToken(t.Context(), testTenant, tc.proxy, "bound", time.Time{})
+		if err != nil {
+			t.Fatalf("IssueProxyToken: %v", err)
+		}
+		line, _ := sessionKey(t)
+		res := h.do(http.MethodPost, contract.PathCredentialCertificate, mustJSON(contract.CertificateRequest{
+			SessionID: "sess-" + tc.proxy, DecisionID: decisionID, Target: "cert-host.example.com",
+			Username: "netadmin", PublicKey: line,
+		}), token.String())
+		if res.Code != tc.want {
+			t.Fatalf("a token bound to %s citing proxy-1's decision = %d, want %d: %s", tc.proxy, res.Code, tc.want, res.Body)
+		}
+		if tc.want != http.StatusUnauthorized {
+			continue
+		}
+		var env contract.ErrorResponse
+		decode(t, res, &env)
+		if env.Error.Code != contract.ErrCodeDecisionMismatch {
+			t.Errorf("code = %q, want %q", env.Error.Code, contract.ErrCodeDecisionMismatch)
+		}
+	}
+}
+
+func TestAMalformedIssuanceIs400(t *testing.T) {
+	t.Parallel()
+	h, ca := certHarness(t, true)
 	decisionID := decisionFor(t, h, "cert-host.example.com")
 	line, _ := sessionKey(t)
+
+	// A certificate offered as the key to sign: the proxy has confused the
+	// two, and signing it would produce something no target reads.
+	_, key := sessionKey(t)
+	issued, err := ca.Issue(t.Context(), testTenant, credential.IssueRequest{
+		SubjectID: "alice@example.com", Principals: []string{"netadmin"}, Target: "cert-host.example.com",
+		PublicKey: key.Marshal(),
+	})
+	if err != nil {
+		t.Fatalf("issue a certificate to offer: %v", err)
+	}
+
 	for name, req := range map[string]contract.CertificateRequest{
 		"no session": {DecisionID: decisionID, Target: "cert-host.example.com", Username: "netadmin", PublicKey: line},
 		"no key":     {SessionID: "s", DecisionID: decisionID, Target: "cert-host.example.com", Username: "netadmin"},
 		"a key that is not one": {SessionID: "s", DecisionID: decisionID, Target: "cert-host.example.com",
 			Username: "netadmin", PublicKey: "ssh-ed25519 not-base64"},
+		"a key that is a certificate": {SessionID: "s", DecisionID: decisionID, Target: "cert-host.example.com",
+			Username: "netadmin", PublicKey: issued.Certificate},
 	} {
 		if res := issue(t, h, req); res.Code != http.StatusBadRequest {
 			t.Errorf("%s: issue = %d, want 400: %s", name, res.Code, res.Body)
