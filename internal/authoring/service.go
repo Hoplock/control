@@ -146,6 +146,13 @@ func Compile(tenant store.Tenant, source []byte) ([]Rejection, *Candidate) {
 // Validate answers whether a source may be published and what its author
 // should know first. An error is an outage; a refusal is in the report.
 func (s *Service) Validate(ctx context.Context, tenant store.Tenant, source []byte, author string) (Report, *Candidate, error) {
+	return s.validate(ctx, tenant, source, "", author)
+}
+
+// validate is Validate for a source that may already be a stored version,
+// which a registered validator is told (ext.PolicyBundleRef.Version); empty
+// before an upload has assigned one.
+func (s *Service) validate(ctx context.Context, tenant store.Tenant, source []byte, version, author string) (Report, *Candidate, error) {
 	rep := Report{Digest: Digest(source), Rejections: []Rejection{}, Findings: []Finding{}}
 	rejections, cand := Compile(tenant, source)
 	if cand == nil {
@@ -153,7 +160,7 @@ func (s *Service) Validate(ctx context.Context, tenant store.Tenant, source []by
 		return rep, nil, nil
 	}
 	rep.Valid = true
-	findings, err := s.findings(ctx, tenant, cand, "", author)
+	findings, err := s.findings(ctx, tenant, cand, version, author)
 	if err != nil {
 		return Report{}, nil, err
 	}
@@ -360,7 +367,7 @@ func (s *Service) Activate(ctx context.Context, tenant store.Tenant, version int
 	if err != nil {
 		return ActivateResult{}, err
 	}
-	rep, cand, err := s.Validate(ctx, tenant, b.Source, actor.Subject)
+	rep, cand, err := s.validate(ctx, tenant, b.Source, strconv.FormatInt(version, 10), actor.Subject)
 	if err != nil {
 		return ActivateResult{}, err
 	}

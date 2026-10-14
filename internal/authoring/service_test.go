@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -341,10 +343,37 @@ func TestSatisfiabilityAgainstTheFleet(t *testing.T) {
 type governance struct {
 	findings []ext.Finding
 	err      error
+	// seen records the versions it was handed, when set.
+	seen *[]string
 }
 
-func (g governance) Validate(context.Context, ext.PolicyDocument) ([]ext.Finding, error) {
+func (g governance) Validate(_ context.Context, doc ext.PolicyDocument) ([]ext.Finding, error) {
+	if g.seen != nil {
+		*g.seen = append(*g.seen, doc.Ref.Version)
+	}
 	return g.findings, g.err
+}
+
+// A validator is told which version it is judging once Control has assigned
+// one: never at validate or upload, always at activation, which is the
+// judgement that decides.
+func TestAValidatorIsToldTheVersionItIsActivating(t *testing.T) {
+	t.Parallel()
+	var seen []string
+	h := newHarness(t, ext.Bound[ext.PolicyValidator]{
+		Registration: ext.Registration{Provider: "example.com/governance"}, Impl: governance{seen: &seen},
+	})
+	up, err := h.svc.Upload(t.Context(), tenant, bundle(plain), author)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if _, err := h.svc.Activate(t.Context(), tenant, up.Version.Version, nil, author); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	want := []string{"", strconv.FormatInt(up.Version.Version, 10)}
+	if !slices.Equal(seen, want) {
+		t.Fatalf("the validator was handed versions %q, want %q", seen, want)
+	}
 }
 
 func TestAValidatorAddsGovernanceOnTop(t *testing.T) {
