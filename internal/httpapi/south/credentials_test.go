@@ -319,6 +319,18 @@ func TestARefusalToMintIs401ThroughItsOwnCode(t *testing.T) {
 	if err != nil || len(denied) != 1 {
 		t.Fatalf("the denial's record: %v (%d)", err, len(denied))
 	}
+	// A record that is not an allow but still holds a snapshot naming the
+	// method. This server writes no snapshot on a deny or an unserved
+	// answer, so only the effect check refuses this one: without it the
+	// "did not allow" rule would rest on that write and nothing else.
+	unserved, err := h.store.Decisions().Get(ctx, testTenant, certDecision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unserved.ID, unserved.Effect = "dec-unserved-with-snapshot", "unserved"
+	if err := h.store.Decisions().Insert(ctx, testTenant, unserved); err != nil {
+		t.Fatal(err)
+	}
 
 	line, _ := sessionKey(t)
 	for _, tc := range []struct {
@@ -331,6 +343,8 @@ func TestARefusalToMintIs401ThroughItsOwnCode(t *testing.T) {
 			Target: "cert-host.example.com", Username: "netadmin"}},
 		{"a decision that denied", contract.ErrCodeUnknownDecision, contract.CertificateRequest{
 			DecisionID: denied[0].ID, Target: "denied-host.example.com", Username: "netadmin"}},
+		{"a decision that went unserved", contract.ErrCodeUnknownDecision, contract.CertificateRequest{
+			DecisionID: unserved.ID, Target: "cert-host.example.com", Username: "netadmin"}},
 		{"a decision naming no certificate rung", contract.ErrCodeUnknownDecision, contract.CertificateRequest{
 			DecisionID: plainDecision, Target: "edge-host.example.com", Username: "alice"}},
 		{"a target the decision did not name", contract.ErrCodeDecisionMismatch, contract.CertificateRequest{
