@@ -576,3 +576,78 @@ func TestTheSerialFilterIsCanonical(t *testing.T) {
 	mustStatus(t, f.send(t, "GET", api+"/audit/records?credential_certificate_serial="+contract.FormatSerial(42), auditor, nil), http.StatusOK)
 	mustStatus(t, f.send(t, "GET", api+"/audit/records?credential_certificate_serial=-1", auditor, nil), http.StatusBadRequest)
 }
+
+// ---------------------------------------------------------------------------
+// the emergency runbook (Hoplock/proxy#69)
+// ---------------------------------------------------------------------------
+
+// The runbook's three steps are each callable over this surface and each
+// audited: a publish that adds a ban everywhere, `cache_invalidate` with `all`,
+// and `session_kill` for the sessions the by-value query returns.
+func TestTheEmergencyRunbookIsCallableAndAudited(t *testing.T) {
+	f := newServer(t)
+	author, desk, auditor := f.roleToken(t, identity.RolePolicyAuthor), f.roleToken(t, identity.RoleGrantAdmin),
+		f.roleToken(t, identity.RoleAuditor)
+	ctx := t.Context()
+
+	// A session that negotiated the exchange about to be banned.
+	ingest, err := audit.New(audit.Options{Store: f.st})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if _, err := ingest.Ingest(ctx, audit.Submission{Tenant: "tenant-a", ProxyID: "proxy-1", Records: []contract.LogRecord{{
+		RecordID: "neg-1", SessionID: "sess-sha1", Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Kind: "provisioning", Severity: contract.SeverityInfo, Message: "negotiated",
+		Attributes: map[string]string{
+			audit.AttrEvent: audit.EventAlgorithmsNegotiated, audit.AttrTargetKexAlgorithm: "diffie-hellman-group14-sha1",
+		},
+	}}}); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	// 1. A ban everywhere: the bundle's own algorithm_bans. No proxy has
+	// declared what it offers, so the name is reported as matching no build
+	// — a warning the author accepts, never a refusal.
+	banned := strings.Replace(bundleFor(sreRule), "rules:\n",
+		"algorithm_bans:\n  key_exchanges: [diffie-hellman-group14-sha1]\nrules:\n", 1)
+	resp := f.send(t, "POST", api+"/policy/apply", author, map[string]any{"source": banned})
+	mustStatus(t, resp, http.StatusConflict)
+	var accept []string
+	for _, raw := range decodeError(t, resp).Parameters["findings"].([]any) {
+		accept = append(accept, raw.(map[string]any)["id"].(string))
+	}
+	mustStatus(t, f.send(t, "POST", api+"/policy/apply", author, map[string]any{"source": banned, "accept": accept}), http.StatusOK)
+
+	// 2. Drop every cached decision, so the ban reaches the next connection.
+	mustStatus(t, f.send(t, "POST", api+"/revocations", desk, map[string]any{"type": "cache_invalidate", "all": true}), http.StatusOK)
+
+	// 3. End the sessions that negotiated it.
+	resp = f.send(t, "GET", api+"/audit/negotiated?axis=key_exchanges&value=diffie-hellman-group14-sha1", auditor, nil)
+	mustStatus(t, resp, http.StatusOK)
+	var found struct {
+		Sessions []string `json:"sessions"`
+	}
+	decodeInto(t, resp, &found)
+	if !slices.Equal(found.Sessions, []string{"sess-sha1"}) {
+		t.Fatalf("the by-value query found %v", found.Sessions)
+	}
+	mustStatus(t, f.send(t, "POST", api+"/revocations", desk, map[string]any{
+		"type": "session_kill", "session_ids": found.Sessions, "reason": "an insecure key exchange was withdrawn",
+	}), http.StatusOK)
+
+	if recs := f.operatorRecords(t, audit.EventPolicyActivated); len(recs) != 1 || recs[0].Attributes[audit.AttrAccepted] == "" {
+		t.Errorf("the ban's activation is not on the record with what was accepted: %+v", recs)
+	}
+	revocations := f.operatorRecords(t, audit.EventRevocationPublished)
+	if len(revocations) != 2 {
+		t.Fatalf("%d revocation records, want 2", len(revocations))
+	}
+	if kill := revocations[0].Attributes; kill[audit.AttrOperatorPrefix+"type"] != "session_kill" ||
+		kill[audit.AttrOperatorPrefix+"session_ids"] != "sess-sha1" {
+		t.Errorf("the kill's record = %v", kill)
+	}
+	if inv := revocations[1].Attributes; inv[audit.AttrOperatorPrefix+"type"] != "cache_invalidate" ||
+		inv[audit.AttrOperatorPrefix+"selector"] != "all" {
+		t.Errorf("the invalidation's record = %v", inv)
+	}
+}

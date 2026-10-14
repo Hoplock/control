@@ -41,7 +41,11 @@ func (windowsAsJSON) Describe() ext.AccessContextInfo {
 	return ext.AccessContextInfo{Name: "itsm", Pushes: true}
 }
 
+// probes counts every Probe call, so a test can say "no provider was asked".
+var probes atomic.Int64
+
 func (windowsAsJSON) Probe(context.Context, ext.AccessContextQuery) (ext.AccessEvidence, error) {
+	probes.Add(1)
 	return ext.AccessEvidence{}, ext.ErrNoEvidence
 }
 
@@ -504,5 +508,98 @@ func TestTheProviderListingNamesEveryProvider(t *testing.T) {
 	if len(out.Providers) != 1 || out.Providers[0].Name != "itsm" || !out.Providers[0].Pushes ||
 		out.Providers[0].Registration.Provider != "example.com/itsm" {
 		t.Errorf("providers = %+v", out.Providers)
+	}
+}
+
+// Explain renders the external story whole — the provider, the reference, the
+// window and how it arrived — and an unanswered probe with which way it fell;
+// simulation replays the windows that counted and never asks a provider.
+func TestExplainAndSimulationOfExternalContext(t *testing.T) {
+	f := newPushServer(t)
+	author, _ := f.tokenFor(t, identity.RolePolicyAuthor)
+	inputs := json.RawMessage(`{"now":"2026-10-01T12:00:00Z","subject":{"id":"alice@example.com","mfa":false,"known":true,"break_glass":false},` +
+		`"target":{"hostname":"db01.example.com","known":true,"labels":{"env":"prod"}},"context":{"proxy_id":"proxy-1"},` +
+		`"grants":[{"id":"g-ext","origin":"external","scope":{"name":"change-window","targets":["db01.example.com"],"labels":null,"zones":null},` +
+		`"not_before":"2026-10-01T11:00:00Z","expires_at":"2026-10-01T13:00:00Z","reason":"CHG-42","reason_code":"",` +
+		`"created_by":{"subject":"","principal":"tok-itsm","break_glass":false},"request_id":"","workflow_ref":"","approvers":null,` +
+		`"external":{"system":"itsm","reference":"CHG-42","window_start":"2026-10-01T11:00:00Z","window_end":"2026-10-01T13:00:00Z","mode":"push","assertion_id":"CHG-42/1"}}],` +
+		`"connection":{},"external_context":[{"provider":"itsm","scope":"change-window","outcome":"confirmed"}]}`)
+	for _, d := range []store.Decision{
+		{ID: "dec-window", SubjectID: "alice@example.com", Effect: "allow", SessionID: "sess-w", ProxyID: "proxy-1",
+			InputsDigest: "x", Inputs: inputs, DecidedAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC),
+			Explanation: json.RawMessage(`{"effect":"allow","rule":"change","grant":"g-ext","external":{"provider":"itsm",` +
+				`"reference":"CHG-42","window_start":"2026-10-01T11:00:00Z","window_end":"2026-10-01T13:00:00Z","arrived":"pushed","confirmed":false}}`)},
+		{ID: "dec-unanswered", SubjectID: "alice@example.com", Effect: "deny", SessionID: "sess-u", ProxyID: "proxy-1",
+			InputsDigest: "x", Inputs: json.RawMessage(`{"now":"2026-10-01T12:00:00Z","subject":{"id":"alice@example.com"},"target":{"hostname":"db01.example.com"},"context":{"proxy_id":"proxy-1"},"connection":{},"external_context":[]}`),
+			DecidedAt:   time.Date(2026, 10, 1, 12, 1, 0, 0, time.UTC),
+			Explanation: json.RawMessage(`{"effect":"deny","unanswered":[{"provider":"scanner","scope":"scan","fell":"closed"}]}`)},
+	} {
+		if err := f.st.Decisions().Insert(t.Context(), "tenant-a", d); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	resp := f.send(t, "GET", "/api/v1/tenants/tenant-a/decisions/dec-window", author, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("explain = %d %+v", resp.StatusCode, decodeError(t, resp))
+	}
+	var story struct {
+		Grant       map[string]any `json:"grant"`
+		Explanation struct {
+			External map[string]any `json:"external"`
+		} `json:"explanation"`
+		Inputs struct {
+			ExternalContext []map[string]any `json:"external_context"`
+		} `json:"inputs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&story); err != nil {
+		t.Fatal(err)
+	}
+	ext := story.Explanation.External
+	if ext["provider"] != "itsm" || ext["reference"] != "CHG-42" || ext["window_end"] == nil || ext["arrived"] != "pushed" {
+		t.Errorf("explanation.external = %v", ext)
+	}
+	if story.Grant["origin"] != "external" || len(story.Inputs.ExternalContext) != 1 {
+		t.Errorf("grant %v, external_context %v", story.Grant, story.Inputs.ExternalContext)
+	}
+
+	resp = f.send(t, "GET", "/api/v1/tenants/tenant-a/decisions/dec-unanswered", author, nil)
+	var denied struct {
+		Explanation struct {
+			Unanswered []map[string]any `json:"unanswered"`
+		} `json:"explanation"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&denied); err != nil || len(denied.Explanation.Unanswered) != 1 ||
+		denied.Explanation.Unanswered[0]["fell"] != "closed" {
+		t.Errorf("an unanswered probe's denial = %+v, %v", denied, err)
+	}
+
+	before := probes.Load()
+	source := "schema_version: 1\ntenant: tenant-a\nscopes:\n  change-window: {}\nrules:\n" +
+		"  - id: change\n    effect: allow\n    match:\n      grant:\n        scopes: [change-window]\n" +
+		"    route:\n      intent: hops-permitted\n      channels: [session]\n      filter:\n        mode: blacklist\n" +
+		"      credentials:\n        - method: brokered-key\n          username: dba\n          credential_ref: vault://db\n"
+	resp = f.send(t, "POST", "/api/v1/tenants/tenant-a/policy/simulate", author, map[string]any{
+		"source": source,
+		"replay": map[string]any{"from": "2026-10-01T00:00:00Z", "to": "2026-10-02T00:00:00Z"},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("simulate = %d %+v", resp.StatusCode, decodeError(t, resp))
+	}
+	var sim struct {
+		Replay struct {
+			Replayed    int   `json:"replayed"`
+			Unchanged   int   `json:"unchanged"`
+			DenyToAllow []any `json:"deny_to_allow"`
+		} `json:"replay"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sim); err != nil {
+		t.Fatal(err)
+	}
+	if sim.Replay.Replayed != 2 || sim.Replay.Unchanged != 2 {
+		t.Errorf("replay = %+v; the window that counted is replayed as recorded", sim.Replay)
+	}
+	if got := probes.Load(); got != before {
+		t.Errorf("simulation called a provider %d time(s); a probe's answer is a recorded input", got-before)
 	}
 }
