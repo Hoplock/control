@@ -12,6 +12,7 @@
 - **#68:** tiers in `internal/contract/enums.go`; `credential.LadderEntry` the one renderer, tripwire pins policy-only params; issuance `200/400/401 (refuseToMint)/503 (noAuthority)`, bound to the decision's proxy; lifetime = min(CA default, CA ceiling, `lifetime_seconds`); serial joins as canonical decimal text.
 - **#69/#72:** `requiredVersion` → 6 floor/ban, 5 certificate, 4 else; `Declares()` = rungs only (floor-only/profiles-only → false); emptied axis judged per proxy in `checkAlgorithms` and per build at publish time; kex stored by host+port beside rungs; declarations written only on digest change (M5); runbook = `policy/apply` → `revocations {cache_invalidate, all}` → `audit/negotiated` → `revocations {session_kill}`.
 - **Deviations:** binding route is `…/access-context/providers/{provider}/binding` (mux conflict); stale/absent capability evidence is advice, not a warning; `seed` stays the database-direct bootstrap. Sync for `hoplock/enterprise` queued (see PR).
+- **NEXT session:** 0020–0023 audit this phase (its session was compressed twice, so every line here is a claim until they rule on it); 0024 onward build on it after.
 
 ## Details
 
@@ -301,7 +302,14 @@ seeds. CI generates a throwaway CA key for the mock and sets `HOPLOCK_KEK`.
 
 ### NEXT session
 
-0020 versions this surface (M19): `north.AllCodes` and `authoring.ControlCodes`
-are the code registries it promises. 0021's console reads these routes and
-nothing else; the runbook and the impact preview are already callable. 0022
-drives `policyctl` and the D18 delivery end to end.
+**Read this file as claims, not facts.** The session that wrote it was
+compressed twice, so 0020–0023 audit everything above before anything builds
+on it: the south-bound surface and decision path, the audit store and fleet
+configuration, the policy lifecycle, and the north-bound surface with the
+record as a whole. Their learnings supersede this file for every item they
+rule on.
+
+After them, 0024 versions this surface (M19): `north.AllCodes` and
+`authoring.ControlCodes` are the code registries it promises. 0025's console
+reads these routes and nothing else; the runbook and the impact preview are
+already callable. 0026 drives `policyctl` and the D18 delivery end to end.

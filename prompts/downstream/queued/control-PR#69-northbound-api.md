@@ -72,6 +72,16 @@ audit.read_token are removed and refused as unknown keys. Any configuration,
 test or doc naming them changes to the north-bound routes.
 (7) Its pin: every obligation above holds from v0.6.0, which control#69's
 merge cuts, never from main. Enterprise's pin moves to v0.6.0.
+(8) Control's queued phases were renumbered: 0020→0024 (instance identity
+and supervisory registration, which its E14 builds on), 0021→0025
+(management console), 0022→0026 (E2E topology), 0023→0027 (post-quantum
+posture), 0024→0028 (one contract version). Control's 0020–0023 are now four
+audits of 0019, run before anything builds on it, because 0019's session
+was compressed twice. Every citation of a Control phase number in its
+prompts, plan and protocol resolves through Control's docs/PLAN.md §10
+mapping table (revision "session-audit"). The audits may correct an
+obligation above. Each correction arrives as a sync of its own, so build on
+v0.6.0 as stated here until one does.
 
 Work on the branch this session was given, whatever it is named — if the name
 is yours to choose, claude/sync-<short-description>. Commit with the `sync`
