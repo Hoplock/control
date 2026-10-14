@@ -214,6 +214,62 @@ func (s *Server) handlePolicyDiff(w http.ResponseWriter, r *http.Request) {
 	answer(w, http.StatusOK, d)
 }
 
+type diffBody struct {
+	Source string `json:"source"`
+	// Against is a stored version, 0 for nothing; absent takes the active one.
+	Against *int64 `json:"against"`
+}
+
+// handlePolicyDiffSource diffs a candidate source — one not stored yet — against
+// a stored version, by default the active one: what a reviewer asks of a pull
+// request before anything is uploaded.
+func (s *Server) handlePolicyDiffSource(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	var body diffBody
+	if !s.readSource(w, r, &body, &body.Source) {
+		return
+	}
+	var (
+		against int64
+		old     []byte
+	)
+	switch {
+	case body.Against != nil && *body.Against < 0:
+		s.invalid(w, r, "against", access.ProblemInvalid, "")
+		return
+	case body.Against != nil && *body.Against > 0:
+		v, src, err := s.authoring.Bundle(r.Context(), tenant, *body.Against)
+		if err != nil {
+			s.policyFailure(w, r, "read policy version", err)
+			return
+		}
+		against, old = v.Version, src
+	case body.Against == nil:
+		v, src, err := s.authoring.Active(r.Context(), tenant)
+		switch {
+		case err == nil:
+			against, old = v.Version, src
+		case !store.IsNotFound(err):
+			s.fail(w, r, "read active policy", err)
+			return
+		}
+	}
+	d, err := authoring.DiffSources(old, []byte(body.Source))
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, Error{
+			Code: CodePolicyInvalid, CorrelationID: CorrelationIDFrom(r.Context()),
+			Parameters: map[string]any{"reason": err.Error()},
+			Message:    "the candidate does not parse, so there is nothing to diff; validate it for the rejections",
+		})
+		return
+	}
+	d.From = against
+	answer(w, http.StatusOK, d)
+}
+
 func (s *Server) handlePolicyActivate(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {

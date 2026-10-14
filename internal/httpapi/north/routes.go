@@ -257,6 +257,8 @@ func (s *Server) policyRoutes() []Route {
 			"one stored version and its source", s.handlePolicyGet),
 		tenantRoute("GET", "/policy/bundles/{version}/diff", identity.PermPolicyRead,
 			"what separates a version from another, by default the active one", s.handlePolicyDiff),
+		tenantRoute("POST", "/policy/diff", identity.PermPolicyRead,
+			"what separates a candidate source from a stored version, by default the active one", s.handlePolicyDiffSource),
 		tenantRoute("POST", "/policy/bundles/{version}/activate", identity.PermPolicyPublish,
 			"make a version the active one; rolling back is activating an older one", s.handlePolicyActivate),
 		tenantRoute("GET", "/policy/active", identity.PermPolicyRead,
