@@ -26,6 +26,87 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.6.0
+
+The north-bound surface is complete: an operator, a pipeline or `policyctl`
+authors, simulates, publishes and explains policy, manages the inventory,
+queries and retains audit, and acts — and a proxy can be sent brokered
+certificates, an algorithm floor and bans, and fleet configuration.
+
+### Breaking
+
+- **Configuration keys removed:** `events.publish_listener`,
+  `events.publish_token`, `audit.read_listener` and `audit.read_token`. The
+  two debug listeners they bound are deleted, and a configuration naming any
+  of the four is refused at start-up as an unknown key. What they served is
+  on the north-bound listener under a scoped API token:
+  `POST /api/v1/tenants/{tenant}/revocations` (`session:revoke`) and
+  `GET /api/v1/tenants/{tenant}/audit/records/{record_id}` (`audit:read`).
+- **`ext.FindingWarning` stops activation until it is accepted.** It used to
+  block nothing. A warning — from Control's own checks or a registered
+  `ext.PolicyValidator` — now holds activation until the author accepts it by
+  the finding's id, and the acceptance is on the activation's audit record. A
+  validator that meant a finding as information returns `FindingAdvice`. No
+  identifier changed, so no API diff shows this.
+- **Audit columns renamed:** `audit_records.target_auth_method` and
+  `target_auth_rung` are `credential_method` and `credential_rung`, the only
+  names the proxy emits (migration `0012`). SQL naming the old columns fails.
+
+- **Phase:** 0019, the north-bound API, inventory and policy lifecycle.
+- **Public packages:** no identifier is added, removed or changed. The doc
+  comments of `ext.FindingSeverity`, `ext.FindingWarning`,
+  `ext.FindingBlocking` and `ext.Finding.Code` say what each severity does at
+  activation and that `Code`, with the provider and `Path`, forms the id a
+  warning is accepted by.
+- **North-bound routes**, each under `/api/v1/tenants/{tenant}/`: the policy
+  lifecycle (`policy/validate`, `policy/bundles`, `policy/bundles/{version}`,
+  `…/diff`, `…/activate`, `policy/diff`, `policy/active`, `policy/apply`,
+  `policy/simulate`); explain (`decisions/{decision}`,
+  `sessions/{session}/decisions`); inventory (`targets`, `targets/relabel`,
+  `subjects`, `role-bindings`, `proxies`, `proxies/enrollments`,
+  `proxies/{proxy}/withdraw`, `fleet/config/{scope}/{id}`, its `rollback`,
+  `fleet/config/rollouts`, `fleet/algorithms`, `fleet/target-observations`);
+  the audit query (`audit/records`, `audit/blocked-commands`, `audit/drift`,
+  `audit/algorithm-policy-unmet`, `audit/negotiated`, `audit/gaps`,
+  `audit/sessions/{session}/loss`, `…/algorithms`, `…/certificates`,
+  `audit/certificates/{serial}/records`) and retention (`audit/retention`,
+  `audit/captures/retention`); `revocations`; `extensions`; and
+  `access-context/providers`, `access-context/bindings` and
+  `access-context/providers/{provider}/binding`.
+- **Permissions:** `target:write`, `audit:retain`, `session:revoke`,
+  `access-context:read`, `access-context:write` and `extension:read` are
+  added, and a host route may name any of them. Every reading role gains
+  `access-context:read` and `extension:read`; `policy-author` and
+  `fleet-admin` gain `target:write`; `grant-admin` gains `session:revoke`;
+  `admin` holds all. `audit:retain` and `access-context:write` are the
+  administrator's alone.
+- **Error codes:** `policy_invalid` (`422`), `findings_not_accepted` (`409`),
+  `policy_blocked` (`422`), `decision_unexplainable` (`500`),
+  `config_key_not_fleet_owned` and `config_value_invalid` (`422`),
+  `host_key_unresolved` (`409`) and `unavailable` (`503`).
+- **South-bound:** the contract is vendored at `4.7.0` (`hoplock/proxy@976faaa`)
+  and this server speaks `policy_version` `6`. `POST /v1/credentials/certificate`
+  issues a brokered certificate per session; `GET /v1/proxies/{proxy_id}/config`
+  and `POST …/config/report` are served, and a publish announces
+  `config_changed`. A route naming `brokered-certificate` is refused to a proxy
+  declaring below `5`, and one with a floor or a ban below `6` — a `5xx`
+  naming both numbers, never a thinned answer.
+- **Binary:** `bin/policyctl` is built beside the server: `validate`, `diff`,
+  `apply`, `activate`, `versions`, `simulate`, `explain`, exiting `0`, `1` for
+  a refusal and `2` for a usage or transport error.
+- **Configuration added:** `policy.interpreters` (the executables a restricted
+  allow-list warns on; empty takes the shipped list, and a list replaces it) and
+  `south.max_log_body_bytes` (the two log paths' body limit, 4 MiB).
+- **Migration:** `0012` adds the algorithm declarations, the key-exchange
+  observations, the configuration report and announcement columns, the audit
+  record projections, `audit_retention`, and `audit_captures.retained_at`.
+- **Behaviour no API diff shows:** `session_id: ""` is accepted on every
+  record kind and never looked up as a session. Every operator act is recorded
+  as `operator.<noun>.<verb>` on the control stream. A retention pass deletes
+  a prefix of a stream and `audit-verify` resumes after it. A proxy's running
+  configuration comes only from its config report; the heartbeat no longer
+  carries one.
+
 ## v0.5.0
 
 A host serves a read that spans tenants, and Control resolves which tenants it

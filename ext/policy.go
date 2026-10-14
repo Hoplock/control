@@ -42,14 +42,24 @@ type PolicyDocument struct {
 
 // FindingSeverity grades a validator's finding. It is a closed enum, and the
 // distinction that matters is whether activation may proceed.
+//
+// Control's own publish-time checks report in the same vocabulary, and the
+// north-bound lifecycle (0019) treats every finding alike, whoever produced it:
+// advice is shown, a warning is shown and must be ACCEPTED by the author — by
+// the finding's id, recorded on the activation's audit record — and a blocking
+// finding stops activation outright.
 type FindingSeverity int
 
 const (
 	// FindingAdvice is worth telling the author and blocks nothing.
 	FindingAdvice FindingSeverity = iota
-	// FindingWarning is a likely mistake and blocks nothing.
+	// FindingWarning is a likely mistake. It is never a refusal: activation
+	// proceeds once the author accepts it by id, which is the override, and
+	// the acceptance is part of the record. A warning nobody has to look at
+	// is not a check.
 	FindingWarning
-	// FindingBlocking stops activation. It is the only severity that does.
+	// FindingBlocking stops activation, and no acceptance moves it. It is the
+	// only severity that refuses.
 	FindingBlocking
 )
 
@@ -68,10 +78,13 @@ func (s FindingSeverity) String() string {
 
 // Finding is one thing a validator has to say about a bundle.
 type Finding struct {
-	// Severity grades it; only FindingBlocking stops activation.
+	// Severity grades it; only FindingBlocking refuses activation, and a
+	// FindingWarning waits for the author to accept it.
 	Severity FindingSeverity
 	// Code is the finding's stable code, which the console renders (M21)
-	// and automation matches on.
+	// and automation matches on. With the provider and Path it forms the id
+	// an author accepts a warning by, so it must not vary from one run to
+	// the next for the same finding.
 	Code string
 	// Path locates the finding inside the bundle — a rule name, a document
 	// pointer. A finding an author cannot locate is a finding they cannot
