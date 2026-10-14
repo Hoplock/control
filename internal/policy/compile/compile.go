@@ -356,12 +356,14 @@ func (c *compiler) checkAlgorithms(r *model.Rule) {
 }
 
 // checkBans refuses an empty identifier and the same identifier twice on one
-// axis. rule is empty for the bundle's own bans.
+// axis, compared as written, exactly as the proxy does. A name of blanks is not
+// empty: the proxy accepts it as a name no build offers, so it is the typo
+// warning's (M17) and not a refusal. rule is empty for the bundle's own bans.
 func (c *compiler) checkBans(rule string, line int, b *model.AlgorithmBans) {
 	for _, axis := range model.BanAxes {
 		seen := map[string]bool{}
 		for i, name := range b.Axis(axis) {
-			if strings.TrimSpace(name) == "" {
+			if name == "" {
 				c.add(model.CodeRouteBanIdentifierEmpty, rule, line, "axis", axis, "index", strconv.Itoa(i+1))
 				continue
 			}
