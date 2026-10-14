@@ -36,6 +36,8 @@ type SubjectRepository interface {
 	Upsert(ctx context.Context, tenant Tenant, s Subject) error
 	// Delete removes a subject. Absent is ErrNotFound.
 	Delete(ctx context.Context, tenant Tenant, subjectID string) error
+	// List returns every subject in the tenant, in id order.
+	List(ctx context.Context, tenant Tenant) ([]Subject, error)
 }
 
 // TargetRepository stores what is being reached.

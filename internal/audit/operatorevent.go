@@ -38,6 +38,7 @@ const (
 	EventSubjectDeleted        = "operator.subject.deleted"
 	EventRoleBound             = "operator.role.bound"
 	EventRoleUnbound           = "operator.role.unbound"
+	EventClaimMappingActivated = "operator.claim_mapping.activated"
 	EventProxyApproved         = "operator.proxy.approved"
 	EventProxyWithdrawn        = "operator.proxy.withdrawn"
 	EventFleetConfigPublished  = "operator.fleet_config.published"

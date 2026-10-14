@@ -108,10 +108,10 @@ func newPushServerWith(t *testing.T, revoker access.Revoker) *pushFixture {
 	if err != nil {
 		t.Fatalf("accessctx: %v", err)
 	}
-	server, err := north.New(north.Options{
+	server, err := north.New(withLifecycle(t, st, north.Options{
 		Federation: federation, Grants: grants, AccessContext: svc, MaxPushBytes: 2048,
 		DefaultTenant: "tenant-a", InsecureCookies: true,
-	})
+	}))
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -381,5 +381,128 @@ func TestAnUndeliveredEndIsAnsweredLikeAnUndeliveredRevocation(t *testing.T) {
 	rv.down.Store(false)
 	if a := decodeEnd(t, f.push(t, pushPath, token, ended("CHG-42/1"))); a.Outcome != "already_ended" || a.Grant != e.Parameters["grant_id"] {
 		t.Errorf("the end pushed again = %+v, want already_ended on grant %v", a, e.Parameters["grant_id"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bindings and providers over the wire (0019)
+// ---------------------------------------------------------------------------
+
+func (f *pushFixture) send(t *testing.T, method, path, token string, body any) *http.Response {
+	t.Helper()
+	var raw []byte
+	if body != nil {
+		raw, _ = json.Marshal(body)
+	}
+	req, err := http.NewRequestWithContext(t.Context(), method, f.http.URL+path, bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := f.http.Client().Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+const bindingPath = "/api/v1/tenants/tenant-a/access-context/providers/itsm/binding"
+
+// A binding written over this surface is validated and audited exactly as
+// accessctx.Service.PutBinding is, and the integration role can neither read
+// nor write one.
+func TestABindingIsManagedOverTheWire(t *testing.T) {
+	f := newPushServer(t)
+	admin, _ := f.tokenFor(t, identity.RoleAdmin)
+	auditor, _ := f.tokenFor(t, identity.RoleAuditor)
+	integration, principal := f.tokenFor(t, identity.RoleIntegration)
+
+	body := map[string]any{
+		"mode": "push", "scope": "change-window", "subjects": []string{"alice@example.com"},
+		"targets": []string{"*.example.com"}, "max_window": "1h", "push_principals": []string{principal},
+	}
+	resp := f.send(t, "PUT", bindingPath, admin, body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put binding = %d %+v", resp.StatusCode, decodeError(t, resp))
+	}
+	var got struct {
+		Provider       string   `json:"provider"`
+		PushPrincipals []string `json:"push_principals"`
+		MaxWindow      string   `json:"max_window"`
+		Enabled        bool     `json:"enabled"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Provider != "itsm" || len(got.PushPrincipals) != 1 || got.PushPrincipals[0] != principal || !got.Enabled {
+		t.Errorf("binding = %+v", got)
+	}
+	rows, err := f.st.Audit().Query(t.Context(), "tenant-a", store.AuditQuery{Event: accessctx.EventBindingPut})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("binding_put records: %d, %v", len(rows), err)
+	}
+
+	// Validated field by field: a window with no target selector is refused.
+	bad := map[string]any{"mode": "push", "scope": "change-window", "subjects": []string{"alice@example.com"}, "max_window": "1h"}
+	resp = f.send(t, "PUT", bindingPath, admin, bad)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("an unbounded binding = %d", resp.StatusCode)
+	}
+	if e := decodeError(t, resp); e.Code != north.CodeInvalidRequest || e.Parameters["field"] == nil {
+		t.Errorf("refusal = %+v", e)
+	}
+
+	// Every role that reads the tenant reads it; the integration reads nothing.
+	if resp := f.send(t, "GET", "/api/v1/tenants/tenant-a/access-context/bindings", auditor, nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("an auditor listing bindings = %d", resp.StatusCode)
+	}
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/v1/tenants/tenant-a/access-context/bindings"},
+		{"GET", bindingPath}, {"PUT", bindingPath}, {"DELETE", bindingPath},
+	} {
+		if resp := f.send(t, c.method, c.path, integration, body); resp.StatusCode != http.StatusForbidden {
+			t.Errorf("the integration role %s %s = %d, want 403", c.method, c.path, resp.StatusCode)
+		}
+	}
+	if resp := f.send(t, "PUT", bindingPath, auditor, body); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("an auditor wrote a binding: %d", resp.StatusCode)
+	}
+
+	resp = f.send(t, "DELETE", bindingPath, admin, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete = %d", resp.StatusCode)
+	}
+	if resp := f.send(t, "GET", bindingPath, admin, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("a deleted binding reads %d", resp.StatusCode)
+	} else if e := decodeError(t, resp); e.Code != north.CodeBindingNotFound {
+		t.Errorf("code %q", e.Code)
+	}
+}
+
+// The provider listing names every provider by its external system's name.
+func TestTheProviderListingNamesEveryProvider(t *testing.T) {
+	f := newPushServer(t)
+	auditor, _ := f.tokenFor(t, identity.RoleAuditor)
+	resp := f.send(t, "GET", "/api/v1/tenants/tenant-a/access-context/providers", auditor, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("providers = %d", resp.StatusCode)
+	}
+	var out struct {
+		Providers []struct {
+			Name         string `json:"name"`
+			Pushes       bool   `json:"pushes"`
+			Registration struct {
+				Provider string `json:"provider"`
+			} `json:"registration"`
+		} `json:"providers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Providers) != 1 || out.Providers[0].Name != "itsm" || !out.Providers[0].Pushes ||
+		out.Providers[0].Registration.Provider != "example.com/itsm" {
+		t.Errorf("providers = %+v", out.Providers)
 	}
 }

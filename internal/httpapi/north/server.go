@@ -11,10 +11,16 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/accessctx"
+	"github.com/hoplock/control/internal/audit"
+	"github.com/hoplock/control/internal/authoring"
 	"github.com/hoplock/control/internal/credential"
+	"github.com/hoplock/control/internal/decision"
+	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -40,6 +46,17 @@ type Server struct {
 	context    *accessctx.Service
 	log        *slog.Logger
 	now        func() time.Time
+
+	// 0019: the policy lifecycle, the inventory, the audit query and the
+	// operator actions.
+	st          *store.Store
+	fleet       *fleet.Registry
+	authoring   *authoring.Service
+	revocations *revoke.Operator
+	emitter     *audit.Emitter
+	reader      *audit.Reader
+	extensions  *ext.Extensions
+	mapping     decision.ActiveMapping
 
 	maxBodyBytes   int64
 	maxPushBytes   int64
@@ -78,6 +95,26 @@ type Options struct {
 	// Authenticator resolves a presented credential. Nil takes Federation,
 	// which is the production wiring; a test supplies its own.
 	Authenticator Authenticator
+	// Store is the inventory this surface edits: targets, subjects, role
+	// bindings, and the decision records explain reads (0019). Required.
+	Store *store.Store
+	// Fleet is the proxy registry: enrollment, the fleet view, configuration
+	// publication, declarations and observations (0006, D18). Required.
+	Fleet *fleet.Registry
+	// Authoring is the policy lifecycle (0019). Required.
+	Authoring *authoring.Service
+	// Revocations publishes operator actions through revoke.Operator, never
+	// beside it (0009). Required.
+	Revocations *revoke.Operator
+	// Audit records every mutating act on this surface. Required: an audit
+	// system whose own administration is unaudited has a hole exactly where
+	// it matters.
+	Audit *audit.Emitter
+	// AuditReader answers the audit queries. Nil builds one over Store.
+	AuditReader *audit.Reader
+	// Extensions is the sealed registry, listed read-only (M15). Nil lists
+	// what Control does at every point with nothing registered.
+	Extensions *ext.Extensions
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -119,6 +156,10 @@ func New(o Options) (*Server, error) {
 	if o.Grants == nil {
 		return nil, fmt.Errorf("httpapi/north: a grant service is required")
 	}
+	if o.Store == nil || o.Fleet == nil || o.Authoring == nil || o.Revocations == nil || o.Audit == nil {
+		return nil, fmt.Errorf("httpapi/north: a store, a fleet registry, the policy lifecycle, the revocation " +
+			"operator and the audit emitter are all required")
+	}
 	// A NIL CA IS ALLOWED, and it is the one dependency that is. The software
 	// custodian refuses to exist without a key-encryption key
 	// (`credential.key_encryption_key_env`), so a deployment that has not set
@@ -149,6 +190,20 @@ func New(o Options) (*Server, error) {
 		requestTimeout: o.RequestTimeout,
 		secureCookies:  !o.InsecureCookies,
 		defaultTenant:  o.DefaultTenant,
+		st:             o.Store,
+		fleet:          o.Fleet,
+		authoring:      o.Authoring,
+		revocations:    o.Revocations,
+		emitter:        o.Audit,
+		reader:         o.AuditReader,
+		extensions:     o.Extensions,
+		mapping:        decision.StoredActiveMapping(o.Store),
+	}
+	if s.reader == nil {
+		s.reader = audit.NewReader(o.Store)
+	}
+	if s.extensions == nil {
+		s.extensions = ext.NoExtensions()
 	}
 	if s.auth == nil {
 		s.auth = o.Federation

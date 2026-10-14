@@ -195,6 +195,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Subjects.GetByPrincipal": func() error { _, err := s.Subjects().GetByPrincipal(ctx, "", "p"); return err },
 		"Subjects.Upsert":         func() error { return s.Subjects().Upsert(ctx, "", Subject{ID: "s"}) },
 		"Subjects.Delete":         func() error { return s.Subjects().Delete(ctx, "", "s") },
+		"Subjects.List":           func() error { _, err := s.Subjects().List(ctx, ""); return err },
 		"Targets.Get":             func() error { _, err := s.Targets().Get(ctx, "", "t"); return err },
 		"Targets.GetByHostname":   func() error { _, err := s.Targets().GetByHostname(ctx, "", "h"); return err },
 		"Targets.ListByLabels":    func() error { _, err := s.Targets().ListByLabels(ctx, "", nil); return err },

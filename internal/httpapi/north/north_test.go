@@ -19,8 +19,10 @@ import (
 
 	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/audit"
+	"github.com/hoplock/control/internal/authoring"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/extdefault"
+	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/revoke"
@@ -78,6 +80,54 @@ type serverFixture struct {
 	federation *identity.Federation
 	server     *north.Server
 	http       *httptest.Server
+	lifecycle  *lifecycle
+}
+
+// lifecycle is what the 0019 routes stand on: the fleet, the policy lifecycle,
+// the revocation operator over a real broker, and the audit emitter.
+type lifecycle struct {
+	fleet     *fleet.Registry
+	authoring *authoring.Service
+	operator  *revoke.Operator
+	bus       *revoke.Bus
+	emitter   *audit.Emitter
+}
+
+// withLifecycle fills in a server's 0019 dependencies over a store.
+func withLifecycle(t *testing.T, st *store.Store, o north.Options) north.Options {
+	t.Helper()
+	l := newLifecycle(t, st)
+	o.Store, o.Fleet, o.Authoring, o.Revocations, o.Audit = st, l.fleet, l.authoring, l.operator, l.emitter
+	return o
+}
+
+func newLifecycle(t *testing.T, st *store.Store) *lifecycle {
+	t.Helper()
+	log := slog.New(slog.DiscardHandler)
+	bus, err := revoke.New(revoke.Options{Logger: log})
+	if err != nil {
+		t.Fatalf("bus: %v", err)
+	}
+	t.Cleanup(func() { _ = bus.Close(context.Background()) })
+	registry := fleet.New(st, fleet.WithSubscriptionState(bus), fleet.WithLogger(log))
+	ingest, err := audit.New(audit.Options{Store: st})
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	emitter, err := audit.NewEmitter(ingest)
+	if err != nil {
+		t.Fatalf("emitter: %v", err)
+	}
+	lifecycleSvc, err := authoring.New(authoring.Options{
+		Store: st, Fleet: registry, Emitter: emitter, Reader: audit.NewReader(st),
+	})
+	if err != nil {
+		t.Fatalf("authoring: %v", err)
+	}
+	return &lifecycle{
+		fleet: registry, authoring: lifecycleSvc, operator: revoke.NewOperator(bus, registry),
+		bus: bus, emitter: emitter,
+	}
 }
 
 func newServer(t *testing.T) *serverFixture {
@@ -104,6 +154,8 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 		t.Fatalf("ca: %v", err)
 	}
 
+	lifecycle := newLifecycle(t, st)
+
 	// Every server these tests build carries a host's routes (M15), so the
 	// tests that enumerate the router cover host routes on the day they are
 	// mounted rather than on the day somebody remembers them.
@@ -111,6 +163,11 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 		Federation:      federation,
 		CA:              ca,
 		Grants:          newGrants(t, st, grantOpts),
+		Store:           st,
+		Fleet:           lifecycle.fleet,
+		Authoring:       lifecycle.authoring,
+		Revocations:     lifecycle.operator,
+		Audit:           lifecycle.emitter,
 		DefaultTenant:   "tenant-a",
 		InsecureCookies: true,
 		HostProvider:    testHostProvider,
@@ -127,7 +184,7 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 		t.Fatalf("ensure b: %v", err)
 	}
 
-	f := &serverFixture{st: st, federation: federation, server: server}
+	f := &serverFixture{st: st, federation: federation, server: server, lifecycle: lifecycle}
 	f.http = httptest.NewServer(server)
 	t.Cleanup(f.http.Close)
 	return f
@@ -764,10 +821,10 @@ func TestADeploymentWithNoKeyEncryptionKeyStillServesEverythingElse(t *testing.T
 	if err != nil {
 		t.Fatalf("federation: %v", err)
 	}
-	server, err := north.New(north.Options{
+	server, err := north.New(withLifecycle(t, st, north.Options{
 		Federation: federation, Grants: newGrants(t, st, access.Options{}),
 		DefaultTenant: "tenant-a", InsecureCookies: true,
-	})
+	}))
 	if err != nil {
 		t.Fatalf("a listener without a certificate authority did not build: %v", err)
 	}
@@ -1029,12 +1086,12 @@ func TestTheAccessLogNamesThePrincipalAndTheTenantItResolved(t *testing.T) {
 	if _, err := ca.Ensure(context.Background(), "tenant-a"); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
-	server, err := north.New(north.Options{
+	server, err := north.New(withLifecycle(t, st, north.Options{
 		Federation: federation, CA: ca, Grants: newGrants(t, st, access.Options{}),
 		DefaultTenant: "tenant-a", InsecureCookies: true,
 		Logger:       slog.New(slog.NewJSONHandler(&buf, nil)),
 		HostProvider: testHostProvider, HostRoutes: testHostRoutes(),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}

@@ -3,7 +3,11 @@
 
 package north
 
-import "github.com/hoplock/control/internal/identity"
+import (
+	"net/http"
+
+	"github.com/hoplock/control/internal/identity"
+)
 
 // The route table.
 //
@@ -26,7 +30,7 @@ const (
 )
 
 func (s *Server) routes() []Route {
-	return []Route{
+	routes := []Route{
 		// --- federation: the routes that run BEFORE authentication ---
 		{
 			Method: "GET", Pattern: APIPrefix + "/session/methods",
@@ -206,7 +210,7 @@ func (s *Server) routes() []Route {
 			Handler:    s.handleOwnRequestCancel,
 		},
 
-		// --- the claim mapping (read; authoring is 0019's) ---
+		// --- the claim mapping ---
 		{
 			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/identity/claim-mapping",
 			Access:     AccessTenant,
@@ -214,5 +218,157 @@ func (s *Server) routes() []Route {
 			Summary:    "the active claim mapping, its version and what it can produce",
 			Handler:    s.handleClaimMapping,
 		},
+		{
+			Method: "PUT", Pattern: APIPrefix + "/tenants/{tenant}/identity/claim-mapping",
+			Access:     AccessTenant,
+			Permission: identity.PermIdentityWrite,
+			Summary:    "write and activate a new claim mapping version",
+			Handler:    s.handleClaimMappingPut,
+		},
+	}
+	routes = append(routes, s.policyRoutes()...)
+	routes = append(routes, s.inventoryRoutes()...)
+	routes = append(routes, s.auditRoutes()...)
+	return routes
+}
+
+func tenantRoute(method, path string, perm identity.Permission, summary string, h http.HandlerFunc) Route {
+	return Route{
+		Method: method, Pattern: APIPrefix + "/tenants/{tenant}" + path,
+		Access: AccessTenant, Permission: perm, Summary: summary, Handler: h,
+	}
+}
+
+// policyRoutes are the policy lifecycle and "explain why" (0019).
+//
+// Reading and simulating are policy:read, which every role that reads the
+// tenant holds. Uploading is policy:write; activating — and apply, which
+// activates — is policy:publish, a separate permission because the review step
+// is the control. Explaining a decision is decision:read.
+func (s *Server) policyRoutes() []Route {
+	return []Route{
+		tenantRoute("POST", "/policy/validate", identity.PermPolicyRead,
+			"compile a bundle and report what publishing it would meet", s.handlePolicyValidate),
+		tenantRoute("GET", "/policy/bundles", identity.PermPolicyRead,
+			"every stored policy version, newest first", s.handlePolicyList),
+		tenantRoute("POST", "/policy/bundles", identity.PermPolicyWrite,
+			"upload a bundle as a new immutable version", s.handlePolicyUpload),
+		tenantRoute("GET", "/policy/bundles/{version}", identity.PermPolicyRead,
+			"one stored version and its source", s.handlePolicyGet),
+		tenantRoute("GET", "/policy/bundles/{version}/diff", identity.PermPolicyRead,
+			"what separates a version from another, by default the active one", s.handlePolicyDiff),
+		tenantRoute("POST", "/policy/bundles/{version}/activate", identity.PermPolicyPublish,
+			"make a version the active one; rolling back is activating an older one", s.handlePolicyActivate),
+		tenantRoute("GET", "/policy/active", identity.PermPolicyRead,
+			"the active version and its source", s.handlePolicyActive),
+		tenantRoute("POST", "/policy/apply", identity.PermPolicyPublish,
+			"upload and activate in one call, for CI", s.handlePolicyApply),
+		tenantRoute("POST", "/policy/simulate", identity.PermPolicyRead,
+			"dry-run a candidate against synthetic questions and replay it over recorded ones", s.handlePolicySimulate),
+
+		tenantRoute("GET", "/decisions/{decision}", identity.PermDecisionRead,
+			"resolve a decision id into the whole story", s.handleExplainDecision),
+		tenantRoute("GET", "/sessions/{session}/decisions", identity.PermDecisionRead,
+			"resolve a session id — what the user was told — into every decision taken for it", s.handleExplainSession),
+	}
+}
+
+// inventoryRoutes are what an operator manages (0019, 0006, D18, M15, M16).
+func (s *Server) inventoryRoutes() []Route {
+	return []Route{
+		tenantRoute("GET", "/targets", identity.PermFleetRead,
+			"targets, filtered by label", s.handleTargetList),
+		tenantRoute("GET", "/targets/{target}", identity.PermFleetRead,
+			"one target and its labels", s.handleTargetGet),
+		tenantRoute("PUT", "/targets/{target}", identity.PermTargetWrite,
+			"create or edit a target; its labels are policy inputs", s.handleTargetPut),
+		tenantRoute("DELETE", "/targets/{target}", identity.PermTargetWrite,
+			"remove a target", s.handleTargetDelete),
+		tenantRoute("POST", "/targets/relabel", identity.PermTargetWrite,
+			"diff and simulate a bulk relabel, and apply it when asked", s.handleTargetRelabel),
+
+		tenantRoute("GET", "/subjects", identity.PermIdentityRead,
+			"every subject and its groups", s.handleSubjectList),
+		tenantRoute("GET", "/subjects/{subject}", identity.PermIdentityRead,
+			"one subject", s.handleSubjectGet),
+		tenantRoute("PUT", "/subjects/{subject}", identity.PermIdentityWrite,
+			"create or edit a subject and its groups", s.handleSubjectPut),
+		tenantRoute("DELETE", "/subjects/{subject}", identity.PermIdentityWrite,
+			"remove a subject", s.handleSubjectDelete),
+		tenantRoute("GET", "/role-bindings", identity.PermIdentityRead,
+			"who holds which role in this tenant", s.handleRoleBindingList),
+		tenantRoute("POST", "/role-bindings", identity.PermIdentityWrite,
+			"grant a role to a subject or a group", s.handleRoleBind),
+		tenantRoute("POST", "/role-bindings/remove", identity.PermIdentityWrite,
+			"withdraw a role from a subject or a group", s.handleRoleUnbind),
+
+		tenantRoute("GET", "/proxies", identity.PermFleetRead,
+			"the fleet: enrollment, liveness, capabilities and configuration rollout", s.handleProxyList),
+		tenantRoute("POST", "/proxies/enrollments", identity.PermFleetWrite,
+			"approve a proxy's enrollment: the one-time token it presents", s.handleProxyEnrollment),
+		tenantRoute("POST", "/proxies/{proxy}/withdraw", identity.PermFleetWrite,
+			"remove a proxy from the fleet and revoke its credentials", s.handleProxyWithdraw),
+		tenantRoute("PUT", "/fleet/config/{scope}/{id}", identity.PermFleetWrite,
+			"publish a zone's or a proxy's configuration document (fleet-owned keys only)", s.handleConfigPublish),
+		tenantRoute("POST", "/fleet/config/{scope}/{id}/rollback", identity.PermFleetWrite,
+			"publish a scope's previous configuration as a new version", s.handleConfigRollback),
+		tenantRoute("GET", "/fleet/config/rollouts", identity.PermFleetRead,
+			"every proxy's desired and running configuration, and its reported state", s.handleConfigRollouts),
+		tenantRoute("GET", "/fleet/algorithms", identity.PermFleetRead,
+			"each proxy's latest algorithm declaration, per build", s.handleAlgorithmDeclarations),
+		tenantRoute("GET", "/fleet/target-observations", identity.PermFleetRead,
+			"what each target was seen to take: its rungs and its key exchange", s.handleTargetObservations),
+
+		tenantRoute("POST", "/revocations", identity.PermSessionRevoke,
+			"end sessions, invalidate cached decisions, resync, or withdraw a host-key decision", s.handleRevocation),
+
+		tenantRoute("GET", "/extensions", identity.PermExtensionRead,
+			"what is extending this deployment, one row per extension point", s.handleExtensions),
+		tenantRoute("GET", "/access-context/providers", identity.PermAccessContextRead,
+			"the external access-context providers this server runs", s.handleAccessContextProviders),
+		// One provider's binding is under the provider rather than at
+		// `…/bindings/{provider}`, which cannot be mounted beside 0013's
+		// `…/access-context/{provider}/push`: both match
+		// `…/bindings/push`, and neither is more specific.
+		tenantRoute("GET", "/access-context/bindings", identity.PermAccessContextRead,
+			"every provider's scope binding in this tenant", s.handleBindingList),
+		tenantRoute("GET", "/access-context/providers/{provider}/binding", identity.PermAccessContextRead,
+			"one provider's scope binding", s.handleBindingGet),
+		tenantRoute("PUT", "/access-context/providers/{provider}/binding", identity.PermAccessContextWrite,
+			"create or replace a provider's scope binding", s.handleBindingPut),
+		tenantRoute("DELETE", "/access-context/providers/{provider}/binding", identity.PermAccessContextWrite,
+			"remove a provider's scope binding", s.handleBindingDelete),
+	}
+}
+
+// auditRoutes are the audit query and retention (0010, 0019).
+func (s *Server) auditRoutes() []Route {
+	return []Route{
+		tenantRoute("GET", "/audit/records", identity.PermAuditRead,
+			"records over every dimension and projection", s.handleAuditRecords),
+		tenantRoute("GET", "/audit/records/{record}", identity.PermAuditRead,
+			"one record by id, with its chain position and hash", s.handleAuditRecord),
+		tenantRoute("GET", "/audit/blocked-commands", identity.PermAuditRead,
+			"blocked commands on labelled targets, with the access that permitted them", s.handleBlockedCommands),
+		tenantRoute("GET", "/audit/drift", identity.PermAuditRead,
+			"every change the proxy made on a device", s.handleDrift),
+		tenantRoute("GET", "/audit/algorithm-policy-unmet", identity.PermAuditRead,
+			"the targets that reported an unmet algorithm policy", s.handleAlgorithmPolicyUnmet),
+		tenantRoute("GET", "/audit/negotiated", identity.PermAuditRead,
+			"the sessions that negotiated a value, ran under a floor, or under a ban", s.handleNegotiated),
+		tenantRoute("GET", "/audit/gaps", identity.PermAuditRead,
+			"what a proxy could not deliver", s.handleGaps),
+		tenantRoute("GET", "/audit/sessions/{session}/loss", identity.PermAuditRead,
+			"a session's lost records, summed per cause", s.handleSessionLoss),
+		tenantRoute("GET", "/audit/sessions/{session}/algorithms", identity.PermAuditRead,
+			"what a session negotiated and the algorithm policy in force", s.handleSessionAlgorithms),
+		tenantRoute("GET", "/audit/sessions/{session}/certificates", identity.PermAuditRead,
+			"the brokered certificates a session presented, joined to their rows", s.handleSessionCertificates),
+		tenantRoute("GET", "/audit/certificates/{serial}/records", identity.PermAuditRead,
+			"the records naming one brokered certificate", s.handleCertificateSessions),
+		tenantRoute("POST", "/audit/retention", identity.PermAuditRetain,
+			"delete a stream's oldest records, never the head, and record where verification resumes", s.handleRetention),
+		tenantRoute("POST", "/audit/captures/retention", identity.PermAuditRetain,
+			"remove old session captures' bytes, keeping their records", s.handleCaptureRetention),
 	}
 }

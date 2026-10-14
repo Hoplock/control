@@ -97,6 +97,37 @@ func (r subjectRepo) Delete(ctx context.Context, tenant Tenant, subjectID string
 
 // scanSubject reads one subject row. It exists so the two lookups cannot drift
 // in what they read or in how they report absence.
+// List returns every subject in the tenant, in id order: the identities an
+// operator administers (0019).
+func (r subjectRepo) List(ctx context.Context, tenant Tenant) ([]Subject, error) {
+	const op = "store.Subjects.List"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.s.db.Query(ctx, `
+		SELECT `+subjectColumns+`
+		FROM subjects
+		WHERE tenant = $1
+		ORDER BY subject_id`, tenant)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+	var out []Subject
+	for rows.Next() {
+		s, err := scanSubject(op, rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, wrap(op, rows.Err())
+}
+
 func scanSubject(op string, row rowScanner) (Subject, error) {
 	var s Subject
 	err := row.Scan(&s.ID, &s.Source, &s.DisplayName, &s.Principals, &s.Groups,

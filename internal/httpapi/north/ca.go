@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/credential"
+	"github.com/hoplock/control/internal/store"
 )
 
 // The certificate authority's operator surface (proxy D6a).
@@ -182,6 +183,22 @@ type certificateView struct {
 	IssuedAt    time.Time `json:"issued_at"`
 }
 
+func viewCertificate(c store.SSHCertificate) certificateView {
+	return certificateView{
+		Serial:      c.Serial,
+		KeyID:       c.KeyID,
+		CAKeyID:     c.CAKeyID,
+		Subject:     c.SubjectID,
+		SessionID:   c.SessionID,
+		Principals:  c.Principals,
+		Target:      c.Target,
+		TargetPort:  c.TargetPort,
+		ValidAfter:  c.ValidAfter,
+		ValidBefore: c.ValidBefore,
+		IssuedAt:    c.IssuedAt,
+	}
+}
+
 type certificatesResponse struct {
 	Tenant       string            `json:"tenant"`
 	Certificates []certificateView `json:"certificates"`
@@ -208,19 +225,7 @@ func (s *Server) handleCACertificates(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]certificateView, 0, len(rows))
 	for _, c := range rows {
-		out = append(out, certificateView{
-			Serial:      c.Serial,
-			KeyID:       c.KeyID,
-			CAKeyID:     c.CAKeyID,
-			Subject:     c.SubjectID,
-			SessionID:   c.SessionID,
-			Principals:  c.Principals,
-			Target:      c.Target,
-			TargetPort:  c.TargetPort,
-			ValidAfter:  c.ValidAfter,
-			ValidBefore: c.ValidBefore,
-			IssuedAt:    c.IssuedAt,
-		})
+		out = append(out, viewCertificate(c))
 	}
 	answer(w, http.StatusOK, certificatesResponse{Tenant: tenant.String(), Certificates: out})
 }
