@@ -25,9 +25,33 @@ import (
 // no session — `session_id: ""` is a record of no session on every kind
 // (Hoplock/proxy#71) — and are filed by the credential that acted instead.
 
+// The acts, by event name. They are `operator.<noun>.<verb>` so that no act can
+// collide with a name a proxy emits (`target.*`, `device.*`) and so that "every
+// administrative act in this tenant" is one prefix.
+const (
+	EventPolicyUploaded        = "operator.policy.uploaded"
+	EventPolicyActivated       = "operator.policy.activated"
+	EventTargetPut             = "operator.target.put"
+	EventTargetDeleted         = "operator.target.deleted"
+	EventTargetsRelabelled     = "operator.targets.relabelled"
+	EventSubjectPut            = "operator.subject.put"
+	EventSubjectDeleted        = "operator.subject.deleted"
+	EventRoleBound             = "operator.role.bound"
+	EventRoleUnbound           = "operator.role.unbound"
+	EventProxyApproved         = "operator.proxy.approved"
+	EventProxyWithdrawn        = "operator.proxy.withdrawn"
+	EventFleetConfigPublished  = "operator.fleet_config.published"
+	EventFleetConfigRolledBack = "operator.fleet_config.rolled_back"
+	EventRevocationPublished   = "operator.revocation.published"
+	EventAuditRetained         = "operator.audit.retained"
+)
+
+// OperatorEventPrefix is what every act's event name starts with.
+const OperatorEventPrefix = "operator."
+
 // Attribute keys an operator record carries beside the actor's.
 const (
-	// AttrOperatorAct is the act's own event name, `operator.<noun>.<verb>`.
+	// AttrBefore and AttrAfter are the versions the act moved between.
 	AttrBefore = "before"
 	AttrAfter  = "after"
 	// AttrAccepted names the findings the operator accepted on a publish:

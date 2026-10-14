@@ -217,6 +217,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"PolicyBundles.GetActive":   func() error { _, err := s.PolicyBundles().GetActive(ctx, ""); return err },
 		"PolicyBundles.Activate":    func() error { return s.PolicyBundles().Activate(ctx, "", 1) },
 		"PolicyBundles.NextVersion": func() error { _, err := s.PolicyBundles().NextVersion(ctx, ""); return err },
+		"PolicyBundles.List":        func() error { _, err := s.PolicyBundles().List(ctx, ""); return err },
 		"Decisions.Insert": func() error {
 			return s.Decisions().Insert(ctx, "", Decision{ID: "d", InputsDigest: "x"})
 		},

@@ -106,6 +106,9 @@ type PolicyBundleRepository interface {
 	Activate(ctx context.Context, tenant Tenant, version int64) error
 	// NextVersion returns the version number a new bundle should carry.
 	NextVersion(ctx context.Context, tenant Tenant) (int64, error)
+	// List returns every version, newest first: the bundle history an
+	// operator diffs and rolls back through (0019).
+	List(ctx context.Context, tenant Tenant) ([]PolicyBundle, error)
 }
 
 // DecisionRepository stores decision records (M4).

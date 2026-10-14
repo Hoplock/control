@@ -159,3 +159,8 @@ func (r *Registry) TargetKex(ctx context.Context, tenant store.Tenant) ([]KexObs
 	}
 	return out, nil
 }
+
+// TargetObservationTTL is how long a target's observation stays fresh: the one
+// window both the rung and the key-exchange observations are judged in, so the
+// publish-time report reads a stale one exactly as the decision path does.
+func (r *Registry) TargetObservationTTL() time.Duration { return r.liveness.TargetCapabilityTTL }
