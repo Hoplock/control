@@ -1812,9 +1812,14 @@ Seven obligations are easy to miss and are graded by the conformance suite:
     `target` and `username` against the stored decision before signing; the
     decision must have allowed and must name a `brokered-certificate` rung.
     A channel token bound to a proxy may cite only a decision made for that
-    proxy; an unbound one is held to its tenant. The request is
-    cross-checked, never trusted, and each refusal is a `401` through the
-    south-bound surface's third denier, `refuseToMint`.
+    proxy; an unbound one is held to its tenant. The decision must also be
+    inside the window a session may be served under it: its cache hint's TTL,
+    or none, plus `credential.DecisionSetupAllowance` (two minutes) for the
+    setup between the answer and this call. A conforming proxy never cites an
+    older one, and minting on one would hand out a fresh credential that the
+    `cache_invalidate` and `session_kill` ending the decision's reuse do not
+    reach. The request is cross-checked, never trusted, and each refusal is a
+    `401` through the south-bound surface's third denier, `refuseToMint`.
   - **Bound its life by `lifetime_seconds`, and never let it run forever.**
     The bound is an upper one: the lifetime is the shorter of the route's
     bound and the CA's own validity, so a route bound above the CA default

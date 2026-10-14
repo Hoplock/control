@@ -77,6 +77,10 @@ var testKEK = []byte("0123456789abcdef0123456789abcdef")
 func certHarness(t *testing.T, ensure bool) (*harness, *credential.CA) {
 	t.Helper()
 	h := newHarness(t)
+	// The authority signs on the real clock — a certificate's window is
+	// graded against it — so decisions are made on it too: an issuance cites
+	// a decision only inside its reuse window (credential.DecisionSetupAllowance).
+	h.clock = time.Now().UTC()
 	keys, err := extdefault.NewSoftwareKeyStore(h.store, testKEK)
 	if err != nil {
 		t.Fatalf("key store: %v", err)
@@ -405,6 +409,81 @@ func TestABoundCredentialMayCiteOnlyItsOwnProxysDecision(t *testing.T) {
 		if env.Error.Code != contract.ErrCodeDecisionMismatch {
 			t.Errorf("code = %q, want %q", env.Error.Code, contract.ErrCodeDecisionMismatch)
 		}
+	}
+}
+
+// An issuance cites a decision only while a session may be served under it: a
+// decision with no hint serves the one connection it answered, a hinted one may
+// be reused for its TTL, and either may be cited for credential.
+// DecisionSetupAllowance beyond that. An older one is a replayed id, and a
+// certificate minted on it would outlive the cache_invalidate and session_kill
+// that end the decision's reuse.
+func TestAnIssuanceCitesADecisionOnlyInsideItsWindow(t *testing.T) {
+	t.Parallel()
+	h, _ := certHarness(t, true)
+	ctx := t.Context()
+	allowance := credential.DecisionSetupAllowance
+	now := h.clock
+
+	// Uncached: the decision's own time, against the allowance alone.
+	h.clock = now.Add(-allowance + 30*time.Second)
+	recent := decisionFor(t, h, "cert-host.example.com")
+	h.clock = now.Add(-allowance - time.Minute)
+	stale := decisionFor(t, h, "cert-host.example.com")
+	h.clock = now
+
+	// Cached: a hint widens the window by its TTL, and no further.
+	hinted := func(id string, age time.Duration) string {
+		t.Helper()
+		d, err := h.store.Decisions().Get(ctx, testTenant, recent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var snap contract.AuthorizeResponse
+		if err := json.Unmarshal(d.Snapshot, &snap); err != nil {
+			t.Fatal(err)
+		}
+		snap.Cache = &contract.CacheHint{Key: "k", TTLSeconds: 300}
+		if d.Snapshot, err = json.Marshal(snap); err != nil {
+			t.Fatal(err)
+		}
+		d.ID, d.DecidedAt = id, time.Now().Add(-age)
+		if err := h.store.Decisions().Insert(ctx, testTenant, d); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	reused := hinted("dec-hinted-reused", 300*time.Second+allowance-30*time.Second)
+	expired := hinted("dec-hinted-expired", 300*time.Second+allowance+time.Minute)
+
+	for _, tc := range []struct {
+		name, decision string
+		want           int
+	}{
+		{"an uncached decision inside the allowance", recent, http.StatusOK},
+		{"an uncached decision past it", stale, http.StatusUnauthorized},
+		{"a hinted decision inside its TTL and the allowance", reused, http.StatusOK},
+		{"a hinted decision past both", expired, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line, _ := sessionKey(t)
+			res := issue(t, h, contract.CertificateRequest{
+				SessionID: "sess-" + tc.decision, DecisionID: tc.decision, Target: "cert-host.example.com",
+				Username: "netadmin", PublicKey: line,
+			})
+			if res.Code != tc.want {
+				t.Fatalf("issue = %d, want %d: %s", res.Code, tc.want, res.Body)
+			}
+			if tc.want != http.StatusUnauthorized {
+				return
+			}
+			h.requireEnvelope(t, res)
+			var env contract.ErrorResponse
+			decode(t, res, &env)
+			if env.Error.Code != contract.ErrCodeUnknownDecision {
+				t.Errorf("code = %q, want %q", env.Error.Code, contract.ErrCodeUnknownDecision)
+			}
+		})
 	}
 }
 

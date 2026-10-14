@@ -35,6 +35,21 @@ import (
 // is never to be the cache. The authorize decision stays cacheable, because its
 // entry carries only policy; a certificate is the one thing no hint may cover.
 
+// DecisionSetupAllowance is how long after its own reuse window a decision may
+// still be cited: the time between the answer and the issuance — the proxy
+// generating a key, a clock between two of this server's nodes — which is
+// seconds, held here at minutes so that no honest session meets it.
+//
+// A decision with no cache hint serves the one connection it answered, so it
+// may be cited for this long after it was made; one with a hint may be reused
+// for the hint's TTL, and cited for that plus this. A conforming proxy never
+// cites an older one (proxy PLAN §5.4: one call per session, after the route
+// is decided), so an older one is a replayed id, and a certificate minted on it
+// would be a fresh credential under a decision whose policy, grant or session
+// may since have been withdrawn — the cache_invalidate and session_kill that
+// end a decision's reuse would not end its issuance.
+const DecisionSetupAllowance = 2 * time.Minute
+
 // SessionRequest is one issuance, as the proxy asked for it.
 type SessionRequest struct {
 	// ProxyID is the proxy the caller's credential is bound to, empty for an
@@ -101,6 +116,14 @@ func unknownDecision(reason string) error {
 	}
 }
 
+func staleDecision(reason string) error {
+	return &MintRefusal{
+		Code:    contract.ErrCodeUnknownDecision,
+		Message: "the decision this issuance cites is past the window a session may be served under it",
+		Reason:  reason,
+	}
+}
+
 func decisionMismatch(reason string) error {
 	return &MintRefusal{
 		Code:    contract.ErrCodeDecisionMismatch,
@@ -138,7 +161,7 @@ func (c *CA) IssueForSession(ctx context.Context, tenant store.Tenant, req Sessi
 		return SessionCertificate{}, err
 	}
 
-	rung, decided, err := c.boundDecision(ctx, tenant, req)
+	rung, decided, err := c.boundDecision(ctx, tenant, req, c.now())
 	if err != nil {
 		return SessionCertificate{}, err
 	}
@@ -195,9 +218,9 @@ type decided struct {
 }
 
 // boundDecision reads the cited decision in the caller's tenant and
-// cross-checks the request against it. Every failure that is about the request
-// is a refusal; every failure to read is an outage.
-func (c *CA) boundDecision(ctx context.Context, tenant store.Tenant, req SessionRequest) (contract.TargetAuth, decided, error) {
+// cross-checks the request against it, at now. Every failure that is about the
+// request is a refusal; every failure to read is an outage.
+func (c *CA) boundDecision(ctx context.Context, tenant store.Tenant, req SessionRequest, now time.Time) (contract.TargetAuth, decided, error) {
 	if req.DecisionID == "" {
 		return contract.TargetAuth{}, decided{}, unknownDecision("no decision_id; this server requires one")
 	}
@@ -222,6 +245,10 @@ func (c *CA) boundDecision(ctx context.Context, tenant store.Tenant, req Session
 	if err := json.Unmarshal(d.Snapshot, &snap); err != nil {
 		return contract.TargetAuth{}, decided{}, fmt.Errorf("credential: decision %s's stored snapshot does not decode: %w", d.ID, err)
 	}
+	if window := citeWindow(snap.Cache); now.Sub(d.DecidedAt) > window {
+		return contract.TargetAuth{}, decided{}, staleDecision(fmt.Sprintf(
+			"the decision was made at %s and may be cited for %s", d.DecidedAt.UTC().Format(time.RFC3339), window))
+	}
 	var rungs []contract.TargetAuth
 	for _, r := range snap.TargetAuthLadder {
 		if r.Method == contract.TargetAuthBrokeredCertificate {
@@ -240,6 +267,16 @@ func (c *CA) boundDecision(ctx context.Context, tenant store.Tenant, req Session
 		}
 	}
 	return contract.TargetAuth{}, decided{}, decisionMismatch("account " + req.Username + " is named by no certificate rung of the decision")
+}
+
+// citeWindow is how long after it was made a decision may be cited: the reuse
+// its cache hint allowed, if it carried one, and the setup allowance.
+func citeWindow(hint *contract.CacheHint) time.Duration {
+	window := DecisionSetupAllowance
+	if hint != nil && hint.TTLSeconds > 0 {
+		window += time.Duration(hint.TTLSeconds) * time.Second
+	}
+	return window
 }
 
 // certificateOf parses an issued certificate line back.
