@@ -68,6 +68,19 @@ const (
 	// it fits, costing requests and protecting nothing the per-record
 	// bounds do not.
 	DefaultSouthMaxLogBodyBytes int64 = 4 << 20
+	// DefaultAuditMaxRecordBytes and DefaultAuditMaxCaptureBytes are what a
+	// zero `audit.max_record_bytes` and `audit.max_capture_bytes` take: the
+	// shipped audit.DefaultLimits, restated here because this package
+	// imports nothing of the server's, and held to it by a test in
+	// internal/audit. Validate needs them to know how large one record can
+	// be.
+	DefaultAuditMaxRecordBytes  = 64 << 10
+	DefaultAuditMaxCaptureBytes = 1 << 20
+	// LogRecordEnvelopeBytes is the room one record needs on a log path
+	// beside its capture and its canonical body: the request's own keys, the
+	// record's field names and its payload key. Generous by design: it only
+	// has to be more than the difference.
+	LogRecordEnvelopeBytes = 4 << 10
 	// DefaultSouthRequestTimeout bounds one south-bound request. A
 	// server-side timeout that ANSWERS is strictly better than a slow
 	// answer that looks like an outage (M5).
@@ -852,6 +865,14 @@ func (c *Config) Validate() error {
 	if err := c.Audit.validate(); err != nil {
 		return err
 	}
+	if floor := MinLogBodyBytes(c.Audit); c.South.MaxLogBodyBytes < floor {
+		return &FieldError{
+			Field: "south.max_log_body_bytes",
+			Msg: fmt.Sprintf(
+				"is %d bytes, below the %d one record this server stores can need (audit.max_capture_bytes as base64, audit.max_record_bytes, and the request around them): a batch of that one record would be refused for its size, and halving cannot cure a batch of one",
+				c.South.MaxLogBodyBytes, floor),
+		}
+	}
 	if err := c.North.validate(); err != nil {
 		return err
 	}
@@ -919,6 +940,29 @@ func (a AuditConfig) validate() error {
 	}
 
 	return nil
+}
+
+// MinLogBodyBytes is the smallest `south.max_log_body_bytes` that holds one
+// record the audit bounds let this server store: its capture as base64, its
+// canonical body, and [LogRecordEnvelopeBytes].
+//
+// The limit exists so that a body over it is a 400 the proxy cures by halving
+// the batch (PLAN §7, Hoplock/proxy#71). That is true only while every record
+// this server would store fits: a batch of one cannot be halved, so the proxy
+// sets the record aside and it is lost to this store, for a condition that was
+// never about the record. A record whose redaction shortened a value can still
+// be larger on the wire than its stored body; a capture-sized record is not
+// that record.
+func MinLogBodyBytes(a AuditConfig) int64 {
+	record, capture := a.MaxRecordBytes, a.MaxCaptureBytes
+	if record == 0 {
+		record = DefaultAuditMaxRecordBytes
+	}
+	if capture == 0 {
+		capture = DefaultAuditMaxCaptureBytes
+	}
+	encoded := 4 * ((int64(capture) + 2) / 3)
+	return encoded + int64(record) + LogRecordEnvelopeBytes
 }
 
 // validate reports the first south-bound bound that cannot be acted on.

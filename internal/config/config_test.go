@@ -573,3 +573,48 @@ func TestAccessContextSettingsNobodyCanActOnAreRefused(t *testing.T) {
 		t.Errorf("a provider configured twice = %v", err)
 	}
 }
+
+// A body over south.max_log_body_bytes is a 400 the proxy cures by halving the
+// batch, and that holds only while one record this server would store fits the
+// limit: a batch of one cannot be halved, so the proxy sets that record aside
+// for good (Hoplock/proxy#71). The two sections are configured apart, so the
+// pairing is refused at load rather than found as lost records.
+func TestALogBodyLimitBelowOneStorableRecordIsRefused(t *testing.T) {
+	// One record's room: its capture as base64, its canonical body, and the
+	// request around them.
+	floor := func(capture, record int) int {
+		return 4*((capture+2)/3) + record + 4<<10
+	}
+	body := func(capture, record, limit int) string {
+		return validYAML + fmt.Sprintf("audit: {max_capture_bytes: %d, max_record_bytes: %d}\nsouth: {max_log_body_bytes: %d}\n",
+			capture, record, limit)
+	}
+
+	for name, doc := range map[string]string{
+		"a capture larger than the default body limit": validYAML +
+			"audit: {max_capture_bytes: 8388608}\n",
+		"a limit one byte short of a record": body(3000, 1000, floor(3000, 1000)-1),
+		"a limit below the default capture":  validYAML + "south: {max_log_body_bytes: 1048576}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := config.Parse(strings.NewReader(doc))
+			var fieldErr *config.FieldError
+			if !errors.As(err, &fieldErr) || fieldErr.Field != "south.max_log_body_bytes" {
+				t.Fatalf("Parse = %v, want a FieldError naming south.max_log_body_bytes", err)
+			}
+		})
+	}
+
+	for name, doc := range map[string]string{
+		"exactly one record": body(3000, 1000, floor(3000, 1000)),
+		"the shipped bounds": validYAML,
+		"a larger capture with room for it": validYAML +
+			"audit: {max_capture_bytes: 2097152}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := config.Parse(strings.NewReader(doc)); err != nil {
+				t.Fatalf("Parse = %v, want the configuration accepted", err)
+			}
+		})
+	}
+}

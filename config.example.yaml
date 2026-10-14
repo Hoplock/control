@@ -110,7 +110,11 @@ south:
   # full default batch of a busy session's terminal output is about 2.7 MiB of
   # JSON, and a body over this limit is answered 400, which the proxy cures by
   # halving the batch — costing requests and protecting nothing the per-record
-  # bounds in `audit:` do not. Defaults to 4194304 (4 MiB).
+  # bounds in `audit:` do not. It may not be smaller than one record those
+  # bounds let this server store (`max_capture_bytes` as base64, plus
+  # `max_record_bytes` and 4 KiB): halving cannot cure a batch of one, so the
+  # proxy would set that record aside for good. A configuration below it is
+  # refused at start-up. Defaults to 4194304 (4 MiB).
   max_log_body_bytes: 4194304
 
   # How long one request may take before this server ANSWERS rather than

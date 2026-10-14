@@ -2597,7 +2597,11 @@ never a partial story.
   cures (more than `audit.max_batch_records`, or a body over
   `south.max_log_body_bytes`, 4 MiB by default — the two log paths' own
   limit, larger than `south.max_body_bytes`, because a full default batch of
-  a busy session's capture is about 2.7 MiB of JSON). Never answer it for a condition that passes. A
+  a busy session's capture is about 2.7 MiB of JSON). Halving cures a body
+  limit only while one storable record fits it, because a batch of one cannot
+  be halved, so a `south.max_log_body_bytes` below one record the `audit:`
+  bounds admit is refused at start-up (`config.MinLogBodyBytes`). Never answer
+  it for a condition that passes. A
   timeout, a store failure or overload is a `5xx`, which costs the proxy
   latency and not records. M11 already forbids answering any of them with a
   `401`.
