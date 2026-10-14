@@ -105,6 +105,49 @@ func (r decisionRepo) ListBySubject(ctx context.Context, tenant Tenant, subjectI
 	return out, wrap(op, rows.Err())
 }
 
+// ListRange returns the decisions taken in [from, to), oldest first, bounded by
+// limit. It is what a simulation replays (0019): an authoring query, never on
+// the decision path, and bounded like every other list here (M5). The boolean
+// reports that the limit cut the range short, so a replay can say it covered
+// only part of the window rather than look complete.
+func (r decisionRepo) ListRange(ctx context.Context, tenant Tenant, from, to time.Time, limit int) ([]Decision, bool, error) {
+	const op = "store.Decisions.ListRange"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, false, err
+	}
+	if limit <= 0 {
+		limit = defaultDecisionLimit
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	rows, err := r.s.db.Query(ctx, `
+		SELECT `+decisionColumns+`
+		FROM decisions
+		WHERE tenant = $1 AND decided_at >= $2 AND decided_at < $3
+		ORDER BY decided_at, decision_id
+		LIMIT $4`, tenant, from, to, limit+1)
+	if err != nil {
+		return nil, false, wrap(op, err)
+	}
+	defer rows.Close()
+	var out []Decision
+	for rows.Next() {
+		d, err := scanDecision(op, rows)
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, wrap(op, err)
+	}
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
+}
+
 // ListBySession returns the decisions taken for one SSH session, newest first.
 //
 // It is the lookup an operator actually arrives with: the proxy tells a user

@@ -123,6 +123,10 @@ type DecisionRepository interface {
 	// first. It is the lookup an operator arrives with, because a session id
 	// is what the user was told; a chained session has one record per hop.
 	ListBySession(ctx context.Context, tenant Tenant, sessionID string, limit int) ([]Decision, error)
+	// ListRange returns the decisions taken in [from, to), oldest first,
+	// bounded by limit, and whether the limit cut the range short: what a
+	// simulation replays (0019).
+	ListRange(ctx context.Context, tenant Tenant, from, to time.Time, limit int) ([]Decision, bool, error)
 	// ListByGrant returns the decisions a grant supplied, newest first,
 	// bounded by limit: "what did this grant let anybody do" (M10).
 	ListByGrant(ctx context.Context, tenant Tenant, grantID string, limit int) ([]Decision, error)
