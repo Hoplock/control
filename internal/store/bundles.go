@@ -79,29 +79,33 @@ func (r bundleRepo) Activate(ctx context.Context, tenant Tenant, version int64) 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	// One statement, for two reasons. The partial unique index is never
-	// transiently violated — the update clears the old active row and sets
-	// the new one together, and Postgres checks the index once at the end.
-	// And the `wanted` CTE makes a missing version affect no rows at all,
-	// so a caller cannot deactivate the live bundle by asking for a version
-	// that does not exist: without it, "cleared the old one and set
-	// nothing" and "there was nothing to clear" are the same row count.
-	tag, err := r.s.db.Exec(ctx, `
-		WITH wanted AS (
-			SELECT 1 FROM policy_bundles WHERE tenant = $1 AND version = $2
-		)
-		UPDATE policy_bundles
-		SET active = (version = $2)
-		WHERE tenant = $1
-		  AND (version = $2 OR active)
-		  AND EXISTS (SELECT 1 FROM wanted)`, tenant, version)
-	if err != nil {
-		return wrap(op, err)
-	}
-	if tag.RowsAffected() == 0 {
-		return notFound(op)
-	}
-	return nil
+	// TWO STATEMENTS IN ONE TRANSACTION, in this order. The partial unique
+	// index is checked row by row, not once at the end of a statement, so a
+	// single UPDATE that set the new row before clearing the old one — which
+	// is what a rollback to an older version does, rows being visited in
+	// their physical order — violates it. The wanted row is locked first, so
+	// a version that does not exist clears nothing: a caller cannot
+	// deactivate the live bundle by asking for one that is not there.
+	return r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
+		var found int
+		err := q.QueryRow(ctx, `
+			SELECT 1 FROM policy_bundles WHERE tenant = $1 AND version = $2 FOR UPDATE`,
+			tenant, version).Scan(&found)
+		if err != nil {
+			return wrap(op, err)
+		}
+		if _, err := q.Exec(ctx, `
+			UPDATE policy_bundles SET active = false
+			WHERE tenant = $1 AND active AND version <> $2`, tenant, version); err != nil {
+			return wrap(op, err)
+		}
+		if _, err := q.Exec(ctx, `
+			UPDATE policy_bundles SET active = true
+			WHERE tenant = $1 AND version = $2`, tenant, version); err != nil {
+			return wrap(op, err)
+		}
+		return nil
+	})
 }
 
 func (r bundleRepo) NextVersion(ctx context.Context, tenant Tenant) (int64, error) {
@@ -121,6 +125,35 @@ func (r bundleRepo) NextVersion(ctx context.Context, tenant Tenant) (int64, erro
 		return 0, wrap(op, err)
 	}
 	return next, nil
+}
+
+func (r bundleRepo) List(ctx context.Context, tenant Tenant) ([]PolicyBundle, error) {
+	const op = "store.PolicyBundles.List"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.s.db.Query(ctx, `
+		SELECT `+bundleColumns+`
+		FROM policy_bundles
+		WHERE tenant = $1
+		ORDER BY version DESC`, tenant)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+	var out []PolicyBundle
+	for rows.Next() {
+		b, err := scanBundle(op, rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, wrap(op, rows.Err())
 }
 
 func scanBundle(op string, row rowScanner) (PolicyBundle, error) {

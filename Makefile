@@ -51,9 +51,10 @@ APIDIFF_VERSION ?= v0.0.0-20261007192929-f45ad48fbe92
 
 all: build
 
-## build: compile the server into bin/. VERSION=... outside a git checkout.
+## build: compile the server and policyctl into bin/. VERSION=... outside a git checkout.
 build:
 	$(GO) build $(if $(LDFLAGS),-ldflags '$(LDFLAGS)') -o $(BIN_DIR)/$(BINARY) ./cmd/hoplock-control
+	$(GO) build -o $(BIN_DIR)/policyctl ./cmd/policyctl
 
 ## test: run the unit tests with the race detector.
 test:

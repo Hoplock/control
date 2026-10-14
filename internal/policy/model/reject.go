@@ -15,7 +15,7 @@ import (
 // than only prose (PLAN M21).
 //
 // A policy author reads the English message, `policyctl` and CI print it, and
-// the console (0021) renders the Code in the operator's locale. Prose alone
+// the console (0025) renders the Code in the operator's locale. Prose alone
 // cannot be localised, and this package is pure — it has no locale and must
 // never acquire one. So every rejection carries a stable Code, the typed
 // Params that filled its message in, and the rule and line it is about.
@@ -77,6 +77,9 @@ const (
 	CodeRouteRestrictedCmdInvalid  Code = "route.restricted_command_invalid"
 	CodeRouteDeadlineInvalid       Code = "route.session_deadline_invalid"
 	CodeRouteConcurrencyInvalid    Code = "route.concurrency_invalid"
+	CodeRouteFloorProfileConflict  Code = "route.algorithm_floor_profile_conflict"
+	CodeRouteBanIdentifierEmpty    Code = "route.algorithm_ban_empty"
+	CodeRouteBanIdentifierRepeated Code = "route.algorithm_ban_repeated"
 )
 
 // Cache-scope codes (PLAN §5.4).
@@ -177,6 +180,9 @@ var messages = map[Code]string{
 	CodeRouteRestrictedCmdInvalid:  "restricted-exec command {index} ({executable}) is not usable: {detail}",
 	CodeRouteDeadlineInvalid:       "session deadline {duration} is not a positive duration; use a form such as `8h` or `45m`",
 	CodeRouteConcurrencyInvalid:    "concurrency cap {field} is negative; use a positive cap, or 0 for uncapped",
+	CodeRouteFloorProfileConflict:  "the route sets algorithm_floor {floor} with algorithm_profile {profile}, which widens the key-exchange axis the floor narrows; the proxy refuses the pair because the leg could never connect — drop the floor, or use `default` or `legacy-rsa-sha1`",
+	CodeRouteBanIdentifierEmpty:    "algorithm_bans.{axis} entry {index} is empty; name the algorithm exactly as SSH spells it",
+	CodeRouteBanIdentifierRepeated: "algorithm_bans.{axis} lists {name} twice; list each identifier once — the record shows a ban exactly as it was issued",
 
 	CodeCacheKeyEmpty:            "the rule's cache hint names no key components; a hint with no key is not cacheable — list the components the key is derived from, or remove the hint",
 	CodeCacheKeyNotIdentityBound: "the rule's cache key does not include `subject`; a key shared across identities serves one user another user's policy",
@@ -206,7 +212,7 @@ var messages = map[Code]string{
 	CodeEnforcementDestsRequired:         "enforcement.reach is `account-egress-restricted` but no `permitted_destinations` are named; the destination list is what the restriction is made of",
 	CodeEnforcementAttestationMissing:    "enforcement.{axis} is `platform-attested` but carries no attestation; an attested rung is a claim this system does not verify, so it must name who asserts it (`asserted_by`) and the evidence (`reference`)",
 	CodeEnforcementAttestationUnexpected: "an attestation is carried but no axis is `platform-attested` (execution is {execution}, reach is {reach}); an applied rung is configured by the proxy and has nobody to attribute",
-	CodeEnforcementAppliedUnprovisioned:  "enforcement.{axis} is {rung}, which the proxy applies to an account it administers, but every ladder entry is `brokered-key` or `static-key`; the proxy refuses that response outright — add an `ephemeral-user` or `ephemeral-account` entry, or use `platform-attested` if the target already enforces it",
+	CodeEnforcementAppliedUnprovisioned:  "enforcement.{axis} is {rung}, which the proxy applies to an account it administers, but no ladder entry creates the account (every one is `brokered-key`, `brokered-certificate` or `static-key`); the proxy refuses that response outright — add an `ephemeral-user` or `ephemeral-account` entry, or use `platform-attested` if the target already enforces it",
 
 	CodeScopeNameInvalid:        "scope {scope} is not a usable name; a scope name is the text a grant carries and a rule matches, so it may not be blank, padded, longer than 128 characters or contain control characters",
 	CodeScopePrivilegedFailOpen: "scope {scope} is privileged and says `unanswered: open`; a privileged window never counts on an unconfirmed push, so use `closed` or `outage`, or omit the key",

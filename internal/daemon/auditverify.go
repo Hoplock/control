@@ -92,8 +92,17 @@ func reportVerification(stdout io.Writer, result audit.Result) error {
 
 	for _, s := range result.Streams {
 		if s.Break == nil {
-			if _, err := fmt.Fprintf(stdout, "tenant %s stream %s: OK, %d records, head %s\n",
-				result.Tenant, s.Stream, s.Records, s.Head); err != nil {
+			// A stream a retention pass trimmed says so, and from where: an
+			// OK that hid the retained prefix would read as a whole history.
+			retained := ""
+			if s.RetainedThrough > 0 {
+				retained = fmt.Sprintf(", retained through %d", s.RetainedThrough)
+			}
+			if s.CapturesRetained > 0 {
+				retained += fmt.Sprintf(", %d capture(s) removed by retention", s.CapturesRetained)
+			}
+			if _, err := fmt.Fprintf(stdout, "tenant %s stream %s: OK, %d records, head %s%s\n",
+				result.Tenant, s.Stream, s.Records, s.Head, retained); err != nil {
 				return err
 			}
 			continue

@@ -47,10 +47,14 @@ import (
 // would be the more comfortable documentation and the less useful one.
 //
 // WHAT TRAVELS. The certificate and nothing else. The proxy generates the key
-// pair; this server never sees, stores or transmits a private key. That is why
-// the issuance API takes a public key rather than returning a key pair, and it
-// is the property that makes the upstream contract change additive rather than
-// dangerous.
+// pair; this server never sees, stores or transmits a private key. It reaches a
+// proxy through the contract's `brokered-certificate` method (Hoplock/proxy#68):
+// the route's ladder entry carries policy only (ladder.go), and the proxy asks
+// POST /v1/credentials/certificate for one certificate per session, over the
+// public half of a key it generated for that session — which is why [CA.Issue]
+// takes a public key rather than returning a key pair. Every call signs under a
+// new serial and writes its own row; nothing here answers an issuance from
+// memory, by decision, by session or by key.
 
 // Defaults for the authority.
 const (
@@ -450,6 +454,12 @@ type IssueRequest struct {
 	// ValidFor is how long it lives. Zero takes the CA's default; anything
 	// above the ceiling is clamped down, never up.
 	ValidFor time.Duration
+	// UpperBound, when positive, SHORTENS the validity and never lengthens
+	// it: a route's `lifetime_seconds` on a `brokered-certificate` entry is
+	// an upper bound, not a request (Hoplock/proxy#68). Passing such a bound
+	// as ValidFor instead would lengthen every certificate whose bound
+	// exceeds the default, up to the ceiling.
+	UpperBound time.Duration
 }
 
 // Issued is a signed certificate.
@@ -515,6 +525,9 @@ func (c *CA) Issue(ctx context.Context, tenant store.Tenant, req IssueRequest) (
 		validity = c.validity
 	}
 	validity = min(validity, c.maxValidity)
+	if req.UpperBound > 0 {
+		validity = min(validity, req.UpperBound)
+	}
 
 	now := c.now()
 	// A minute of backdating absorbs clock skew between this server and the

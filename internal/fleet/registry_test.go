@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,16 +32,31 @@ func (s subs) LiveSubscriptions(context.Context, store.Tenant) (map[string]time.
 	return s, nil
 }
 
-// recordingPublisher stands in for the event-stream delivery 0009 implements,
-// and records what it was asked to deliver.
+// recordingPublisher stands in for the event stream, and records what it was
+// asked to announce. fail makes that many announcements fail first.
 type recordingPublisher struct {
-	calls []string
+	mu     sync.Mutex
+	calls  []string
+	events []contract.ConfigChangedEvent
+	fail   int
 }
 
-func (p *recordingPublisher) PublishConfigChange(_ context.Context, _ store.Tenant, proxyID string, version int64, _ string) error {
+func (p *recordingPublisher) PublishConfigChange(_ context.Context, _ store.Tenant, proxyID string, ev contract.ConfigChangedEvent) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.fail > 0 {
+		p.fail--
+		return errors.New("the stream is down")
+	}
 	p.calls = append(p.calls, proxyID)
-	_ = version
+	p.events = append(p.events, ev)
 	return nil
+}
+
+func (p *recordingPublisher) announced() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.calls...)
 }
 
 func newRegistry(t *testing.T, opts ...fleet.Option) (*store.Store, *fleet.Registry, *clock) {

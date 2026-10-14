@@ -98,6 +98,11 @@ type externalView struct {
 	Reference   string     `json:"reference,omitempty"`
 	WindowStart *time.Time `json:"window_start,omitempty"`
 	WindowEnd   *time.Time `json:"window_end,omitempty"`
+	// Mode is how a pushed window arrived — `push`, or `push-probe` when it
+	// counts only while its provider's probe confirms it — and AssertionID
+	// the push's own id. Both are empty for a grant no push produced (0019).
+	Mode        string `json:"mode,omitempty"`
+	AssertionID string `json:"assertion_id,omitempty"`
 }
 
 // grantView is a grant as the API renders it.
@@ -663,6 +668,7 @@ func viewGrant(tenant store.Tenant, g store.Grant, now time.Time) grantView {
 		v.External = &externalView{
 			System: e.System, Reference: g.ExternalRef,
 			WindowStart: timePtr(e.WindowStart), WindowEnd: timePtr(e.WindowEnd),
+			Mode: string(e.Mode), AssertionID: e.AssertionID,
 		}
 	}
 	if !g.RevokedAt.IsZero() {

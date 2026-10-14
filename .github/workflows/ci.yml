@@ -216,8 +216,12 @@ jobs:
         with:
           go-version: stable
 
+      # The mock's certificate authority signs with a key generated here, so
+      # no private key is ever checked in (mock-fixtures.yaml names the path).
       - name: Build and start the mock control server
         run: |
+          mkdir -p .mock-ca
+          ssh-keygen -q -t ed25519 -N '' -f .mock-ca/ca_ed25519
           go -C .proxy build -o "$GITHUB_WORKSPACE/mock-control" ./cmd/mock-control
           ./mock-control -listen 127.0.0.1:8080 \
             -fixtures cmd/pdpconform/testdata/mock-fixtures.yaml &
@@ -287,25 +291,14 @@ jobs:
             dsn: postgres://postgres:postgres@127.0.0.1:5432/hoplock?sslmode=disable
           log:
             level: info
-          # The local publish path the suite drives, on its OWN port. Nothing
-          # on `/v1` publishes an event — the contract says so, because an
-          # event is an operator action and no proxy calls one — so gap
-          # recovery is gradeable only through a path the implementation
-          # exposes outside it (phase 0009). It is off unless configured, and
-          # configuring it is what this leg does.
-          events:
-            publish_listener: 127.0.0.1:8082
-            publish_token: pdpconform-dev-publish-token
-          # The record read-back path the suite reads the priority ack
-          # through, on its OWN port again. Nothing on `/v1` reads a record
-          # back — the contract says so, because a proxy writes logs and never
-          # queries them — so the durability guarantee the proxy acts on is
-          # observable only through a path the implementation exposes outside
-          # it (phase 0010). Deleted by 0019, which repoints the suite at the
-          # north-bound audit query route.
-          audit:
-            read_listener: 127.0.0.1:8083
-            read_token: pdpconform-dev-audit-token
+          # The tenant's certificate authority, for the brokered-certificate
+          # cases: its private half is encrypted under a key-encryption key
+          # this job generates and hands the server through the environment.
+          credential:
+            key_encryption_key_env: HOPLOCK_KEK
+          # No debug listeners: since 0019 the suite publishes events and
+          # reads records back over the north-bound API (127.0.0.1:8081),
+          # under scoped API tokens control-seed.yaml seeds.
           YAML
 
       # Migrations are an explicit command and never run on boot (PLAN §8), so
@@ -313,10 +306,10 @@ jobs:
       - name: Apply migrations
         run: go run ./cmd/hoplock-control migrate --config ci-config.yaml
 
-      # The fixtures the expectation file describes. There is no north-bound
-      # API yet (0019), so `seed` is how a server is configured to serve
-      # anything at all — see internal/daemon/seed.go for why that is not a
-      # back door.
+      # The fixtures the expectation file describes, including the scoped
+      # north-bound API tokens the suite publishes and reads through. `seed`
+      # is the bootstrap path — the API cannot mint its own first credential —
+      # see internal/daemon/seed.go for why that is not a back door.
       - name: Seed the fixtures the suite expects
         run: |
           go run ./cmd/hoplock-control seed \
@@ -326,7 +319,8 @@ jobs:
       - name: Start the server
         run: |
           go build -o hoplock-control ./cmd/hoplock-control
-          ./hoplock-control --config ci-config.yaml > server.log 2>&1 &
+          HOPLOCK_KEK="$(head -c 32 /dev/urandom | base64)" \
+            ./hoplock-control --config ci-config.yaml > server.log 2>&1 &
           up=0
           for _ in $(seq 1 60); do
             # A 401 is the listener answering: every route is behind the proxy
@@ -360,7 +354,7 @@ jobs:
             BASE_URL=http://127.0.0.1:8080 \
             TOKEN=default.pdpconform-dev-secret \
             EXPECT=cmd/pdpconform/testdata/control-expectations.yaml \
-            CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid,logs,revocation'
+            CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid,logs,revocation,fleet,brokered,algorithm'
 
       # The server's own log, so a failure above can be read against what it
       # thought it was doing.

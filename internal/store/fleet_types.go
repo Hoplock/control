@@ -159,15 +159,48 @@ type ProxyConfigState struct {
 	DesiredHash     string
 	DesiredDocument json.RawMessage
 	DesiredAt       time.Time
-	// RunningVersion is what the proxy reported. Zero means it never has.
+	// RunningVersion is the running document's version as this server
+	// parsed it from the report. Zero means the proxy never reported, runs
+	// on its bootstrap file, or reported a version that is not one of this
+	// server's. RunningHash is the bare digest, empty in the same cases.
 	RunningVersion int64
 	RunningHash    string
 	ReportedAt     time.Time
+	// Report is the last substantive report, as it arrived (proxy D18).
+	Report ConfigReport
+	// AnnouncedHash is the composed document this server last announced
+	// with a `config_changed` the stream took; behind DesiredHash means an
+	// announcement is owed.
+	AnnouncedHash string
+	AnnouncedAt   time.Time
+}
+
+// ConfigReport is what a proxy last reported about its configuration, the
+// wire strings kept as they arrived.
+type ConfigReport struct {
+	RunningVersion  string
+	RunningHash     string
+	DesiredVersion  string
+	DesiredHash     string
+	State           string
+	RestartRequired []string
+	LastError       string
+	// ReportedAt is the proxy's own: when it reached this state.
+	ReportedAt time.Time
+	// LastHeardAt is when this server last received any report.
+	LastHeardAt time.Time
 }
 
 // Drifted reports whether the proxy is running something other than what it
-// was told to run.
-func (s ProxyConfigState) Drifted() bool { return s.DesiredVersion != s.RunningVersion }
+// was told to run. A proxy is caught up only when it reports `applied` and its
+// running document is the one desired: `pending_restart` holds the new document
+// and has not finished, and a version this server cannot parse is drift.
+func (s ProxyConfigState) Drifted() bool {
+	if s.DesiredVersion == 0 {
+		return false
+	}
+	return s.Report.State != "applied" || s.RunningHash != s.DesiredHash || s.RunningVersion != s.DesiredVersion
+}
 
 // TargetCapabilityRecord is what one TARGET can take, as a proxy found it by
 // probing (M17).

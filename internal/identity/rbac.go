@@ -77,8 +77,25 @@ const (
 	// one.
 	PermCARotate Permission = "ca:rotate"
 
+	// PermTargetWrite is creating, editing, relabelling and removing
+	// targets. A label is a policy input, so editing one changes decisions:
+	// it is held by the roles that own the estate (fleet-admin) and its
+	// policy (policy-author), and a relabel is diffable and simulable before
+	// it is applied (0019). Reading targets is fleet:read.
+	PermTargetWrite Permission = "target:write"
+
 	// PermAuditRead is reading the audit store (M8).
 	PermAuditRead Permission = "audit:read"
+	// PermAuditRetain is running a retention pass: deleting a stream's oldest
+	// records, or the bytes of old session captures (0019, PLAN §7). It is
+	// the admin's alone — the one permission that removes evidence — and the
+	// pass is itself an audit record.
+	PermAuditRetain Permission = "audit:retain"
+	// PermSessionRevoke is publishing an operator action on the revocation
+	// stream (0009): ending sessions, invalidating cached decisions, a
+	// resync, withdrawing a host-key decision. The grant desk holds it —
+	// it already ends sessions by revoking grants — and the admin.
+	PermSessionRevoke Permission = "session:revoke"
 	// PermDecisionRead is resolving a decision or session id into the whole
 	// story (M4).
 	PermDecisionRead Permission = "decision:read"
@@ -87,6 +104,18 @@ const (
 	// integration role can do, and what it can reach is decided again per
 	// push: the integration's scope binding must name this very credential.
 	PermAccessContextPush Permission = "access-context:push"
+	// PermAccessContextRead is reading the external access-context scope
+	// bindings and the providers they may name (M16, 0019). A binding says
+	// who may open what, so every role that reads the tenant reads it.
+	PermAccessContextRead Permission = "access-context:read"
+	// PermAccessContextWrite is writing a binding. A binding is a standing
+	// pre-approval for an external system to open access, which is larger
+	// than grant:write, so it is the admin's alone (PLAN §2).
+	PermAccessContextWrite Permission = "access-context:write"
+	// PermExtensionRead is reading which extensions this deployment runs
+	// (M15). It is read-only because there is nothing to change: the
+	// registry is sealed before the server starts.
+	PermExtensionRead Permission = "extension:read"
 
 	// PermReportWrite is changing what reports are produced: their
 	// schedules, their recipients and the campaigns they belong to. Control
@@ -107,11 +136,12 @@ const (
 var AllPermissions = []Permission{
 	PermPolicyRead, PermPolicyWrite, PermPolicyPublish,
 	PermGrantRead, PermGrantWrite, PermGrantApprove, PermGrantRequest,
-	PermFleetRead, PermFleetWrite,
+	PermFleetRead, PermFleetWrite, PermTargetWrite,
 	PermIdentityRead, PermIdentityWrite,
 	PermCARead, PermCARotate,
-	PermAuditRead, PermDecisionRead,
-	PermAccessContextPush,
+	PermAuditRead, PermAuditRetain, PermDecisionRead, PermSessionRevoke,
+	PermAccessContextPush, PermAccessContextRead, PermAccessContextWrite,
+	PermExtensionRead,
 	PermReportWrite, PermLicenseRead,
 }
 
@@ -174,6 +204,7 @@ var AllRoles = []Role{RoleIntegration, RoleRequester, RoleAuditor, RolePolicyAut
 var readOnly = []Permission{
 	PermPolicyRead, PermGrantRead, PermFleetRead,
 	PermIdentityRead, PermCARead, PermAuditRead, PermDecisionRead,
+	PermAccessContextRead, PermExtensionRead,
 	PermLicenseRead,
 }
 
@@ -183,9 +214,9 @@ var rolePermissions = map[Role][]Permission{
 	RoleIntegration:  {PermAccessContextPush},
 	RoleRequester:    {PermGrantRequest},
 	RoleAuditor:      readOnly,
-	RolePolicyAuthor: append(slices.Clone(readOnly), PermPolicyWrite, PermPolicyPublish),
-	RoleGrantAdmin:   append(slices.Clone(readOnly), PermGrantWrite, PermGrantApprove),
-	RoleFleetAdmin:   append(slices.Clone(readOnly), PermFleetWrite),
+	RolePolicyAuthor: append(slices.Clone(readOnly), PermPolicyWrite, PermPolicyPublish, PermTargetWrite),
+	RoleGrantAdmin:   append(slices.Clone(readOnly), PermGrantWrite, PermGrantApprove, PermSessionRevoke),
+	RoleFleetAdmin:   append(slices.Clone(readOnly), PermFleetWrite, PermTargetWrite),
 	RoleAdmin:        AllPermissions,
 }
 

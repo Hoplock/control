@@ -309,10 +309,39 @@ func (s *Service) serve(
 	rec.expl.RouteType = string(rt.routeType)
 	rec.expl.NextProxyID = rt.nextProxyID
 
-	resp := assembleSnapshot(snap, rt, rec.id)
+	resp, err := assembleSnapshot(snap, rt, rec.id)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	if err := checkServeable(resp, snap.Rule); err != nil {
 		return nil, nil, err
+	}
+
+	// The version gate runs over the assembled response, because the
+	// question it answers is about what is being sent rather than about what
+	// this build can express — and BEFORE the capability checks, because a
+	// proxy that cannot read a field has made no declaration about it worth
+	// checking: a vocabulary-5 proxy asked for a floor is refused naming both
+	// numbers, not for a level it never knew to declare. Nothing after it
+	// changes which tiers the response needs; the cache hint rides on every
+	// vocabulary.
+	if err := checkVersion(resp, declaredVersion(req)); err != nil {
+		return nil, nil, err
+	}
+
+	// What the asking proxy's build declares about algorithms is kept per
+	// proxy for the publish-time report and the fleet view (Hoplock/proxy#72).
+	// One write per build change at most, and a failure costs this answer
+	// nothing: the declaration on this request is the authority judged
+	// below, and the stored copy is a readiness signal.
+	if err := s.fleet.RecordAlgorithmDeclaration(ctx, tenant, req.Conn.ProxyID, req.Capabilities); err != nil {
+		s.log.WarnContext(ctx, "a proxy's algorithm declaration could not be recorded",
+			"event", "algorithm_declaration_unrecorded",
+			"proxy_id", req.Conn.ProxyID,
+			"tenant", tenant.String(),
+			"error", err.Error(),
+		)
 	}
 	if err := s.checkCapabilities(ctx, tenant, req, resp, g); err != nil {
 		return nil, nil, err
@@ -321,13 +350,6 @@ func (s *Service) serve(
 	// The cache hint rides on a response that is otherwise complete, so
 	// that a hint can never be the thing that makes an answer servable.
 	s.attachCacheHint(ctx, tenant, req, snap, resp, rec)
-
-	// The version gate runs LAST, over the assembled response, because the
-	// question it answers is about what is being sent rather than about
-	// what this build can express.
-	if err := checkVersion(resp, declaredVersion(req)); err != nil {
-		return nil, nil, err
-	}
 	return resp, nil, nil
 }
 

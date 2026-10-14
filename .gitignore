@@ -27,3 +27,6 @@ config.local.yaml
 .idea/
 .vscode/
 *.swp
+
+# The mock certificate authority key the conformance run generates (never checked in).
+.mock-ca/

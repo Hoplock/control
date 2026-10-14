@@ -36,6 +36,8 @@ type SubjectRepository interface {
 	Upsert(ctx context.Context, tenant Tenant, s Subject) error
 	// Delete removes a subject. Absent is ErrNotFound.
 	Delete(ctx context.Context, tenant Tenant, subjectID string) error
+	// List returns every subject in the tenant, in id order.
+	List(ctx context.Context, tenant Tenant) ([]Subject, error)
 }
 
 // TargetRepository stores what is being reached.
@@ -106,6 +108,9 @@ type PolicyBundleRepository interface {
 	Activate(ctx context.Context, tenant Tenant, version int64) error
 	// NextVersion returns the version number a new bundle should carry.
 	NextVersion(ctx context.Context, tenant Tenant) (int64, error)
+	// List returns every version, newest first: the bundle history an
+	// operator diffs and rolls back through (0019).
+	List(ctx context.Context, tenant Tenant) ([]PolicyBundle, error)
 }
 
 // DecisionRepository stores decision records (M4).
@@ -123,6 +128,10 @@ type DecisionRepository interface {
 	// first. It is the lookup an operator arrives with, because a session id
 	// is what the user was told; a chained session has one record per hop.
 	ListBySession(ctx context.Context, tenant Tenant, sessionID string, limit int) ([]Decision, error)
+	// ListRange returns the decisions taken in [from, to), oldest first,
+	// bounded by limit, and whether the limit cut the range short: what a
+	// simulation replays (0019).
+	ListRange(ctx context.Context, tenant Tenant, from, to time.Time, limit int) ([]Decision, bool, error)
 	// ListByGrant returns the decisions a grant supplied, newest first,
 	// bounded by limit: "what did this grant let anybody do" (M10).
 	ListByGrant(ctx context.Context, tenant Tenant, grantID string, limit int) ([]Decision, error)
@@ -166,11 +175,28 @@ type AuditRepository interface {
 	// BlockedCommands is the showcase join: blocked commands on targets
 	// carrying a label, resolved to the decision that permitted the access.
 	BlockedCommands(ctx context.Context, tenant Tenant, q BlockedCommandQuery) ([]BlockedCommand, error)
+	// GapLoss sums one session's `logging.gap` reports per cause
+	// (Hoplock/proxy#71). An empty session id is refused: it is no session.
+	GapLoss(ctx context.Context, tenant Tenant, sessionID string) ([]GapLoss, error)
 	// PutCapture stores a session capture's bytes; Capture reads them back.
 	// They are a separate table because a pty stream is large and no query
 	// over the records wants to drag it along.
+	// A capture a retention pass emptied is ErrCaptureRetained.
 	PutCapture(ctx context.Context, tenant Tenant, recordID string, bytes []byte) error
 	Capture(ctx context.Context, tenant Tenant, recordID string) ([]byte, error)
+	// Retention returns where a stream's chain starts after retention;
+	// ErrNotFound means sequence 1 (0019, PLAN §7).
+	Retention(ctx context.Context, tenant Tenant, stream string) (AuditRetention, error)
+	// RetainPrefix deletes a stream's records through a sequence — a
+	// contiguous prefix, never the head — and records where the chain now
+	// starts, under the stream's append lock.
+	RetainPrefix(ctx context.Context, tenant Tenant, stream string, throughSeq int64, by string) (AuditRetention, int64, error)
+	// ThroughSeqBefore answers the sequence to retain through to drop what
+	// was received before an instant; zero means nothing.
+	ThroughSeqBefore(ctx context.Context, tenant Tenant, stream string, before time.Time) (int64, error)
+	// RetainCaptures empties the captures of records recorded before an
+	// instant, keeping the records and marking the bytes as retained.
+	RetainCaptures(ctx context.Context, tenant Tenant, recordedBefore time.Time) (int64, error)
 }
 
 // GrantRepository stores JIT access grants (M10).
@@ -481,9 +507,17 @@ type ProxyConfigRepository interface {
 	// read off it, and silent drift across a fleet is indistinguishable from
 	// a broken rollout.
 	ListStates(ctx context.Context, tenant Tenant) ([]ProxyConfigState, error)
-	// ReportRunning records what a proxy says it is running. Absent is
-	// ErrNotFound.
-	ReportRunning(ctx context.Context, tenant Tenant, proxyID string, version int64, hash string, at time.Time) error
+	// LockState takes one proxy's state row for the rest of a transaction,
+	// creating it empty when absent. Outside a transaction it is refused.
+	LockState(ctx context.Context, tenant Tenant, proxyID string) (ProxyConfigState, error)
+	// PutReport records a substantive configuration report (proxy D18).
+	// Absent is ErrNotFound.
+	PutReport(ctx context.Context, tenant Tenant, proxyID string, rep ConfigReport, runningVersion int64, runningHash string) error
+	// TouchReport records only that a report was heard.
+	TouchReport(ctx context.Context, tenant Tenant, proxyID string, at time.Time) error
+	// MarkAnnounced records that the stream took a `config_changed` naming
+	// a hash, or a report confirmed it; never for a hash no longer desired.
+	MarkAnnounced(ctx context.Context, tenant Tenant, proxyID, hash string, at time.Time) error
 }
 
 // TargetCapabilityRepository stores what one TARGET can take (M17).

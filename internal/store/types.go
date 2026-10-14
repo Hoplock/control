@@ -127,7 +127,7 @@ type Proxy struct {
 	// proxy D13 makes first-class. 0006 owns the shape.
 	DeclaredCapabilities json.RawMessage
 	// SessionCount, LastError and LastErrorAt are health, as an operator
-	// needs them during an incident (0021 renders them).
+	// needs them during an incident (0025 renders them).
 	SessionCount int
 	LastError    string
 	LastErrorAt  time.Time
@@ -257,14 +257,34 @@ type AuditRecord struct {
 	DeviceFields map[string]string
 	// Enforcement is the rung IN FORCE, never the rung policy asked for.
 	Enforcement EnforcementFacts
-	// TargetAuthMethod is the ladder entry that was satisfied, and
-	// TargetAuthRung its 0-based index into the ladder. Nil means the
-	// record stated no rung, which is not the same fact as rung 0.
-	TargetAuthMethod string
-	TargetAuthRung   *int32
-	// AlgorithmProfile is the profile the proxy→target leg ran under.
-	// Anything but `default` is a deliberate weakening.
+	// CredentialMethod is the ladder entry that was satisfied, and
+	// CredentialRung its position in the ladder COUNTING FROM 1, exactly as
+	// the proxy recorded it (`credential_method`, `credential_rung`). Nil
+	// means the record stated no rung. The first choice is rung 1; a
+	// degraded credential is one above it.
+	CredentialMethod string
+	CredentialRung   *int32
+	// CertificateSerial is the brokered certificate the session presented
+	// (`credential_certificate_serial`), as its canonical decimal; empty
+	// when none. It joins to ssh_certificates.serial.
+	CertificateSerial string
+	// AlgorithmProfile is the profile the proxy→target leg ran under, as
+	// stamped on the record. The proxy stamps `default` too, so EMPTY MEANS
+	// NOT A TARGET-LEG RECORD — never `default`, and never a weakening.
 	AlgorithmProfile string
+	// AlgorithmFloor is the floor in force; empty means none, never a floor.
+	AlgorithmFloor string
+	// AlgorithmBans are the bans in force as `axis:name`, and
+	// AlgorithmBansUnmatched the banned names no build implemented, as the
+	// proxy recorded them.
+	AlgorithmBans          []string
+	AlgorithmBansUnmatched []string
+	// Negotiated is what the target leg negotiated, as `axis:value`.
+	Negotiated []string
+	// Device is the drift feed's projection of a `device.config.change`.
+	Device DeviceChangeFacts
+	// Gap is the projection of a `logging.gap` record.
+	Gap GapFacts
 	// Grant is the external grant context the session ran under (M16).
 	Grant GrantContextFacts
 	// CaptureBytes and CaptureSHA256 describe the session capture stored in
@@ -276,6 +296,31 @@ type AuditRecord struct {
 	// buffering, which is exactly the gap an auditor wants to see.
 	RecordedAt time.Time
 	ReceivedAt time.Time
+}
+
+// DeviceChangeFacts is what a `device.config.change` record says changed on a
+// device (Hoplock/proxy#66). ObjectKind empty means an administrator.
+type DeviceChangeFacts struct {
+	Op         string
+	Account    string
+	ObjectKind string
+}
+
+// GapFacts is what a `logging.gap` record says a proxy could not deliver
+// (Hoplock/proxy#71). Each field is nil or empty when the record did not carry
+// it or carried something that does not parse: a gap record is never refused
+// over its gap keys.
+type GapFacts struct {
+	// Cause is `evicted` or `refused`; empty on every other record.
+	Cause    string
+	Records  *int64
+	Bytes    *int64
+	FirstAt  *time.Time
+	LastAt   *time.Time
+	Kinds    []string
+	Critical *int64
+	// RecordIDs are the refused records' ids, at most 64.
+	RecordIDs []string
 }
 
 // EnforcementFacts is the enforcement rung a session actually ran on.

@@ -114,7 +114,7 @@ func runEventChecks(t *testing.T, f *fakeControl, fallbackSeconds int) map[strin
 	e := &Expectations{}
 	e.Events.ProxyID = "proxy-1"
 	e.Events.HeartbeatIntervalSeconds = fallbackSeconds
-	e.Events.PublishURL = srv.URL + "/debug/revoke"
+	e.Events.PublishURL = srv.URL + "/api/v1/tenants/default/revocations"
 
 	s := NewSuite(srv.URL, "", e, 5*time.Second)
 	s.checkHeartbeats()

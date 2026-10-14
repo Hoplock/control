@@ -19,6 +19,7 @@ import (
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/extdefault"
+	"github.com/hoplock/control/internal/policy/model"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -400,6 +401,36 @@ func TestARequestedLifetimeIsClampedDownAndNeverUp(t *testing.T) {
 	}
 }
 
+// A route's lifetime_seconds is an UPPER BOUND (Hoplock/proxy#68): it shortens
+// the CA's own validity and never lengthens it — including when the bound is
+// above the default and below the ceiling, the case passing it as ValidFor
+// would get wrong.
+func TestAnUpperBoundShortensAndNeverLengthens(t *testing.T) {
+	f := newCA(t, credential.WithValidity(5*time.Minute), credential.WithMaxValidity(time.Hour))
+	ctx := context.Background()
+	if _, err := f.ca.Ensure(ctx, "tenant-a"); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	public, _ := proxyKey(t)
+	for _, c := range []struct{ bound, want time.Duration }{
+		{2 * time.Minute, 2 * time.Minute},
+		{30 * time.Minute, 5 * time.Minute},
+		{0, 5 * time.Minute},
+	} {
+		bound, want := c.bound, c.want
+		issued, err := f.ca.Issue(ctx, "tenant-a", credential.IssueRequest{
+			SubjectID: "alice", Principals: []string{"deploy"}, Target: "db-1",
+			PublicKey: public, UpperBound: bound,
+		})
+		if err != nil {
+			t.Fatalf("issue: %v", err)
+		}
+		if got := issued.ValidBefore; !got.Equal(f.now.Add(want)) {
+			t.Errorf("bound %s produced a window ending %s, want %s", bound, got, f.now.Add(want))
+		}
+	}
+}
+
 func TestSerialsAreMonotonicWithinATenantAndIndependentAcrossThem(t *testing.T) {
 	// A serial that repeats makes a revocation list ambiguous.
 	f := newCA(t)
@@ -516,43 +547,57 @@ func TestATenantWithNoAuthorityIsNamedRatherThanGuessedAt(t *testing.T) {
 // the seam
 // ---------------------------------------------------------------------------
 
-func TestTheBrokeredCertificateMethodIsNotYetInTheContract(t *testing.T) {
-	// THE TRIPWIRE. It fails on the day the method lands in the vendored
-	// document, which is the signal for the phase that syncs it to come to
-	// internal/credential/seam.go and delete the refusal.
-	for _, method := range []contract.TargetAuthMethod{
-		contract.TargetAuthEphemeralUser,
-		contract.TargetAuthBrokeredKey,
-		contract.TargetAuthEphemeralAccount,
-		contract.TargetAuthStaticKey,
-	} {
-		if string(method) == credential.BrokeredCertificateMethod {
-			t.Fatalf("`%s` is now in the contract: delete the refusal in internal/credential/seam.go, "+
-				"wire the ladder entry on the decision path, and remove this test",
-				credential.BrokeredCertificateMethod)
+// THE TRIPWIRE, CHANGED RATHER THAN DELETED. 0011 left a test here that failed
+// the day `brokered-certificate` reached the vendored contract. It has; and the
+// refusal it guarded rendered the certificate, its serial and the CA bundle as
+// ladder parameters, which is the shape upstream refused (Hoplock/proxy#68). So
+// it now pins the shape upstream took: a rendered entry names the method,
+// carries `username`, and carries no parameter outside `username`, `key_type`
+// and `lifetime_seconds`. A proxy that implements the method refuses a
+// parameter it does not know before it generates anything, so an artifact on
+// the entry would fail every session closed.
+func TestABrokeredCertificateEntryCarriesPolicyOnly(t *testing.T) {
+	entry, err := credential.LadderEntry(model.CredentialEntry{
+		Method:          model.CredentialBrokeredCertificate,
+		Username:        model.Username{Source: model.UsernameLiteral, Value: "netadmin"},
+		KeyType:         "ed25519",
+		LifetimeSeconds: 300,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Method != contract.TargetAuthBrokeredCertificate {
+		t.Fatalf("method = %q, want %q", entry.Method, contract.TargetAuthBrokeredCertificate)
+	}
+	if entry.Params[contract.ParamUsername] != "netadmin" {
+		t.Fatalf("username = %q, want netadmin", entry.Params[contract.ParamUsername])
+	}
+	// Named one by one, because these three are the shape upstream refused
+	// and the likeliest to come back.
+	for _, artifact := range []string{"certificate", "certificate_serial", "ca_public_keys"} {
+		if _, ok := entry.Params[artifact]; ok {
+			t.Errorf("a brokered-certificate entry carries %q; the certificate is minted per session at %s and is never a ladder parameter",
+				artifact, contract.PathCredentialCertificate)
 		}
 	}
-
-	_, err := credential.LadderEntry("deploy", credential.Issued{Certificate: "x"}, nil)
-	if !errors.Is(err, credential.ErrMethodNotInContract) {
-		t.Fatalf("want ErrMethodNotInContract, got %v", err)
+	policy := map[string]bool{
+		contract.ParamUsername: true, contract.ParamKeyType: true, contract.ParamLifetimeSeconds: true,
 	}
-	// And it is an OUTAGE-class error, never a denial: a decision that allowed
-	// and cannot be served is a 5xx, not an "access denied" to a user who did
-	// nothing wrong (M11).
-	if err := credential.ErrMethodNotInContract; !strings.Contains(err.Error(), "brokered-certificate") {
-		t.Errorf("the error does not name the missing method: %v", err)
+	for name := range entry.Params {
+		if !policy[name] {
+			t.Errorf("a brokered-certificate entry carries %q, outside the three policy names", name)
+		}
 	}
 }
 
 func TestALadderEntryStillRequiresAUsername(t *testing.T) {
 	// `username` is required on every method the contract defines and is never
 	// defaulted to the identity's login — a client-typed string the proxy must
-	// not base an authorization decision on. The same rule will hold for this
-	// method, so it is checked before the refusal.
-	_, err := credential.LadderEntry("", credential.Issued{}, nil)
-	if err == nil || errors.Is(err, credential.ErrMethodNotInContract) {
-		t.Fatalf("want a missing-username error, got %v", err)
+	// not base an authorization decision on. The compiler refuses such an entry
+	// first; the renderer refuses it too, as an outage rather than an entry.
+	_, err := credential.LadderEntry(model.CredentialEntry{Method: model.CredentialBrokeredCertificate})
+	if err == nil {
+		t.Fatal("an entry with no username was rendered")
 	}
 }
 

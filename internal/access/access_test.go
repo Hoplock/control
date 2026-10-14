@@ -453,7 +453,7 @@ func TestRevokingALiveGrantEndsItsSessionWithTheReasonShown(t *testing.T) {
 				}
 			case contract.EventTypeSessionKill:
 				kill = ev.SessionKill
-			case contract.EventTypeHeartbeat, contract.EventTypeResync:
+			case contract.EventTypeHeartbeat, contract.EventTypeResync, contract.EventTypeConfigChanged:
 			}
 		case <-deadline:
 			t.Fatal("proxy-1 never received a session_kill")

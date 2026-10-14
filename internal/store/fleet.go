@@ -544,8 +544,7 @@ func (r proxyConfigRepo) GetState(ctx context.Context, tenant Tenant, proxyID st
 	defer cancel()
 
 	row := r.s.db.QueryRow(ctx, `
-		SELECT proxy_id, desired_version, desired_hash, desired_document, desired_at,
-		       running_version, running_hash, reported_at
+		SELECT `+proxyConfigStateColumns+`
 		FROM proxy_config_state
 		WHERE tenant = $1 AND proxy_id = $2`, tenant, proxyID)
 	return scanProxyConfigState(op, row)
@@ -561,8 +560,7 @@ func (r proxyConfigRepo) ListStates(ctx context.Context, tenant Tenant) ([]Proxy
 	defer cancel()
 
 	rows, err := r.s.db.Query(ctx, `
-		SELECT proxy_id, desired_version, desired_hash, desired_document, desired_at,
-		       running_version, running_hash, reported_at
+		SELECT `+proxyConfigStateColumns+`
 		FROM proxy_config_state
 		WHERE tenant = $1
 		ORDER BY proxy_id`, tenant)
@@ -582,26 +580,58 @@ func (r proxyConfigRepo) ListStates(ctx context.Context, tenant Tenant) ([]Proxy
 	return out, wrap(op, rows.Err())
 }
 
-func (r proxyConfigRepo) ReportRunning(ctx context.Context, tenant Tenant, proxyID string, version int64, hash string, at time.Time) error {
-	const op = "store.ProxyConfigs.ReportRunning"
+// LockState takes one proxy's state row for the rest of the transaction,
+// creating it empty when it is not there, so two reports arriving together are
+// compared one after the other rather than both against the same old row.
+func (r proxyConfigRepo) LockState(ctx context.Context, tenant Tenant, proxyID string) (ProxyConfigState, error) {
+	const op = "store.ProxyConfigs.LockState"
+	if err := checkTenant(op, tenant); err != nil {
+		return ProxyConfigState{}, err
+	}
+	if r.s.pool != nil {
+		return ProxyConfigState{}, invalid(op, "a state row is locked inside a transaction")
+	}
+	if proxyID == "" {
+		return ProxyConfigState{}, invalid(op, "proxy id is required")
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	if _, err := r.s.db.Exec(ctx, `
+		INSERT INTO proxy_config_state (tenant, proxy_id) VALUES ($1, $2)
+		ON CONFLICT (tenant, proxy_id) DO NOTHING`, tenant, proxyID); err != nil {
+		return ProxyConfigState{}, wrap(op, err)
+	}
+	row := r.s.db.QueryRow(ctx, `
+		SELECT `+proxyConfigStateColumns+`
+		FROM proxy_config_state
+		WHERE tenant = $1 AND proxy_id = $2
+		FOR UPDATE`, tenant, proxyID)
+	return scanProxyConfigState(op, row)
+}
+
+// PutReport records a substantive report: the wire strings as they arrived,
+// the running version and digest this server parsed from them, and the time.
+func (r proxyConfigRepo) PutReport(ctx context.Context, tenant Tenant, proxyID string, rep ConfigReport, runningVersion int64, runningHash string) error {
+	const op = "store.ProxyConfigs.PutReport"
 	if err := checkTenant(op, tenant); err != nil {
 		return err
 	}
-	if proxyID == "" {
-		return invalid(op, "proxy id is required")
+	if proxyID == "" || rep.LastHeardAt.IsZero() {
+		return invalid(op, "proxy id and the time it was heard are required")
 	}
-	if at.IsZero() {
-		return invalid(op, "report time is required")
-	}
-
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
-
 	tag, err := r.s.db.Exec(ctx, `
-		UPDATE proxy_config_state
-		SET running_version = $3, running_hash = $4, reported_at = $5
+		UPDATE proxy_config_state SET
+			running_version = $3, running_hash = $4, reported_at = $5,
+			report_running_version = $6, report_running_hash = $7,
+			report_desired_version = $8, report_desired_hash = $9,
+			report_state = $10, restart_required = $11, last_error = $12,
+			report_reported_at = $13, last_reported_at = $5
 		WHERE tenant = $1 AND proxy_id = $2`,
-		tenant, proxyID, version, hash, at)
+		tenant, proxyID, runningVersion, runningHash, rep.LastHeardAt,
+		rep.RunningVersion, rep.RunningHash, rep.DesiredVersion, rep.DesiredHash,
+		rep.State, nonNilStrings(rep.RestartRequired), rep.LastError, nullableTime(rep.ReportedAt))
 	if err != nil {
 		return wrap(op, err)
 	}
@@ -611,20 +641,63 @@ func (r proxyConfigRepo) ReportRunning(ctx context.Context, tenant Tenant, proxy
 	return nil
 }
 
+// TouchReport records that a report was heard and changes nothing else: an
+// unchanged report, or one older than the stored one.
+func (r proxyConfigRepo) TouchReport(ctx context.Context, tenant Tenant, proxyID string, at time.Time) error {
+	const op = "store.ProxyConfigs.TouchReport"
+	if err := checkTenant(op, tenant); err != nil {
+		return err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	_, err := r.s.db.Exec(ctx, `
+		UPDATE proxy_config_state SET last_reported_at = $3
+		WHERE tenant = $1 AND proxy_id = $2`, tenant, proxyID, at)
+	return wrap(op, err)
+}
+
+// MarkAnnounced records that a `config_changed` naming a document was taken by
+// the stream, or confirmed by a report. It never moves the marker onto a hash
+// that is no longer desired.
+func (r proxyConfigRepo) MarkAnnounced(ctx context.Context, tenant Tenant, proxyID, hash string, at time.Time) error {
+	const op = "store.ProxyConfigs.MarkAnnounced"
+	if err := checkTenant(op, tenant); err != nil {
+		return err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	_, err := r.s.db.Exec(ctx, `
+		UPDATE proxy_config_state SET announced_hash = $3, announced_at = $4
+		WHERE tenant = $1 AND proxy_id = $2 AND desired_hash = $3`, tenant, proxyID, hash, at)
+	return wrap(op, err)
+}
+
+const proxyConfigStateColumns = `proxy_id, desired_version, desired_hash, desired_document, desired_at,
+		       running_version, running_hash, reported_at,
+		       report_running_version, report_running_hash, report_desired_version, report_desired_hash,
+		       report_state, restart_required, last_error, report_reported_at, last_reported_at,
+		       announced_hash, announced_at`
+
 func scanProxyConfigState(op string, row rowScanner) (ProxyConfigState, error) {
 	var (
-		s          ProxyConfigState
-		doc        string
-		desiredAt  *time.Time
-		reportedAt *time.Time
+		s                                    ProxyConfigState
+		doc                                  string
+		desiredAt, reportedAt                *time.Time
+		reportReportedAt, lastHeard, annouAt *time.Time
 	)
 	if err := row.Scan(&s.ProxyID, &s.DesiredVersion, &s.DesiredHash, &doc, &desiredAt,
-		&s.RunningVersion, &s.RunningHash, &reportedAt); err != nil {
+		&s.RunningVersion, &s.RunningHash, &reportedAt,
+		&s.Report.RunningVersion, &s.Report.RunningHash, &s.Report.DesiredVersion, &s.Report.DesiredHash,
+		&s.Report.State, &s.Report.RestartRequired, &s.Report.LastError, &reportReportedAt, &lastHeard,
+		&s.AnnouncedHash, &annouAt); err != nil {
 		return ProxyConfigState{}, wrap(op, err)
 	}
 	s.DesiredDocument = json.RawMessage(doc)
 	s.DesiredAt = timeOrZero(desiredAt)
 	s.ReportedAt = timeOrZero(reportedAt)
+	s.Report.ReportedAt = timeOrZero(reportReportedAt)
+	s.Report.LastHeardAt = timeOrZero(lastHeard)
+	s.AnnouncedAt = timeOrZero(annouAt)
 	return s, nil
 }
 

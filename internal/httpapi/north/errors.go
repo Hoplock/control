@@ -13,7 +13,7 @@ import (
 // Errors on this surface are MACHINE-READABLE (M21).
 //
 // Every error carries a stable `code`, typed `parameters`, an English `message`
-// and the correlation id. The console (0021) is the only layer that localises,
+// and the correlation id. The console (0025) is the only layer that localises,
 // and it can only do that if the sentence is assembled there — so an API that
 // answers with prose alone makes a localisable console impossible. 0019 owns the
 // full code registry for this surface and extends what is here; the shape is
@@ -122,6 +122,37 @@ const (
 	CodeWindowClosed        = accessctx.CodeWindowClosed
 	// CodePayloadTooLarge is a push body past access_context.max_push_bytes.
 	CodePayloadTooLarge = "payload_too_large"
+
+	// The policy lifecycle (0019).
+	//
+	// CodePolicyInvalid is a bundle the compiler refused. Its parameters
+	// carry the rejections verbatim — code, rule, line, parameters and the
+	// compiler's own text — because what to do instead is in them.
+	CodePolicyInvalid = "policy_invalid"
+	// CodeFindingsNotAccepted is an activation with warnings the author has
+	// not accepted. Its parameters list them, each with the id to accept:
+	// that is the override, and it is never a refusal of the policy.
+	CodeFindingsNotAccepted = "findings_not_accepted"
+	// CodePolicyBlocked is an activation a registered validator's blocking
+	// finding stopped. No acceptance moves it.
+	CodePolicyBlocked = "policy_blocked"
+	// CodeDecisionUnexplainable is a stored decision that does not carry its
+	// own story (M4). It is an integrity fault in this server's records and
+	// answered as an outage, loudly, never as a partial story.
+	CodeDecisionUnexplainable = "decision_unexplainable"
+	// CodeConfigKeyNotFleetOwned and CodeConfigValueInvalid are a fleet
+	// configuration publish naming a setting the proxy keeps in its
+	// bootstrap file, or a value not of its key's shape (proxy D18).
+	CodeConfigKeyNotFleetOwned = "config_key_not_fleet_owned"
+	CodeConfigValueInvalid     = "config_value_invalid"
+	// CodeHostKeyUnresolved is a host-key withdrawal this server cannot
+	// resolve to the key it issued: no such recorded decision, or one
+	// recorded before keys were issued, whose only honest withdrawal is a
+	// resync. Nothing was published.
+	CodeHostKeyUnresolved = "host_key_unresolved"
+	// CodeUnavailable is a request this server cannot serve right now and
+	// will on a retry: the revocation stream is shutting down.
+	CodeUnavailable = "unavailable"
 )
 
 // AllCodes is every code this surface defines, so a test can assert that adding
@@ -137,6 +168,8 @@ var AllCodes = []string{
 	CodePushNotPermitted, CodePushNotAccepted, CodeRateLimited, CodeAssertionMalformed,
 	CodeOutsideScope, CodeAssertionConflict, CodeAssertionStale, CodeAssertionFromFuture,
 	CodeWindowClosed, CodePayloadTooLarge,
+	CodePolicyInvalid, CodeFindingsNotAccepted, CodePolicyBlocked, CodeDecisionUnexplainable,
+	CodeConfigKeyNotFleetOwned, CodeConfigValueInvalid, CodeHostKeyUnresolved, CodeUnavailable,
 }
 
 // writeJSON is the only writer in this package, so the content type cannot

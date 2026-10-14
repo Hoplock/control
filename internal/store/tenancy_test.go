@@ -57,6 +57,10 @@ var repositoryInterfaces = map[string]reflect.Type{
 	"ProxyConfigRepository":       reflect.TypeOf((*ProxyConfigRepository)(nil)).Elem(),
 	"TargetCapabilityRepository":  reflect.TypeOf((*TargetCapabilityRepository)(nil)).Elem(),
 
+	// What each build offers and each target negotiates (0019).
+	"ProxyAlgorithmDeclarationRepository": reflect.TypeOf((*ProxyAlgorithmDeclarationRepository)(nil)).Elem(),
+	"TargetKexObservationRepository":      reflect.TypeOf((*TargetKexObservationRepository)(nil)).Elem(),
+
 	// The south-bound API (0007).
 	"SubjectKeyRepository":      reflect.TypeOf((*SubjectKeyRepository)(nil)).Elem(),
 	"SubjectPasswordRepository": reflect.TypeOf((*SubjectPasswordRepository)(nil)).Elem(),
@@ -142,11 +146,13 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"SSHCertificateRepository":    s.SSHCertificates(),
 		"SoftwareKeyRepository":       s.SoftwareKeys(),
 
-		"ProxyEnrollmentRepository":   s.ProxyEnrollments(),
-		"ProxyEdgeRepository":         s.ProxyEdges(),
-		"RelayRegistrationRepository": s.RelayRegistrations(),
-		"ProxyConfigRepository":       s.ProxyConfigs(),
-		"TargetCapabilityRepository":  s.TargetCapabilities(),
+		"ProxyEnrollmentRepository":           s.ProxyEnrollments(),
+		"ProxyEdgeRepository":                 s.ProxyEdges(),
+		"RelayRegistrationRepository":         s.RelayRegistrations(),
+		"ProxyConfigRepository":               s.ProxyConfigs(),
+		"TargetCapabilityRepository":          s.TargetCapabilities(),
+		"ProxyAlgorithmDeclarationRepository": s.ProxyAlgorithmDeclarations(),
+		"TargetKexObservationRepository":      s.TargetKexObservations(),
 
 		"SubjectKeyRepository":      s.SubjectKeys(),
 		"SubjectPasswordRepository": s.SubjectPasswords(),
@@ -189,6 +195,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Subjects.GetByPrincipal": func() error { _, err := s.Subjects().GetByPrincipal(ctx, "", "p"); return err },
 		"Subjects.Upsert":         func() error { return s.Subjects().Upsert(ctx, "", Subject{ID: "s"}) },
 		"Subjects.Delete":         func() error { return s.Subjects().Delete(ctx, "", "s") },
+		"Subjects.List":           func() error { _, err := s.Subjects().List(ctx, ""); return err },
 		"Targets.Get":             func() error { _, err := s.Targets().Get(ctx, "", "t"); return err },
 		"Targets.GetByHostname":   func() error { _, err := s.Targets().GetByHostname(ctx, "", "h"); return err },
 		"Targets.ListByLabels":    func() error { _, err := s.Targets().ListByLabels(ctx, "", nil); return err },
@@ -211,12 +218,17 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"PolicyBundles.GetActive":   func() error { _, err := s.PolicyBundles().GetActive(ctx, ""); return err },
 		"PolicyBundles.Activate":    func() error { return s.PolicyBundles().Activate(ctx, "", 1) },
 		"PolicyBundles.NextVersion": func() error { _, err := s.PolicyBundles().NextVersion(ctx, ""); return err },
+		"PolicyBundles.List":        func() error { _, err := s.PolicyBundles().List(ctx, ""); return err },
 		"Decisions.Insert": func() error {
 			return s.Decisions().Insert(ctx, "", Decision{ID: "d", InputsDigest: "x"})
 		},
 		"Decisions.Get":           func() error { _, err := s.Decisions().Get(ctx, "", "d"); return err },
 		"Decisions.ListBySubject": func() error { _, err := s.Decisions().ListBySubject(ctx, "", "s", 1); return err },
 		"Decisions.ListBySession": func() error { _, err := s.Decisions().ListBySession(ctx, "", "s", 1); return err },
+		"Decisions.ListRange": func() error {
+			_, _, err := s.Decisions().ListRange(ctx, "", nowForTest(), nowForTest(), 1)
+			return err
+		},
 		"Audit.Append": func() error {
 			return s.Audit().Append(ctx, "", AuditRecord{RecordID: "r", Stream: "s", ChainSeq: 1})
 		},
@@ -234,8 +246,19 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.Audit().BlockedCommands(ctx, "", BlockedCommandQuery{LabelName: "env"})
 			return err
 		},
+		"Audit.GapLoss":    func() error { _, err := s.Audit().GapLoss(ctx, "", "sess"); return err },
 		"Audit.PutCapture": func() error { return s.Audit().PutCapture(ctx, "", "r", []byte("x")) },
 		"Audit.Capture":    func() error { _, err := s.Audit().Capture(ctx, "", "r"); return err },
+		"Audit.Retention":  func() error { _, err := s.Audit().Retention(ctx, "", "s"); return err },
+		"Audit.RetainPrefix": func() error {
+			_, _, err := s.Audit().RetainPrefix(ctx, "", "s", 1, "x")
+			return err
+		},
+		"Audit.ThroughSeqBefore": func() error {
+			_, err := s.Audit().ThroughSeqBefore(ctx, "", "s", time.Now())
+			return err
+		},
+		"Audit.RetainCaptures": func() error { _, err := s.Audit().RetainCaptures(ctx, "", time.Now()); return err },
 		"Grants.Insert": func() error {
 			return s.Grants().Insert(ctx, "", Grant{ID: "g", Origin: GrantOriginManual, ExpiresAt: nowForTest()})
 		},
@@ -325,9 +348,14 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		},
 		"ProxyConfigs.GetState":   func() error { _, err := s.ProxyConfigs().GetState(ctx, "", "p"); return err },
 		"ProxyConfigs.ListStates": func() error { _, err := s.ProxyConfigs().ListStates(ctx, ""); return err },
-		"ProxyConfigs.ReportRunning": func() error {
-			return s.ProxyConfigs().ReportRunning(ctx, "", "p", 1, "h", nowForTest())
+		"ProxyConfigs.PutReport": func() error {
+			return s.ProxyConfigs().PutReport(ctx, "", "p", ConfigReport{LastHeardAt: nowForTest()}, 1, "h")
 		},
+		"ProxyConfigs.TouchReport": func() error { return s.ProxyConfigs().TouchReport(ctx, "", "p", nowForTest()) },
+		"ProxyConfigs.MarkAnnounced": func() error {
+			return s.ProxyConfigs().MarkAnnounced(ctx, "", "p", "h", nowForTest())
+		},
+		"ProxyConfigs.LockState": func() error { _, err := s.ProxyConfigs().LockState(ctx, "", "p"); return err },
 		"TargetCapabilities.Put": func() error {
 			return s.TargetCapabilities().Put(ctx, "", TargetCapabilityRecord{Hostname: "h"})
 		},
@@ -336,6 +364,24 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return err
 		},
 		"TargetCapabilities.List": func() error { _, err := s.TargetCapabilities().List(ctx, ""); return err },
+
+		// What each build offers and each target negotiates (0019).
+		"ProxyAlgorithmDeclarations.Put": func() error {
+			_, err := s.ProxyAlgorithmDeclarations().Put(ctx, "", ProxyAlgorithmDeclaration{ProxyID: "p", Digest: "d"})
+			return err
+		},
+		"ProxyAlgorithmDeclarations.List": func() error {
+			_, err := s.ProxyAlgorithmDeclarations().List(ctx, "")
+			return err
+		},
+		"TargetKexObservations.Put": func() error {
+			return s.TargetKexObservations().Put(ctx, "", TargetKexObservation{Hostname: "h", FloorMet: "none", ObservedAt: nowForTest()})
+		},
+		"TargetKexObservations.Get": func() error {
+			_, err := s.TargetKexObservations().Get(ctx, "", "h", 22)
+			return err
+		},
+		"TargetKexObservations.List": func() error { _, err := s.TargetKexObservations().List(ctx, ""); return err },
 
 		// The south-bound API (0007). These are the credential lookups, so
 		// a method here that read across tenants would authenticate one

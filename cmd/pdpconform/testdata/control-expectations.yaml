@@ -153,19 +153,19 @@ uids:
     range_max: 3012287
 
 logs:
-  # A SEPARATE PORT, and not a `/v1` path. Nothing on `/v1` reads a record back
-  # — the contract says so, because a proxy writes logs and never queries them
-  # — so the priority ack's durability guarantee is observable only through a
-  # path this implementation exposes outside it (phase 0010). It is bound only
-  # because this file's server configures one: see audit.read_listener.
+  # NOT a `/v1` path. Nothing on `/v1` reads a record back — the contract says
+  # so, because a proxy writes logs and never queries them — so the priority
+  # ack's durability guarantee is observable only through a path this
+  # implementation exposes outside it: since 0019, the north-bound audit query's
+  # record-by-id route, on the north-bound listener.
   #
   # `{record_id}` is substituted with the id the case just ingested, so the
   # assertion is that THE RECORD was found rather than that a listing happened
   # to mention it.
-  read_url: "http://127.0.0.1:8083/debug/logs/{record_id}"
-  # A credential of its own, because the surface is of a different kind: the
-  # proxy token ships logs, and this reads everybody's.
-  read_token: "pdpconform-dev-audit-token"
+  read_url: "http://127.0.0.1:8081/api/v1/tenants/default/audit/records/{record_id}"
+  # A scoped API token holding audit:read (the auditor role), seeded by
+  # control-seed.yaml: the proxy token ships logs, and this reads everybody's.
+  read_token: "ht.default.pdpconform-dev-audit-token"
   batch_size: 3
 
 events:
@@ -178,14 +178,50 @@ events:
   # regression which stopped advertising fails on the claim rather than
   # becoming ungradeable.
   heartbeat_interval_seconds: 5
-  # A SEPARATE PORT, and not a `/v1` path. The contract states outright that
-  # nothing on `/v1` publishes an event — an event is an operator action — so
-  # the publish path is this implementation's to expose, and the south-bound
-  # listener serves the contract and nothing else (M2). It is bound only
-  # because this file configures one: see events.publish_listener.
-  publish_url: "http://127.0.0.1:8082/debug/revoke"
-  # A credential of its own, because the surface is of a different kind: the
-  # proxy token authenticates a proxy asking about decisions, and this
-  # publishes the kill switch.
-  publish_token: "pdpconform-dev-publish-token"
+  # NOT a `/v1` path. The contract states outright that nothing on `/v1`
+  # publishes an event — an event is an operator action — so the publish path
+  # is this implementation's to expose: since 0019, the north-bound operator
+  # route `POST …/revocations`, on the north-bound listener.
+  publish_url: "http://127.0.0.1:8081/api/v1/tenants/default/revocations"
+  # A scoped API token holding session:revoke (the grant-admin role), seeded
+  # by control-seed.yaml: the proxy token authenticates a proxy asking about
+  # decisions, and this publishes the kill switch.
+  publish_token: "ht.default.pdpconform-dev-publish-token"
   publish_body: '{"type":"cache_invalidate","all":true}'
+
+config:
+  # Seeded in control-seed.yaml, so enrolled; the unknown id is not, and a
+  # fetch for it is the tenancy leak this case exists to catch.
+  proxy_id: proxy-1
+  unknown_proxy_id: proxy-nobody-enrolled
+  # The north-bound publish route (0019), on the north-bound listener: a
+  # proxy-scoped document for proxy-1, which re-materialises exactly that
+  # proxy and announces it with one config_changed. Fleet-owned keys only.
+  publish_url: "http://127.0.0.1:8081/api/v1/tenants/default/fleet/config/proxy/proxy-1"
+  publish_method: PUT
+  publish_body: '{"settings":{"logging.batch_size":50}}'
+  # A scoped API token holding fleet:write (the fleet-admin role), seeded by
+  # control-seed.yaml.
+  publish_token: "ht.default.pdpconform-dev-fleet-token"
+
+certificate:
+  # `cert-host` in control-policy.yaml. The CA is the tenant's own, which the
+  # CI configuration enables with a key-encryption key.
+  route:
+    login: alice
+    subject: alice@example.com
+    target: cert.company.com
+  username: netadmin
+
+algorithms:
+  # `floor-host` and `ban-host` in control-policy.yaml.
+  floor:
+    login: alice
+    subject: alice@example.com
+    target: floor.company.com
+  floor_level: modern-kex
+  ban:
+    login: alice
+    subject: alice@example.com
+    target: ban.company.com
+  kex_target: floor.company.com

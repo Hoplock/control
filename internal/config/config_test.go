@@ -375,22 +375,6 @@ database: {dsn: "postgres://x"}
 			doc:   base + "events: {subscriber_queue: -1}\n",
 			field: "events.subscriber_queue",
 		},
-		"a publish listener with no credential": {
-			doc:   base + `events: {publish_listener: "127.0.0.1:9000"}` + "\n",
-			field: "events.publish_token",
-		},
-		"a publish credential nothing would read": {
-			doc:   base + `events: {publish_token: "secret"}` + "\n",
-			field: "events.publish_token",
-		},
-		"a publish listener sharing the south-bound port": {
-			doc:   base + `events: {publish_listener: "0.0.0.0:8443", publish_token: "s"}` + "\n",
-			field: "events.publish_listener",
-		},
-		"a publish listener sharing the north-bound port": {
-			doc:   base + `events: {publish_listener: "127.0.0.1:9443", publish_token: "s"}` + "\n",
-			field: "events.publish_listener",
-		},
 	}
 	for name, tc := range cases {
 		_, err := config.Parse(strings.NewReader(tc.doc))
@@ -408,11 +392,9 @@ database: {dsn: "postgres://x"}
 		}
 	}
 
-	// The ceiling itself is conformant, and so is a deployment that binds
-	// the publish listener with a credential on a port of its own.
+	// The ceiling itself is conformant.
 	for name, doc := range map[string]string{
 		"the ceiling exactly":        base + "events: {heartbeat_interval: 10s}\n",
-		"a bound publish listener":   base + `events: {publish_listener: "127.0.0.1:9000", publish_token: "s"}` + "\n",
 		"nothing said about events":  base,
 		"an explicit zero interval":  base + "events: {heartbeat_interval: 0s}\n",
 		"an explicit zero of buffer": base + "events: {replay_buffer: 0}\n",
@@ -444,10 +426,26 @@ events: {heartbeat_interval: 0s}
 	if cfg.Events.SubscriberQueue != config.DefaultSubscriberQueue {
 		t.Errorf("subscriber_queue = %v, want the default %v", cfg.Events.SubscriberQueue, config.DefaultSubscriberQueue)
 	}
-	// The publish listener has NO default, and that is the point: a
-	// deployment that does not ask for one has no publish port at all.
-	if cfg.Events.PublishListener != "" {
-		t.Errorf("publish_listener = %q, want none unless configured", cfg.Events.PublishListener)
+}
+
+// The two debug paths 0019 superseded are gone, and so are their keys: a
+// document naming one is refused as an unknown key by the strict loader, never
+// accepted and ignored — an operator who believes they bound a listener must be
+// told they did not.
+func TestTheSupersededDebugKeysNoLongerParse(t *testing.T) {
+	base := `listeners: {south: "0.0.0.0:8443", north: "127.0.0.1:9443"}
+database: {dsn: "postgres://x"}
+`
+	for _, doc := range []string{
+		base + `events: {publish_listener: "127.0.0.1:9000"}` + "\n",
+		base + `events: {publish_token: "s"}` + "\n",
+		base + `audit: {read_listener: "127.0.0.1:9001"}` + "\n",
+		base + `audit: {read_token: "s"}` + "\n",
+	} {
+		_, err := config.Parse(strings.NewReader(doc))
+		if err == nil || !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "unknown") {
+			t.Errorf("%q: err = %v, want an unknown-key refusal", doc, err)
+		}
 	}
 }
 

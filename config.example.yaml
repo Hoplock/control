@@ -103,8 +103,15 @@ fleet:
 # field has the default shown.
 south:
   # The largest request body this listener accepts. Every south-bound payload
-  # is a small JSON object. Defaults to 1048576 (1 MiB).
+  # but a log batch is a small JSON object. Defaults to 1048576 (1 MiB).
   max_body_bytes: 1048576
+
+  # The largest body the two log paths accept. They carry session capture: a
+  # full default batch of a busy session's terminal output is about 2.7 MiB of
+  # JSON, and a body over this limit is answered 400, which the proxy cures by
+  # halving the batch — costing requests and protecting nothing the per-record
+  # bounds in `audit:` do not. Defaults to 4194304 (4 MiB).
+  max_log_body_bytes: 4194304
 
   # How long one request may take before this server ANSWERS rather than
   # hangs. A proxy holds a user's SSH handshake open while it waits, and a
@@ -233,30 +240,22 @@ events:
   # `resync`, so nothing is silently skipped. Defaults to 256.
   subscriber_queue: 256
 
-  # The local publish path, `POST /debug/revoke`. EMPTY BY DEFAULT AND NOT
-  # BOUND, which is what you want in a deployment.
-  #
-  # Publishing an event is an operator action, and the contract states that
-  # nothing on `/v1` publishes one — the proxy-facing API would otherwise carry
-  # an endpoint no proxy calls. The north-bound API that will own it is phase
-  # 0019's; until then this is how the conformance suite makes this server emit
-  # an event while a subscriber is away, which is the only way gap recovery is
-  # gradeable at all.
-  #
-  # It is a separate port because the south-bound listener serves the contract
-  # and nothing else (M2), and publish_token is REQUIRED when it is set: what
-  # this publishes is the kill switch, and an unauthenticated one is worse than
-  # none.
-  publish_listener: ""
-  publish_token: ""
+  # Operator actions — ending sessions, invalidating cached decisions, a
+  # resync — are published over the north-bound API
+  # (`POST /api/v1/tenants/{tenant}/revocations`), under a scoped credential
+  # holding `session:revoke`. Nothing on `/v1` publishes one.
 
 # Log ingest and the audit store (PLAN M8, §7, phase 0010). Optional; every
 # field has the default shown.
 audit:
   # The bounds on one ingest request. An unbounded ingest path is a
   # memory-exhaustion surface reachable by any enrolled proxy, and a batch too
-  # large to answer inside the request timeout is a batch the proxy retries
-  # forever. A zero takes the default.
+  # large to answer inside the request timeout is one the proxy retries — a
+  # timeout is retried, never set aside — with its drain waiting behind that
+  # batch until its disk window evicts it, which it never does for a pinned
+  # session. A record over a bound is refused (400) and set aside by the proxy
+  # for good, reported as a `logging.gap`; a batch over max_batch_records is a
+  # 400 the proxy cures by halving it. A zero takes the default.
   #
   # `max_capture_bytes` is the one with a number behind it rather than a round
   # guess: a pty stream arrives as raw chunks, one per read off the wire, so a
@@ -266,24 +265,9 @@ audit:
   max_record_bytes: 65536
   max_capture_bytes: 1048576
 
-  # The record read-back path, `GET /debug/logs/{record_id}`. EMPTY BY DEFAULT
-  # AND NOT BOUND, which is what you want in a deployment.
-  #
-  # The contract defines no way to read a record back, and that is deliberate
-  # upstream: a proxy writes logs and never queries them, so an operator read
-  # API on `/v1` would be one every Hoplock Control implements and no proxy
-  # calls. The priority ack's durability guarantee — a 200 means the record is
-  # stored — is therefore observable only through a path this server exposes
-  # outside `/v1`, and the conformance suite takes it as an input. The
-  # north-bound audit query API that will own it is phase 0019's, which deletes
-  # this one rather than folding it in.
-  #
-  # It is a separate port from both other listeners (M2), and read_token is
-  # REQUIRED when it is set: audit records are the most sensitive documents
-  # this server holds, and the south-bound proxy token is not the credential
-  # for reading them.
-  read_listener: ""
-  read_token: ""
+  # Records are read back over the north-bound audit query
+  # (`GET /api/v1/tenants/{tenant}/audit/records/{record_id}` and its
+  # siblings), under a scoped credential holding `audit:read`.
 
 # The north-bound listener's own bounds (PLAN M2, phase 0011). Optional; every
 # field has the default shown.
@@ -544,3 +528,13 @@ access_context:
   #     issued_at: "$.sent_at"
   #     ended:
   #       - {path: "$.change.status", one_of: [Cancelled, Closed]}
+
+# The policy lifecycle's publish-time checks (phase 0019). Optional.
+policy:
+  # Executables that hand back a shell (GTFOBins' "shell" function). A
+  # `restricted_exec` allow-list naming one under `account-restricted` or
+  # `account-confined` is a WARNING the author must accept to publish, because
+  # the rung's real guarantee drops to `no-interactive-shell` at best. It is
+  # never a deny-list in the data plane. Empty takes the shipped list (see
+  # internal/authoring.DefaultInterpreters); a list here replaces it whole.
+  interpreters: []

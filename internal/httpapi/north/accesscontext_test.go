@@ -41,7 +41,11 @@ func (windowsAsJSON) Describe() ext.AccessContextInfo {
 	return ext.AccessContextInfo{Name: "itsm", Pushes: true}
 }
 
+// probes counts every Probe call, so a test can say "no provider was asked".
+var probes atomic.Int64
+
 func (windowsAsJSON) Probe(context.Context, ext.AccessContextQuery) (ext.AccessEvidence, error) {
+	probes.Add(1)
 	return ext.AccessEvidence{}, ext.ErrNoEvidence
 }
 
@@ -108,10 +112,10 @@ func newPushServerWith(t *testing.T, revoker access.Revoker) *pushFixture {
 	if err != nil {
 		t.Fatalf("accessctx: %v", err)
 	}
-	server, err := north.New(north.Options{
+	server, err := north.New(withLifecycle(t, st, north.Options{
 		Federation: federation, Grants: grants, AccessContext: svc, MaxPushBytes: 2048,
 		DefaultTenant: "tenant-a", InsecureCookies: true,
-	})
+	}))
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -381,5 +385,221 @@ func TestAnUndeliveredEndIsAnsweredLikeAnUndeliveredRevocation(t *testing.T) {
 	rv.down.Store(false)
 	if a := decodeEnd(t, f.push(t, pushPath, token, ended("CHG-42/1"))); a.Outcome != "already_ended" || a.Grant != e.Parameters["grant_id"] {
 		t.Errorf("the end pushed again = %+v, want already_ended on grant %v", a, e.Parameters["grant_id"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bindings and providers over the wire (0019)
+// ---------------------------------------------------------------------------
+
+func (f *pushFixture) send(t *testing.T, method, path, token string, body any) *http.Response {
+	t.Helper()
+	var raw []byte
+	if body != nil {
+		raw, _ = json.Marshal(body)
+	}
+	req, err := http.NewRequestWithContext(t.Context(), method, f.http.URL+path, bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := f.http.Client().Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+const bindingPath = "/api/v1/tenants/tenant-a/access-context/providers/itsm/binding"
+
+// A binding written over this surface is validated and audited exactly as
+// accessctx.Service.PutBinding is, and the integration role can neither read
+// nor write one.
+func TestABindingIsManagedOverTheWire(t *testing.T) {
+	f := newPushServer(t)
+	admin, _ := f.tokenFor(t, identity.RoleAdmin)
+	auditor, _ := f.tokenFor(t, identity.RoleAuditor)
+	integration, principal := f.tokenFor(t, identity.RoleIntegration)
+
+	body := map[string]any{
+		"mode": "push", "scope": "change-window", "subjects": []string{"alice@example.com"},
+		"targets": []string{"*.example.com"}, "max_window": "1h", "push_principals": []string{principal},
+	}
+	resp := f.send(t, "PUT", bindingPath, admin, body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put binding = %d %+v", resp.StatusCode, decodeError(t, resp))
+	}
+	var got struct {
+		Provider       string   `json:"provider"`
+		PushPrincipals []string `json:"push_principals"`
+		MaxWindow      string   `json:"max_window"`
+		Enabled        bool     `json:"enabled"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Provider != "itsm" || len(got.PushPrincipals) != 1 || got.PushPrincipals[0] != principal || !got.Enabled {
+		t.Errorf("binding = %+v", got)
+	}
+	rows, err := f.st.Audit().Query(t.Context(), "tenant-a", store.AuditQuery{Event: accessctx.EventBindingPut})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("binding_put records: %d, %v", len(rows), err)
+	}
+
+	// Validated field by field: a window with no target selector is refused.
+	bad := map[string]any{"mode": "push", "scope": "change-window", "subjects": []string{"alice@example.com"}, "max_window": "1h"}
+	resp = f.send(t, "PUT", bindingPath, admin, bad)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("an unbounded binding = %d", resp.StatusCode)
+	}
+	if e := decodeError(t, resp); e.Code != north.CodeInvalidRequest || e.Parameters["field"] == nil {
+		t.Errorf("refusal = %+v", e)
+	}
+
+	// Every role that reads the tenant reads it; the integration reads nothing.
+	if resp := f.send(t, "GET", "/api/v1/tenants/tenant-a/access-context/bindings", auditor, nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("an auditor listing bindings = %d", resp.StatusCode)
+	}
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/v1/tenants/tenant-a/access-context/bindings"},
+		{"GET", bindingPath}, {"PUT", bindingPath}, {"DELETE", bindingPath},
+	} {
+		if resp := f.send(t, c.method, c.path, integration, body); resp.StatusCode != http.StatusForbidden {
+			t.Errorf("the integration role %s %s = %d, want 403", c.method, c.path, resp.StatusCode)
+		}
+	}
+	if resp := f.send(t, "PUT", bindingPath, auditor, body); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("an auditor wrote a binding: %d", resp.StatusCode)
+	}
+
+	resp = f.send(t, "DELETE", bindingPath, admin, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete = %d", resp.StatusCode)
+	}
+	if resp := f.send(t, "GET", bindingPath, admin, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("a deleted binding reads %d", resp.StatusCode)
+	} else if e := decodeError(t, resp); e.Code != north.CodeBindingNotFound {
+		t.Errorf("code %q", e.Code)
+	}
+}
+
+// The provider listing names every provider by its external system's name.
+func TestTheProviderListingNamesEveryProvider(t *testing.T) {
+	f := newPushServer(t)
+	auditor, _ := f.tokenFor(t, identity.RoleAuditor)
+	resp := f.send(t, "GET", "/api/v1/tenants/tenant-a/access-context/providers", auditor, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("providers = %d", resp.StatusCode)
+	}
+	var out struct {
+		Providers []struct {
+			Name         string `json:"name"`
+			Pushes       bool   `json:"pushes"`
+			Registration struct {
+				Provider string `json:"provider"`
+			} `json:"registration"`
+		} `json:"providers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Providers) != 1 || out.Providers[0].Name != "itsm" || !out.Providers[0].Pushes ||
+		out.Providers[0].Registration.Provider != "example.com/itsm" {
+		t.Errorf("providers = %+v", out.Providers)
+	}
+}
+
+// Explain renders the external story whole — the provider, the reference, the
+// window and how it arrived — and an unanswered probe with which way it fell;
+// simulation replays the windows that counted and never asks a provider.
+func TestExplainAndSimulationOfExternalContext(t *testing.T) {
+	f := newPushServer(t)
+	author, _ := f.tokenFor(t, identity.RolePolicyAuthor)
+	inputs := json.RawMessage(`{"now":"2026-10-01T12:00:00Z","subject":{"id":"alice@example.com","mfa":false,"known":true,"break_glass":false},` +
+		`"target":{"hostname":"db01.example.com","known":true,"labels":{"env":"prod"}},"context":{"proxy_id":"proxy-1"},` +
+		`"grants":[{"id":"g-ext","origin":"external","scope":{"name":"change-window","targets":["db01.example.com"],"labels":null,"zones":null},` +
+		`"not_before":"2026-10-01T11:00:00Z","expires_at":"2026-10-01T13:00:00Z","reason":"CHG-42","reason_code":"",` +
+		`"created_by":{"subject":"","principal":"tok-itsm","break_glass":false},"request_id":"","workflow_ref":"","approvers":null,` +
+		`"external":{"system":"itsm","reference":"CHG-42","window_start":"2026-10-01T11:00:00Z","window_end":"2026-10-01T13:00:00Z","mode":"push","assertion_id":"CHG-42/1"}}],` +
+		`"connection":{},"external_context":[{"provider":"itsm","scope":"change-window","outcome":"confirmed"}]}`)
+	for _, d := range []store.Decision{
+		{ID: "dec-window", SubjectID: "alice@example.com", Effect: "allow", SessionID: "sess-w", ProxyID: "proxy-1",
+			InputsDigest: "x", Inputs: inputs, DecidedAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC),
+			Explanation: json.RawMessage(`{"effect":"allow","rule":"change","grant":"g-ext","external":{"provider":"itsm",` +
+				`"reference":"CHG-42","window_start":"2026-10-01T11:00:00Z","window_end":"2026-10-01T13:00:00Z","arrived":"pushed","confirmed":false}}`)},
+		{ID: "dec-unanswered", SubjectID: "alice@example.com", Effect: "deny", SessionID: "sess-u", ProxyID: "proxy-1",
+			InputsDigest: "x", Inputs: json.RawMessage(`{"now":"2026-10-01T12:00:00Z","subject":{"id":"alice@example.com"},"target":{"hostname":"db01.example.com"},"context":{"proxy_id":"proxy-1"},"connection":{},"external_context":[]}`),
+			DecidedAt:   time.Date(2026, 10, 1, 12, 1, 0, 0, time.UTC),
+			Explanation: json.RawMessage(`{"effect":"deny","unanswered":[{"provider":"scanner","scope":"scan","fell":"closed"}]}`)},
+	} {
+		if err := f.st.Decisions().Insert(t.Context(), "tenant-a", d); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	resp := f.send(t, "GET", "/api/v1/tenants/tenant-a/decisions/dec-window", author, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("explain = %d %+v", resp.StatusCode, decodeError(t, resp))
+	}
+	var story struct {
+		Grant       map[string]any `json:"grant"`
+		Explanation struct {
+			External map[string]any `json:"external"`
+		} `json:"explanation"`
+		Inputs struct {
+			ExternalContext []map[string]any `json:"external_context"`
+		} `json:"inputs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&story); err != nil {
+		t.Fatal(err)
+	}
+	ext := story.Explanation.External
+	if ext["provider"] != "itsm" || ext["reference"] != "CHG-42" || ext["window_end"] == nil || ext["arrived"] != "pushed" {
+		t.Errorf("explanation.external = %v", ext)
+	}
+	if story.Grant["origin"] != "external" || len(story.Inputs.ExternalContext) != 1 {
+		t.Errorf("grant %v, external_context %v", story.Grant, story.Inputs.ExternalContext)
+	}
+
+	resp = f.send(t, "GET", "/api/v1/tenants/tenant-a/decisions/dec-unanswered", author, nil)
+	var denied struct {
+		Explanation struct {
+			Unanswered []map[string]any `json:"unanswered"`
+		} `json:"explanation"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&denied); err != nil || len(denied.Explanation.Unanswered) != 1 ||
+		denied.Explanation.Unanswered[0]["fell"] != "closed" {
+		t.Errorf("an unanswered probe's denial = %+v, %v", denied, err)
+	}
+
+	before := probes.Load()
+	source := "schema_version: 1\ntenant: tenant-a\nscopes:\n  change-window: {}\nrules:\n" +
+		"  - id: change\n    effect: allow\n    match:\n      grant:\n        scopes: [change-window]\n" +
+		"    route:\n      intent: hops-permitted\n      channels: [session]\n      filter:\n        mode: blacklist\n" +
+		"      credentials:\n        - method: brokered-key\n          username: dba\n          credential_ref: vault://db\n"
+	resp = f.send(t, "POST", "/api/v1/tenants/tenant-a/policy/simulate", author, map[string]any{
+		"source": source,
+		"replay": map[string]any{"from": "2026-10-01T00:00:00Z", "to": "2026-10-02T00:00:00Z"},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("simulate = %d %+v", resp.StatusCode, decodeError(t, resp))
+	}
+	var sim struct {
+		Replay struct {
+			Replayed    int   `json:"replayed"`
+			Unchanged   int   `json:"unchanged"`
+			DenyToAllow []any `json:"deny_to_allow"`
+		} `json:"replay"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sim); err != nil {
+		t.Fatal(err)
+	}
+	if sim.Replay.Replayed != 2 || sim.Replay.Unchanged != 2 {
+		t.Errorf("replay = %+v; the window that counted is replayed as recorded", sim.Replay)
+	}
+	if got := probes.Load(); got != before {
+		t.Errorf("simulation called a provider %d time(s); a probe's answer is a recorded input", got-before)
 	}
 }

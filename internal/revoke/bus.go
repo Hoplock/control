@@ -242,6 +242,27 @@ func (b *Bus) Resync(ctx context.Context, tenant store.Tenant, aud Audience) (Re
 	return b.publish(ctx, tenant, aud, contract.RevocationEvent{Type: contract.EventTypeResync}, true)
 }
 
+// ConfigChanged tells one proxy that its desired configuration document moved
+// (proxy D18). It NAMES the document and never carries it: the stream is
+// replayable, and a replayed document would be a stale one applied as if
+// current — the proxy answers by fetching the current one, so a replayed
+// notification for an older version cannot bring that version back. That is
+// also why it is retained for replay like any other event. It touches no
+// session and no cached decision.
+func (b *Bus) ConfigChanged(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) (Receipt, error) {
+	aud := ToProxy(proxyID)
+	if err := aud.validate(); err != nil {
+		return Receipt{}, err
+	}
+	if ev.Version == "" || ev.Hash == "" {
+		return Receipt{}, fmt.Errorf("revoke: a config_changed names a version and a hash")
+	}
+	return b.publish(ctx, tenant, aud, contract.RevocationEvent{
+		Type:          contract.EventTypeConfigChanged,
+		ConfigChanged: &ev,
+	}, false)
+}
+
 // publish mints an id, retains the event when it is replayable, and queues it
 // to every subscription the audience reaches.
 //

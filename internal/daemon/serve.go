@@ -13,6 +13,7 @@ import (
 	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/config"
+	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/south"
@@ -56,6 +57,9 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 
 	registry := fleet.New(st,
 		fleet.WithSubscriptionState(bus),
+		// Configuration delivery reuses the stream (proxy D18): a publish
+		// announces each moved proxy's composed document on it.
+		fleet.WithConfigPublisher(busConfigPublisher{bus}),
 		fleet.WithLiveness(fleet.Liveness{
 			HeartbeatTTL:         cfg.Fleet.HeartbeatTTL,
 			RelayRegistrationTTL: cfg.Fleet.RelayRegistrationTTL,
@@ -158,15 +162,26 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
+	// The certificate authority (0011) serves both listeners: the north-bound
+	// surface manages it, and the south-bound one mints the per-session
+	// certificates `brokered-certificate` routes ask for (Hoplock/proxy#68).
+	// Nil when no key-encryption key is configured; both answer for that.
+	ca, err := buildCA(cfg, st, log)
+	if err != nil {
+		return err
+	}
+
 	handler, err := south.New(south.Options{
-		Identity:       auth,
-		Fleet:          registry,
-		Decision:       decisions,
-		Events:         trackSubscriptions(bus, grants),
-		Logs:           ingest,
-		Logger:         log,
-		MaxBodyBytes:   cfg.South.MaxBodyBytes,
-		RequestTimeout: cfg.South.RequestTimeout,
+		CA:              ca,
+		Identity:        auth,
+		Fleet:           registry,
+		Decision:        decisions,
+		Events:          trackSubscriptions(bus, grants, registry),
+		Logs:            ingest,
+		Logger:          log,
+		MaxBodyBytes:    cfg.South.MaxBodyBytes,
+		MaxLogBodyBytes: cfg.South.MaxLogBodyBytes,
+		RequestTimeout:  cfg.South.RequestTimeout,
 	})
 	if err != nil {
 		return err
@@ -193,6 +208,12 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	defer stopPolling()
 	go grants.Watch(pollCtx, cfg.Grants.WorkflowPollInterval)
 
+	// Owed configuration announcements are retried until the stream takes
+	// them — once now, for a publish a crash interrupted between its commit
+	// and its announcement, and then on a timer (proxy D18).
+	registry.TrackConfigTenant(store.Tenant(cfg.Tenant))
+	go registry.WatchAnnouncements(pollCtx, fleet.DefaultAnnounceInterval)
+
 	// The push receiver (0013): an admitted window becomes a grant through
 	// the grant service, and whether a scope is privileged is the active
 	// policy's to say, which the decision service already holds.
@@ -201,12 +222,15 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
-	northSrv, northHandler, err := buildNorth(ctx, cfg, st, emitter, grants, pushes, h, log)
+	northSrv, northHandler, err := buildNorth(ctx, cfg, northDeps{
+		st: st, ca: ca, emitter: emitter, grants: grants, pushes: pushes,
+		fleet: registry, revocations: revoke.NewOperator(bus, registry), extensions: extensions,
+	}, h, log)
 	if err != nil {
 		return err
 	}
 
-	errs := make(chan error, 4)
+	errs := make(chan error, 2)
 	go func() {
 		err := srv.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
@@ -240,34 +264,6 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		errs <- err
 	}()
 
-	publisher, err := startPublishListener(cfg, registry, bus, log)
-	if err != nil {
-		return err
-	}
-	if publisher != nil {
-		go func() {
-			err := publisher.ListenAndServe()
-			if errors.Is(err, http.ErrServerClosed) {
-				err = nil
-			}
-			errs <- err
-		}()
-	}
-
-	auditReader, err := startAuditReadListener(cfg, st, log)
-	if err != nil {
-		return err
-	}
-	if auditReader != nil {
-		go func() {
-			err := auditReader.ListenAndServe()
-			if errors.Is(err, http.ErrServerClosed) {
-				err = nil
-			}
-			errs <- err
-		}()
-	}
-
 	select {
 	case err := <-errs:
 		return err
@@ -283,16 +279,6 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	// would cut a line mid-write and leave a gap the proxy could only
 	// discover on reconnect — a deploy is a reconnect, not a fleet-wide
 	// cache flush.
-	if publisher != nil {
-		if err := publisher.Shutdown(shutdownCtx); err != nil {
-			log.Warn("the publish listener did not shut down cleanly", "error", err)
-		}
-	}
-	if auditReader != nil {
-		if err := auditReader.Shutdown(shutdownCtx); err != nil {
-			log.Warn("the audit read listener did not shut down cleanly", "error", err)
-		}
-	}
 	if err := northSrv.Shutdown(shutdownCtx); err != nil {
 		log.Warn("the north-bound listener did not shut down cleanly", "error", err)
 	}
@@ -309,57 +295,11 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	return <-errs
 }
 
-// startPublishListener binds the local publish path, when one is configured.
-//
-// It returns (nil, nil) when it is not, which is the default: see publish.go
-// for why an unconfigured deployment has no publish port at all.
-func startPublishListener(cfg *config.Config, registry *fleet.Registry, bus *revoke.Bus, log *slog.Logger) (*http.Server, error) {
-	if cfg.Events.PublishListener == "" {
-		return nil, nil
-	}
-	ps, err := newPublishServer(
-		revoke.NewOperator(bus, registry),
-		store.Tenant(cfg.Tenant),
-		cfg.Events.PublishToken,
-		log,
-	)
-	if err != nil {
-		return nil, err
-	}
-	log.Warn("the local revocation publish listener is enabled",
-		"event", "revoke_publish_listener_enabled",
-		"address", cfg.Events.PublishListener,
-		"note", "this is a pre-0019 operator path and publishes the kill switch; do not expose it",
-	)
-	return &http.Server{
-		Addr:              cfg.Events.PublishListener,
-		Handler:           ps.handler(),
-		ReadHeaderTimeout: cfg.South.RequestTimeout,
-	}, nil
-}
+// busConfigPublisher is the fleet registry's configuration publisher over the
+// revocation bus: one `config_changed` to one proxy (proxy D18).
+type busConfigPublisher struct{ bus *revoke.Bus }
 
-// startAuditReadListener binds the record read-back path, when one is
-// configured.
-//
-// It returns (nil, nil) when it is not, which is the default: see
-// auditread.go for why an unconfigured deployment has no read port at all,
-// and for the phase that deletes this one.
-func startAuditReadListener(cfg *config.Config, st *store.Store, log *slog.Logger) (*http.Server, error) {
-	if cfg.Audit.ReadListener == "" {
-		return nil, nil
-	}
-	ar, err := newAuditReadServer(audit.NewReader(st), store.Tenant(cfg.Tenant), cfg.Audit.ReadToken)
-	if err != nil {
-		return nil, err
-	}
-	log.Warn("the local audit read listener is enabled",
-		"event", "audit_read_listener_enabled",
-		"address", cfg.Audit.ReadListener,
-		"note", "this is a pre-0019 operator path and serves audit records; do not expose it",
-	)
-	return &http.Server{
-		Addr:              cfg.Audit.ReadListener,
-		Handler:           ar.handler(),
-		ReadHeaderTimeout: cfg.South.RequestTimeout,
-	}, nil
+func (p busConfigPublisher) PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) error {
+	_, err := p.bus.ConfigChanged(ctx, tenant, proxyID, ev)
+	return err
 }

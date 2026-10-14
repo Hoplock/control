@@ -30,31 +30,29 @@ import (
 //     mid-upgrade fleet that silently enforces less than its policy says is
 //     the exact failure this exists to prevent.
 //
-// REMOVING THE OLDER VOCABULARIES DID NOT REMOVE THE VERSIONING. Upstream
-// collapsed the contract to one live vocabulary stated in the present tense,
-// with no "since version N" annotation on any field — so `requiredVersion`
-// answers the current baseline for every response this server can build today.
-// It is not vestigial: it is where the NEXT revision tiers its own fields, as a
-// case that runs first, and the proxy's `cmd/mock-control` keeps the same shape
-// for the same reason. A session reading "one vocabulary" as "nothing to
-// negotiate" would delete the only thing standing between a fleet mid-upgrade
-// and a silently widened session.
+// THE TIERS. Upstream states the contract in the present tense, with no
+// "since version N" on any field, so the tiers are this server's to keep — the
+// same three the proxy's cmd/mock-control keeps (baselineVocabulary,
+// vocabularyBrokeredCertificate, vocabularyAlgorithmFloor), and each a constant
+// of its own in internal/contract rather than an offset from PolicyVersion:
+//
+//	contract.VocabularyAlgorithmFloor (6)       algorithm_floor, or a non-empty algorithm_bans
+//	contract.VocabularyBrokeredCertificate (5)  a ladder naming brokered-certificate at any rung
+//	contract.VocabularyBaseline (4)             everything else
+//
+// A proxy one or two revisions behind therefore still gets every route it CAN
+// read, and is refused — whole, with a 5xx naming both numbers — exactly the
+// routes it cannot. Never a thinned answer: a ladder with the certificate rung
+// dropped, or a route with its floor or ban removed, is a dropped restriction
+// (PLAN §4).
 
 // requiredVersion reports the lowest policy vocabulary that can express this
 // response.
 //
 // It answers per RESPONSE and not per build, which is the point: the refusal is
-// per route, so a proxy one revision behind still gets every route it CAN read.
-// With one live vocabulary that is every route or none, and the next revision
-// is what makes the distinction bite again:
-//
-//	switch {
-//	case resp.SomeFieldAddedInVocabulary5 != nil:
-//		return 5
-//	}
-//
-// Every field added to the contract needs such a case, or this server hands it
-// to a proxy that fails the session closed on it.
+// per route. Every field added to the contract needs a case here, highest tier
+// first, or this server hands it to a proxy that fails the session closed on
+// it.
 //
 // The `device_field.<name>` namespace is deliberately NOT a case here and must
 // never become one. It is an open namespace: a name inside it is not a new
@@ -62,9 +60,18 @@ import (
 // older proxy parses a route bearing device fields exactly as it parses one
 // without them. Whether a driver accepts a given name is a CAPABILITY question
 // (M17), answered in capability.go against what the enforcing proxy declared.
+// So is whether the proxy enforces a floor level, or can apply a ban without
+// emptying an axis: those are per proxy (Hoplock/proxy#72), never a version.
 func requiredVersion(resp *contract.AuthorizeResponse) int32 {
-	_ = resp
-	return contract.PolicyVersion
+	if resp.AlgorithmFloor != "" || !resp.AlgorithmBans.Empty() {
+		return contract.VocabularyAlgorithmFloor
+	}
+	for _, rung := range resp.TargetAuthLadder {
+		if rung.Method == contract.TargetAuthBrokeredCertificate {
+			return contract.VocabularyBrokeredCertificate
+		}
+	}
+	return contract.VocabularyBaseline
 }
 
 // VersionMismatchError is policy this server cannot express within the

@@ -183,13 +183,13 @@ func TestBreakGlassArrivesAsAssertedAndAFederatedPrincipalArrivesWithout(t *test
 	federated.Subject, federated.Source = "alice", "corp-oidc"
 	federated.Groups = []string{"auditors", "sre"}
 
-	server, err := north.New(north.Options{
+	server, err := north.New(withLifecycle(t, st, north.Options{
 		Federation:    federation,
 		Grants:        newGrants(t, st, access.Options{}),
 		Authenticator: fixedAuthenticator{"bg": breakGlass, "fed": federated},
 		HostProvider:  testHostProvider,
 		HostRoutes:    testHostRoutes(),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -394,12 +394,12 @@ func TestAHostErrorCodeMustBeNewAndSnakeCase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("federation: %v", err)
 	}
-	if _, err := north.New(north.Options{
+	if _, err := north.New(withLifecycle(t, st, north.Options{
 		Federation:     federation,
 		Grants:         newGrants(t, st, access.Options{}),
 		HostProvider:   testHostProvider,
 		HostErrorCodes: []string{north.CodeNotFound},
-	}); err == nil {
+	})); err == nil {
 		t.Error("a host code colliding with Control's built a server")
 	}
 }

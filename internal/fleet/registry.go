@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/hoplock/control/internal/contract"
@@ -40,6 +41,12 @@ type Registry struct {
 	// answer has no rule, so this server states its own. Zero takes
 	// DefaultHostKeyCacheTTL.
 	hostKeyCacheTTL time.Duration
+	// configTenants are the tenants the announcer walks (TrackConfigTenant).
+	configTenants sync.Map
+	// declared is the digest of each proxy's algorithm declaration as this
+	// process last wrote it (tenant + "\x00" + proxy id → digest), so the
+	// decision path writes only when a build changed (M5).
+	declared sync.Map
 }
 
 // Option configures a Registry.
@@ -56,9 +63,10 @@ func WithSubscriptionState(s SubscriptionState) Option {
 	return func(r *Registry) { r.subs = s }
 }
 
-// WithConfigPublisher supplies the configuration delivery path (0009 implements
-// it). Without one, a publish is durable and visible but not pushed — see
-// [ConfigPublisher] for why that is the honest state today.
+// WithConfigPublisher supplies the configuration delivery path: the event
+// stream's `config_changed` (proxy D18), which the daemon wires to the
+// revocation bus. Without one a publish is durable and every announcement is
+// owed, which the rollout view shows.
 func WithConfigPublisher(p ConfigPublisher) Option {
 	return func(r *Registry) {
 		if p != nil {
@@ -373,10 +381,6 @@ type HeartbeatReport struct {
 	// stops reporting has dropped, and a relay edge over a dropped registration
 	// must leave routing at once rather than hang a session.
 	RelayRegistrations []string
-	// RunningConfigVersion and RunningConfigHash are what it is actually
-	// running. Zero leaves the stored value alone.
-	RunningConfigVersion int64
-	RunningConfigHash    string
 }
 
 // Heartbeat records a report.
@@ -418,13 +422,6 @@ func (r *Registry) Heartbeat(ctx context.Context, tenant store.Tenant, h Heartbe
 		}
 		if err := tx.RelayRegistrations().ReplaceForUpstream(ctx, tenant, h.ProxyID, h.RelayRegistrations, now); err != nil {
 			return err
-		}
-		if h.RunningConfigVersion != 0 {
-			err := tx.ProxyConfigs().ReportRunning(ctx, tenant, h.ProxyID,
-				h.RunningConfigVersion, h.RunningConfigHash, now)
-			if err != nil && !store.IsNotFound(err) {
-				return err
-			}
 		}
 		return nil
 	})
@@ -541,7 +538,7 @@ func (r *Registry) Path(ctx context.Context, tenant store.Tenant, entry EntryPoi
 // health
 // ---------------------------------------------------------------------------
 
-// ProxyHealth is what the console's fleet screen (0021) renders and what an
+// ProxyHealth is what the console's fleet screen (0025) renders and what an
 // operator looks at first during an incident.
 type ProxyHealth struct {
 	ProxyID string
@@ -564,13 +561,11 @@ type ProxyHealth struct {
 	// RelayRegistrations are the downstream proxies currently registered with
 	// it, live ones only, in id order.
 	RelayRegistrations []string
-	// DesiredConfigVersion, RunningConfigVersion and ConfigDrift are the
-	// rollout. Drift is a value rather than something the reader derives,
-	// because silent drift across a fleet is indistinguishable from a broken
-	// rollout.
-	DesiredConfigVersion int64
-	RunningConfigVersion int64
-	ConfigDrift          bool
+	// Config is its place in the configuration rollout, derived from its
+	// report (proxy D18). Drift is a value rather than something the reader
+	// derives, because silent drift across a fleet is indistinguishable from
+	// a broken rollout.
+	Config ConfigRollout
 	// SessionCount, LastError and LastErrorAt are the rest of the picture.
 	SessionCount int
 	LastError    string
@@ -621,22 +616,21 @@ func (r *Registry) Health(ctx context.Context, tenant store.Tenant) ([]ProxyHeal
 	out := make([]ProxyHealth, 0, len(proxies))
 	for _, p := range proxies {
 		cfg := byProxy[p.ID]
+		cfg.ProxyID = p.ID
 		out = append(out, ProxyHealth{
-			ProxyID:              p.ID,
-			Zone:                 Zone(p.Zone),
-			State:                p.State,
-			Live:                 r.isLive(p, subs, now),
-			LastHeartbeatAt:      p.LastHeartbeatAt,
-			SubscriptionSeenAt:   subs[p.ID],
-			ContractVersion:      p.ContractVersion,
-			Capabilities:         UnmarshalCapabilities(p.DeclaredCapabilities),
-			RelayRegistrations:   relays[p.ID],
-			DesiredConfigVersion: cfg.DesiredVersion,
-			RunningConfigVersion: cfg.RunningVersion,
-			ConfigDrift:          cfg.Drifted(),
-			SessionCount:         p.SessionCount,
-			LastError:            p.LastError,
-			LastErrorAt:          p.LastErrorAt,
+			ProxyID:            p.ID,
+			Zone:               Zone(p.Zone),
+			State:              p.State,
+			Live:               r.isLive(p, subs, now),
+			LastHeartbeatAt:    p.LastHeartbeatAt,
+			SubscriptionSeenAt: subs[p.ID],
+			ContractVersion:    p.ContractVersion,
+			Capabilities:       UnmarshalCapabilities(p.DeclaredCapabilities),
+			RelayRegistrations: relays[p.ID],
+			Config:             rolloutOf(cfg),
+			SessionCount:       p.SessionCount,
+			LastError:          p.LastError,
+			LastErrorAt:        p.LastErrorAt,
 		})
 	}
 	return out, nil
@@ -662,10 +656,16 @@ func (r *Registry) ReportTargetCapabilities(ctx context.Context, tenant store.Te
 	if rec.Key.Hostname == "" {
 		return 0, fmt.Errorf("fleet.ReportTargetCapabilities: hostname is required")
 	}
-	// An undated report is stored undated. Stamping it with arrival time would
-	// make a record the proxy could not date look fresh, which is exactly the
-	// fail-open the rule exists to prevent — and the proxy's own clock is the
-	// only one that saw the target.
+	// A rung observation reaches here DATED: the contract's merge rule has
+	// the south-bound handler refuse rungs or detail without observed_at,
+	// because an undated observation cannot be placed against the stored one
+	// (Hoplock/proxy#69). It is never stamped with arrival time — the proxy's
+	// own clock is the only one that saw the target — and a record stored
+	// undated before that rule still reads as stale (M17).
+	//
+	// This replaces the RUNG observation only. The key-exchange observation
+	// is stored beside it (ReportTargetKex) and a rung report never touches
+	// it, nor it a rung one.
 	if err := r.st.TargetCapabilities().Put(ctx, tenant, targetCapabilitiesToStore(rec, r.now())); err != nil {
 		return 0, err
 	}

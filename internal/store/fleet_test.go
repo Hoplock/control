@@ -301,8 +301,10 @@ func TestPutStateDoesNotTouchWhatTheProxyReported(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PutState: %v", err)
 	}
-	if err := st.ProxyConfigs().ReportRunning(ctx, tenantA, "p-a", 1, "h1", fleetNow()); err != nil {
-		t.Fatalf("ReportRunning: %v", err)
+	if err := st.ProxyConfigs().PutReport(ctx, tenantA, "p-a", store.ConfigReport{
+		RunningVersion: "v1", RunningHash: "sha256:h1", State: "applied", LastHeardAt: fleetNow(),
+	}, 1, "h1"); err != nil {
+		t.Fatalf("PutReport: %v", err)
 	}
 	if err := st.ProxyConfigs().PutState(ctx, tenantA, store.ProxyConfigState{
 		ProxyID: "p-a", DesiredVersion: 2, DesiredHash: "h2",
@@ -323,8 +325,10 @@ func TestPutStateDoesNotTouchWhatTheProxyReported(t *testing.T) {
 		t.Error("the state does not report drift")
 	}
 
-	if err := st.ProxyConfigs().ReportRunning(ctx, tenantA, "p-nobody", 1, "h", fleetNow()); !store.IsNotFound(err) {
-		t.Errorf("ReportRunning for an unknown proxy: %v, want ErrNotFound", err)
+	if err := st.ProxyConfigs().PutReport(ctx, tenantA, "p-nobody", store.ConfigReport{
+		State: "applied", LastHeardAt: fleetNow(),
+	}, 1, "h"); !store.IsNotFound(err) {
+		t.Errorf("PutReport for an unknown proxy: %v, want ErrNotFound", err)
 	}
 }
 
@@ -463,8 +467,8 @@ func TestFleetRepositoriesDoNotReachAnotherTenant(t *testing.T) {
 			_, err := st.ProxyConfigs().GetState(ctx, tenantA, bOnly)
 			return err
 		},
-		"ProxyConfigs.ReportRunning": func() error {
-			return st.ProxyConfigs().ReportRunning(ctx, tenantA, bOnly, 1, "h", now)
+		"ProxyConfigs.PutReport": func() error {
+			return st.ProxyConfigs().PutReport(ctx, tenantA, bOnly, store.ConfigReport{State: "applied", LastHeardAt: now}, 1, "h")
 		},
 	}
 	for name, read := range reads {

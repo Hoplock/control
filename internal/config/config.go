@@ -61,6 +61,13 @@ const (
 const (
 	// DefaultSouthMaxBodyBytes caps a south-bound request body.
 	DefaultSouthMaxBodyBytes int64 = 1 << 20
+	// DefaultSouthMaxLogBodyBytes caps a body on the two log paths. A full
+	// default batch of a busy session's capture is 64 records of up to
+	// 32 KiB each — about 2.7 MiB once base64-encoded — and since
+	// Hoplock/proxy#71 a body over the limit is halved by the proxy until
+	// it fits, costing requests and protecting nothing the per-record
+	// bounds do not.
+	DefaultSouthMaxLogBodyBytes int64 = 4 << 20
 	// DefaultSouthRequestTimeout bounds one south-bound request. A
 	// server-side timeout that ANSWERS is strictly better than a slow
 	// answer that looks like an outage (M5).
@@ -183,34 +190,25 @@ type Config struct {
 	Notify     NotifyConfig     `yaml:"notify"`
 
 	AccessContext AccessContextConfig `yaml:"access_context"`
+	Policy        PolicyConfig        `yaml:"policy"`
 }
 
-// AuditConfig bounds log ingest and configures the record read-back path
-// (PLAN §7, M8).
+// PolicyConfig is what the publish-time report reads beyond the bundle (0019).
+type PolicyConfig struct {
+	// Interpreters are the executables that hand back a shell. A restricted
+	// allow-list naming one, under a rung that claims the list is a
+	// boundary, is a warning the author must accept. Empty takes the
+	// shipped starting list; a list here replaces it whole, because an
+	// estate knows its own tooling. It is never a data-plane deny-list.
+	Interpreters []string `yaml:"interpreters"`
+}
+
+// AuditConfig bounds log ingest (PLAN §7, M8).
 //
-// THE READ PATH IS NOT PART OF THE CONTRACT, and that is deliberate upstream:
-// a proxy writes logs and never queries them, so an operator read API on `/v1`
-// would be one every Hoplock Control implements and no proxy calls
-// (`Hoplock/proxy#56`). The priority ack's durability guarantee is therefore
-// observable only through a path this server exposes outside `/v1`, which is
-// what this listener is — and what the conformance suite takes as
-// `logs.read_url`.
-//
-// It follows `events.publish_listener` in every respect: OFF UNLESS
-// CONFIGURED, refusing to bind without a credential of its own, on a port of
-// its own because the south-bound listener serves the contract and nothing
-// else (M2). It is superseded and DELETED by 0019's north-bound audit query
-// route — `docs/PROTOCOL.md` §3 permits a debug endpoint only against a named
-// successor whose own prompt carries the removal, and 0019's does, file by
-// file.
+// The record read-back path that lived here until 0019 is gone: records are read
+// over the north-bound audit query, under a scoped credential and RBAC, and the
+// bounds below are ingest limits that nothing supersedes.
 type AuditConfig struct {
-	// ReadListener is an OPTIONAL address for the record read-back path,
-	// host:port. EMPTY IS THE DEFAULT AND MEANS NOT BOUND.
-	ReadListener string `yaml:"read_listener"`
-	// ReadToken is the bearer token that listener requires. It is REQUIRED
-	// whenever ReadListener is set: the path reads audit records, which are
-	// the most sensitive documents this server holds.
-	ReadToken string `yaml:"read_token"`
 	// MaxBatchRecords, MaxRecordBytes and MaxCaptureBytes bound one ingest
 	// request. Zero takes the shipped default. They are configurable
 	// because a fleet's record sizes are a property of its estate, and
@@ -244,24 +242,6 @@ type EventsConfig struct {
 	// the publisher would make one stalled proxy an outage for the fleet,
 	// and growing the queue would make it an out-of-memory.
 	SubscriberQueue int `yaml:"subscriber_queue"`
-	// PublishListener is an OPTIONAL address for the local publish path,
-	// host:port. EMPTY IS THE DEFAULT AND MEANS NOT BOUND.
-	//
-	// Publishing an event is an operator action, and the contract states
-	// outright that nothing on `/v1` publishes one — the proxy-facing API
-	// would otherwise carry an endpoint no proxy calls. The north-bound
-	// API that will own it is 0019's, so until then the conformance suite
-	// (which cannot grade gap recovery without making this server emit an
-	// event while a subscriber is away) drives this listener instead.
-	//
-	// It is off unless configured because what it publishes is the kill
-	// switch, and it is a SEPARATE port because the south-bound listener
-	// serves the contract and nothing else (M2).
-	PublishListener string `yaml:"publish_listener"`
-	// PublishToken is the bearer token the publish listener requires. It
-	// is REQUIRED whenever PublishListener is set: an unauthenticated kill
-	// switch is worse than no kill switch.
-	PublishToken string `yaml:"publish_token"`
 }
 
 // DecisionConfig bounds the decision path (PLAN M5, §5.4).
@@ -287,9 +267,14 @@ type DecisionConfig struct {
 
 // SouthConfig bounds the south-bound listener (PLAN M2, M5).
 type SouthConfig struct {
-	// MaxBodyBytes caps a request body. Every south-bound payload is a
-	// small JSON object.
+	// MaxBodyBytes caps a request body. Every south-bound payload but a log
+	// batch is a small JSON object.
 	MaxBodyBytes int64 `yaml:"max_body_bytes"`
+	// MaxLogBodyBytes caps a body on the two log paths, which carry session
+	// capture. A body over it is a 400 the proxy cures by halving the batch
+	// (Hoplock/proxy#71), so it is sized to let a full default batch land in
+	// one request.
+	MaxLogBodyBytes int64 `yaml:"max_log_body_bytes"`
 	// RequestTimeout bounds a single request. It is a deadline on the
 	// handler rather than a suggestion: a timeout the proxy classifies as
 	// an outage is strictly better than a held connection.
@@ -543,6 +528,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.South.MaxBodyBytes == 0 {
 		c.South.MaxBodyBytes = DefaultSouthMaxBodyBytes
+	}
+	if c.South.MaxLogBodyBytes == 0 {
+		c.South.MaxLogBodyBytes = DefaultSouthMaxLogBodyBytes
 	}
 	if c.South.RequestTimeout == 0 {
 		c.South.RequestTimeout = DefaultSouthRequestTimeout
@@ -858,10 +846,10 @@ func (c *Config) Validate() error {
 	if err := c.Decision.validate(); err != nil {
 		return err
 	}
-	if err := c.Events.validate(c.Listeners); err != nil {
+	if err := c.Events.validate(); err != nil {
 		return err
 	}
-	if err := c.Audit.validate(c.Listeners, c.Events); err != nil {
+	if err := c.Audit.validate(); err != nil {
 		return err
 	}
 	if err := c.North.validate(); err != nil {
@@ -886,7 +874,7 @@ func (c *Config) Validate() error {
 }
 
 // validate reports the first revocation-stream setting that cannot be acted on.
-func (e EventsConfig) validate(l ListenersConfig) error {
+func (e EventsConfig) validate() error {
 	if e.HeartbeatInterval <= 0 {
 		return &FieldError{Field: "events.heartbeat_interval", Msg: "must not be negative"}
 	}
@@ -911,35 +899,11 @@ func (e EventsConfig) validate(l ListenersConfig) error {
 	if e.SubscriberQueue <= 0 {
 		return &FieldError{Field: "events.subscriber_queue", Msg: "must be a positive number of events"}
 	}
-	if e.PublishListener == "" {
-		if e.PublishToken != "" {
-			return &FieldError{
-				Field: "events.publish_token",
-				Msg:   "is set but events.publish_listener is not, so nothing would ever read it",
-			}
-		}
-		return nil
-	}
-	if e.PublishToken == "" {
-		// The listener publishes the kill switch. A deployment that
-		// binds it without a credential has opened one to anybody who
-		// can reach the port.
-		return &FieldError{
-			Field: "events.publish_token",
-			Msg:   "is required when events.publish_listener is set",
-		}
-	}
-	if e.PublishListener == l.South || e.PublishListener == l.North {
-		return &FieldError{
-			Field: "events.publish_listener",
-			Msg:   "must differ from listeners.south and listeners.north: the south-bound listener serves the contract and nothing else",
-		}
-	}
 	return nil
 }
 
 // validate reports the first audit setting that cannot be acted on.
-func (a AuditConfig) validate(l ListenersConfig, e EventsConfig) error {
+func (a AuditConfig) validate() error {
 	for _, f := range []struct {
 		name  string
 		value int
@@ -954,29 +918,6 @@ func (a AuditConfig) validate(l ListenersConfig, e EventsConfig) error {
 		}
 	}
 
-	if a.ReadListener == "" {
-		if a.ReadToken != "" {
-			return &FieldError{
-				Field: "audit.read_token",
-				Msg:   "is set but audit.read_listener is not, so nothing would ever read it",
-			}
-		}
-		return nil
-	}
-	if a.ReadToken == "" {
-		// The path serves audit records. A deployment that binds it
-		// without a credential has published its audit store.
-		return &FieldError{
-			Field: "audit.read_token",
-			Msg:   "is required when audit.read_listener is set",
-		}
-	}
-	if a.ReadListener == l.South || a.ReadListener == l.North || a.ReadListener == e.PublishListener {
-		return &FieldError{
-			Field: "audit.read_listener",
-			Msg:   "must differ from listeners.south, listeners.north and events.publish_listener: the south-bound listener serves the contract and nothing else, and a read path must not share a port with the kill switch",
-		}
-	}
 	return nil
 }
 
@@ -984,6 +925,9 @@ func (a AuditConfig) validate(l ListenersConfig, e EventsConfig) error {
 func (s SouthConfig) validate() error {
 	if s.MaxBodyBytes <= 0 {
 		return &FieldError{Field: "south.max_body_bytes", Msg: "must be a positive number of bytes"}
+	}
+	if s.MaxLogBodyBytes <= 0 {
+		return &FieldError{Field: "south.max_log_body_bytes", Msg: "must be a positive number of bytes"}
 	}
 	if s.RequestTimeout <= 0 {
 		return &FieldError{Field: "south.request_timeout", Msg: "must not be negative"}

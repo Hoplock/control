@@ -12,13 +12,18 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/accessctx"
+	"github.com/hoplock/control/internal/audit"
+	"github.com/hoplock/control/internal/authoring"
 	"github.com/hoplock/control/internal/config"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/extdefault"
+	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -27,33 +32,52 @@ import (
 // It is a file of its own beside serve.go because the two listeners share
 // nothing (M2), and the seam is worth being able to read on its own.
 
-// buildNorth assembles the federation service, the certificate authority and
-// the north-bound handler tree, over the grant service serve built.
-func buildNorth(
-	ctx context.Context,
-	cfg *config.Config,
-	st *store.Store,
-	emitter identity.AuditSink,
-	grants *access.Service,
-	pushes *accessctx.Service,
-	h Host,
-	log *slog.Logger,
-) (*http.Server, *north.Server, error) {
-	federation, err := buildFederation(cfg, st, emitter, log)
+// northDeps is what serve built that the north-bound surface stands on.
+type northDeps struct {
+	st          *store.Store
+	ca          *credential.CA
+	emitter     *audit.Emitter
+	grants      *access.Service
+	pushes      *accessctx.Service
+	fleet       *fleet.Registry
+	revocations *revoke.Operator
+	extensions  *ext.Extensions
+}
+
+// buildNorth assembles the federation service, the policy lifecycle and the
+// north-bound handler tree, over the services serve built.
+func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, log *slog.Logger) (*http.Server, *north.Server, error) {
+	st := d.st
+	federation, err := buildFederation(cfg, st, d.emitter, log)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	ca, err := buildCA(cfg, st, log)
+	// The policy lifecycle (0019): Control's own publish-time checks, then
+	// every registered validator, over the fleet and the audit evidence.
+	var validators []ext.Bound[ext.PolicyValidator]
+	if d.extensions != nil {
+		validators = d.extensions.PolicyValidators()
+	}
+	lifecycle, err := authoring.New(authoring.Options{
+		Store: st, Fleet: d.fleet, Emitter: d.emitter, Reader: audit.NewReader(st),
+		Validators: validators, Interpreters: cfg.Policy.Interpreters,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
 
 	handler, err := north.New(north.Options{
 		Federation:      federation,
-		CA:              ca,
-		Grants:          grants,
-		AccessContext:   pushes,
+		CA:              d.ca,
+		Grants:          d.grants,
+		AccessContext:   d.pushes,
+		Store:           st,
+		Fleet:           d.fleet,
+		Authoring:       lifecycle,
+		Revocations:     d.revocations,
+		Audit:           d.emitter,
+		Extensions:      d.extensions,
 		MaxPushBytes:    cfg.AccessContext.MaxPushBytes,
 		Logger:          log,
 		MaxBodyBytes:    cfg.North.MaxBodyBytes,

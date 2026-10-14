@@ -171,10 +171,10 @@ func TestAFederatedSessionCoversTheOneTenantItSignedInThrough(t *testing.T) {
 		t.Fatalf("complete: %v", err)
 	}
 
-	server, err := north.New(north.Options{
+	server, err := north.New(withLifecycle(t, st, north.Options{
 		Federation: federation, Grants: newGrants(t, st, access.Options{}),
 		HostProvider: testHostProvider, HostRoutes: testHostRoutes(),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}

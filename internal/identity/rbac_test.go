@@ -49,6 +49,10 @@ func TestEveryRoleCanReadWhatItCanChange(t *testing.T) {
 		{identity.PermIdentityWrite, identity.PermIdentityRead},
 		{identity.PermCARotate, identity.PermCARead},
 		{identity.PermReportWrite, identity.PermAuditRead},
+		{identity.PermTargetWrite, identity.PermFleetRead},
+		{identity.PermAuditRetain, identity.PermAuditRead},
+		{identity.PermSessionRevoke, identity.PermAuditRead},
+		{identity.PermAccessContextWrite, identity.PermAccessContextRead},
 	}
 	for _, role := range identity.AllRoles {
 		for _, pair := range pairs {
@@ -65,6 +69,8 @@ func TestTheAuditorChangesNothing(t *testing.T) {
 		identity.PermGrantWrite, identity.PermGrantApprove,
 		identity.PermFleetWrite, identity.PermIdentityWrite, identity.PermCARotate,
 		identity.PermReportWrite, identity.PermGrantRequest,
+		identity.PermTargetWrite, identity.PermAuditRetain, identity.PermSessionRevoke,
+		identity.PermAccessContextWrite,
 	}
 	for _, perm := range writes {
 		if identity.RoleAuditor.Can(perm) {
@@ -80,7 +86,11 @@ func TestOnlyTheAdminHoldsThePermissionsThatGrantPermissions(t *testing.T) {
 	// identity:write writes the claim mapping, which decides which IdP claims
 	// become policy attributes: whoever holds it can grant themselves a group.
 	// ca:rotate can invalidate every outstanding certificate in the tenant.
-	for _, perm := range []identity.Permission{identity.PermIdentityWrite, identity.PermCARotate} {
+	// audit:retain removes evidence, and access-context:write is a standing
+	// pre-approval for an external system to open access (0019).
+	for _, perm := range []identity.Permission{
+		identity.PermIdentityWrite, identity.PermCARotate, identity.PermAuditRetain, identity.PermAccessContextWrite,
+	} {
 		for _, role := range identity.AllRoles {
 			if role == identity.RoleAdmin {
 				continue

@@ -42,6 +42,7 @@ func Compile(b *model.Bundle) (*Program, error) {
 		rules:    make([]Rule, 0, len(b.Rules)),
 		scopes:   maps.Clone(b.Scopes),
 	}
+	c.checkBans("", 0, b.AlgorithmBans)
 	for i := range b.Rules {
 		prog.rules = append(prog.rules, c.rule(&b.Rules[i]))
 	}
@@ -77,6 +78,16 @@ func (c *compiler) rule(r *model.Rule) Rule {
 	c.checkCache(r)
 	if r.Route != nil {
 		c.checkRoute(r)
+		// A ban everywhere is the bundle's own bans added to every
+		// route's (Hoplock/proxy#69): the compiled route carries the
+		// union, so the snapshot, the decision record and the vocabulary
+		// gate all see exactly what goes on the wire. The authored route
+		// is never mutated; the program holds its own copy.
+		if !c.bundle.AlgorithmBans.Empty() {
+			rt := *r.Route
+			rt.AlgorithmBans = r.Route.AlgorithmBans.Merge(c.bundle.AlgorithmBans)
+			out.route = &rt
+		}
 	}
 	return out
 }
@@ -311,6 +322,7 @@ func (c *compiler) checkRoute(r *model.Rule) {
 	c.checkFilter(r)
 	c.checkCredentials(r)
 	c.checkEnforcement(r)
+	c.checkAlgorithms(r)
 
 	if rt.MaxSessionDuration.Duration() < 0 {
 		c.add(model.CodeRouteDeadlineInvalid, r.ID, r.Line(), "duration", rt.MaxSessionDuration.String())
@@ -320,6 +332,44 @@ func (c *compiler) checkRoute(r *model.Rule) {
 	}
 	if rt.Concurrency.MaxSessionsPerTarget < 0 {
 		c.add(model.CodeRouteConcurrencyInvalid, r.ID, r.Line(), "field", "max_sessions_per_target")
+	}
+}
+
+// checkAlgorithms holds a route's floor and bans to exactly what the proxy
+// refuses, and no more (Hoplock/proxy#69).
+//
+// What is refused here is what every build refuses: a floor with a profile that
+// widens the key-exchange axis the floor narrows, and an empty or repeated ban
+// identifier. What depends on the build is NOT refused here — whether a ban
+// leaves an axis nothing to offer is judged per proxy, from each one's
+// declaration, on the decision path and as a publish-time finding (M17) — and
+// neither is a name no build implements: banning what is never offered is
+// already satisfied, and refusing it would turn a same-day ban issued after an
+// advisory into an outage on every build that never had the algorithm.
+func (c *compiler) checkAlgorithms(r *model.Rule) {
+	rt := r.Route
+	if rt.AlgorithmFloor != model.AlgorithmFloorUnset && rt.AlgorithmProfile.WidensKeyExchange() {
+		c.add(model.CodeRouteFloorProfileConflict, r.ID, r.Line(),
+			"floor", string(rt.AlgorithmFloor), "profile", string(rt.AlgorithmProfile))
+	}
+	c.checkBans(r.ID, r.Line(), rt.AlgorithmBans)
+}
+
+// checkBans refuses an empty identifier and the same identifier twice on one
+// axis. rule is empty for the bundle's own bans.
+func (c *compiler) checkBans(rule string, line int, b *model.AlgorithmBans) {
+	for _, axis := range model.BanAxes {
+		seen := map[string]bool{}
+		for i, name := range b.Axis(axis) {
+			if strings.TrimSpace(name) == "" {
+				c.add(model.CodeRouteBanIdentifierEmpty, rule, line, "axis", axis, "index", strconv.Itoa(i+1))
+				continue
+			}
+			if seen[name] {
+				c.add(model.CodeRouteBanIdentifierRepeated, rule, line, "axis", axis, "name", name)
+			}
+			seen[name] = true
+		}
 	}
 }
 
@@ -435,8 +485,11 @@ func (c *compiler) checkCredentialEntry(r *model.Rule, index int, e model.Creden
 	case model.UsernameSubject, model.UsernameSubjectLocalPart:
 	}
 
+	// Nothing a bundle can spell names a certificate, its serial or a CA
+	// bundle: a brokered-certificate entry is policy, and the artifacts are
+	// minted per session (Hoplock/proxy#68). Keep it that way.
 	c.checkParamScope(r, idx, method, "key_type", e.KeyType != "",
-		e.Method == model.CredentialEphemeralUser)
+		e.Method == model.CredentialEphemeralUser || e.Method == model.CredentialBrokeredCertificate)
 	c.checkParamScope(r, idx, method, "credential_ref", e.CredentialRef != "",
 		e.Method == model.CredentialBrokeredKey)
 	c.checkParamScope(r, idx, method, "platform", e.Platform != "",
@@ -446,7 +499,8 @@ func (c *compiler) checkCredentialEntry(r *model.Rule, index int, e model.Creden
 	c.checkParamScope(r, idx, method, "expiry_posture", e.ExpiryPosture != model.ExpiryPostureUnset,
 		e.Method == model.CredentialEphemeralAccount)
 	c.checkParamScope(r, idx, method, "lifetime_seconds", e.LifetimeSeconds != 0,
-		e.Method == model.CredentialEphemeralUser || e.Method == model.CredentialEphemeralAccount)
+		e.Method == model.CredentialEphemeralUser || e.Method == model.CredentialEphemeralAccount ||
+			e.Method == model.CredentialBrokeredCertificate)
 
 	if e.LifetimeSeconds < 0 {
 		c.add(model.CodeCredentialLifetimeInvalid, r.ID, r.Line(),

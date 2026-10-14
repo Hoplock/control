@@ -84,6 +84,8 @@ func (s *Suite) CheckLogs() {
 			"record %s was acked and is not in the read path %s straight afterwards; the ack claimed a durability the server did not have",
 			rec.RecordID, url)
 	})
+
+	s.checkSessionless()
 }
 
 // readToken is the credential the read path takes. An expectation file that
@@ -95,6 +97,62 @@ func (s *Suite) readToken(e *LogExpectations) string {
 		return e.ReadToken
 	}
 	return s.token
+}
+
+// contractKinds is the record kinds the contract lists on `LogRecord.kind`,
+// restated here because the suite grades a server against the document and not
+// against any server's code.
+var contractKinds = []string{
+	"session_start", "session_end", "auth", "authorize", "channel_open", "channel_close",
+	"command", "policy_decision", "host_key", "stream", "provisioning", "error",
+}
+
+// sessionlessRecord is a record of one kind that belongs to no session:
+// `session_id: ""`, which the contract allows on every kind since
+// Hoplock/proxy#71 — a sweep's change, a sweep's failure, a gap over records
+// that had none.
+func (s *Suite) sessionlessRecord(kind string, severity contract.LogSeverity) contract.LogRecord {
+	rec := contract.LogRecord{
+		RecordID: s.nextID("pdpconform-sessionless"), SessionID: "", Timestamp: nowRFC3339(),
+		Kind: kind, Severity: severity, Message: "pdpconform session-less record",
+	}
+	if kind == "stream" {
+		rec.Payload = "cGRwY29uZm9ybQ=="
+	}
+	return rec
+}
+
+// checkSessionless grades Hoplock/proxy#71: a record of every kind may belong to
+// no session, on both paths. The sweep failure is named on the priority path
+// because it is the record a server that refused `""` used to set aside — the
+// one that says a privileged account was left standing on a device.
+func (s *Suite) checkSessionless() {
+	s.run(groupLogs, "a session-less record of every kind is accepted on the batch path", func(c *Case) {
+		records := make([]contract.LogRecord, 0, len(contractKinds))
+		for _, kind := range contractKinds {
+			records = append(records, s.sessionlessRecord(kind, contract.SeverityInfo))
+		}
+		r, err := s.postObject(contract.PathLogsBatch, contract.LogBatchRequest{Records: records})
+		c.must(err == nil, "request failed: %v", err)
+		c.must(r.status == 202, "want 202, got %d: %s", r.status, snippet(r.body))
+		var got contract.LogBatchResponse
+		c.must(r.into(&got) == nil, "undecodable body: %s", snippet(r.body))
+		c.require(got.Accepted == int32(len(records)),
+			"sent %d session-less records, one per kind, and the server accepted %d", len(records), got.Accepted)
+	})
+
+	s.run(groupLogs, "a session-less record of every kind is accepted on the priority path", func(c *Case) {
+		for _, kind := range contractKinds {
+			rec := s.sessionlessRecord(kind, contract.SeverityCritical)
+			if kind == "policy_decision" {
+				rec.Message = "device.account.sweep_failed"
+				rec.Attributes = map[string]string{"event": "device.account.sweep_failed"}
+			}
+			r, err := s.postObject(contract.PathLogsPriority, contract.LogPriorityRequest{Record: rec})
+			c.must(err == nil, "%s: request failed: %v", kind, err)
+			c.require(r.status == 200, "a session-less %s at critical answered %d: %s", kind, r.status, snippet(r.body))
+		}
+	})
 }
 
 func (s *Suite) logRecords(n int) []contract.LogRecord {

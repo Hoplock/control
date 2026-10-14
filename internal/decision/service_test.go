@@ -187,6 +187,25 @@ rules:
           expiry_posture: target-enforced
           lifetime_seconds: 600
 
+  - id: brokered-certificate
+    effect: allow
+    match:
+      target:
+        hostnames: [cert-host.example.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-certificate
+          username: netadmin
+          key_type: ed25519
+          lifetime_seconds: 300
+        - method: brokered-key
+          username: netadmin
+          credential_ref: vault://cert
+
   - id: sre-anywhere
     effect: allow
     match:
@@ -299,6 +318,7 @@ func (h *harness) seed(t testing.TB) {
 			{ID: "t-device", Hostname: "device-host.example.com", Zone: "edge"},
 			{ID: "t-ios", Hostname: "ios-host.example.com", Zone: "edge"},
 			{ID: "t-vault", Hostname: "vault-host.example.com", Zone: "vault"},
+			{ID: "t-cert", Hostname: "cert-host.example.com", Zone: "edge"},
 		},
 	})
 
@@ -750,8 +770,8 @@ func TestVocabularyNegotiation(t *testing.T) {
 		if !errors.As(err, &mismatch) {
 			t.Fatalf("error = %v, want a *decision.VersionMismatchError", err)
 		}
-		if mismatch.Needed != contract.PolicyVersion || mismatch.Declared != 1 {
-			t.Errorf("mismatch = %+v, want needed=%d declared=1", mismatch, contract.PolicyVersion)
+		if mismatch.Needed != contract.VocabularyBaseline || mismatch.Declared != 1 {
+			t.Errorf("mismatch = %+v, want needed=%d declared=1", mismatch, contract.VocabularyBaseline)
 		}
 	})
 }

@@ -20,10 +20,13 @@ const auditColumns = `record_id, stream, chain_seq, prev_hash, hash, session_id,
 	body, subject, login, target, message, event, decision_id, proxy_id,
 	attributes, device_fields,
 	enforcement_execution, enforcement_reach, enforcement_verified, enforcement_attested_by,
-	target_auth_method, target_auth_rung, algorithm_profile,
+	credential_method, credential_rung, algorithm_profile,
 	grant_system, grant_reference, grant_window_start, grant_window_end,
 	grant_additional_kind, grant_additional,
-	capture_bytes, capture_sha256, recorded_at, received_at`
+	capture_bytes, capture_sha256, recorded_at, received_at,
+	credential_certificate_serial, algorithm_floor, algorithm_bans, algorithm_bans_unmatched,
+	negotiated, device_change_op, target_account, device_object_kind,
+	gap_cause, gap_records, gap_bytes, gap_first_at, gap_last_at, gap_kinds, gap_critical, gap_record_ids`
 
 // defaultAuditLimit bounds a chain walk or a query when the caller asks for no
 // limit.
@@ -182,12 +185,15 @@ const auditInsertColumns = `tenant, record_id, stream, chain_seq, prev_hash, has
 	session_id, kind, severity, body, subject, login, target,
 	message, event, decision_id, proxy_id, attributes, device_fields,
 	enforcement_execution, enforcement_reach, enforcement_verified,
-	enforcement_attested_by, target_auth_method, target_auth_rung,
+	enforcement_attested_by, credential_method, credential_rung,
 	algorithm_profile, grant_system, grant_reference,
 	grant_window_start, grant_window_end, grant_additional_kind,
-	grant_additional, capture_bytes, capture_sha256, recorded_at`
+	grant_additional, capture_bytes, capture_sha256, recorded_at,
+	credential_certificate_serial, algorithm_floor, algorithm_bans, algorithm_bans_unmatched,
+	negotiated, device_change_op, target_account, device_object_kind,
+	gap_cause, gap_records, gap_bytes, gap_first_at, gap_last_at, gap_kinds, gap_critical, gap_record_ids`
 
-const auditInsertArity = 35
+const auditInsertArity = 51
 
 // maxInsertParameters keeps a multi-row insert inside Postgres' 65535-parameter
 // limit. A batch above it is split rather than refused: the batch bound is
@@ -252,10 +258,15 @@ func (r auditRepo) insertMany(ctx context.Context, op string, q querier, tenant 
 				rec.Message, rec.Event, rec.DecisionID, rec.ProxyID,
 				nonNilMap(rec.Attributes), nonNilMap(rec.DeviceFields),
 				rec.Enforcement.Execution, rec.Enforcement.Reach, rec.Enforcement.Verified,
-				rec.Enforcement.AttestedBy, rec.TargetAuthMethod, rec.TargetAuthRung,
+				rec.Enforcement.AttestedBy, rec.CredentialMethod, rec.CredentialRung,
 				rec.AlgorithmProfile, rec.Grant.System, rec.Grant.Reference,
 				rec.Grant.WindowStart, rec.Grant.WindowEnd, rec.Grant.AdditionalKind,
-				rec.Grant.Additional, rec.CaptureBytes, rec.CaptureSHA256, recordedAt)
+				rec.Grant.Additional, rec.CaptureBytes, rec.CaptureSHA256, recordedAt,
+				rec.CertificateSerial, rec.AlgorithmFloor, nonNilStrings(rec.AlgorithmBans),
+				nonNilStrings(rec.AlgorithmBansUnmatched), nonNilStrings(rec.Negotiated),
+				rec.Device.Op, rec.Device.Account, rec.Device.ObjectKind,
+				rec.Gap.Cause, rec.Gap.Records, rec.Gap.Bytes, rec.Gap.FirstAt, rec.Gap.LastAt,
+				nonNilStrings(rec.Gap.Kinds), rec.Gap.Critical, nonNilStrings(rec.Gap.RecordIDs))
 		}
 
 		if _, err := q.Exec(ctx,
@@ -403,12 +414,18 @@ func (r auditRepo) Capture(ctx context.Context, tenant Tenant, recordID string) 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	var out []byte
+	var (
+		out      []byte
+		retained *time.Time
+	)
 	err := r.s.db.QueryRow(ctx, `
-		SELECT bytes FROM audit_captures WHERE tenant = $1 AND record_id = $2`,
-		tenant, recordID).Scan(&out)
+		SELECT bytes, retained_at FROM audit_captures WHERE tenant = $1 AND record_id = $2`,
+		tenant, recordID).Scan(&out, &retained)
 	if err != nil {
 		return nil, wrap(op, err)
+	}
+	if retained != nil {
+		return nil, fmt.Errorf("%s: %w", op, ErrCaptureRetained)
 	}
 	return out, nil
 }
@@ -434,6 +451,47 @@ type AuditQuery struct {
 	// is open, so it is a name/value pair rather than a column.
 	DeviceFieldName  string
 	DeviceFieldValue string
+	// NoSession selects only records that belong to no session
+	// (`session_id: ""`, Hoplock/proxy#71). An empty SessionID is "do not
+	// filter", so this is how the session-less records are asked for.
+	NoSession bool
+	// Weakened selects records whose profile is present and not `default`
+	// (Hoplock/proxy#66): an absent profile is not a target-leg record and
+	// is never read as `default`, nor `default` as a weakening.
+	Weakened bool
+	// Degraded selects records whose credential rung is above 1: the rung
+	// counts from 1 and the first choice is rung 1 (Hoplock/proxy#66).
+	Degraded bool
+	// CertificateSerial selects the records naming one brokered certificate,
+	// by its canonical decimal.
+	CertificateSerial string
+	// AlgorithmFloor selects records stamped with exactly this floor.
+	AlgorithmFloor string
+	// Banned selects records whose bans include one `axis:name`.
+	Banned string
+	// Negotiated selects records whose target leg negotiated one
+	// `axis:value`.
+	Negotiated string
+	// DeviceChangeOp, TargetAccount and DeviceObjectKind filter the drift
+	// feed. DeviceObjectKind is a pointer because empty is a value: it is
+	// how a change to an administrator is recorded.
+	DeviceChangeOp   string
+	TargetAccount    string
+	DeviceObjectKind *string
+	// Gaps selects `logging.gap` records; GapCause, GapKind, GapRecordID and
+	// GapCritical narrow them. GapRecordID finds the refusal that named one
+	// record; GapCritical the gaps that hid something critical.
+	Gaps        bool
+	GapCause    string
+	GapKind     string
+	GapRecordID string
+	GapCritical bool
+	// SpanFrom and SpanTo select gaps whose span — the MISSING records' own
+	// timestamps, gap_first_at to gap_last_at — overlaps the range; never
+	// the gap record's own timestamp, which is when the proxy wrote the
+	// report. A gap with no span matches no span query.
+	SpanFrom time.Time
+	SpanTo   time.Time
 	// From is inclusive and To is exclusive, both on recorded_at — the
 	// instant the event happened, never the instant it arrived.
 	From time.Time
@@ -515,6 +573,57 @@ func (r auditRepo) Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]Au
 	if q.DeviceFieldName != "" {
 		add("device_fields @> $%d::jsonb", jsonPair(q.DeviceFieldName, q.DeviceFieldValue))
 	}
+	if q.NoSession {
+		where = append(where, "session_id = ''")
+	}
+	if q.Weakened {
+		where = append(where, "algorithm_profile <> '' AND algorithm_profile <> 'default'")
+	}
+	if q.Degraded {
+		where = append(where, "credential_rung > 1")
+	}
+	if q.CertificateSerial != "" {
+		add("credential_certificate_serial = $%d", q.CertificateSerial)
+	}
+	if q.AlgorithmFloor != "" {
+		add("algorithm_floor = $%d", q.AlgorithmFloor)
+	}
+	if q.Banned != "" {
+		add("$%d = ANY(algorithm_bans)", q.Banned)
+	}
+	if q.Negotiated != "" {
+		add("$%d = ANY(negotiated)", q.Negotiated)
+	}
+	if q.DeviceChangeOp != "" {
+		add("device_change_op = $%d", q.DeviceChangeOp)
+	}
+	if q.TargetAccount != "" {
+		add("target_account = $%d", q.TargetAccount)
+	}
+	if q.DeviceObjectKind != nil {
+		add("device_object_kind = $%d", *q.DeviceObjectKind)
+	}
+	if q.Gaps || q.GapCause != "" || q.GapKind != "" || q.GapRecordID != "" || q.GapCritical {
+		where = append(where, "gap_cause <> ''")
+	}
+	if q.GapCause != "" {
+		add("gap_cause = $%d", q.GapCause)
+	}
+	if q.GapKind != "" {
+		add("$%d = ANY(gap_kinds)", q.GapKind)
+	}
+	if q.GapRecordID != "" {
+		add("$%d = ANY(gap_record_ids)", q.GapRecordID)
+	}
+	if q.GapCritical {
+		where = append(where, "gap_critical > 0")
+	}
+	if !q.SpanFrom.IsZero() {
+		add("gap_last_at >= $%d", q.SpanFrom)
+	}
+	if !q.SpanTo.IsZero() {
+		add("gap_first_at < $%d", q.SpanTo)
+	}
 	if !q.From.IsZero() {
 		add("recorded_at >= $%d", q.From)
 	}
@@ -533,6 +642,48 @@ func (r auditRepo) Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]Au
 		return nil, wrap(op, err)
 	}
 	return collectAuditRecords(op, rows)
+}
+
+// GapLoss is one session's loss for one cause, SUMMED over its reports: a
+// session can carry more than one report of one cause, because the proxy never
+// rewrites a report once sent, and each counts records no other one counts.
+type GapLoss struct {
+	Cause   string
+	Reports int64
+	Records int64
+	Bytes   int64
+}
+
+// GapLoss sums one session's `logging.gap` reports per cause. The session id
+// must not be empty: "" is no session, not a session.
+func (r auditRepo) GapLoss(ctx context.Context, tenant Tenant, sessionID string) ([]GapLoss, error) {
+	const op = "store.Audit.GapLoss"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+	if sessionID == "" {
+		return nil, invalid(op, "a session id is required; an empty one is no session")
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	rows, err := r.s.db.Query(ctx, `
+		SELECT gap_cause, count(*), COALESCE(sum(gap_records), 0), COALESCE(sum(gap_bytes), 0)
+		FROM audit_records
+		WHERE tenant = $1 AND session_id = $2 AND gap_cause <> ''
+		GROUP BY gap_cause ORDER BY gap_cause`, tenant, sessionID)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+	var out []GapLoss
+	for rows.Next() {
+		var g GapLoss
+		if err := rows.Scan(&g.Cause, &g.Reports, &g.Records, &g.Bytes); err != nil {
+			return nil, wrap(op, err)
+		}
+		out = append(out, g)
+	}
+	return out, wrap(op, rows.Err())
 }
 
 // BlockedCommandQuery selects the showcase join (PLAN §7): blocked commands on
@@ -670,11 +821,15 @@ func auditScanDest(rec *AuditRecord) []any {
 		&rec.DecisionID, &rec.ProxyID, &rec.Attributes, &rec.DeviceFields,
 		&rec.Enforcement.Execution, &rec.Enforcement.Reach,
 		&rec.Enforcement.Verified, &rec.Enforcement.AttestedBy,
-		&rec.TargetAuthMethod, &rec.TargetAuthRung, &rec.AlgorithmProfile,
+		&rec.CredentialMethod, &rec.CredentialRung, &rec.AlgorithmProfile,
 		&rec.Grant.System, &rec.Grant.Reference,
 		&rec.Grant.WindowStart, &rec.Grant.WindowEnd,
 		&rec.Grant.AdditionalKind, &rec.Grant.Additional,
 		&rec.CaptureBytes, &rec.CaptureSHA256, &rec.RecordedAt, &rec.ReceivedAt,
+		&rec.CertificateSerial, &rec.AlgorithmFloor, &rec.AlgorithmBans, &rec.AlgorithmBansUnmatched,
+		&rec.Negotiated, &rec.Device.Op, &rec.Device.Account, &rec.Device.ObjectKind,
+		&rec.Gap.Cause, &rec.Gap.Records, &rec.Gap.Bytes, &rec.Gap.FirstAt, &rec.Gap.LastAt,
+		&rec.Gap.Kinds, &rec.Gap.Critical, &rec.Gap.RecordIDs,
 	}
 }
 

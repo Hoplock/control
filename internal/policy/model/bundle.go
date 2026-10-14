@@ -50,6 +50,13 @@ type Bundle struct {
 	// grants exactly as before — so declaring a scope changes no decision
 	// that did not involve an external window.
 	Scopes map[string]ScopeDecl `yaml:"scopes,omitempty"`
+	// AlgorithmBans is a ban EVERYWHERE: added to every allow route's own
+	// bans at compile time (Hoplock/proxy#69). A ban is per route on the
+	// wire and no proxy setting can apply or lift one, so "everywhere" is
+	// this server putting it on every route it serves. It is the first step
+	// of the emergency runbook: publish it, then `cache_invalidate` with
+	// `all`, then `session_kill` for the sessions that negotiated it.
+	AlgorithmBans *AlgorithmBans `yaml:"algorithm_bans,omitempty"`
 
 	// Rules are evaluated in order, first match wins. The default-deny at
 	// the end is not authored and cannot be removed.

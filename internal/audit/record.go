@@ -25,9 +25,14 @@ import (
 // three-value scale a reader can act on without knowing the value; a kind is
 // what every query in PLAN §7 filters by, so a kind nobody knows is a record
 // nobody finds, filed under a name no dashboard, retention rule or export
-// mapping mentions. Refusing it is loud: the proxy keeps the record in its
-// disk buffer and an operator sees an error, which is the outcome a silently
-// unqueryable record does not produce.
+// mapping mentions.
+//
+// What a refusal costs changed with Hoplock/proxy#71, and it is the record. The
+// proxy no longer retries a refused request: it halves the batch to isolate the
+// refused record, delivers the rest, and sets the record aside — never resent,
+// kept only until its disk window evicts it. So "loud" now means the
+// `logging.gap` record that reports it (PLAN §7), and a refusal is right only
+// for a record this server will never store.
 //
 // Adding one is therefore an upstream change (M1) and never a local edit.
 var Kinds = []string{
@@ -57,14 +62,11 @@ var Severities = []contract.LogSeverity{
 // kept the keys it recognised would lose the field a customer's driver added
 // yesterday.
 //
-// TWO KEYS ARE ACCEPTED UNDER TWO NAMES. `docs/PLAN.md` §7 names the credential
-// method's two audit fields `target_auth_method` and `target_auth_rung`, after
-// the contract's `target_auth_ladder` they index into; `hoplock/proxy` emits
-// them as `credential_method` and `credential_rung`. Both are read and both
-// land in the same column, because dropping the ones the proxy actually sends
-// would leave the degradation query empty against every real deployment. The
-// divergence is named upstream rather than absorbed silently — see the PR's
-// `## Upstream request`.
+// ONE NAME PER FIELD, AND IT IS THE PROXY'S. The credential method and its rung
+// are `credential_method` and `credential_rung`, the rung counting from 1; an
+// earlier `target_auth_*` pair (0-based) came from the proxy's contract text by
+// mistake and Hoplock/proxy#66 corrected it. From this phase on these names are
+// on the north-bound surface, which is a compatibility promise (M19).
 const (
 	AttrEvent      = "event"
 	AttrDecisionID = "decision_id"
@@ -74,12 +76,68 @@ const (
 	AttrEnforcementVerified   = "enforcement_verified"
 	AttrEnforcementAttestedBy = "enforcement_attested_by"
 
-	AttrTargetAuthMethod = "target_auth_method"
-	AttrTargetAuthRung   = "target_auth_rung"
 	AttrCredentialMethod = "credential_method"
 	AttrCredentialRung   = "credential_rung"
+	// AttrCertificateSerial is the brokered certificate the session
+	// presented (Hoplock/proxy#68), a decimal string, stamped on the
+	// session's `provisioning` record — the one naming credential_method.
+	AttrCertificateSerial = "credential_certificate_serial"
 
+	// AttrAlgorithmProfile is the profile in force on a target leg. The
+	// proxy stamps `default` too, so its absence means the record is not
+	// about a target leg — never `default` (Hoplock/proxy#66).
 	AttrAlgorithmProfile = "algorithm_profile"
+	// AttrAlgorithmFloor is the floor in force, omitted when there is none
+	// (Hoplock/proxy#69).
+	AttrAlgorithmFloor = "algorithm_floor"
+	// AttrAlgorithmBansPrefix opens one attribute per banned axis,
+	// `algorithm_bans.<axis>`, sorted and comma-joined.
+	AttrAlgorithmBansPrefix = "algorithm_bans."
+	// AttrAlgorithmBansUnmatched is the banned names no build implemented,
+	// `<axis>:<name>`, comma-joined — how an author learns a ban was a typo.
+	AttrAlgorithmBansUnmatched = "algorithm_bans_unmatched"
+
+	// What the target leg negotiated (`target.algorithms_negotiated`, and the
+	// device account-mapping event's key exchange). A MAC is omitted in a
+	// direction whose cipher is AEAD, so an absent MAC is not a missing one.
+	// The `target_` prefix is the proxy's: a record can describe three SSH
+	// legs, and these are the target's.
+	AttrTargetKexAlgorithm               = "target_kex_algorithm"
+	AttrTargetHostKeyAlgorithm           = "target_host_key_algorithm"
+	AttrTargetCipherOut                  = "target_cipher_out"
+	AttrTargetCipherIn                   = "target_cipher_in"
+	AttrTargetMACOut                     = "target_mac_out"
+	AttrTargetMACIn                      = "target_mac_in"
+	AttrTargetPublicKeyAlgorithmsOffered = "target_public_key_algorithms_offered"
+
+	// `target.algorithm_policy_unmet`: the axis that failed, what the target
+	// offered on it (absent on `public_key_auth` when the library could not
+	// say — never "nothing"), and the cause (`profile`, `floor` or `ban`).
+	AttrAlgorithmAxis           = "algorithm_axis"
+	AttrTargetAlgorithmsOffered = "target_algorithms_offered"
+	AttrAlgorithmPolicyCause    = "algorithm_policy_cause"
+	AttrTargetAddr              = "target_addr"
+
+	// The drift feed (`device.config.change`, Hoplock/proxy#66).
+	AttrPlatform         = "platform"
+	AttrDeviceChangeOp   = "device_change_op"
+	AttrTargetAccount    = "target_account"
+	AttrDeviceObjectKind = "device_object_kind"
+
+	// What a proxy could not deliver (`logging.gap`, Hoplock/proxy#71).
+	// upstream api/README.md "When records do not arrive" says what each
+	// means; every one is query surface.
+	AttrGapCause              = "gap_cause"
+	AttrGapRecords            = "gap_records"
+	AttrGapBytes              = "gap_bytes"
+	AttrGapFirstAt            = "gap_first_at"
+	AttrGapLastAt             = "gap_last_at"
+	AttrGapKinds              = "gap_kinds"
+	AttrGapCritical           = "gap_critical"
+	AttrGapRecordIDs          = "gap_record_ids"
+	AttrGapRecordIDsTruncated = "gap_record_ids_truncated"
+	AttrRefusalCode           = "refusal_code"
+	AttrRefusalMessage        = "refusal_message"
 
 	AttrGrantSystem           = "grant_system"
 	AttrGrantReference        = "grant_reference"
@@ -105,16 +163,31 @@ const (
 	// belonged to, so losing the event loses the ability to answer who did
 	// something on a router.
 	EventAccountMapping = "device.account.mapping"
-	// EventDeviceConfigChange is the device configuration-change event
-	// (proxy §5.3). Every provisioning and teardown is a configuration
-	// change on the device and a customer's drift detection will see it;
-	// making these queryable and exportable is what lets a SIEM auto-close
-	// the resulting alerts — and lets an `hl-*` account Hoplock never
-	// reported become a detection.
-	//
-	// `hoplock/proxy` does not emit this name yet. The schema is here and
-	// the gap is named upstream rather than approximated.
+	// EventDeviceConfigChange is the drift feed (Hoplock/proxy#66): one
+	// `provisioning` record at `info`, on the batch path, per configuration
+	// change the proxy made on a device. Its target is the device; a
+	// session's changes carry its session id and device fields, an orphan
+	// sweep's carry neither, because a sweep has no route — and naming the
+	// session that triggered it would attribute somebody else's leftover to
+	// the wrong person. Making it queryable is what a customer's SIEM export
+	// reads (Enterprise's E7).
 	EventDeviceConfigChange = "device.config.change"
+	// EventSweepFailed is an orphan sweep's own failure: `policy_decision`,
+	// `critical`, on the priority path, and belonging to no session. It is
+	// the one record that says a privileged administrator was left standing
+	// on a device (proxy D13).
+	EventSweepFailed = "device.account.sweep_failed"
+	// EventLoggingGap reports what a proxy could not deliver: `error`, at
+	// `critical` when anything it reports was critical and `warn` otherwise
+	// (Hoplock/proxy#71).
+	EventLoggingGap = "logging.gap"
+	// EventAlgorithmsNegotiated is one per session whose target leg came up:
+	// `provisioning`, `info`, batch path (Hoplock/proxy#69).
+	EventAlgorithmsNegotiated = "target.algorithms_negotiated"
+	// EventAlgorithmPolicyUnmet is a target the route's algorithm policy
+	// could not reach: `error` at `warn`, batch path. The user is told only
+	// that it is an outage; this record is how an operator finds it.
+	EventAlgorithmPolicyUnmet = "target.algorithm_policy_unmet"
 )
 
 // Record is one ingested log record, validated and canonicalised.
@@ -145,8 +218,10 @@ type Record struct {
 
 // Limits bound what one request may carry. They are explicit because an
 // unbounded ingest path is a memory-exhaustion surface reachable by any
-// enrolled proxy, and because a batch that is too large to answer inside the
-// request timeout is a batch the proxy will retry forever.
+// enrolled proxy, and because a batch too large to answer inside the request
+// timeout is one the proxy retries — a timeout is retried, not set aside — and
+// its drain waits behind that batch until its disk window evicts it, which it
+// never does for a pinned session.
 type Limits struct {
 	// MaxBatchRecords is how many records one `/v1/logs/batch` may carry.
 	MaxBatchRecords int
@@ -218,16 +293,27 @@ func (e *MalformedError) Error() string {
 // enrolled tenant would hide a misconfiguration that matters — two customers'
 // records in one chain — and answering 5xx would tell an operator their
 // database is broken when their proxy is misconfigured.
+//
+// It names the record by its index as well as its id, as a MalformedError does:
+// the proxy copies the message verbatim into a refused `logging.gap`'s
+// `refusal_message`, and an operator reads it there (Hoplock/proxy#71).
 type TenantMismatchError struct {
+	// Index is the record's position in the batch, or -1 for a single
+	// record.
+	Index    int
 	RecordID string
 	Claimed  string
 	Enrolled string
 }
 
 func (e *TenantMismatchError) Error() string {
+	where := "the record"
+	if e.Index >= 0 {
+		where = fmt.Sprintf("record %d", e.Index)
+	}
 	return fmt.Sprintf(
-		"record %s names tenant %q and was submitted by a proxy enrolled in %q; a proxy does not assert its own tenancy",
-		e.RecordID, e.Claimed, e.Enrolled)
+		"%s (%s) names tenant %q and was submitted by a proxy enrolled in %q; a proxy does not assert its own tenancy",
+		where, e.RecordID, e.Claimed, e.Enrolled)
 }
 
 // AttrTenant is the attribute a record would name a tenant in. The contract
@@ -247,15 +333,16 @@ func Parse(rec contract.LogRecord, enrolled string, index int, limits Limits) (R
 		return &MalformedError{Index: index, RecordID: rec.RecordID, Reason: fmt.Sprintf(format, args...)}
 	}
 
+	// `session_id: ""` is a record that belongs to NO session, and the
+	// contract requires a server to accept it on every kind
+	// (LogRecord.session_id, Hoplock/proxy#71). An orphan sweep's change, the
+	// sweep's own failure and a gap over session-less records are such
+	// records, so there is no session check here at all. It is stored as
+	// belonging to no session, and the by-session lookups refuse "" rather
+	// than answer with every session-less record in the tenant.
 	switch {
 	case strings.TrimSpace(rec.RecordID) == "":
 		return Record{}, bad("record_id is required")
-	case strings.TrimSpace(rec.SessionID) == "" && rec.Kind != "error":
-		// An `error` record can belong to no session — a sweep failure
-		// on a device belongs to the fleet rather than to anybody's
-		// connection — and refusing it would lose the one record class
-		// that reports a failure nobody was present for.
-		return Record{}, bad("session_id is required for a %s record", rec.Kind)
 	case rec.Kind == "":
 		return Record{}, bad("kind is required")
 	case !slices.Contains(Kinds, rec.Kind):
@@ -272,7 +359,7 @@ func Parse(rec contract.LogRecord, enrolled string, index int, limits Limits) (R
 	}
 
 	if claimed, ok := rec.Attributes[AttrTenant]; ok && claimed != "" && claimed != enrolled {
-		return Record{}, &TenantMismatchError{RecordID: rec.RecordID, Claimed: claimed, Enrolled: enrolled}
+		return Record{}, &TenantMismatchError{Index: index, RecordID: rec.RecordID, Claimed: claimed, Enrolled: enrolled}
 	}
 
 	out := Record{
@@ -424,14 +511,43 @@ func (r Record) Row(proxyID string) (store.AuditRecord, error) {
 		}
 	}
 
-	row.TargetAuthMethod = firstOf(r.Attributes, AttrTargetAuthMethod, AttrCredentialMethod)
-	if v := firstOf(r.Attributes, AttrTargetAuthRung, AttrCredentialRung); v != "" {
+	// The rung is kept exactly as it arrived, counting from 1: every
+	// projection must be recomputable from the hashed body, and a converted
+	// value would disagree with the record it came from.
+	row.CredentialMethod = r.Attributes[AttrCredentialMethod]
+	if v := r.Attributes[AttrCredentialRung]; v != "" {
 		if n, err := strconv.ParseInt(v, 10, 32); err == nil && n >= 0 {
 			rung := int32(n)
-			row.TargetAuthRung = &rung
+			row.CredentialRung = &rung
 		}
 	}
+	if v := r.Attributes[AttrCertificateSerial]; v != "" {
+		// Parsed in one place, as an unsigned integer and never through a
+		// float, then rendered canonically so it joins
+		// ssh_certificates.serial. A value that does not parse projects
+		// nothing; the record keeps it as it arrived.
+		if serial, err := contract.ParseSerial(v); err == nil {
+			row.CertificateSerial = contract.FormatSerial(serial)
+		}
+	}
+	// Kept exactly: absent stays empty and is never backfilled to
+	// `default`, because the proxy stamps `default` too and an absent
+	// profile means the record is not about a target leg.
 	row.AlgorithmProfile = r.Attributes[AttrAlgorithmProfile]
+	row.AlgorithmFloor = r.Attributes[AttrAlgorithmFloor]
+	row.AlgorithmBans = bans(r.Attributes)
+	row.AlgorithmBansUnmatched = splitList(r.Attributes[AttrAlgorithmBansUnmatched])
+	row.Negotiated = negotiated(r.Attributes)
+	if row.Event == EventDeviceConfigChange {
+		row.Device = store.DeviceChangeFacts{
+			Op:         r.Attributes[AttrDeviceChangeOp],
+			Account:    r.Attributes[AttrTargetAccount],
+			ObjectKind: r.Attributes[AttrDeviceObjectKind],
+		}
+	}
+	if row.Event == EventLoggingGap {
+		row.Gap = gapFacts(r.Attributes)
+	}
 
 	row.Grant = store.GrantContextFacts{
 		System:    r.Attributes[AttrGrantSystem],
@@ -513,13 +629,96 @@ func prefixMap(attrs map[string]string, prefix string) map[string]string {
 	return out
 }
 
-func firstOf(attrs map[string]string, keys ...string) string {
-	for _, k := range keys {
-		if v := attrs[k]; v != "" {
-			return v
+// splitList reads a comma-joined attribute, dropping empty entries. Nil when
+// there is nothing.
+func splitList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
 		}
 	}
-	return ""
+	return out
+}
+
+// bans projects `algorithm_bans.<axis>` onto `axis:name` entries, so each axis
+// is a filter of its own rather than a substring search.
+func bans(attrs map[string]string) []string {
+	var out []string
+	for axis, names := range prefixMap(attrs, AttrAlgorithmBansPrefix) {
+		for _, name := range splitList(names) {
+			out = append(out, axis+":"+name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// negotiatedAxes maps each negotiated-algorithm attribute onto the axis a
+// query names. The public-key list is what the proxy OFFERED, not what
+// authentication used, so it is not a negotiated value and is not here.
+var negotiatedAxes = []struct{ attr, axis string }{
+	{AttrTargetKexAlgorithm, contract.AxisKeyExchanges},
+	{AttrTargetHostKeyAlgorithm, contract.AxisHostKeys},
+	{AttrTargetCipherOut, contract.AxisCiphers},
+	{AttrTargetCipherIn, contract.AxisCiphers},
+	{AttrTargetMACOut, contract.AxisMACs},
+	{AttrTargetMACIn, contract.AxisMACs},
+}
+
+// negotiated projects what the target leg negotiated onto `axis:value` entries.
+func negotiated(attrs map[string]string) []string {
+	var out []string
+	for _, n := range negotiatedAxes {
+		if v := strings.TrimSpace(attrs[n.attr]); v != "" {
+			out = append(out, n.axis+":"+v)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// gapFacts reads a `logging.gap` record's keys LENIENTLY. A gap record this
+// server refused would be set aside and reported by nothing — a gap record never
+// begets another — so a strict parser would turn the report of a loss into a
+// silent loss. A key that is absent or does not parse projects nothing, and the
+// record is stored as it arrived. The proxy omits the span when no missing
+// record carried a timestamp, so absent is not malformed there either.
+func gapFacts(attrs map[string]string) store.GapFacts {
+	g := store.GapFacts{
+		Cause:     attrs[AttrGapCause],
+		Kinds:     splitList(attrs[AttrGapKinds]),
+		RecordIDs: splitList(attrs[AttrGapRecordIDs]),
+	}
+	g.Records = parseCount(attrs[AttrGapRecords])
+	g.Bytes = parseCount(attrs[AttrGapBytes])
+	g.Critical = parseCount(attrs[AttrGapCritical])
+	if t, ok := parseNanoTime(attrs[AttrGapFirstAt]); ok {
+		g.FirstAt = &t
+	}
+	if t, ok := parseNanoTime(attrs[AttrGapLastAt]); ok {
+		g.LastAt = &t
+	}
+	return g
+}
+
+func parseCount(v string) *int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil || n < 0 {
+		return nil
+	}
+	return &n
+}
+
+func parseNanoTime(v string) (time.Time, bool) {
+	if v == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t.UTC(), true
 }
 
 func parseTime(v string) (time.Time, bool) {

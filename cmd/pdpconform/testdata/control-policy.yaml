@@ -272,3 +272,73 @@ rules:
           expiry_posture: target-enforced
           lifetime_seconds: 900
       algorithm_profile: legacy-device
+
+  # ---------------------------------------------------------------------
+  # `certificate.route` (Hoplock/proxy#68): a brokered certificate,
+  # vocabulary 5. The entry carries policy only — the username, the key type
+  # and the route's bound on the lifetime; issuance happens per session over
+  # POST /v1/credentials/certificate, cross-checked against this decision.
+  # ---------------------------------------------------------------------
+  - id: cert-host
+    description: a target that trusts the tenant's CA and already has the account
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [cert.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-certificate
+          username: netadmin
+          key_type: ed25519
+          lifetime_seconds: 300
+
+  # ---------------------------------------------------------------------
+  # `algorithms.floor` and `algorithms.ban` (Hoplock/proxy#69): vocabulary 6.
+  # A floor is answered only to a proxy that declares the level; a ban is
+  # answered as authored to a proxy whose declaration cannot judge it.
+  # ---------------------------------------------------------------------
+  - id: floor-host
+    description: a target whose proxy-to-target leg must negotiate a modern key exchange
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [floor.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+      algorithm_floor: modern-kex
+
+  - id: ban-host
+    description: a target the CBC ciphers and SHA-1 MACs are never offered to
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [ban.company.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+      algorithm_bans:
+        ciphers: [aes128-cbc, 3des-cbc]
+        macs: [hmac-sha1]
