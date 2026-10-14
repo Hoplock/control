@@ -10,8 +10,11 @@
 # for a CI database that is created and destroyed in one job; a deployment
 # seeds its own file and keeps it off any host it need not be on.
 #
-# The seed command exists because the north-bound API does not yet (0019).
-# When it does, this becomes a thin client of it or it goes away.
+# The seed command is the BOOTSTRAP path (decided in 0019): the north-bound API
+# cannot mint its own first credential, and keys, second factors, channel
+# tokens and host keys have no operator route by design. Everything it writes
+# that the API also serves — targets, subjects, policy — goes through the same
+# compiler and store; it is a fixture loader, not a second set of rules.
 
 tenant: default
 
@@ -160,3 +163,24 @@ tokens:
   # that. A deployment's proxies carry bound tokens, minted at enrollment.
   - secret: pdpconform-dev-secret
     label: conformance suite
+
+# North-bound API tokens (0019), scoped to this tenant and to the least that
+# each conformance input needs. The suite takes them as inputs, never as a
+# shape it asserts: `events.publish_token` publishes through
+# `POST …/revocations` (session:revoke, the grant desk's), `logs.read_token`
+# reads a record back by id (audit:read, the auditor's), and
+# `config.publish_token` publishes a fleet configuration (fleet:write, the
+# fleet admin's). The presented credential is `ht.<tenant>.<secret>`.
+api_tokens:
+  - id: tok-pdpconform-publish
+    display_name: conformance suite — publish
+    secret: pdpconform-dev-publish-token
+    roles: [grant-admin]
+  - id: tok-pdpconform-audit
+    display_name: conformance suite — read back
+    secret: pdpconform-dev-audit-token
+    roles: [auditor]
+  - id: tok-pdpconform-fleet
+    display_name: conformance suite — fleet configuration
+    secret: pdpconform-dev-fleet-token
+    roles: [fleet-admin]

@@ -287,25 +287,9 @@ jobs:
             dsn: postgres://postgres:postgres@127.0.0.1:5432/hoplock?sslmode=disable
           log:
             level: info
-          # The local publish path the suite drives, on its OWN port. Nothing
-          # on `/v1` publishes an event — the contract says so, because an
-          # event is an operator action and no proxy calls one — so gap
-          # recovery is gradeable only through a path the implementation
-          # exposes outside it (phase 0009). It is off unless configured, and
-          # configuring it is what this leg does.
-          events:
-            publish_listener: 127.0.0.1:8082
-            publish_token: pdpconform-dev-publish-token
-          # The record read-back path the suite reads the priority ack
-          # through, on its OWN port again. Nothing on `/v1` reads a record
-          # back — the contract says so, because a proxy writes logs and never
-          # queries them — so the durability guarantee the proxy acts on is
-          # observable only through a path the implementation exposes outside
-          # it (phase 0010). Deleted by 0019, which repoints the suite at the
-          # north-bound audit query route.
-          audit:
-            read_listener: 127.0.0.1:8083
-            read_token: pdpconform-dev-audit-token
+          # No debug listeners: since 0019 the suite publishes events and
+          # reads records back over the north-bound API (127.0.0.1:8081),
+          # under scoped API tokens control-seed.yaml seeds.
           YAML
 
       # Migrations are an explicit command and never run on boot (PLAN §8), so
@@ -313,10 +297,10 @@ jobs:
       - name: Apply migrations
         run: go run ./cmd/hoplock-control migrate --config ci-config.yaml
 
-      # The fixtures the expectation file describes. There is no north-bound
-      # API yet (0019), so `seed` is how a server is configured to serve
-      # anything at all — see internal/daemon/seed.go for why that is not a
-      # back door.
+      # The fixtures the expectation file describes, including the scoped
+      # north-bound API tokens the suite publishes and reads through. `seed`
+      # is the bootstrap path — the API cannot mint its own first credential —
+      # see internal/daemon/seed.go for why that is not a back door.
       - name: Seed the fixtures the suite expects
         run: |
           go run ./cmd/hoplock-control seed \

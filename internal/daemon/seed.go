@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -100,6 +101,23 @@ type seedDocument struct {
 	Policy *seedPolicy `yaml:"policy"`
 	// Tokens are south-bound channel credentials (M2).
 	Tokens []seedToken `yaml:"tokens"`
+	// APITokens are north-bound API tokens (0019): scoped credentials for
+	// the operator surface, which the conformance suite publishes events
+	// and reads records back through.
+	APITokens []seedAPIToken `yaml:"api_tokens"`
+}
+
+// seedAPIToken is one north-bound API token, scoped to the seeded tenant.
+type seedAPIToken struct {
+	// ID is the principal id, safe to log; it names the token in every
+	// audit record of what it did.
+	ID          string `yaml:"id"`
+	DisplayName string `yaml:"display_name"`
+	// Secret is the secret half. The presented credential is
+	// `ht.<tenant>.<secret>`; only its SHA-256 is stored.
+	Secret string `yaml:"secret"`
+	// Roles are what it may do, in the seeded tenant and nowhere else.
+	Roles []string `yaml:"roles"`
 }
 
 type seedSubject struct {
@@ -437,6 +455,28 @@ func (d *seedDocument) apply(ctx context.Context, st *store.Store, tenant store.
 			bound = "(unbound)"
 		}
 		say("token %s for %s", tokenID, bound)
+	}
+
+	for _, a := range d.APITokens {
+		if a.ID == "" || a.Secret == "" {
+			return fmt.Errorf("seed: an api token needs an id and a secret")
+		}
+		roles, err := identity.ParseRoleSet(a.Roles)
+		if err != nil {
+			return fmt.Errorf("seed: api token %s: %w", a.ID, err)
+		}
+		if len(roles) == 0 {
+			return fmt.Errorf("seed: api token %s names no roles, so it could reach nothing", a.ID)
+		}
+		cred := identity.Credential{Kind: store.PrincipalToken, Tenant: tenant, Secret: a.Secret}
+		if err := st.NorthPrincipals().Put(ctx, tenant, store.NorthPrincipal{
+			ID: a.ID, Kind: store.PrincipalToken, DisplayName: a.DisplayName, Source: identity.SourceLocal,
+			TokenDigest: cred.Digest(), Scopes: map[string][]string{string(tenant): roles.Strings()},
+		}); err != nil {
+			return err
+		}
+		// Like the channel token, the secret is NOT printed.
+		say("api token %s with %s", a.ID, strings.Join(roles.Strings(), ","))
 	}
 
 	if d.Policy != nil {

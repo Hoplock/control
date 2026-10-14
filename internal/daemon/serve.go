@@ -222,12 +222,15 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
-	northSrv, northHandler, err := buildNorth(ctx, cfg, st, ca, emitter, grants, pushes, h, log)
+	northSrv, northHandler, err := buildNorth(ctx, cfg, northDeps{
+		st: st, ca: ca, emitter: emitter, grants: grants, pushes: pushes,
+		fleet: registry, revocations: revoke.NewOperator(bus, registry), extensions: extensions,
+	}, h, log)
 	if err != nil {
 		return err
 	}
 
-	errs := make(chan error, 4)
+	errs := make(chan error, 2)
 	go func() {
 		err := srv.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
@@ -261,34 +264,6 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		errs <- err
 	}()
 
-	publisher, err := startPublishListener(cfg, registry, bus, log)
-	if err != nil {
-		return err
-	}
-	if publisher != nil {
-		go func() {
-			err := publisher.ListenAndServe()
-			if errors.Is(err, http.ErrServerClosed) {
-				err = nil
-			}
-			errs <- err
-		}()
-	}
-
-	auditReader, err := startAuditReadListener(cfg, st, log)
-	if err != nil {
-		return err
-	}
-	if auditReader != nil {
-		go func() {
-			err := auditReader.ListenAndServe()
-			if errors.Is(err, http.ErrServerClosed) {
-				err = nil
-			}
-			errs <- err
-		}()
-	}
-
 	select {
 	case err := <-errs:
 		return err
@@ -304,16 +279,6 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	// would cut a line mid-write and leave a gap the proxy could only
 	// discover on reconnect — a deploy is a reconnect, not a fleet-wide
 	// cache flush.
-	if publisher != nil {
-		if err := publisher.Shutdown(shutdownCtx); err != nil {
-			log.Warn("the publish listener did not shut down cleanly", "error", err)
-		}
-	}
-	if auditReader != nil {
-		if err := auditReader.Shutdown(shutdownCtx); err != nil {
-			log.Warn("the audit read listener did not shut down cleanly", "error", err)
-		}
-	}
 	if err := northSrv.Shutdown(shutdownCtx); err != nil {
 		log.Warn("the north-bound listener did not shut down cleanly", "error", err)
 	}
@@ -328,61 +293,6 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 	return <-errs
-}
-
-// startPublishListener binds the local publish path, when one is configured.
-//
-// It returns (nil, nil) when it is not, which is the default: see publish.go
-// for why an unconfigured deployment has no publish port at all.
-func startPublishListener(cfg *config.Config, registry *fleet.Registry, bus *revoke.Bus, log *slog.Logger) (*http.Server, error) {
-	if cfg.Events.PublishListener == "" {
-		return nil, nil
-	}
-	ps, err := newPublishServer(
-		revoke.NewOperator(bus, registry),
-		store.Tenant(cfg.Tenant),
-		cfg.Events.PublishToken,
-		log,
-	)
-	if err != nil {
-		return nil, err
-	}
-	log.Warn("the local revocation publish listener is enabled",
-		"event", "revoke_publish_listener_enabled",
-		"address", cfg.Events.PublishListener,
-		"note", "this is a pre-0019 operator path and publishes the kill switch; do not expose it",
-	)
-	return &http.Server{
-		Addr:              cfg.Events.PublishListener,
-		Handler:           ps.handler(),
-		ReadHeaderTimeout: cfg.South.RequestTimeout,
-	}, nil
-}
-
-// startAuditReadListener binds the record read-back path, when one is
-// configured.
-//
-// It returns (nil, nil) when it is not, which is the default: see
-// auditread.go for why an unconfigured deployment has no read port at all,
-// and for the phase that deletes this one.
-func startAuditReadListener(cfg *config.Config, st *store.Store, log *slog.Logger) (*http.Server, error) {
-	if cfg.Audit.ReadListener == "" {
-		return nil, nil
-	}
-	ar, err := newAuditReadServer(audit.NewReader(st), store.Tenant(cfg.Tenant), cfg.Audit.ReadToken)
-	if err != nil {
-		return nil, err
-	}
-	log.Warn("the local audit read listener is enabled",
-		"event", "audit_read_listener_enabled",
-		"address", cfg.Audit.ReadListener,
-		"note", "this is a pre-0019 operator path and serves audit records; do not expose it",
-	)
-	return &http.Server{
-		Addr:              cfg.Audit.ReadListener,
-		Handler:           ar.handler(),
-		ReadHeaderTimeout: cfg.South.RequestTimeout,
-	}, nil
 }
 
 // busConfigPublisher is the fleet registry's configuration publisher over the

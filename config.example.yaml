@@ -240,22 +240,10 @@ events:
   # `resync`, so nothing is silently skipped. Defaults to 256.
   subscriber_queue: 256
 
-  # The local publish path, `POST /debug/revoke`. EMPTY BY DEFAULT AND NOT
-  # BOUND, which is what you want in a deployment.
-  #
-  # Publishing an event is an operator action, and the contract states that
-  # nothing on `/v1` publishes one — the proxy-facing API would otherwise carry
-  # an endpoint no proxy calls. The north-bound API that will own it is phase
-  # 0019's; until then this is how the conformance suite makes this server emit
-  # an event while a subscriber is away, which is the only way gap recovery is
-  # gradeable at all.
-  #
-  # It is a separate port because the south-bound listener serves the contract
-  # and nothing else (M2), and publish_token is REQUIRED when it is set: what
-  # this publishes is the kill switch, and an unauthenticated one is worse than
-  # none.
-  publish_listener: ""
-  publish_token: ""
+  # Operator actions — ending sessions, invalidating cached decisions, a
+  # resync — are published over the north-bound API
+  # (`POST /api/v1/tenants/{tenant}/revocations`), under a scoped credential
+  # holding `session:revoke`. Nothing on `/v1` publishes one.
 
 # Log ingest and the audit store (PLAN M8, §7, phase 0010). Optional; every
 # field has the default shown.
@@ -277,24 +265,9 @@ audit:
   max_record_bytes: 65536
   max_capture_bytes: 1048576
 
-  # The record read-back path, `GET /debug/logs/{record_id}`. EMPTY BY DEFAULT
-  # AND NOT BOUND, which is what you want in a deployment.
-  #
-  # The contract defines no way to read a record back, and that is deliberate
-  # upstream: a proxy writes logs and never queries them, so an operator read
-  # API on `/v1` would be one every Hoplock Control implements and no proxy
-  # calls. The priority ack's durability guarantee — a 200 means the record is
-  # stored — is therefore observable only through a path this server exposes
-  # outside `/v1`, and the conformance suite takes it as an input. The
-  # north-bound audit query API that will own it is phase 0019's, which deletes
-  # this one rather than folding it in.
-  #
-  # It is a separate port from both other listeners (M2), and read_token is
-  # REQUIRED when it is set: audit records are the most sensitive documents
-  # this server holds, and the south-bound proxy token is not the credential
-  # for reading them.
-  read_listener: ""
-  read_token: ""
+  # Records are read back over the north-bound audit query
+  # (`GET /api/v1/tenants/{tenant}/audit/records/{record_id}` and its
+  # siblings), under a scoped credential holding `audit:read`.
 
 # The north-bound listener's own bounds (PLAN M2, phase 0011). Optional; every
 # field has the default shown.
@@ -555,3 +528,13 @@ access_context:
   #     issued_at: "$.sent_at"
   #     ended:
   #       - {path: "$.change.status", one_of: [Cancelled, Closed]}
+
+# The policy lifecycle's publish-time checks (phase 0019). Optional.
+policy:
+  # Executables that hand back a shell (GTFOBins' "shell" function). A
+  # `restricted_exec` allow-list naming one under `account-restricted` or
+  # `account-confined` is a WARNING the author must accept to publish, because
+  # the rung's real guarantee drops to `no-interactive-shell` at best. It is
+  # never a deny-list in the data plane. Empty takes the shipped list (see
+  # internal/authoring.DefaultInterpreters); a list here replaces it whole.
+  interpreters: []
