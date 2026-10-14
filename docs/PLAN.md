@@ -215,6 +215,19 @@ decision.
   answer that looks like one. Horizontal scale-out is the only scaling story;
   nothing on the decision path may be node-local state.
 
+  **A node may remember shared state; it may not be the only place a fact
+  lives.** Three memories sit on the decision path, and each is a copy whose
+  authority is the store: the compiled program and the fleet graph, served for
+  at most `decision.DefaultRefreshInterval` (5 s) before they are re-read, and
+  which proxy algorithm declaration the node last wrote, which saves the write
+  for at most `fleet.DeclarationRecheck` (a minute). Each can make a node late,
+  never wrong for longer than its bound, whichever node a proxy reaches. The
+  last bound is the one easily left out: a node that remembered a write forever
+  would leave a proxy's row wrong after a rollback to a build it recorded
+  itself, while another node held the newer one. What may not exist is state
+  that changes an answer and is kept nowhere else — a counter, a lease, a set
+  of what has been seen — because the next call may land on another node.
+
   **The magnitude is not modest.** The first target deployment is a telco with
   ~300,000 network devices and ~50,000 Linux hosts. If machine-to-machine health
   checking of that estate runs over SSH on a one-minute interval, the decision
