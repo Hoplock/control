@@ -182,4 +182,9 @@ algorithms:
     login: alice
     subject: alice@example.com
     target: ban.company.com
+  # The ban route's algorithm_bans exactly as authored: the answer must carry
+  # these lists and no others.
+  bans:
+    ciphers: [aes128-cbc, 3des-cbc]
+    macs: [hmac-sha1]
   kex_target: floor.company.com

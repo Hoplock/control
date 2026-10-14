@@ -150,9 +150,66 @@ func (s *Suite) checkSessionless() {
 			}
 			r, err := s.postObject(contract.PathLogsPriority, contract.LogPriorityRequest{Record: rec})
 			c.must(err == nil, "%s: request failed: %v", kind, err)
-			c.require(r.status == 200, "a session-less %s at critical answered %d: %s", kind, r.status, snippet(r.body))
+			if !c.require(r.status == 200, "a session-less %s at critical answered %d: %s", kind, r.status, snippet(r.body)) {
+				continue
+			}
+			var got contract.LogPriorityResponse
+			c.require(r.into(&got) == nil && got.Accepted,
+				"a session-less %s at critical answered 200 without accepted: true: %s", kind, snippet(r.body))
 		}
 	})
+
+	// The proxy's report of what it could not deliver arrives like any
+	// record, on the path its severity picks: warn on the batch path,
+	// critical on the priority path. Each is shaped as the proxy renders one
+	// (its internal/logging/gap.go at the vendored commit), and a server that
+	// refused one would set aside the only record saying records were lost.
+	s.run(groupLogs, "a logging.gap record is accepted on the path its severity picks", func(c *Case) {
+		evicted := s.gapRecord("evicted", contract.SeverityWarn, "")
+		r, err := s.postObject(contract.PathLogsBatch, contract.LogBatchRequest{Records: []contract.LogRecord{evicted}})
+		c.must(err == nil, "request failed: %v", err)
+		if c.require(r.status == 202, "a warn gap on the batch path answered %d: %s", r.status, snippet(r.body)) {
+			var got contract.LogBatchResponse
+			c.require(r.into(&got) == nil && got.Accepted == 1, "a warn gap was not counted as stored: %s", snippet(r.body))
+		}
+
+		refused := s.gapRecord("refused", contract.SeverityCritical, s.nextID("pdpconform-gap-session"))
+		r, err = s.postObject(contract.PathLogsPriority, contract.LogPriorityRequest{Record: refused})
+		c.must(err == nil, "request failed: %v", err)
+		if c.require(r.status == 200, "a critical gap on the priority path answered %d: %s", r.status, snippet(r.body)) {
+			var got contract.LogPriorityResponse
+			c.require(r.into(&got) == nil && got.Accepted, "a critical gap was not accepted: %s", snippet(r.body))
+		}
+	})
+}
+
+// gapRecord is a `logging.gap` as the proxy renders one: kind `error`, the
+// counts as decimal strings, the span as RFC 3339 with nanoseconds, and for a
+// refusal the ids it names with this server's own answer to them.
+func (s *Suite) gapRecord(cause string, severity contract.LogSeverity, sessionID string) contract.LogRecord {
+	first := time.Now().UTC().Add(-time.Minute)
+	attrs := map[string]string{
+		"event":        "logging.gap",
+		"gap_cause":    cause,
+		"gap_records":  "2",
+		"gap_bytes":    "512",
+		"gap_kinds":    "command,stream",
+		"gap_critical": "0",
+		"gap_first_at": first.Format(time.RFC3339Nano),
+		"gap_last_at":  first.Add(time.Second).Format(time.RFC3339Nano),
+	}
+	message := "records were evicted from the proxy's disk buffer before Hoplock Control received them"
+	if cause == "refused" {
+		attrs["gap_critical"] = "1"
+		attrs["gap_record_ids"] = s.nextID("pdpconform-refused") + "," + s.nextID("pdpconform-refused")
+		attrs["refusal_code"] = contract.ErrCodeInvalidRequest
+		attrs["refusal_message"] = "record 0 (pdpconform-refused) is malformed: an example refusal"
+		message = "records were refused by Hoplock Control and set aside by the proxy"
+	}
+	return contract.LogRecord{
+		RecordID: s.nextID("pdpconform-gap"), SessionID: sessionID, Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Kind: "error", Severity: severity, Message: message, Attributes: attrs,
+	}
 }
 
 func (s *Suite) logRecords(n int) []contract.LogRecord {

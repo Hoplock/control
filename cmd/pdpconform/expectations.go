@@ -6,9 +6,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/hoplock/control/internal/contract"
 )
 
 // The expectation file is everything the suite knows about the server in front
@@ -76,8 +79,10 @@ type AlgorithmExpectations struct {
 	// Floor is a route carrying `algorithm_floor` FloorLevel.
 	Floor      AuthorizeRoute `yaml:"floor"`
 	FloorLevel string         `yaml:"floor_level"`
-	// Ban is a route carrying `algorithm_bans` and no floor.
-	Ban AuthorizeRoute `yaml:"ban"`
+	// Ban is a route carrying `algorithm_bans` and no floor, and Bans are
+	// those bans as authored, per axis: the answer must carry exactly these.
+	Ban  AuthorizeRoute      `yaml:"ban"`
+	Bans map[string][]string `yaml:"bans"`
 	// KexTarget is the target the key-exchange report is about.
 	KexTarget string `yaml:"kex_target"`
 }
@@ -400,6 +405,14 @@ func (e *Expectations) validate() error {
 	need("algorithms.floor.target", e.Algorithms.Floor.Target)
 	need("algorithms.floor_level", e.Algorithms.FloorLevel)
 	need("algorithms.ban.target", e.Algorithms.Ban.Target)
+	if len(e.Algorithms.Bans) == 0 {
+		missing = append(missing, "algorithms.bans")
+	}
+	for axis := range e.Algorithms.Bans {
+		if !slices.Contains(contract.Axes, axis) {
+			missing = append(missing, "algorithms.bans."+axis+" (not an axis the contract names)")
+		}
+	}
 	need("algorithms.kex_target", e.Algorithms.KexTarget)
 
 	for name, pair := range map[string]DefaultPair{

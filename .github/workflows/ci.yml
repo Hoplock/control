@@ -339,10 +339,13 @@ jobs:
             exit 1
           fi
 
-      # -only names the groups this build serves. With log ingest (0010) that
-      # is now EVERY group the suite has, so the filter is kept for the shape
-      # of the command rather than to exclude anything: a group added upstream
-      # has to be named here deliberately, which is the point.
+      # -only names the groups this build serves, and that is EVERY group the
+      # suite has: `error` is the error discipline (M11), which went unnamed
+      # here from 0007 to 0020 and so was never run against this server. The
+      # filter is kept for the shape of the command rather than to exclude
+      # anything: a group added to the suite has to be named here
+      # deliberately, which is the point, and main.go's group list is what to
+      # check this one against.
       #
       # `authorize` covers four groups at once — the envelope, the absent-value
       # defaults, vocabulary negotiation and the device-field namespace — all
@@ -354,7 +357,7 @@ jobs:
             BASE_URL=http://127.0.0.1:8080 \
             TOKEN=default.pdpconform-dev-secret \
             EXPECT=cmd/pdpconform/testdata/control-expectations.yaml \
-            CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid,logs,revocation,fleet,brokered,algorithm'
+            CONFORM_FLAGS='-v -only=authentication,authorize,host,capabilities,uid,logs,revocation,fleet,brokered,algorithm,error'
 
       # The server's own log, so a failure above can be read against what it
       # thought it was doing.
