@@ -93,6 +93,14 @@ type StreamResult struct {
 	Head string
 	// Break is nil when the chain verified.
 	Break *Break
+	// RetainedThrough is the sequence a retention pass deleted through, zero
+	// when none has: the walk started at the next one, chained onto the hash
+	// the pass recorded, rather than at sequence 1 (PLAN §7).
+	RetainedThrough int64
+	// CapturesRetained counts captures whose bytes a retention pass removed:
+	// gone deliberately, which is not changed. Counted only when captures are
+	// verified.
+	CapturesRetained int64
 }
 
 // VerifyTenant walks every stream a tenant has.
@@ -112,7 +120,10 @@ func (v *Verifier) VerifyTenant(ctx context.Context, tenant store.Tenant) (Resul
 	return out, nil
 }
 
-// VerifyStream walks one chain, in sequence order, from the beginning.
+// VerifyStream walks one chain, in sequence order, from where it starts: the
+// beginning, or — after a retention pass deleted a prefix — the record after the
+// one the pass recorded, chained onto that record's hash. Resuming there is what
+// lets a lawful deletion verify while a deletion from the middle still breaks.
 //
 // It stops at the FIRST break. A verifier that carried on would report every
 // later record as broken too — they all chain onto the altered one — and bury
@@ -125,6 +136,14 @@ func (v *Verifier) VerifyStream(ctx context.Context, tenant store.Tenant, stream
 		afterSeq int64
 		expected int64 = 1
 	)
+	switch marker, err := v.store.Audit().Retention(ctx, tenant, stream); {
+	case err == nil:
+		prev = store.AuditRecord{Hash: marker.ThroughHash}
+		afterSeq, expected = marker.ThroughSeq, marker.ThroughSeq+1
+		out.RetainedThrough = marker.ThroughSeq
+	case !store.IsNotFound(err):
+		return StreamResult{}, err
+	}
 	for {
 		page, err := v.store.Audit().Chain(ctx, tenant, stream, afterSeq, v.page)
 		if err != nil {
@@ -139,7 +158,9 @@ func (v *Verifier) VerifyStream(ctx context.Context, tenant store.Tenant, stream
 				return out, nil
 			}
 			if v.captures && rec.CaptureSHA256 != "" {
-				if b, err := v.verifyCapture(ctx, tenant, stream, rec); err != nil {
+				if b, err := v.verifyCapture(ctx, tenant, stream, rec); store.IsCaptureRetained(err) {
+					out.CapturesRetained++
+				} else if err != nil {
 					return StreamResult{}, err
 				} else if b != nil {
 					out.Break = b

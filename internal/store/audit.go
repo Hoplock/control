@@ -414,12 +414,18 @@ func (r auditRepo) Capture(ctx context.Context, tenant Tenant, recordID string) 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	var out []byte
+	var (
+		out      []byte
+		retained *time.Time
+	)
 	err := r.s.db.QueryRow(ctx, `
-		SELECT bytes FROM audit_captures WHERE tenant = $1 AND record_id = $2`,
-		tenant, recordID).Scan(&out)
+		SELECT bytes, retained_at FROM audit_captures WHERE tenant = $1 AND record_id = $2`,
+		tenant, recordID).Scan(&out, &retained)
 	if err != nil {
 		return nil, wrap(op, err)
+	}
+	if retained != nil {
+		return nil, fmt.Errorf("%s: %w", op, ErrCaptureRetained)
 	}
 	return out, nil
 }

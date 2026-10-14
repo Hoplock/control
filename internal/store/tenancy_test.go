@@ -248,6 +248,16 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Audit.GapLoss":    func() error { _, err := s.Audit().GapLoss(ctx, "", "sess"); return err },
 		"Audit.PutCapture": func() error { return s.Audit().PutCapture(ctx, "", "r", []byte("x")) },
 		"Audit.Capture":    func() error { _, err := s.Audit().Capture(ctx, "", "r"); return err },
+		"Audit.Retention":  func() error { _, err := s.Audit().Retention(ctx, "", "s"); return err },
+		"Audit.RetainPrefix": func() error {
+			_, _, err := s.Audit().RetainPrefix(ctx, "", "s", 1, "x")
+			return err
+		},
+		"Audit.ThroughSeqBefore": func() error {
+			_, err := s.Audit().ThroughSeqBefore(ctx, "", "s", time.Now())
+			return err
+		},
+		"Audit.RetainCaptures": func() error { _, err := s.Audit().RetainCaptures(ctx, "", time.Now()); return err },
 		"Grants.Insert": func() error {
 			return s.Grants().Insert(ctx, "", Grant{ID: "g", Origin: GrantOriginManual, ExpiresAt: nowForTest()})
 		},

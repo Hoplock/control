@@ -181,3 +181,34 @@ ALTER TABLE proxy_config_state
     -- makes it reconnect.
     ADD COLUMN announced_hash         text        NOT NULL DEFAULT '',
     ADD COLUMN announced_at           timestamptz;
+
+-- ---------------------------------------------------------------------------
+-- audit_retention — where verification resumes after a retention pass (PLAN §7)
+-- ---------------------------------------------------------------------------
+--
+-- Deleting a record out of the middle of a hash chain leaves its successor
+-- pointing at a hash nothing produces, which is indistinguishable from
+-- tampering, and the verifier cannot tell a policy from an attacker and must not
+-- try. So a retention pass deletes a contiguous PREFIX of one stream, and this
+-- row records the sequence it deleted through and the hash of the last record it
+-- removed: verification starts from here rather than from sequence 1. One row
+-- per stream, moved forward by each pass and never back. The pass itself is an
+-- operator record on the control stream, so the act is on a chain too.
+CREATE TABLE audit_retention (
+    tenant       text        NOT NULL,
+    stream       text        NOT NULL,
+    through_seq  bigint      NOT NULL,
+    through_hash text        NOT NULL,
+    retained_at  timestamptz NOT NULL DEFAULT now(),
+    retained_by  text        NOT NULL DEFAULT '',
+
+    PRIMARY KEY (tenant, stream),
+    CONSTRAINT audit_retention_through_seq_positive CHECK (through_seq > 0)
+);
+
+-- Session captures are the separate and easier case. Their bytes live in their
+-- own table and the record keeps their digest, so emptying the bytes while
+-- keeping the record leaves a chain that still verifies — and `retained_at` is
+-- how the store says the bytes are gone rather than changed.
+ALTER TABLE audit_captures
+    ADD COLUMN retained_at timestamptz;

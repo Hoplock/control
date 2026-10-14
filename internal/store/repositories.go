@@ -179,8 +179,22 @@ type AuditRepository interface {
 	// PutCapture stores a session capture's bytes; Capture reads them back.
 	// They are a separate table because a pty stream is large and no query
 	// over the records wants to drag it along.
+	// A capture a retention pass emptied is ErrCaptureRetained.
 	PutCapture(ctx context.Context, tenant Tenant, recordID string, bytes []byte) error
 	Capture(ctx context.Context, tenant Tenant, recordID string) ([]byte, error)
+	// Retention returns where a stream's chain starts after retention;
+	// ErrNotFound means sequence 1 (0019, PLAN §7).
+	Retention(ctx context.Context, tenant Tenant, stream string) (AuditRetention, error)
+	// RetainPrefix deletes a stream's records through a sequence — a
+	// contiguous prefix, never the head — and records where the chain now
+	// starts, under the stream's append lock.
+	RetainPrefix(ctx context.Context, tenant Tenant, stream string, throughSeq int64, by string) (AuditRetention, int64, error)
+	// ThroughSeqBefore answers the sequence to retain through to drop what
+	// was received before an instant; zero means nothing.
+	ThroughSeqBefore(ctx context.Context, tenant Tenant, stream string, before time.Time) (int64, error)
+	// RetainCaptures empties the captures of records recorded before an
+	// instant, keeping the records and marking the bytes as retained.
+	RetainCaptures(ctx context.Context, tenant Tenant, recordedBefore time.Time) (int64, error)
 }
 
 // GrantRepository stores JIT access grants (M10).
