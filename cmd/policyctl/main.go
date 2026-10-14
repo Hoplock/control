@@ -91,7 +91,7 @@ func (r *refusal) Error() string {
 func run(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	global := flag.NewFlagSet("policyctl", flag.ContinueOnError)
 	global.SetOutput(stderr)
-	global.Usage = func() { fmt.Fprint(stderr, usage) }
+	global.Usage = func() { _, _ = fmt.Fprint(stderr, usage) }
 	c := &client{out: stdout, errOut: stderr, http: &http.Client{Timeout: 60 * time.Second}}
 	tenant := getenv("HOPLOCK_TENANT")
 	if tenant == "" {
@@ -110,7 +110,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return exitError
 	}
 	if c.server == "" {
-		fmt.Fprintln(stderr, "policyctl: -server (or HOPLOCK_SERVER) is required")
+		_, _ = fmt.Fprintln(stderr, "policyctl: -server (or HOPLOCK_SERVER) is required")
 		return exitError
 	}
 	c.server = strings.TrimRight(c.server, "/")
@@ -121,7 +121,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	}
 	cmd, ok := cmds[rest[0]]
 	if !ok {
-		fmt.Fprintf(stderr, "policyctl: unknown command %q\n%s", rest[0], usage)
+		_, _ = fmt.Fprintf(stderr, "policyctl: unknown command %q\n%s", rest[0], usage)
 		return exitError
 	}
 	code, err := cmd(rest[1:])
@@ -131,7 +131,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 			c.printRefusal(ref)
 			return exitRefused
 		}
-		fmt.Fprintf(stderr, "policyctl: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "policyctl: %v\n", err)
 		return exitError
 	}
 	return code
@@ -191,12 +191,12 @@ func (c *client) line(fields ...any) {
 	for _, f := range fields {
 		parts = append(parts, strings.ReplaceAll(fmt.Sprint(f), "\t", " "))
 	}
-	fmt.Fprintln(c.out, strings.Join(parts, "\t"))
+	_, _ = fmt.Fprintln(c.out, strings.Join(parts, "\t"))
 }
 
 func (c *client) raw(b []byte) {
 	_, _ = c.out.Write(bytes.TrimRight(b, "\n"))
-	fmt.Fprintln(c.out)
+	_, _ = fmt.Fprintln(c.out)
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ func (c *client) printFindings(fs []finding) {
 func (c *client) printRefusal(r *refusal) {
 	if c.json {
 		_, _ = c.errOut.Write(r.raw)
-		fmt.Fprintln(c.errOut)
+		_, _ = fmt.Fprintln(c.errOut)
 		return
 	}
 	w := c.out

@@ -10,9 +10,10 @@ import (
 	"reflect"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/hoplock/control/internal/policy/model"
 	"github.com/hoplock/control/internal/store"
-	"gopkg.in/yaml.v3"
 )
 
 // A DIFF IS READ BY A REVIEWER, so it says what changed in the policy's own

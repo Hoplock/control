@@ -412,11 +412,12 @@ func TestAnUpperBoundShortensAndNeverLengthens(t *testing.T) {
 		t.Fatalf("ensure: %v", err)
 	}
 	public, _ := proxyKey(t)
-	for bound, want := range map[time.Duration]time.Duration{
-		2 * time.Minute:  2 * time.Minute,
-		30 * time.Minute: 5 * time.Minute,
-		0:                5 * time.Minute,
+	for _, c := range []struct{ bound, want time.Duration }{
+		{2 * time.Minute, 2 * time.Minute},
+		{30 * time.Minute, 5 * time.Minute},
+		{0, 5 * time.Minute},
 	} {
+		bound, want := c.bound, c.want
 		issued, err := f.ca.Issue(ctx, "tenant-a", credential.IssueRequest{
 			SubjectID: "alice", Principals: []string{"deploy"}, Target: "db-1",
 			PublicKey: public, UpperBound: bound,
