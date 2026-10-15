@@ -206,6 +206,7 @@ func (r *Registry) PublishConfig(ctx context.Context, tenant store.Tenant, scope
 	if err != nil {
 		return ConfigPublication{}, err
 	}
+	r.TrackConfigTenant(tenant)
 	return ConfigPublication{Version: version, Changed: r.announce(ctx, tenant, changed)}, nil
 }
 
@@ -246,6 +247,7 @@ func (r *Registry) RollbackConfig(ctx context.Context, tenant store.Tenant, scop
 	if err != nil {
 		return ConfigPublication{}, err
 	}
+	r.TrackConfigTenant(tenant)
 	return ConfigPublication{Version: version, Changed: r.announce(ctx, tenant, changed)}, nil
 }
 
@@ -316,13 +318,25 @@ func materialiseConfig(ctx context.Context, tx *store.Store, tenant store.Tenant
 		return store.ProxyConfigState{}, err
 	}
 
-	raw, hash, err := marshalConfig(ComposeConfig(zoneDoc, proxyDoc))
-	if err != nil {
-		return store.ProxyConfigState{}, err
-	}
-
 	current, err := tx.ProxyConfigs().GetState(ctx, tenant, proxyID)
 	if err != nil && !store.IsNotFound(err) {
+		return store.ProxyConfigState{}, err
+	}
+	if zoneDoc == nil && proxyDoc == nil && current.DesiredVersion == 0 {
+		// NOTHING IS PUBLISHED for this proxy, and nothing ever was: the
+		// fetch answers 204 and the proxy runs on its bootstrap file. That
+		// is version 0 — no document to announce, none to be behind — and
+		// never the empty composition stored as a version 1 the fetch would
+		// deny having. The row exists so that the report has one to write.
+		empty := store.ProxyConfigState{ProxyID: proxyID}
+		if err := tx.ProxyConfigs().PutState(ctx, tenant, empty); err != nil {
+			return store.ProxyConfigState{}, err
+		}
+		return empty, nil
+	}
+
+	raw, hash, err := marshalConfig(ComposeConfig(zoneDoc, proxyDoc))
+	if err != nil {
 		return store.ProxyConfigState{}, err
 	}
 	if current.DesiredHash == hash && current.DesiredVersion > 0 {
@@ -489,28 +503,18 @@ func (r *Registry) DesiredConfig(ctx context.Context, tenant store.Tenant, proxy
 }
 
 // FetchConfig answers `GET /v1/proxies/{proxy_id}/config`: the document desired
-// for a proxy NOW, or ok false when nothing is published for it — neither its
-// zone nor the proxy itself has a document — in which case the proxy runs on its
-// bootstrap file alone. A proxy the registry does not hold in this tenant is
-// [ErrNotEnrolled]: a registry fact, never a deny (M11).
+// for a proxy NOW, or ok false when nothing is published for it — its state
+// desires version 0, because neither its zone nor the proxy itself has ever had
+// a document — in which case the proxy runs on its bootstrap file alone. It
+// reads the same row the announcer and the drift view read, so the three never
+// disagree about whether there is a document. A proxy the registry does not
+// hold in this tenant is [ErrNotEnrolled]: a registry fact, never a deny (M11).
 func (r *Registry) FetchConfig(ctx context.Context, tenant store.Tenant, proxyID string) (*contract.ProxyConfigDocument, bool, error) {
-	p, err := r.st.Proxies().Get(ctx, tenant, proxyID)
-	if err != nil {
+	if _, err := r.st.Proxies().Get(ctx, tenant, proxyID); err != nil {
 		if store.IsNotFound(err) {
 			return nil, false, ErrNotEnrolled
 		}
 		return nil, false, err
-	}
-	published := false
-	for _, scope := range []store.ConfigScope{ZoneScope(Zone(p.Zone)), ProxyScope(p.ID)} {
-		if _, err := r.st.ProxyConfigs().GetDesired(ctx, tenant, scope); err == nil {
-			published = true
-		} else if !store.IsNotFound(err) {
-			return nil, false, err
-		}
-	}
-	if !published {
-		return nil, false, nil
 	}
 	state, err := r.st.ProxyConfigs().GetState(ctx, tenant, proxyID)
 	if err != nil {
@@ -518,6 +522,9 @@ func (r *Registry) FetchConfig(ctx context.Context, tenant store.Tenant, proxyID
 			return nil, false, nil
 		}
 		return nil, false, err
+	}
+	if state.DesiredVersion == 0 {
+		return nil, false, nil
 	}
 	var settings map[string]any
 	if err := json.Unmarshal(state.DesiredDocument, &settings); err != nil {
