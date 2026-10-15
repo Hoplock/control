@@ -94,14 +94,8 @@ func (r auditRepo) AppendChain(
 	err := r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
 		stored = 0
 
-		// hashtext gives the two int4 keys the advisory lock takes. A
-		// collision costs two streams a shared lock and nothing else:
-		// the chain is still correct, the append is merely serialised
-		// with a stream it need not have waited for.
-		if _, err := q.Exec(ctx,
-			`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
-			string(tenant), stream); err != nil {
-			return wrap(op, err)
+		if err := lockStream(ctx, op, q, tenant, stream); err != nil {
+			return err
 		}
 
 		fresh, err := r.unseen(ctx, op, q, tenant, ids)
@@ -136,6 +130,23 @@ func (r auditRepo) AppendChain(
 		return 0, err
 	}
 	return stored, nil
+}
+
+// lockStream takes one stream's APPEND LOCK for the rest of the transaction.
+// Every append takes it, and so does a retention pass, so a prefix never moves
+// while a record is being chained onto the stream. It is one function so that
+// the two can never take different locks.
+//
+// hashtext gives the two int4 keys the advisory lock takes. A collision costs
+// two streams a shared lock and nothing else: the chain is still correct, the
+// append is merely serialised with a stream it need not have waited for.
+func lockStream(ctx context.Context, op string, q querier, tenant Tenant, stream string) error {
+	if _, err := q.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
+		string(tenant), stream); err != nil {
+		return wrap(op, err)
+	}
+	return nil
 }
 
 // unseen returns the ids not already stored, in the order given and without

@@ -5,9 +5,7 @@ package north
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -487,40 +485,16 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request) {
 		s.invalid(w, r, "through_seq", "exactly_one_of_through_seq_or_before", "")
 		return
 	}
-	through := body.ThroughSeq
-	if !body.Before.IsZero() {
-		n, err := s.st.Audit().ThroughSeqBefore(r.Context(), tenant, body.Stream, body.Before)
-		if err != nil {
-			s.auditFailure(w, r, "plan retention", err)
-			return
-		}
-		if prior, err := s.st.Audit().Retention(r.Context(), tenant, body.Stream); err == nil && n <= prior.ThroughSeq {
-			answer(w, http.StatusOK, map[string]any{"stream": body.Stream, "deleted": 0, "through_seq": prior.ThroughSeq})
-			return
-		}
-		if n == 0 {
-			answer(w, http.StatusOK, map[string]any{"stream": body.Stream, "deleted": 0, "through_seq": 0})
-			return
-		}
-		through = n
-	}
-	marker, deleted, err := s.st.Audit().RetainPrefix(r.Context(), tenant, body.Stream, through, actor.Principal)
+	// The pass and its record are one transaction (internal/audit/retention.go).
+	out, err := s.emitter.RetainPrefix(r.Context(), tenant, audit.PrefixPass{
+		Stream: body.Stream, ThroughSeq: body.ThroughSeq, Before: body.Before,
+	}, actor)
 	if err != nil {
 		s.auditFailure(w, r, "retain", err)
 		return
 	}
-	if err := s.emitter.OperatorEvent(r.Context(), nil, tenant, audit.OperatorAct{
-		Event: audit.EventAuditRetained, Actor: actor, After: strconv.FormatInt(marker.ThroughSeq, 10),
-		Fields: map[string]string{
-			"stream": body.Stream, "through_hash": marker.ThroughHash, "deleted": strconv.FormatInt(deleted, 10),
-		},
-		Message: fmt.Sprintf("stream %s retained through %d", body.Stream, marker.ThroughSeq),
-	}); err != nil {
-		s.fail(w, r, "record retention", err)
-		return
-	}
 	answer(w, http.StatusOK, map[string]any{
-		"stream": body.Stream, "deleted": deleted, "through_seq": marker.ThroughSeq, "through_hash": marker.ThroughHash,
+		"stream": out.Stream, "deleted": out.Deleted, "through_seq": out.ThroughSeq, "through_hash": out.ThroughHash,
 	})
 }
 
@@ -545,19 +519,9 @@ func (s *Server) handleCaptureRetention(w http.ResponseWriter, r *http.Request) 
 		s.invalid(w, r, "before", access.ProblemRequired, "")
 		return
 	}
-	n, err := s.st.Audit().RetainCaptures(r.Context(), tenant, body.Before)
+	n, err := s.emitter.RetainCaptures(r.Context(), tenant, body.Before, actor)
 	if err != nil {
 		s.auditFailure(w, r, "retain captures", err)
-		return
-	}
-	if err := s.emitter.OperatorEvent(r.Context(), nil, tenant, audit.OperatorAct{
-		Event: audit.EventAuditRetained, Actor: actor,
-		Fields: map[string]string{
-			"captures_before": body.Before.UTC().Format(time.RFC3339), "captures": strconv.FormatInt(n, 10),
-		},
-		Message: fmt.Sprintf("%d session capture(s) retained", n),
-	}); err != nil {
-		s.fail(w, r, "record capture retention", err)
 		return
 	}
 	answer(w, http.StatusOK, map[string]any{"captures": n, "before": body.Before.UTC()})

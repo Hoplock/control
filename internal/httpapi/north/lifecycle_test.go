@@ -5,6 +5,7 @@ package north_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -498,12 +499,56 @@ func TestRetentionOverTheWireKeepsTheChainVerifying(t *testing.T) {
 	if err != nil || !result.OK() {
 		t.Fatalf("verification after retention: %v %+v", err, result.Streams)
 	}
-	if len(f.operatorRecords(t, audit.EventAuditRetained)) != 1 {
-		t.Errorf("the retention pass is not on the record")
+	retained := f.operatorRecords(t, audit.EventAuditRetained)
+	if len(retained) != 1 {
+		t.Fatalf("the retention pass is not on the record")
+	}
+	// The record of the pass commits in the deletion's own transaction, so
+	// neither exists without the other (0021): rows one transaction wrote
+	// carry its id.
+	if marker, rec := xminOf(t, f, `SELECT xmin::text FROM audit_retention WHERE tenant = 'tenant-a' AND stream = $1`, audit.StreamControl),
+		xminOf(t, f, `SELECT xmin::text FROM audit_records WHERE tenant = 'tenant-a' AND record_id = $1`, retained[0].RecordID); marker != rec {
+		t.Errorf("the marker was written by transaction %s and the record of the pass by %s", marker, rec)
 	}
 	// The head is never retained.
 	resp = f.send(t, "POST", api+"/audit/retention", admin, map[string]any{"stream": audit.StreamControl, "through_seq": 100})
 	mustStatus(t, resp, http.StatusBadRequest)
+}
+
+// A capture retention pass and its record commit together too (0021).
+func TestCaptureRetentionOverTheWireIsRecordedInItsOwnTransaction(t *testing.T) {
+	f := newServer(t)
+	admin := f.roleToken(t, identity.RoleAdmin)
+	in, err := audit.New(audit.Options{Store: f.st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := in.Ingest(t.Context(), audit.Submission{Tenant: "tenant-a", ProxyID: "proxy-a", Records: []contract.LogRecord{{
+		RecordID: "rec-capture", SessionID: "sess-capture", Kind: "stream", Severity: contract.SeverityInfo,
+		Timestamp: time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339),
+		Payload:   base64.StdEncoding.EncodeToString([]byte("whoami\r\n")),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.send(t, "POST", api+"/audit/captures/retention", admin, map[string]any{"before": time.Now().Add(-24 * time.Hour)})
+	mustStatus(t, resp, http.StatusOK)
+	retained := f.operatorRecords(t, audit.EventAuditRetained)
+	if len(retained) != 1 {
+		t.Fatalf("the capture retention pass is not on the record")
+	}
+	if capture, rec := xminOf(t, f, `SELECT xmin::text FROM audit_captures WHERE tenant = 'tenant-a' AND record_id = $1`, "rec-capture"),
+		xminOf(t, f, `SELECT xmin::text FROM audit_records WHERE tenant = 'tenant-a' AND record_id = $1`, retained[0].RecordID); capture != rec {
+		t.Errorf("the capture was emptied by transaction %s and the record of the pass written by %s", capture, rec)
+	}
+}
+
+func xminOf(t *testing.T, f *serverFixture, query, arg string) string {
+	t.Helper()
+	var xmin string
+	if err := f.st.Pool().QueryRow(t.Context(), query, arg).Scan(&xmin); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+	return xmin
 }
 
 // ---------------------------------------------------------------------------

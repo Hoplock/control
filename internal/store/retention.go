@@ -91,9 +91,8 @@ func (r auditRepo) RetainPrefix(ctx context.Context, tenant Tenant, stream strin
 		deleted int64
 	)
 	err := r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
-		if _, err := q.Exec(ctx,
-			`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, string(tenant), stream); err != nil {
-			return wrap(op, err)
+		if err := lockStream(ctx, op, q, tenant, stream); err != nil {
+			return err
 		}
 		prior, err := r.retention(ctx, op, q, tenant, stream)
 		if err != nil && !IsNotFound(err) {
