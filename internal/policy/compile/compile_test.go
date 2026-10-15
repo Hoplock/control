@@ -1198,6 +1198,13 @@ func TestABanRefusesOnlyWhatEveryBuildRefuses(t *testing.T) {
 	if rs := compileSource(t, banRoute(`{key_exchanges: [sntrup761x25519-sha512, no-such-kex]}`)); rs != nil {
 		t.Errorf("a ban on a name no build offers was refused: %v", rs)
 	}
+	// Nor is a name of blanks. It is not EMPTY, which is what the proxy
+	// refuses; it is a name no build offers, which the proxy accepts and
+	// records as unmatched, and which the publish-time report warns about
+	// as it does any typo. Refusing it here would refuse more than the proxy.
+	if rs := compileSource(t, banRoute(`{ciphers: ["  "]}`)); rs != nil {
+		t.Errorf("a ban on a name of blanks was refused, which the proxy accepts: %v", rs)
+	}
 }
 
 // A ban everywhere is the bundle's own algorithm_bans, added to every allow
@@ -1213,12 +1220,24 @@ rules:
       channels: [session]
       filter: {mode: whitelist}
       algorithm_bans: {ciphers: [aes128-ctr, aes192-ctr]}
+  - id: refused
+    effect: deny
+    reason: nobody reaches this
+    match: {target: {hostnames: [b.example.com]}}
   - id: none
     effect: allow
     route: `+allowRoute+`
 `))
 	for i := range prog.Len() {
 		r := prog.Rule(i)
+		if r.Effect() == model.EffectDeny {
+			// A deny has no route to carry a ban on, and the merge does
+			// not invent one.
+			if r.Route() != nil {
+				t.Errorf("deny rule %s carries a route after the merge: %+v", r.ID(), r.Route())
+			}
+			continue
+		}
 		b := r.Route().AlgorithmBans
 		if !slices.Contains(b.Axis("key_exchanges"), "diffie-hellman-group14-sha256") {
 			t.Errorf("rule %s does not carry the bundle-wide key-exchange ban: %+v", r.ID(), b)

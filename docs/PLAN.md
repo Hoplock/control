@@ -215,6 +215,19 @@ decision.
   answer that looks like one. Horizontal scale-out is the only scaling story;
   nothing on the decision path may be node-local state.
 
+  **A node may remember shared state; it may not be the only place a fact
+  lives.** Three memories sit on the decision path, and each is a copy whose
+  authority is the store: the compiled program and the fleet graph, served for
+  at most `decision.DefaultRefreshInterval` (5 s) before they are re-read, and
+  which proxy algorithm declaration the node last wrote, which saves the write
+  for at most `fleet.DeclarationRecheck` (a minute). Each can make a node late,
+  never wrong for longer than its bound, whichever node a proxy reaches. The
+  last bound is the one easily left out: a node that remembered a write forever
+  would leave a proxy's row wrong after a rollback to a build it recorded
+  itself, while another node held the newer one. What may not exist is state
+  that changes an answer and is kept nowhere else — a counter, a lease, a set
+  of what has been seen — because the next call may land on another node.
+
   **The magnitude is not modest.** The first target deployment is a telco with
   ~300,000 network devices and ~50,000 Linux hosts. If machine-to-machine health
   checking of that estate runs over SSH on a one-minute interval, the decision
@@ -1799,9 +1812,14 @@ Seven obligations are easy to miss and are graded by the conformance suite:
     `target` and `username` against the stored decision before signing; the
     decision must have allowed and must name a `brokered-certificate` rung.
     A channel token bound to a proxy may cite only a decision made for that
-    proxy; an unbound one is held to its tenant. The request is
-    cross-checked, never trusted, and each refusal is a `401` through the
-    south-bound surface's third denier, `refuseToMint`.
+    proxy; an unbound one is held to its tenant. The decision must also be
+    inside the window a session may be served under it: its cache hint's TTL,
+    or none, plus `credential.DecisionSetupAllowance` (two minutes) for the
+    setup between the answer and this call. A conforming proxy never cites an
+    older one, and minting on one would hand out a fresh credential that the
+    `cache_invalidate` and `session_kill` ending the decision's reuse do not
+    reach. The request is cross-checked, never trusted, and each refusal is a
+    `401` through the south-bound surface's third denier, `refuseToMint`.
   - **Bound its life by `lifetime_seconds`, and never let it run forever.**
     The bound is an upper one: the lifetime is the shorter of the route's
     bound and the CA's own validity, so a route bound above the CA default
@@ -2579,7 +2597,11 @@ never a partial story.
   cures (more than `audit.max_batch_records`, or a body over
   `south.max_log_body_bytes`, 4 MiB by default — the two log paths' own
   limit, larger than `south.max_body_bytes`, because a full default batch of
-  a busy session's capture is about 2.7 MiB of JSON). Never answer it for a condition that passes. A
+  a busy session's capture is about 2.7 MiB of JSON). Halving cures a body
+  limit only while one storable record fits it, because a batch of one cannot
+  be halved, so a `south.max_log_body_bytes` below one record the `audit:`
+  bounds admit is refused at start-up (`config.MinLogBodyBytes`). Never answer
+  it for a condition that passes. A
   timeout, a store failure or overload is a `5xx`, which costs the proxy
   latency and not records. M11 already forbids answering any of them with a
   `401`.
@@ -2600,21 +2622,24 @@ never a partial story.
   it, and it is not merely late. `Parse` accepts `""` on every kind, and the
   by-session reads (`Reader.Session`, `SessionLoss`, `Algorithms`,
   `SessionCertificates`) and explain refuse it.
-- **The kind enum is closed and an unknown kind is refused**; severity is not,
-  and the asymmetry is deliberate. A severity is a three-value scale a reader
-  can act on without knowing the value; a kind is what every query below filters
-  by, so a kind nobody knows is a record nobody finds. **Refusing it is loud,
-  and "loud" means one record.** The refused record is set aside on the proxy
-  and lost to this store (above). What arrives in its place is a `logging.gap`
-  with `gap_cause: refused`. The gap names the record (`gap_record_ids`), its
-  kind (`gap_kinds`) and this server's own answer (`refusal_code` and
-  `refusal_message`, whose text names the kind). It sits in the session's own
-  timeline, `critical` when the refused record was. That is the trade, taken
-  knowingly. Accepting would keep the record where no query looks, and nothing
-  would say so. Refusing loses the record, and the gap says so and names the
-  kind. An unknown kind means the proxy runs a contract this server has not
-  vendored yet, so the fix is a re-vendor and never a local addition: adding a
-  kind is an upstream change (M1).
+- **The kind and severity enums are closed, and a record outside either is
+  refused** (`audit.Kinds`, `audit.Severities`, both the contract's). The kind
+  is the one the refusal is for: it is what every query below filters by, so a
+  kind nobody knows is a record nobody finds. The severity is refused here and
+  not by the database, whose column carries no `CHECK` (0003), because a
+  constraint violation would be a `5xx` the proxy retries rather than one
+  refused record. **Refusing either is loud, and "loud" means one record.** The
+  refused record is set aside on the proxy and lost to this store (above). What
+  arrives in its place is a `logging.gap` with `gap_cause: refused`. The gap
+  names the record (`gap_record_ids`), its kind (`gap_kinds`) and this server's
+  own answer (`refusal_code` and `refusal_message`, whose text names the value
+  refused). It sits in the session's own timeline, `critical` when the refused
+  record was. That is the trade, taken knowingly. Accepting would keep the
+  record where no query looks, and nothing would say so. Refusing loses the
+  record, and the gap says so and names what was refused. An unknown kind or
+  severity means the proxy runs a contract this server has not vendored yet, so
+  the fix is a re-vendor and never a local addition: adding either is an
+  upstream change (M1).
 - **A gap in a proxy's stream is a record, and it is not a break in the chain**
   (proxy D8 as its phase 0046 amended it; `Hoplock/proxy#71`). A proxy loses a
   record to this server in exactly two ways, and it reports both in a

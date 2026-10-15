@@ -4,6 +4,9 @@
 package main
 
 import (
+	"net/url"
+	"strings"
+
 	"github.com/hoplock/control/internal/contract"
 )
 
@@ -61,6 +64,10 @@ func (s *Suite) CheckErrors() {
 			contract.PathUIDLease:           []byte(`{"proxy_id":"p","target":"t"}`),
 			contract.PathLogsBatch:          []byte(`{"records":[{"record_id":"r","session_id":"s","timestamp":"2026-01-01T00:00:00Z","kind":"error","severity":"info"}]}`),
 			contract.PathLogsPriority:       []byte(`{"record":{"record_id":"r","session_id":"s","timestamp":"2026-01-01T00:00:00Z","kind":"error","severity":"critical"}}`),
+
+			// The two endpoints Hoplock/proxy#65 and #68 added (0019).
+			contract.PathCredentialCertificate:              []byte(`{"session_id":"s","decision_id":"d","target":"t","username":"u","public_key":"ssh-ed25519 AAAA"}`),
+			configPath(contract.PathProxyConfigReport, "p"): []byte(`{"state":"applied","reported_at":"2026-01-01T00:00:00Z"}`),
 		}
 		for path, body := range paths {
 			r, err := s.do("POST", s.baseURL+path, body, "pdpconform-not-a-real-token")
@@ -73,7 +80,21 @@ func (s *Suite) CheckErrors() {
 				s.requireEnvelope(c, r)
 			}
 		}
+		// The configuration fetch is a GET, and is held to the same answer.
+		fetch := configPath(contract.PathProxyConfig, "p")
+		r, err := s.do("GET", s.baseURL+fetch, nil, "pdpconform-not-a-real-token")
+		if c.require(err == nil, "%s: request failed: %v", fetch, err) {
+			c.require(r.status == 401, "GET %s: want 401 for a rejected token, got %d: %s", fetch, r.status, snippet(r.body))
+			if r.status == 401 {
+				s.requireEnvelope(c, r)
+			}
+		}
 	})
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// configPath is one of the fleet configuration paths for a proxy id.
+func configPath(pattern, proxyID string) string {
+	return strings.ReplaceAll(pattern, "{proxy_id}", url.PathEscape(proxyID))
+}

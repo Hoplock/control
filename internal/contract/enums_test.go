@@ -6,6 +6,7 @@ package contract
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -181,6 +182,55 @@ func TestEnumsMatchContract(t *testing.T) {
 
 	for _, c := range cases {
 		assertSameSet(t, c.what, enumAt(t, doc, c.schema, c.property, c.inItems), c.code)
+	}
+
+	// And the list above is the document's whole list: an enum a re-vendor
+	// brings in with no case here would be held to nothing, and no test would
+	// say so.
+	covered := map[string]bool{}
+	for _, c := range cases {
+		covered[enumPath(c.schema, c.property, c.inItems)] = true
+	}
+	for _, where := range documentEnums(doc) {
+		if !covered[where] {
+			t.Errorf("the contract has an enum at %s and TestEnumsMatchContract has no case for it", where)
+		}
+	}
+}
+
+func enumPath(schema, property string, inItems bool) string {
+	if inItems {
+		return schema + "." + property + "[]"
+	}
+	return schema + "." + property
+}
+
+// documentEnums lists every enum the vendored document declares on a schema's
+// property or on a property's items, as enumPath spells it.
+func documentEnums(doc *contractDoc) []string {
+	var out []string
+	for name, s := range doc.Components.Schemas {
+		for prop, p := range s.Properties {
+			if len(p.Enum) > 0 {
+				out = append(out, enumPath(name, prop, false))
+			}
+			if p.Items != nil && len(p.Items.Enum) > 0 {
+				out = append(out, enumPath(name, prop, true))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// The walk above must see the enums the cases name; one that found nothing
+// would make the completeness check pass against anything.
+func TestTheEnumWalkFindsTheDocumentsEnums(t *testing.T) {
+	found := documentEnums(loadContract(t))
+	for _, want := range []string{"LogRecord.severity", "RequestPolicy.types[]", "KexObservation.floor_met"} {
+		if !slices.Contains(found, want) {
+			t.Errorf("the enum walk did not find %s in %v", want, found)
+		}
 	}
 }
 

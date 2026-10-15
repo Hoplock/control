@@ -172,7 +172,6 @@ func Denied(message string) *StatusError {
 	return &StatusError{Class: ErrDenied, Code: ErrCodeUnauthorized, Message: message}
 }
 
-// Invalid builds the 400 answer for a malformed request.
 // RefusedToMint is the 401 for a brokered-certificate issuance this server
 // refuses (Hoplock/proxy#68): the decision cited is not one it made for the
 // method, or the request does not match it. It is a DECISION, like Denied, and
@@ -190,6 +189,7 @@ func Unavailable(code, message string) *StatusError {
 	return &StatusError{Class: ErrUnavailable, Code: code, Message: message}
 }
 
+// Invalid builds the 400 answer for a malformed request.
 func Invalid(message string) *StatusError {
 	return &StatusError{Class: ErrInvalidRequest, Code: ErrCodeInvalidRequest, Message: message}
 }

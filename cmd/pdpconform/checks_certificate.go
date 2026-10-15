@@ -19,6 +19,10 @@ import (
 
 const groupCertificate = "brokered certificates (POST /v1/credentials/certificate)"
 
+// certificateClockSkew is the skew the proxy allows between itself and this
+// server when it holds valid_before to a route's lifetime_seconds.
+const certificateClockSkew = 30 * time.Second
+
 // authorizeAt answers a route at a declared version and returns the session id
 // the request carried, which an issuance cites.
 func (s *Suite) authorizeAt(route AuthorizeRoute, version int32) (*response, string, error) {
@@ -97,6 +101,23 @@ func (s *Suite) CheckCertificate() {
 		c.require(err == nil && before.Unix() == int64(cert.ValidBefore),
 			"valid_before %q is not the certificate's own instant %d", got.ValidBefore, cert.ValidBefore)
 		c.require(time.Unix(int64(cert.ValidBefore), 0).After(time.Now()), "the certificate is already expired")
+
+		// The route's lifetime_seconds is an upper bound: a server may
+		// shorten it and may not widen it, judged as the proxy judges it,
+		// from now and with its 30 seconds of clock skew.
+		entry, ok := brokeredCertificateEntry(&decision)
+		c.must(ok, "the decision names no brokered-certificate entry: %s", snippet(r.body))
+		if raw := entry.Params[contract.ParamLifetimeSeconds]; raw != "" {
+			secs, err := strconv.Atoi(raw)
+			c.must(err == nil && secs > 0, "the entry's lifetime_seconds %q is not a positive integer", raw)
+			limit := time.Now().Add(time.Duration(secs)*time.Second + certificateClockSkew)
+			c.require(!time.Unix(int64(cert.ValidBefore), 0).After(limit),
+				"the certificate is valid until %s, past the route's %ss bound from now (with %s of skew)",
+				time.Unix(int64(cert.ValidBefore), 0).UTC().Format(time.RFC3339), raw, certificateClockSkew)
+			c.note("valid_before %s, inside the route's %ss bound", got.ValidBefore, raw)
+		} else {
+			c.note("the route sets no lifetime_seconds, so only expiry is graded")
+		}
 	})
 
 	s.run(groupCertificate, "two issuances citing one decision are two certificates with two serials", func(c *Case) {

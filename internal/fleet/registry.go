@@ -43,9 +43,10 @@ type Registry struct {
 	hostKeyCacheTTL time.Duration
 	// configTenants are the tenants the announcer walks (TrackConfigTenant).
 	configTenants sync.Map
-	// declared is the digest of each proxy's algorithm declaration as this
-	// process last wrote it (tenant + "\x00" + proxy id → digest), so the
-	// decision path writes only when a build changed (M5).
+	// declared is what this node last wrote of each proxy's algorithm
+	// declaration (tenant + "\x00" + proxy id → its digest and when), so the
+	// decision path writes when a build changed or the memory is older than
+	// DeclarationRecheck, and not on every call (M5).
 	declared sync.Map
 }
 

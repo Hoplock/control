@@ -228,7 +228,7 @@ the group against a server whose fixtures publish no document.
 
 | Key | Meaning |
 | --- | --- |
-| `route` | A route whose ladder names `brokered-certificate`. Below vocabulary 5 it must be refused with a `5xx` naming both numbers. |
+| `route` | A route whose ladder names `brokered-certificate`. Below vocabulary 5 it must be refused with a `5xx` naming both numbers. When its entry sets `lifetime_seconds`, an issued certificate's `valid_before` must be no later than that bound from now, with the proxy's 30 seconds of skew; set one, or that half of the case grades nothing (`-v` says which). |
 | `username` | The account the route names: the issued certificate's only principal. |
 
 ### `algorithms` (`Hoplock/proxy#69`, `#72`)
@@ -236,8 +236,9 @@ the group against a server whose fixtures publish no document.
 | Key | Meaning |
 | --- | --- |
 | `floor`, `floor_level` | A route carrying `algorithm_floor` at that level: refused below vocabulary 6, answered to a proxy declaring the level in `capabilities.algorithm_floors`, and a `5xx` — never stripped — to one that does not, or that sends no capabilities. |
-| `ban` | A route carrying `algorithm_bans` and no floor: refused below vocabulary 6, answered with the bans as authored at 6. |
-| `kex_target` | The target a key-exchange capability report is about. The report is accepted; a report with rungs and no `observed_at`, one carrying neither observation, and a `kex` with no `floor_met` answer `400`. |
+| `ban` | A route carrying `algorithm_bans` and no floor: refused below vocabulary 6, answered with the bans as authored at 6, and answered the same when the request also declares `capabilities.algorithm_profiles` with an offer the bans leave something on every axis (`Hoplock/proxy#72`). |
+| `bans` | That route's bans exactly as authored, one list per axis (`key_exchanges`, `ciphers`, `macs`, `host_keys`, `public_key_auth`). The answer must carry these lists, in this order, and nothing else. |
+| `kex_target` | The target a key-exchange capability report is about. The report answers `200 {"accepted": true}`; a report with rungs and no `observed_at`, one carrying neither observation, and a `kex` with no `floor_met` answer `400`. |
 
 ## What the suite asserts, and what it deliberately does not
 

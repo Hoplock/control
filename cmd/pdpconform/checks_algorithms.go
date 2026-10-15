@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/hoplock/control/internal/contract"
@@ -103,7 +104,30 @@ func (s *Suite) CheckAlgorithms() {
 		c.require(r.has("algorithm_bans"), "the route's algorithm_bans are not on the answer: %s", snippet(r.body))
 		var got contract.AuthorizeResponse
 		c.must(r.into(&got) == nil, "undecodable body")
-		c.require(got.AlgorithmBans != nil && !got.AlgorithmBans.Empty(), "algorithm_bans is present and empty")
+		s.requireBansAsAuthored(c, got.AlgorithmBans, e.Bans)
+	})
+
+	// Hoplock/proxy#72: a proxy declaring what each profile offers is judged
+	// from it, and a ban that leaves every axis of that declaration something
+	// to offer is answered exactly as it is without one — never a 400 for the
+	// new key, never a refusal.
+	s.run(groupAlgorithms, "a declaration of each profile's offer that the ban leaves something on every axis changes nothing", func(c *Case) {
+		without, err := s.authorizeWithCapabilities(e.Ban, floorTier, declaring(e.FloorLevel))
+		c.must(err == nil, "request failed: %v", err)
+		c.must(without.status == 200, "the ban route answered %d without the declaration: %s", without.status, snippet(without.body))
+
+		caps := declaring(e.FloorLevel)
+		caps["algorithm_profiles"] = []map[string]any{offerSurviving(contract.AlgorithmProfileDefault, e.Bans)}
+		with, err := s.authorizeWithCapabilities(e.Ban, floorTier, caps)
+		c.must(err == nil, "request failed: %v", err)
+		c.must(with.status == 200, "with algorithm_profiles declared the ban route answered %d, want 200 as without it: %s",
+			with.status, snippet(with.body))
+		var a, b contract.AuthorizeResponse
+		c.must(without.into(&a) == nil && with.into(&b) == nil, "undecodable body")
+		s.requireBansAsAuthored(c, b.AlgorithmBans, e.Bans)
+		c.require(a.AlgorithmProfile == b.AlgorithmProfile && a.AlgorithmFloor == b.AlgorithmFloor,
+			"the declaration changed the answer's profile or floor: %q/%q, then %q/%q",
+			a.AlgorithmProfile, a.AlgorithmFloor, b.AlgorithmProfile, b.AlgorithmFloor)
 	})
 
 	s.run(groupAlgorithms, "a key-exchange report is accepted, and the three malformed reports answer 400", func(c *Case) {
@@ -116,6 +140,12 @@ func (s *Suite) CheckAlgorithms() {
 		})
 		c.must(err == nil, "request failed: %v", err)
 		c.require(ok.status == 200, "a key-exchange report answered %d: %s", ok.status, snippet(ok.body))
+		if ok.status == 200 {
+			var got contract.CapabilityReportResponse
+			c.require(ok.into(&got) == nil && got.Accepted,
+				"a key-exchange report answered 200 without accepted: true — a report the server did not record is one the proxy must not believe it made: %s",
+				snippet(ok.body))
+		}
 
 		for name, caps := range map[string]contract.TargetCapabilities{
 			"rungs with no observed_at": {Execution: []string{string(contract.ExecutionProxyInspected)}},
@@ -132,4 +162,30 @@ func (s *Suite) CheckAlgorithms() {
 			}
 		}
 	})
+}
+
+// requireBansAsAuthored asserts the answer carries exactly the bans the
+// expectation file says the route authors, axis by axis and in order: a ban
+// added, dropped or reordered on the way is not the policy that was written.
+func (s *Suite) requireBansAsAuthored(c *Case, got *contract.AlgorithmBans, want map[string][]string) {
+	c.require(got != nil && !got.Empty(), "algorithm_bans is absent or empty")
+	for _, axis := range contract.Axes {
+		have := got.Axis(axis)
+		c.require(slices.Equal(have, want[axis]),
+			"algorithm_bans.%s is %v, and the route authors %v", axis, have, want[axis])
+	}
+	c.note("algorithm_bans as authored: %v", want)
+}
+
+// offerSurviving is one profile's offer as a proxy declares it, every axis
+// present and none empty (AlgorithmProfileCapability), built so that the bans
+// leave each axis one identifier no ban names. The identifiers are the suite's
+// own: what is graded is that the server judges from the declaration, not
+// which algorithms a build offers.
+func offerSurviving(profile contract.AlgorithmProfile, bans map[string][]string) map[string]any {
+	offer := map[string]any{"profile": string(profile)}
+	for _, axis := range contract.Axes {
+		offer[axis] = append(slices.Clone(bans[axis]), "pdpconform-unbanned-"+axis)
+	}
+	return offer
 }

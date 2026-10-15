@@ -77,6 +77,10 @@ var testKEK = []byte("0123456789abcdef0123456789abcdef")
 func certHarness(t *testing.T, ensure bool) (*harness, *credential.CA) {
 	t.Helper()
 	h := newHarness(t)
+	// The authority signs on the real clock — a certificate's window is
+	// graded against it — so decisions are made on it too: an issuance cites
+	// a decision only inside its reuse window (credential.DecisionSetupAllowance).
+	h.clock = time.Now().UTC()
 	keys, err := extdefault.NewSoftwareKeyStore(h.store, testKEK)
 	if err != nil {
 		t.Fatalf("key store: %v", err)
@@ -247,6 +251,41 @@ func TestTwoIssuancesForOneDecisionAreTwoCertificates(t *testing.T) {
 	}
 }
 
+// Nor by session, nor by key: the same request sent twice is two certificates.
+// One call per session is the PROXY's rule; this side never answers from
+// memory, so a cache keyed by either would be the first thing to break it.
+func TestTheSameRequestTwiceIsTwoCertificates(t *testing.T) {
+	t.Parallel()
+	h, _ := certHarness(t, true)
+	decisionID := decisionFor(t, h, "cert-host.example.com")
+	line, _ := sessionKey(t)
+	req := contract.CertificateRequest{
+		SessionID: "sess-again", DecisionID: decisionID, Target: "cert-host.example.com",
+		Username: "netadmin", PublicKey: line,
+	}
+
+	serials := map[string]bool{}
+	for range 2 {
+		res := issue(t, h, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("issue = %d: %s", res.Code, res.Body)
+		}
+		var out contract.CertificateResponse
+		decode(t, res, &out)
+		serials[out.Serial] = true
+	}
+	if len(serials) != 2 {
+		t.Fatalf("one request sent twice answered %d serial(s), want 2", len(serials))
+	}
+	rows, err := h.store.SSHCertificates().ListBySubject(t.Context(), testTenant, "alice@example.com", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("%d rows written, want 2", len(rows))
+	}
+}
+
 // A route's bound above the CA's default does not lengthen the certificate.
 func TestARouteBoundAboveTheDefaultDoesNotLengthenIt(t *testing.T) {
 	t.Parallel()
@@ -284,6 +323,18 @@ func TestARefusalToMintIs401ThroughItsOwnCode(t *testing.T) {
 	if err != nil || len(denied) != 1 {
 		t.Fatalf("the denial's record: %v (%d)", err, len(denied))
 	}
+	// A record that is not an allow but still holds a snapshot naming the
+	// method. This server writes no snapshot on a deny or an unserved
+	// answer, so only the effect check refuses this one: without it the
+	// "did not allow" rule would rest on that write and nothing else.
+	unserved, err := h.store.Decisions().Get(ctx, testTenant, certDecision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unserved.ID, unserved.Effect = "dec-unserved-with-snapshot", "unserved"
+	if err := h.store.Decisions().Insert(ctx, testTenant, unserved); err != nil {
+		t.Fatal(err)
+	}
 
 	line, _ := sessionKey(t)
 	for _, tc := range []struct {
@@ -296,6 +347,8 @@ func TestARefusalToMintIs401ThroughItsOwnCode(t *testing.T) {
 			Target: "cert-host.example.com", Username: "netadmin"}},
 		{"a decision that denied", contract.ErrCodeUnknownDecision, contract.CertificateRequest{
 			DecisionID: denied[0].ID, Target: "denied-host.example.com", Username: "netadmin"}},
+		{"a decision that went unserved", contract.ErrCodeUnknownDecision, contract.CertificateRequest{
+			DecisionID: unserved.ID, Target: "cert-host.example.com", Username: "netadmin"}},
 		{"a decision naming no certificate rung", contract.ErrCodeUnknownDecision, contract.CertificateRequest{
 			DecisionID: plainDecision, Target: "edge-host.example.com", Username: "alice"}},
 		{"a target the decision did not name", contract.ErrCodeDecisionMismatch, contract.CertificateRequest{
@@ -320,16 +373,144 @@ func TestARefusalToMintIs401ThroughItsOwnCode(t *testing.T) {
 	}
 }
 
-func TestAMalformedIssuanceIs400(t *testing.T) {
+// A credential bound to a proxy may cite only a decision made for that proxy
+// (M22): each leg of a chain asks for its own decision, so a bound token citing
+// another proxy's is asking on somebody else's session. An unbound token is held
+// to its tenant, which the cases above already exercise.
+func TestABoundCredentialMayCiteOnlyItsOwnProxysDecision(t *testing.T) {
 	t.Parallel()
 	h, _ := certHarness(t, true)
+	decisionID := decisionFor(t, h, "cert-host.example.com") // made for proxy-1
+
+	for _, tc := range []struct {
+		proxy string
+		want  int
+	}{
+		{"proxy-2", http.StatusUnauthorized},
+		{"proxy-1", http.StatusOK},
+	} {
+		token, _, err := h.fleet.IssueProxyToken(t.Context(), testTenant, tc.proxy, "bound", time.Time{})
+		if err != nil {
+			t.Fatalf("IssueProxyToken: %v", err)
+		}
+		line, _ := sessionKey(t)
+		res := h.do(http.MethodPost, contract.PathCredentialCertificate, mustJSON(contract.CertificateRequest{
+			SessionID: "sess-" + tc.proxy, DecisionID: decisionID, Target: "cert-host.example.com",
+			Username: "netadmin", PublicKey: line,
+		}), token.String())
+		if res.Code != tc.want {
+			t.Fatalf("a token bound to %s citing proxy-1's decision = %d, want %d: %s", tc.proxy, res.Code, tc.want, res.Body)
+		}
+		if tc.want != http.StatusUnauthorized {
+			continue
+		}
+		var env contract.ErrorResponse
+		decode(t, res, &env)
+		if env.Error.Code != contract.ErrCodeDecisionMismatch {
+			t.Errorf("code = %q, want %q", env.Error.Code, contract.ErrCodeDecisionMismatch)
+		}
+	}
+}
+
+// An issuance cites a decision only while a session may be served under it: a
+// decision with no hint serves the one connection it answered, a hinted one may
+// be reused for its TTL, and either may be cited for credential.
+// DecisionSetupAllowance beyond that. An older one is a replayed id, and a
+// certificate minted on it would outlive the cache_invalidate and session_kill
+// that end the decision's reuse.
+func TestAnIssuanceCitesADecisionOnlyInsideItsWindow(t *testing.T) {
+	t.Parallel()
+	h, _ := certHarness(t, true)
+	ctx := t.Context()
+	allowance := credential.DecisionSetupAllowance
+	now := h.clock
+
+	// Uncached: the decision's own time, against the allowance alone.
+	h.clock = now.Add(-allowance + 30*time.Second)
+	recent := decisionFor(t, h, "cert-host.example.com")
+	h.clock = now.Add(-allowance - time.Minute)
+	stale := decisionFor(t, h, "cert-host.example.com")
+	h.clock = now
+
+	// Cached: a hint widens the window by its TTL, and no further.
+	hinted := func(id string, age time.Duration) string {
+		t.Helper()
+		d, err := h.store.Decisions().Get(ctx, testTenant, recent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var snap contract.AuthorizeResponse
+		if err := json.Unmarshal(d.Snapshot, &snap); err != nil {
+			t.Fatal(err)
+		}
+		snap.Cache = &contract.CacheHint{Key: "k", TTLSeconds: 300}
+		if d.Snapshot, err = json.Marshal(snap); err != nil {
+			t.Fatal(err)
+		}
+		d.ID, d.DecidedAt = id, time.Now().Add(-age)
+		if err := h.store.Decisions().Insert(ctx, testTenant, d); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	reused := hinted("dec-hinted-reused", 300*time.Second+allowance-30*time.Second)
+	expired := hinted("dec-hinted-expired", 300*time.Second+allowance+time.Minute)
+
+	for _, tc := range []struct {
+		name, decision string
+		want           int
+	}{
+		{"an uncached decision inside the allowance", recent, http.StatusOK},
+		{"an uncached decision past it", stale, http.StatusUnauthorized},
+		{"a hinted decision inside its TTL and the allowance", reused, http.StatusOK},
+		{"a hinted decision past both", expired, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line, _ := sessionKey(t)
+			res := issue(t, h, contract.CertificateRequest{
+				SessionID: "sess-" + tc.decision, DecisionID: tc.decision, Target: "cert-host.example.com",
+				Username: "netadmin", PublicKey: line,
+			})
+			if res.Code != tc.want {
+				t.Fatalf("issue = %d, want %d: %s", res.Code, tc.want, res.Body)
+			}
+			if tc.want != http.StatusUnauthorized {
+				return
+			}
+			h.requireEnvelope(t, res)
+			var env contract.ErrorResponse
+			decode(t, res, &env)
+			if env.Error.Code != contract.ErrCodeUnknownDecision {
+				t.Errorf("code = %q, want %q", env.Error.Code, contract.ErrCodeUnknownDecision)
+			}
+		})
+	}
+}
+
+func TestAMalformedIssuanceIs400(t *testing.T) {
+	t.Parallel()
+	h, ca := certHarness(t, true)
 	decisionID := decisionFor(t, h, "cert-host.example.com")
 	line, _ := sessionKey(t)
+
+	// A certificate offered as the key to sign: the proxy has confused the
+	// two, and signing it would produce something no target reads.
+	_, key := sessionKey(t)
+	issued, err := ca.Issue(t.Context(), testTenant, credential.IssueRequest{
+		SubjectID: "alice@example.com", Principals: []string{"netadmin"}, Target: "cert-host.example.com",
+		PublicKey: key.Marshal(),
+	})
+	if err != nil {
+		t.Fatalf("issue a certificate to offer: %v", err)
+	}
+
 	for name, req := range map[string]contract.CertificateRequest{
 		"no session": {DecisionID: decisionID, Target: "cert-host.example.com", Username: "netadmin", PublicKey: line},
 		"no key":     {SessionID: "s", DecisionID: decisionID, Target: "cert-host.example.com", Username: "netadmin"},
 		"a key that is not one": {SessionID: "s", DecisionID: decisionID, Target: "cert-host.example.com",
 			Username: "netadmin", PublicKey: "ssh-ed25519 not-base64"},
+		"a key that is a certificate": {SessionID: "s", DecisionID: decisionID, Target: "cert-host.example.com",
+			Username: "netadmin", PublicKey: issued.Certificate},
 	} {
 		if res := issue(t, h, req); res.Code != http.StatusBadRequest {
 			t.Errorf("%s: issue = %d, want 400: %s", name, res.Code, res.Body)

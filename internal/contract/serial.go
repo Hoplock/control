@@ -15,8 +15,10 @@ import (
 // not safely integral above 2^53, so a serial carried as a number can lose its
 // low digits in any peer's parser — and a serial that has lost digits is a join
 // key that no longer joins. These two functions are the only rendering and the
-// only parsing of one in this module: never through a float, and never "fixed"
-// to a JSON number.
+// only parsing of one in this server: never through a float, and never "fixed"
+// to a JSON number. cmd/pdpconform renders the serial it grades with strconv
+// on purpose, because a grader that called the code it grades would agree
+// with it by construction.
 
 var serialPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
 

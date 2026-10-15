@@ -48,17 +48,40 @@ type DeclaredAlgorithms struct {
 	DeclaredAt  time.Time            `json:"declared_at"`
 }
 
+// DeclarationRecheck is how long a node trusts its memory of having written a
+// proxy's declaration before it writes the same digest again.
+//
+// The memory is per node and the store is shared, so a node's memory can be
+// wrong: a proxy rolled back from a build another node recorded presents, to
+// the node that recorded the older build, a digest that node remembers writing,
+// while the row holds the other node's. Remembering for ever would leave that
+// row wrong for as long as the proxy keeps calling that node. So the memory only
+// saves writes, and only for this long; the stored copy is right within one
+// interval whichever node a proxy reaches (M5). The rewrite is a no-op upsert
+// when the row already holds the digest, so it costs one round trip per proxy
+// per node per interval and changes nothing it does not have to.
+const DeclarationRecheck = time.Minute
+
+// declared is what a node remembers of its last write of one proxy's
+// declaration.
+type declared struct {
+	digest string
+	at     time.Time
+}
+
 // RecordAlgorithmDeclaration keeps a proxy's latest algorithm declaration.
 //
 // IT IS A WRITE THE DECISION PATH CAUSES, AND M5 BOUNDS THE DECISION PATH. So
-// it costs one hash per call and one write per BUILD CHANGE: the digest of what
-// the request declared is compared with the one this process last wrote for the
-// proxy, and only a difference reaches the store — where the upsert is itself a
-// no-op when the stored digest matches, so a restart costs one write per proxy
-// at most. A failure is the caller's to log and not to answer: the declaration
-// on the request is the authority the decision path judges against, and this
-// copy is a readiness signal for the publish-time report. The cache is updated
-// only after a write lands, so a failed write is retried on the next call.
+// it costs one hash per call, and a write when the build changed or when this
+// node last wrote the declaration more than [DeclarationRecheck] ago. The
+// upsert is a no-op when the stored digest matches, so the second kind changes
+// nothing unless another node's write made the row stale. Correctness never
+// rests on the memory: two nodes are each right within one interval, at the
+// cost of one write each. A failure is the caller's to log and not to answer:
+// the declaration on the request is the authority the decision path judges
+// against, and this copy is a readiness signal for the publish-time report. The
+// memory is updated only after a write lands, so a failed write is retried on
+// the next call.
 func (r *Registry) RecordAlgorithmDeclaration(ctx context.Context, tenant store.Tenant, proxyID string, caps *contract.ProxyCapabilities) error {
 	if proxyID == "" || caps == nil {
 		return nil
@@ -76,15 +99,18 @@ func (r *Registry) RecordAlgorithmDeclaration(ctx context.Context, tenant store.
 	sum := sha256.Sum256(body)
 	digest := hex.EncodeToString(sum[:])
 	key := string(tenant) + "\x00" + proxyID
-	if last, ok := r.declared.Load(key); ok && last.(string) == digest {
-		return nil
+	now := r.now()
+	if last, ok := r.declared.Load(key); ok {
+		if d := last.(declared); d.digest == digest && now.Sub(d.at) < DeclarationRecheck {
+			return nil
+		}
 	}
 	if _, err := r.st.ProxyAlgorithmDeclarations().Put(ctx, tenant, store.ProxyAlgorithmDeclaration{
-		ProxyID: proxyID, Declaration: body, Digest: digest, DeclaredAt: r.now(),
+		ProxyID: proxyID, Declaration: body, Digest: digest, DeclaredAt: now,
 	}); err != nil {
 		return err
 	}
-	r.declared.Store(key, digest)
+	r.declared.Store(key, declared{digest: digest, at: now})
 	return nil
 }
 

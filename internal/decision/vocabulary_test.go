@@ -70,6 +70,36 @@ func TestTheBrokeredCertificateTier(t *testing.T) {
 
 	// A route without the method is answered to the older proxy unchanged.
 	h.mustAllow(t, atVersion(contract.VocabularyBaseline, "edge-host.example.com"))
+
+	// At ANY rung: a ladder that names the method second needs 5 as surely
+	// as one that names it first, and is never answered with its first rung
+	// alone.
+	h.republish(t, `
+schema_version: 1
+tenant: acme
+rules:
+  - id: certificate-second
+    effect: allow
+    match:
+      target:
+        hostnames: [edge-host.example.com]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-key
+          username: netadmin
+          credential_ref: vault://edge
+        - method: brokered-certificate
+          username: netadmin
+`)
+	requireMismatch(t, h, atVersion(contract.VocabularyBaseline, "edge-host.example.com"),
+		contract.VocabularyBrokeredCertificate)
+	if resp := h.mustAllow(t, atVersion(contract.VocabularyBrokeredCertificate, "edge-host.example.com")); len(resp.TargetAuthLadder) != 2 {
+		t.Fatalf("ladder = %+v, want both rungs", resp.TargetAuthLadder)
+	}
 }
 
 // algorithmBundle is a one-rule policy for edge-host.example.com whose route

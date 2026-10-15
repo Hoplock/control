@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -20,7 +21,13 @@ import (
 // upstream-capabilities.json is the proxy's own encoder's output at the
 // vendored commit (AlgorithmFloorCapabilities, AlgorithmProfileCapabilities and
 // OfferableAlgorithms in its internal/control), not a value built with this
-// package's types — and requires every list to arrive non-empty.
+// package's types — and requires every list to arrive non-empty, and the
+// document to survive a decode and an encode unchanged: a key this package
+// spells differently, or drops on the way out, is a difference.
+//
+// To regenerate it after a re-vendor, encode those three functions' results
+// under `capabilities` with encoding/json at the new commit, from inside the
+// proxy's module; phase 0020 checked the file against them at 976faaa.
 func TestProxyCapabilitiesDecodeUpstreamShape(t *testing.T) {
 	var req struct {
 		Capabilities *ProxyCapabilities `json:"capabilities"`
@@ -58,6 +65,21 @@ func TestProxyCapabilitiesDecodeUpstreamShape(t *testing.T) {
 		if len(c.Algorithms.Axis(axis)) == 0 {
 			t.Errorf("algorithms decoded with no %s", axis)
 		}
+	}
+
+	again, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var upstream, ours any
+	if err := json.Unmarshal(raw, &upstream); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(again, &ours); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(upstream, ours) {
+		t.Errorf("the declaration does not survive a decode and an encode:\nupstream %s\nours     %s", raw, again)
 	}
 }
 

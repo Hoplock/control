@@ -25,8 +25,9 @@ import (
 //   - 400 for a request this server cannot act on (no session_id, a key that
 //     does not parse or is itself a certificate);
 //   - 401 through [refuseToMint] — a decision_id this server never made, one
-//     that denied or names no certificate rung, a target or account it did
-//     not name, or a decision made for another proxy;
+//     that denied or names no certificate rung, one past the window a session
+//     may be served under it, a target or account it did not name, or a
+//     decision made for another proxy;
 //   - 503 through [noAuthority] — a tenant with no CA, or a deployment with
 //     no `credential.key_encryption_key_env`;
 //

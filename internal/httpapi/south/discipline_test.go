@@ -20,10 +20,13 @@ import (
 //
 // So this reads the package's own source and checks the shape of it:
 //
-//   - `contract.Denied` — the only constructor of an error the mapper can turn
-//     into a 401 — is called from a named, reviewed set of functions.
+//   - `contract.Denied` and `contract.RefusedToMint` — the only constructors of
+//     an error the mapper can turn into a 401 — are called from a named,
+//     reviewed set of functions, and nothing but the mapper names the 401
+//     itself, as `http.StatusUnauthorized` or as the number.
 //   - `statusFor` is the only function that names an HTTP status constant, so
-//     a handler cannot choose one for itself.
+//     a handler cannot choose one for itself; the few that write their own
+//     SUCCESS status are named, and may still never name the 401.
 //
 // Both are source-level assertions and both are cheap. The alternative is a
 // comment nobody has to read.
@@ -33,7 +36,7 @@ import (
 // [deny] is the end user's credential being refused; [rejectCredential] is the
 // PROXY's own channel token being refused. They are two different facts that
 // share a status code, and an operator reading a log line needs to know which
-// happened — which is why there are two rather than one.
+// happened — which is why there is more than one.
 //
 // ADDING A NAME HERE IS A DECISION, not a fix for a failing test. Every entry
 // is a place that can tell a real user "access denied", so the question to
@@ -67,8 +70,22 @@ func TestOnlyOneFunctionCanProduceA401(t *testing.T) {
 			offenders = append(offenders, pos.String()+": contract.ErrDenied in "+fn)
 		}
 	})
+	// Nor does anything write the status itself. The test below lets a few
+	// functions name a status constant, because their SUCCESS has a shape the
+	// adapter does not; none of them may name this one, and no function may
+	// spell it as a number, which no selector check would see.
+	forEachSelector(t, "http", func(sel, file, fn string, pos token.Position) {
+		if sel == "StatusUnauthorized" && fn != "statusFor" {
+			offenders = append(offenders, pos.String()+": http.StatusUnauthorized in "+fn)
+		}
+	})
+	forEachIntLiteral(t, func(value, file, fn string, pos token.Position) {
+		if value == "401" {
+			offenders = append(offenders, pos.String()+": the literal 401 in "+fn)
+		}
+	})
 	if len(offenders) > 0 {
-		t.Fatalf("contract.Denied is called outside %v:\n  %s\n\n"+
+		t.Fatalf("a 401 is built outside %v:\n  %s\n\n"+
 			"A 401 is a DECISION this server made on purpose (M11). If what you are refusing is a "+
 			"failure — a database timeout, a provider that did not answer, a panic — return the error "+
 			"and let the mapper answer 5xx. If it really is a decision, add the function to `deniers` "+
@@ -139,6 +156,34 @@ func forEachCall(t *testing.T, pkg, name string, visit func(file, fn string, pos
 // non-test files.
 func forEachSelector(t *testing.T, pkg string, visit func(sel, file, fn string, pos token.Position)) {
 	t.Helper()
+	forEachNode(t, func(n ast.Node, file, fn string, pos token.Position) {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return
+		}
+		ident, ok := sel.X.(*ast.Ident)
+		if !ok || ident.Name != pkg {
+			return
+		}
+		visit(sel.Sel.Name, file, fn, pos)
+	})
+}
+
+// forEachIntLiteral visits every integer literal in this package's non-test
+// files.
+func forEachIntLiteral(t *testing.T, visit func(value, file, fn string, pos token.Position)) {
+	t.Helper()
+	forEachNode(t, func(n ast.Node, file, fn string, pos token.Position) {
+		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.INT {
+			visit(lit.Value, file, fn, pos)
+		}
+	})
+}
+
+// forEachNode visits every node inside a function in this package's non-test
+// files, reporting the enclosing function.
+func forEachNode(t *testing.T, visit func(n ast.Node, file, fn string, pos token.Position)) {
+	t.Helper()
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -160,20 +205,16 @@ func forEachSelector(t *testing.T, pkg string, visit func(sel, file, fn string, 
 		}
 
 		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
+			// A package-level declaration is reported as the function
+			// "(package)", which no allow-list names.
+			enclosing := "(package)"
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				enclosing = fn.Name.Name
 			}
-			ast.Inspect(fn, func(n ast.Node) bool {
-				sel, ok := n.(*ast.SelectorExpr)
-				if !ok {
-					return true
+			ast.Inspect(decl, func(n ast.Node) bool {
+				if n != nil {
+					visit(n, name, enclosing, fset.Position(n.Pos()))
 				}
-				ident, ok := sel.X.(*ast.Ident)
-				if !ok || ident.Name != pkg {
-					return true
-				}
-				visit(sel.Sel.Name, name, fn.Name.Name, fset.Position(sel.Pos()))
 				return true
 			})
 		}
