@@ -240,8 +240,9 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 				func(AuditRecord, []string) ([]AuditRecord, error) { return nil, nil })
 			return err
 		},
-		"Audit.Streams": func() error { _, err := s.Audit().Streams(ctx, ""); return err },
-		"Audit.Query":   func() error { _, err := s.Audit().Query(ctx, "", AuditQuery{}); return err },
+		"Audit.Streams":  func() error { _, err := s.Audit().Streams(ctx, ""); return err },
+		"Audit.Query":    func() error { _, err := s.Audit().Query(ctx, "", AuditQuery{}); return err },
+		"Audit.Sessions": func() error { _, err := s.Audit().Sessions(ctx, "", AuditQuery{}); return err },
 		"Audit.BlockedCommands": func() error {
 			_, err := s.Audit().BlockedCommands(ctx, "", BlockedCommandQuery{LabelName: "env"})
 			return err

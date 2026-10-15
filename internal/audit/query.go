@@ -242,7 +242,7 @@ func (r *Reader) SessionCertificates(ctx context.Context, tenant store.Tenant, s
 	if sessionID == "" {
 		return nil, ErrNoSession
 	}
-	rows, err := r.store.Audit().Query(ctx, tenant, Query{SessionID: sessionID, Ascending: true})
+	rows, err := r.store.Audit().Query(ctx, tenant, Query{SessionID: sessionID, HasCertificate: true, Ascending: true})
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +341,8 @@ type NegotiatedQuery struct {
 
 // SessionsBy answers the first two questions: the distinct sessions whose
 // records match, newest first. Session-less records name no session and are
-// not returned.
+// not returned. The limit counts sessions, never records, because the answer
+// is what the runbook's next step ends.
 func (r *Reader) SessionsBy(ctx context.Context, tenant store.Tenant, q NegotiatedQuery) ([]string, error) {
 	sq := Query{From: q.From, To: q.To, Limit: q.Limit}
 	switch {
@@ -354,17 +355,7 @@ func (r *Reader) SessionsBy(ctx context.Context, tenant store.Tenant, q Negotiat
 	default:
 		return nil, errors.New("audit: name an axis and value, a floor, or a banned axis and name")
 	}
-	rows, err := r.store.Audit().Query(ctx, tenant, sq)
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, row := range rows {
-		if row.SessionID != "" && !slices.Contains(out, row.SessionID) {
-			out = append(out, row.SessionID)
-		}
-	}
-	return out, nil
+	return r.store.Audit().Sessions(ctx, tenant, sq)
 }
 
 // SessionAlgorithms is the third question, and the only per-session proof that
@@ -388,7 +379,7 @@ func (r *Reader) Algorithms(ctx context.Context, tenant store.Tenant, sessionID 
 	if sessionID == "" {
 		return SessionAlgorithms{}, ErrNoSession
 	}
-	rows, err := r.store.Audit().Query(ctx, tenant, Query{SessionID: sessionID, Ascending: true})
+	rows, err := r.store.Audit().Query(ctx, tenant, Query{SessionID: sessionID, HasAlgorithms: true, Ascending: true})
 	if err != nil {
 		return SessionAlgorithms{}, err
 	}
