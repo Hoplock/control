@@ -137,7 +137,7 @@ evidence: a file and line, a test name, or command output.
     - Each register row's status and "Rendered in" must be true.
     - §3's entries must describe the code as it is.
     - §5.6 must survive parts 1–3's corrections.
-    - §10's row for 0019 and the rows for 0020–0028, the renumbering notes, and the composed mapping table must be consistent (`protocol_test.go`).
+    - §10's row for 0019 and the rows for 0020–0030, the renumbering notes, and the composed mapping table must be consistent (`protocol_test.go`).
     - There must be no dated layers and no "now"/"previously" narration (`docs/PROTOCOL.md` §3).
 12. **`CHANGELOG.md` `v0.6.0`.**
     - Check every bullet against the code after parts 1–3. A released section is never edited (M23), so a wrong bullet is corrected in **this** phase's release section, saying what `v0.6.0` stated wrongly.
