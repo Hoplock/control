@@ -4,6 +4,7 @@
 package fleet_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,24 +59,35 @@ func settingsDescription(t *testing.T) string {
 	return d
 }
 
+// fleetOwnedDrift is the contract test's whole check: how a description's
+// fleet-owned keys differ from this server's list, or nil. It is one function
+// so that the test proving the check catches drift runs the check itself,
+// rather than a copy of it that could agree with a broken original.
+func fleetOwnedDrift(description string) error {
+	got := extractFleetOwned(description)
+	if len(got) != 17 {
+		return fmt.Errorf("extracted %d keys from the contract, want D18's 17: %v", len(got), got)
+	}
+	if want := fleet.FleetOwnedKeys(); !slices.Equal(got, want) {
+		return fmt.Errorf("the contract lists %v\nthis server publishes %v", got, want)
+	}
+	return nil
+}
+
 // The fleet-owned list is held in ONE place, and this ties it to the vendored
 // document: a `make contract-sync` that adds or removes a key fails here rather
 // than slipping past. The extraction is strict and its count is asserted, so a
 // description reworded into a shape the pattern misses fails rather than
 // producing an empty list that trivially agrees.
 func TestTheFleetOwnedKeysAreTheContracts(t *testing.T) {
-	got := extractFleetOwned(settingsDescription(t))
-	if len(got) != 17 {
-		t.Fatalf("extracted %d keys from the contract, want D18's 17: %v", len(got), got)
-	}
-	if want := fleet.FleetOwnedKeys(); !slices.Equal(got, want) {
-		t.Fatalf("the contract lists %v\nthis server publishes %v", got, want)
+	if err := fleetOwnedDrift(settingsDescription(t)); err != nil {
+		t.Fatal(err)
 	}
 }
 
 // Proved, not assumed: the extraction ignores the backticked duration values,
-// fails a count on a description that lost a key, and disagrees with the list
-// when the contract gains one.
+// and the check above fails on a description that lost a key, gained one, or
+// renamed one without changing the count.
 func TestTheFleetOwnedKeyTestCatchesDrift(t *testing.T) {
 	d := settingsDescription(t)
 	for _, v := range []string{"30s", "5m"} {
@@ -85,13 +97,17 @@ func TestTheFleetOwnedKeyTestCatchesDrift(t *testing.T) {
 			}
 		}
 	}
-	lost := strings.Replace(d, "`chain.max_hops`", "chain.max_hops", 1)
-	if n := len(extractFleetOwned(lost)); n == 17 {
-		t.Error("a description that lost a backticked key still extracted 17")
-	}
-	gained := strings.Replace(d, "`chain.max_hops`", "`chain.max_hops`, `chain.extra_setting`", 1)
-	if slices.Equal(extractFleetOwned(gained), fleet.FleetOwnedKeys()) {
-		t.Error("a contract with one more key agreed with this server's list")
+	for name, drifted := range map[string]string{
+		"lost a key":   strings.Replace(d, "`chain.max_hops`", "chain.max_hops", 1),
+		"gained a key": strings.Replace(d, "`chain.max_hops`", "`chain.max_hops`, `chain.extra_setting`", 1),
+		"renamed one":  strings.Replace(d, "`chain.max_hops`", "`chain.max_hop_count`", 1),
+	} {
+		if drifted == d {
+			t.Fatalf("%s: the vendored description no longer names chain.max_hops", name)
+		}
+		if fleetOwnedDrift(drifted) == nil {
+			t.Errorf("a contract that %s passed the contract test", name)
+		}
 	}
 }
 
