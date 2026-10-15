@@ -68,6 +68,14 @@ under a test that failed first.
   - A tenant in which a fleet configuration is published or rolled back is
     one the announcer retries in. A lost announcement there was retried only
     once a proxy of that tenant subscribed on the same node.
+  - A `config_changed` counts as announced only when a proxy's live event
+    stream on the node took it, or the proxy's report names the document.
+    Each node's announcer delivers to the proxies whose streams it holds, so
+    a publish on one node reaches a proxy subscribed on another within one
+    announce interval (15 s). A publish answers `announced: false` for a proxy
+    not subscribed on the publishing node, saying why, where it answered
+    `true` because the event was retained. Revocations still reach only the
+    publishing node's subscribers, so Control still runs as one node.
 
 ## v0.7.0
 
