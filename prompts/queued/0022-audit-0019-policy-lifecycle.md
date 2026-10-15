@@ -142,6 +142,10 @@ evidence: a file and line, a test name, or command output.
     - `docs/PLAN.md` §5.6, M4, M17's added paragraph, §3's `internal/authoring`, `internal/decision` and `cmd/policyctl` entries, and M21's code registries;
     - the matching `CHANGELOG.md` `v0.6.0` bullets.
 
+16. **Carried from 0021** (found there, in this phase's files, and left to it).
+    - `store.PolicyBundles().List` returns every version with its `source`, and upload reads that whole list to find an identical source. Its cost grows with every upload a tenant makes. A lookup by `hash` answers the same question. Decide whether upload should use it.
+    - The unmet-algorithm warning reads the 1000 newest `target.algorithm_policy_unmet` records over 30 days (`authoring.unmetLimit`). One target reporting often can push every other target out of the publish-time report, and nothing says the read was cut short. Decide whether the read should be per target, or should report that it was truncated.
+
 ## Out of scope
 - Parts 1, 2 and 4's files: the north-bound handlers that call this package are 0023's.
 - New behaviour. Item 1's design question, if you would change the answer, is a proposal for the user.

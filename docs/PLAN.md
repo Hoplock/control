@@ -172,8 +172,9 @@ decision.
   two debug listeners 0009 and 0010 bound for them on ports of their own were
   superseded and **deleted** by 0019, config keys and all — a document naming
   `events.publish_listener` or `audit.read_listener` is refused as an unknown
-  key — and `TestNoGoFileBindsADebugRoute` reads every Go file under `cmd/` and
-  `internal/` so that none comes back (`docs/PROTOCOL.md` §3).
+  key — and `TestNoGoFileBindsADebugRoute` reads every Go file in the module,
+  refusing a `/debug/` route pattern anywhere and a `/debug/` string literal in
+  anything that ships, so that none comes back (`docs/PROTOCOL.md` §3).
 - **M3 — Policy is data compiled into a decision program, not an embedded
   general-purpose language.** The policy input vocabulary is closed and known:
   subject, claims, groups, device posture, source network, time, target labels,
@@ -279,7 +280,8 @@ decision.
   removes the oldest contiguous run of one stream's records, never the head,
   under the stream's append lock, and records where it stopped — the last
   deleted sequence and its hash — in a marker of its own and in an
-  `operator.audit.retained` record on the control stream. The verifier resumes
+  `operator.audit.retained` record on the control stream, written in the
+  pass's own transaction so that neither commits without the other. The verifier resumes
   from the marker, so a chain with its prefix retained verifies, and one with a
   record removed anywhere else still does not. Capture bytes are retained
   separately, leaving the digest the chain covers, and the verifier counts a
@@ -1894,7 +1896,20 @@ the server half of each:
   until the stream takes it or a report confirms the document. The proxy has
   no periodic fetch, so without this a notification lost while its stream stays
   healthy would leave it on the old document until something made it
-  reconnect.
+  reconnect. It walks every tenant this process has seen — the configured
+  one, each a proxy subscribes in, and each a publish or a rollback is made in
+  — because the store cannot list tenants (M18). "The stream took it" means
+  this node's bus did: with several nodes, a proxy subscribed on another node
+  is reached only by that node's own announcer, and only once cross-node
+  fan-out exists (M9, 0009's prerequisites); until then a lost notification
+  reaches it on its next reconnect, when it fetches anyway.
+
+  **Nothing published is version 0, everywhere.** A proxy whose zone and own
+  scope have never had a document desires no version: the fetch answers `204`,
+  nothing is announced, and a proxy reporting its bootstrap file is not drift.
+  The fetch, the announcer and the drift view read the same state row, so
+  they cannot disagree about whether there is a document; the proxy's first
+  document is `v1`.
 - **`GET /v1/proxies/{proxy_id}/config` serves the document desired *now*.**
   It returns `200` with the `ProxyConfigDocument` and its `hash` as the `ETag`.
   It returns `304` with no body when `If-None-Match` names the hash still
@@ -2840,7 +2855,10 @@ never a partial story.
   record it removed; verification then starts from there instead of from 1,
   `audit-verify` names the retained prefix in its OK line, and the deleted span
   is a documented fact rather than a break. The pass is itself an operator
-  record on the control stream. Capture bytes are the exception
+  record on the control stream, committed in the pass's own transaction
+  (`audit.Emitter.RetainPrefix`, `RetainCaptures`): a deletion the chain does
+  not state, or a statement of one that never happened, would be exactly the
+  silent gap M8 exists to rule out. Capture bytes are the exception
   that motivates it: a pty stream dwarfs everything else in the store, so
   "delete captures older than N days, keep the records" is the first retention
   rule anybody writes (`POST …/audit/captures/retention`) — and it is safe
