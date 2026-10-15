@@ -1898,11 +1898,14 @@ the server half of each:
   healthy would leave it on the old document until something made it
   reconnect. It walks every tenant this process has seen — the configured
   one, each a proxy subscribes in, and each a publish or a rollback is made in
-  — because the store cannot list tenants (M18). "The stream took it" means
-  this node's bus did: with several nodes, a proxy subscribed on another node
-  is reached only by that node's own announcer, and only once cross-node
-  fan-out exists (M9, 0009's prerequisites); until then a lost notification
-  reaches it on its next reconnect, when it fetches anyway.
+  — because the store cannot list tenants (M18). "The stream took it" means a
+  live subscription did: a node's bus reaches only the subscriptions held on
+  that node, so an event it merely retained settles nothing. Every node's
+  announcer walks the same markers and announces only to the proxies whose
+  stream it holds, so an announcement made on one node reaches a proxy
+  subscribed on another within one interval, with no cross-node bus. A proxy
+  subscribed nowhere is not re-announced into the replay buffer; it fetches
+  when it reconnects, and its report settles the marker.
 
   **Nothing published is version 0, everywhere.** A proxy whose zone and own
   scope have never had a document desires no version: the fetch answers `204`,

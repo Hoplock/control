@@ -299,7 +299,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 // revocation bus: one `config_changed` to one proxy (proxy D18).
 type busConfigPublisher struct{ bus *revoke.Bus }
 
-func (p busConfigPublisher) PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) error {
-	_, err := p.bus.ConfigChanged(ctx, tenant, proxyID, ev)
-	return err
+func (p busConfigPublisher) PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) (bool, error) {
+	receipt, err := p.bus.ConfigChanged(ctx, tenant, proxyID, ev)
+	return receipt.Delivered > 0, err
 }

@@ -146,9 +146,13 @@ type SubscriptionState interface {
 // current. The daemon wires it to the revocation bus.
 type ConfigPublisher interface {
 	// PublishConfigChange tells one proxy that its desired configuration
-	// moved. A nil error means the stream took the event — queued to the
-	// proxy's subscription or retained for its replay — and nothing more.
-	PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) error
+	// moved. A nil error means the stream accepted the event and retained it
+	// for replay; delivered reports whether a live subscription held ON THIS
+	// NODE took it now. Only a delivery settles an announcement: a bus
+	// reaches the subscriptions of its own node and no other, so an event
+	// accepted with no local subscriber reaches a proxy only by replay, if
+	// it reconnects here, or not at all, if its stream is held elsewhere.
+	PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) (delivered bool, err error)
 }
 
 // noopConfigPublisher is what a Registry uses when none is supplied: a
@@ -159,8 +163,8 @@ type ConfigPublisher interface {
 // which is the honest state for a registry with no stream to announce on.
 type noopConfigPublisher struct{}
 
-func (noopConfigPublisher) PublishConfigChange(context.Context, store.Tenant, string, contract.ConfigChangedEvent) error {
-	return errNoConfigPublisher
+func (noopConfigPublisher) PublishConfigChange(context.Context, store.Tenant, string, contract.ConfigChangedEvent) (bool, error) {
+	return false, errNoConfigPublisher
 }
 
 var errNoConfigPublisher = errors.New("fleet: no event stream is wired to announce configuration on")

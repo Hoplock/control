@@ -576,3 +576,42 @@ func TestAReportNamingTheDesiredDocumentSettlesItsAnnouncement(t *testing.T) {
 		t.Errorf("Announce = %+v, %v after the proxy reported knowing the document; want nothing owed", tried, err)
 	}
 }
+
+// SEVERAL NODES (0021). A node's event bus reaches only the subscriptions held
+// on that node, so a `config_changed` the publishing node's bus takes reaches
+// nobody when the proxy's stream is held by another node. The announcement is
+// owed until a live subscription takes it, and the node holding the stream —
+// whose announcer walks the same durable markers — delivers it.
+func TestAnAnnouncementReachesAProxySubscribedOnAnotherNode(t *testing.T) {
+	t.Parallel()
+	nodeA := &recordingPublisher{elsewhere: true}
+	st, a, _ := newRegistry(t, fleet.WithConfigPublisher(nodeA), fleet.WithSubscriptionState(subs{}))
+	ctx := t.Context()
+	enrolled(t, a, testTenant, "p-a", "region", nil, fleet.Capabilities{})
+
+	p := publish(t, a, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(64)})
+	if len(p.Changed) != 1 || p.Changed[0].Announced || p.Changed[0].Error == "" {
+		t.Fatalf("publication on a node without the stream = %+v, want it not announced, saying why", p)
+	}
+	if tried, _ := a.Announce(ctx, testTenant); len(tried) != 0 || len(nodeA.missed) != 1 {
+		t.Errorf("node A re-announced %+v to a proxy it holds no stream for (missed %v)", tried, nodeA.missed)
+	}
+
+	// Node B holds p-a's stream: its announcer delivers what A could not.
+	nodeB := &recordingPublisher{}
+	b := fleet.New(st, fleet.WithConfigPublisher(nodeB),
+		fleet.WithSubscriptionState(subs{"p-a": time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)}))
+	tried, err := b.Announce(ctx, testTenant)
+	if err != nil || len(tried) != 1 || !tried[0].Announced {
+		t.Fatalf("node B's announcer = %+v, %v; want p-a announced", tried, err)
+	}
+	if got := nodeB.announced(); len(got) != 1 || got[0] != "p-a" {
+		t.Errorf("node B announced to %v, want p-a", got)
+	}
+	// Delivered once, it is owed by no node.
+	for name, r := range map[string]*fleet.Registry{"A": a, "B": b} {
+		if again, _ := r.Announce(ctx, testTenant); len(again) != 0 {
+			t.Errorf("node %s announced %+v after the stream took it", name, again)
+		}
+	}
+}
