@@ -111,6 +111,18 @@ type PolicyBundleRepository interface {
 	// List returns every version, newest first: the bundle history an
 	// operator diffs and rolls back through (0019).
 	List(ctx context.Context, tenant Tenant) ([]PolicyBundle, error)
+	// GetByHash returns the version holding a source digest — the oldest,
+	// should there be several. Absent is ErrNotFound. It is how an upload
+	// learns that an identical source is already stored without reading
+	// every version's source.
+	GetByHash(ctx context.Context, tenant Tenant, hash string) (PolicyBundle, error)
+	// Lock takes the tenant's policy lock for the rest of the transaction,
+	// so an upload and an activation are serialised against every other
+	// one in the tenant: the version number, the identical-source check
+	// and the active version each act reads are still what it writes over.
+	// Outside a transaction it is refused, because a lock released when the
+	// statement ends serialises nothing.
+	Lock(ctx context.Context, tenant Tenant) error
 }
 
 // DecisionRepository stores decision records (M4).

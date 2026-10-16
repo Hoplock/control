@@ -4,8 +4,10 @@
 package store_test
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
@@ -60,5 +62,76 @@ func TestRacingActivationsLeaveExactlyOneActive(t *testing.T) {
 		if active != 1 {
 			t.Fatalf("round %d: %d bundles active, want exactly one", round, active)
 		}
+	}
+}
+
+// GetByHash finds the version holding a digest without reading every source,
+// and the oldest when there are several. Absent is not-found.
+func TestABundleIsFoundByItsHash(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	dup := storetest.Bundle(3, false)
+	dup.Hash = storetest.Bundle(2, false).Hash
+	storetest.Seed(t, st, storetest.Fixture{Tenant: tenantA, Bundles: []store.PolicyBundle{
+		storetest.Bundle(1, true), storetest.Bundle(2, false), dup,
+	}})
+	got, err := st.PolicyBundles().GetByHash(ctx, tenantA, dup.Hash)
+	if err != nil || got.Version != 2 {
+		t.Errorf("by hash = %d, %v; want version 2, the oldest holding it", got.Version, err)
+	}
+	if _, err := st.PolicyBundles().GetByHash(ctx, tenantA, "sha256:none"); !store.IsNotFound(err) {
+		t.Errorf("an unknown hash answered %v, want not found", err)
+	}
+	if _, err := st.PolicyBundles().GetByHash(ctx, tenantB, dup.Hash); !store.IsNotFound(err) {
+		t.Errorf("another tenant's hash answered %v, want not found", err)
+	}
+}
+
+// The policy lock serialises two transactions in one tenant, and is refused
+// outside a transaction, where it would serialise nothing.
+func TestThePolicyLockSerialisesATenantsActs(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	if err := st.PolicyBundles().Lock(ctx, tenantA); !store.IsInvalid(err) {
+		t.Fatalf("the lock outside a transaction answered %v, want invalid", err)
+	}
+	held, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+			if err := tx.PolicyBundles().Lock(ctx, tenantA); err != nil {
+				return err
+			}
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+	// Another tenant's lock is its own.
+	if err := st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		return tx.PolicyBundles().Lock(ctx, tenantB)
+	}); err != nil {
+		t.Fatalf("tenant b's lock: %v", err)
+	}
+	waited := make(chan error, 1)
+	go func() {
+		waited <- st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+			return tx.PolicyBundles().Lock(ctx, tenantA)
+		})
+	}()
+	select {
+	case err := <-waited:
+		t.Fatalf("a second lock in tenant a was taken while the first was held: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-waited; err != nil {
+		t.Fatalf("the second lock, once the first was released: %v", err)
 	}
 }

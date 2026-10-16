@@ -104,6 +104,10 @@ const (
 	// target the route reaches, under the policy the route names. Warning —
 	// the record is a past observation, and the device may have changed.
 	CodePolicyUnmet = "algorithm.policy_unmet"
+	// CodePolicyUnmetTruncated: the read of stored unmet records stopped at
+	// its limit with more in the window, so the unmet-policy warnings above
+	// may miss a target. Advice — the absence of a warning is not proof.
+	CodePolicyUnmetTruncated = "algorithm.policy_unmet_truncated"
 )
 
 // ControlCodes is every finding code Control's own checks produce, so a test
@@ -112,7 +116,7 @@ var ControlCodes = []string{
 	CodeProxiesUnreported, CodeNoProxyProvides, CodeTargetCannotTake, CodeTargetUnproven,
 	CodeInterpreter, CodeCacheHintOutlives, CodeCacheHintSpansSources,
 	CodeFloorUndeclared, CodeAxisEmptied, CodeAlgorithmUnknown, CodeBanUnmatched,
-	CodeTargetBelowFloor, CodeTargetNotReported, CodePolicyUnmet,
+	CodeTargetBelowFloor, CodeTargetNotReported, CodePolicyUnmet, CodePolicyUnmetTruncated,
 }
 
 // Finding is one thing a check has to say about a bundle.

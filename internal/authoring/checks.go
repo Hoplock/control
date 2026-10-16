@@ -31,12 +31,21 @@ type Facts struct {
 	Declarations []fleet.DeclaredAlgorithms
 	// Kex are the stored key-exchange observations.
 	Kex []fleet.KexObservation
-	// Unmet are the stored `target.algorithm_policy_unmet` records.
-	Unmet []audit.UnmetAlgorithmPolicy
+	// Unmet are the stored `target.algorithm_policy_unmet` records, newest
+	// first. UnmetTruncated is set when the read stopped at its limit with
+	// more in the window, so the records below are not all of them.
+	Unmet          []audit.UnmetAlgorithmPolicy
+	UnmetTruncated *UnmetRead
 	// Now and TTL judge an observation's freshness, in the decision path's
 	// own window.
 	Now time.Time
 	TTL time.Duration
+}
+
+// UnmetRead is how far an unmet-policy read reached when it was cut short.
+type UnmetRead struct {
+	Limit  int
+	Window time.Duration
 }
 
 // DefaultInterpreters is the starting list of executables that hand back a
@@ -488,6 +497,17 @@ func algorithmFindings(prog *compile.Program, facts Facts) []Finding {
 				})
 			}
 		}
+	}
+
+	if r := facts.UnmetTruncated; r != nil {
+		out = append(out, Finding{
+			ID: findingID(CodePolicyUnmetTruncated), Severity: SeverityAdvice, Code: CodePolicyUnmetTruncated,
+			Source:     SourceControl,
+			Parameters: map[string]any{"limit": r.Limit, "window_seconds": int64(r.Window / time.Second)},
+			Message: fmt.Sprintf("this report read the newest %d target.algorithm_policy_unmet records of the last %s "+
+				"and there were more, so a target whose records are older than those is missing from the "+
+				"unmet-policy warnings; the audit surface lists one target's records by name", r.Limit, r.Window),
+		})
 	}
 
 	for _, key := range unmatchedOrder {

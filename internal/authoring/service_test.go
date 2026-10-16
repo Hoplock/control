@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,12 @@ type harness struct {
 
 func newHarness(t *testing.T, validators ...ext.Bound[ext.PolicyValidator]) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil, validators...)
+}
+
+// newHarnessWith is newHarness with the service's options adjusted first.
+func newHarnessWith(t *testing.T, adjust func(*authoring.Options), validators ...ext.Bound[ext.PolicyValidator]) *harness {
+	t.Helper()
 	st := storetest.New(t)
 	h := &harness{st: st, reader: audit.NewReader(st), now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
 	clock := func() time.Time { return h.now }
@@ -45,9 +52,13 @@ func newHarness(t *testing.T, validators ...ext.Bound[ext.PolicyValidator]) *har
 	if err != nil {
 		t.Fatalf("emitter: %v", err)
 	}
-	h.svc, err = authoring.New(authoring.Options{
+	opts := authoring.Options{
 		Store: st, Fleet: registry, Emitter: emitter, Reader: h.reader, Validators: validators, Now: clock,
-	})
+	}
+	if adjust != nil {
+		adjust(&opts)
+	}
+	h.svc, err = authoring.New(opts)
 	if err != nil {
 		t.Fatalf("authoring: %v", err)
 	}
@@ -429,5 +440,354 @@ func TestAValidatorSeverityOutsideTheEnumIsAnOutage(t *testing.T) {
 	}
 	if _, err := h.svc.Upload(t.Context(), tenant, bundle(plain), author); err == nil {
 		t.Errorf("an upload stored a bundle a validator could not grade")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// the lifecycle under concurrency
+// ---------------------------------------------------------------------------
+
+// Identical sources uploaded at once are one version: an identical source is
+// the version already stored, never a duplicate (PLAN §5.6), however the
+// uploads interleave. Different sources at once each get their own number.
+func TestConcurrentUploadsMintOneVersionPerSource(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	const n = 8
+	errs := make(chan error, 2*n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, err := h.svc.Upload(t.Context(), tenant, bundle(plain), author)
+			errs <- err
+		}()
+		go func(i int) {
+			defer wg.Done()
+			_, err := h.svc.Upload(t.Context(), tenant, bundle(plain+restricted("r"+strconv.Itoa(i), "app.example.com", "/usr/bin/uptime")), author)
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("a concurrent upload failed: %v", err)
+		}
+	}
+	versions, err := h.svc.Versions(t.Context(), tenant)
+	if err != nil {
+		t.Fatalf("versions: %v", err)
+	}
+	digests := map[string]int{}
+	for _, v := range versions {
+		digests[v.Digest]++
+	}
+	if len(versions) != n+1 || len(digests) != n+1 {
+		t.Errorf("%d versions over %d digests, want %d of each: %v", len(versions), len(digests), n+1, digests)
+	}
+	if got := len(operatorRecords(t, h, audit.EventPolicyUploaded)); got != n+1 {
+		t.Errorf("%d upload records, want %d", got, n+1)
+	}
+}
+
+// Activations at once leave exactly one version active, and their records are
+// a chain: each names, as `before`, the version the previous one made active,
+// and an activation that found its version already active records nothing.
+// That is what an auditor reads to know which bundle served when.
+func TestConcurrentActivationsRecordAChain(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	const n = 4
+	for i := 0; i < n; i++ {
+		if _, err := h.svc.Upload(t.Context(), tenant, bundle(plain+restricted("r"+strconv.Itoa(i), "app.example.com", "/usr/bin/uptime")), author); err != nil {
+			t.Fatalf("upload: %v", err)
+		}
+	}
+	for round := 0; round < 5; round++ {
+		var wg sync.WaitGroup
+		for i := 0; i < 2*n; i++ {
+			wg.Add(1)
+			go func(v int64) {
+				defer wg.Done()
+				if _, err := h.svc.Activate(t.Context(), tenant, v, nil, author); err != nil {
+					t.Errorf("activate %d: %v", v, err)
+				}
+			}(int64(i%n) + 1)
+		}
+		wg.Wait()
+	}
+	recs := operatorRecords(t, h, audit.EventPolicyActivated)
+	slices.SortFunc(recs, func(a, b store.AuditRecord) int { return int(a.ChainSeq - b.ChainSeq) })
+	before := ""
+	for _, rec := range recs {
+		got, after := rec.Attributes[audit.AttrBefore], rec.Attributes[audit.AttrAfter]
+		if got != before || after == before {
+			t.Fatalf("record %d moved %q → %q, but %q was active", rec.ChainSeq, got, after, before)
+		}
+		before = after
+	}
+	active, _, err := h.svc.Active(t.Context(), tenant)
+	if err != nil || strconv.FormatInt(active.Version, 10) != before {
+		t.Errorf("active is %+v (%v), the last record says %q", active, err, before)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// the lifecycle's edges
+// ---------------------------------------------------------------------------
+
+// Each act's record is written in the act's own transaction: the stored row
+// and its operator record carry one xmin.
+func TestUploadAndActivationAreRecordedInTheirOwnTransaction(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := t.Context()
+	up, err := h.svc.Upload(ctx, tenant, bundle(plain), author)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	xmin := func(query string, args ...any) string {
+		t.Helper()
+		var x string
+		if err := h.st.Pool().QueryRow(ctx, query, args...).Scan(&x); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		return x
+	}
+	row := `SELECT xmin::text FROM policy_bundles WHERE tenant = $1 AND version = $2`
+	rec := `SELECT xmin::text FROM audit_records WHERE tenant = $1 AND event = $2 ORDER BY chain_seq DESC LIMIT 1`
+	if a, b := xmin(row, tenant, up.Version.Version), xmin(rec, tenant, audit.EventPolicyUploaded); a != b {
+		t.Errorf("the upload committed in %s and its record in %s", a, b)
+	}
+	if _, err := h.svc.Activate(ctx, tenant, up.Version.Version, nil, author); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if a, b := xmin(row, tenant, up.Version.Version), xmin(rec, tenant, audit.EventPolicyActivated); a != b {
+		t.Errorf("the activation committed in %s and its record in %s", a, b)
+	}
+}
+
+// Accepting an id that does not arise accepts nothing, and is not an error:
+// a CI job carrying an old -accept line forward publishes, and the record
+// names only what was accepted.
+func TestAcceptingAFindingThatNoLongerArisesAcceptsNothing(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	up, err := h.svc.Upload(t.Context(), tenant, bundle(plain), author)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	res, err := h.svc.Activate(t.Context(), tenant, up.Version.Version, []string{"authoring.interpreter_in_allow_list/gone//usr/bin/awk"}, author)
+	if err != nil {
+		t.Fatalf("activating with a stale acceptance: %v", err)
+	}
+	if len(res.Accepted) != 0 {
+		t.Errorf("accepted = %v, want nothing", res.Accepted)
+	}
+	recs := operatorRecords(t, h, audit.EventPolicyActivated)
+	if len(recs) != 1 || recs[0].Attributes[audit.AttrAccepted] != "" {
+		t.Errorf("the record names %q as accepted", recs[0].Attributes[audit.AttrAccepted])
+	}
+}
+
+// Apply with a warning unaccepted stores the version, inactive, and the
+// refusal names it, so the next run accepts by id and stores nothing new.
+func TestAnApplyRefusedForAWarningStoresTheVersionAndNamesIt(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := t.Context()
+	source := bundle(restricted("logs", "app.example.com", "/usr/bin/find"))
+	res, err := h.svc.Apply(ctx, tenant, source, nil, author)
+	var notAccepted *authoring.NotAcceptedError
+	if !errors.As(err, &notAccepted) || res.Upload.Version.Version != 1 || res.Upload.Version.Active {
+		t.Fatalf("apply = %+v, %v; want version 1 stored inactive and the warning refused", res.Upload.Version, err)
+	}
+	if _, _, err := h.svc.Active(ctx, tenant); !store.IsNotFound(err) {
+		t.Errorf("a refused apply left a version active: %v", err)
+	}
+	again, err := h.svc.Apply(ctx, tenant, source, []string{notAccepted.Findings[0].ID}, author)
+	if err != nil || !again.Upload.Existing || again.Activate.Version.Version != 1 {
+		t.Fatalf("the re-run = %+v, %v; want version 1, existing, activated", again, err)
+	}
+	if got := len(operatorRecords(t, h, audit.EventPolicyUploaded)); got != 1 {
+		t.Errorf("%d upload records, want 1", got)
+	}
+}
+
+// A stored version this release no longer compiles is refused at activation
+// and never served: the pointer stays where it was.
+func TestAStoredVersionThatNoLongerCompilesIsNeverActivated(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := t.Context()
+	first, err := h.svc.Upload(ctx, tenant, bundle(plain), author)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if _, err := h.svc.Activate(ctx, tenant, first.Version.Version, nil, author); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	stale := []byte("schema_version: 99\ntenant: acme\nrules: []\n")
+	if err := h.st.PolicyBundles().Insert(ctx, tenant, store.PolicyBundle{Version: 2, Source: stale, Hash: authoring.Digest(stale), UploadedBy: "older-release"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if _, err := h.svc.Activate(ctx, tenant, 2, nil, author); !errors.As(err, new(*authoring.InvalidError)) {
+		t.Fatalf("activating a version that does not compile answered %v, want InvalidError", err)
+	}
+	if active, _, err := h.svc.Active(ctx, tenant); err != nil || active.Version != 1 {
+		t.Errorf("active = %+v, %v; want version 1 still", active, err)
+	}
+}
+
+// A rollback says so on its record.
+func TestARollbackIsRecordedAsOne(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := t.Context()
+	for _, src := range [][]byte{bundle(plain), bundle(plain + restricted("logs", "app.example.com", "/usr/bin/uptime"))} {
+		up, err := h.svc.Upload(ctx, tenant, src, author)
+		if err != nil {
+			t.Fatalf("upload: %v", err)
+		}
+		if _, err := h.svc.Activate(ctx, tenant, up.Version.Version, nil, author); err != nil {
+			t.Fatalf("activate: %v", err)
+		}
+	}
+	if _, err := h.svc.Activate(ctx, tenant, 1, nil, author); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	recs := operatorRecords(t, h, audit.EventPolicyActivated)
+	want := []string{"true", "false", "false"} // newest first
+	for i, rec := range recs {
+		if got := rec.Attributes[audit.AttrOperatorPrefix+"rollback"]; got != want[i] {
+			t.Errorf("record %d (%s → %s): rollback %q, want %q", i, rec.Attributes[audit.AttrBefore], rec.Attributes[audit.AttrAfter], got, want[i])
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// validators
+// ---------------------------------------------------------------------------
+
+type recording struct {
+	mu   *sync.Mutex
+	docs *[]ext.PolicyDocument
+}
+
+func (r recording) Validate(_ context.Context, doc ext.PolicyDocument) ([]ext.Finding, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	*r.docs = append(*r.docs, doc)
+	return []ext.Finding{{Severity: ext.FindingAdvice, Code: "gov.noted", Path: "sre", Detail: map[string]string{"why": "noted"}}}, nil
+}
+
+// Every registered validator runs on validate, upload and activate, and is
+// handed the document as it stands at each: no version before upload, the
+// stored version at activation, the version active when it is asked, who
+// asked and when. Its Detail and Path reach the finding.
+func TestEveryValidatorRunsOnEveryActWithTheDocumentOfThatAct(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var a, b []ext.PolicyDocument
+	h := newHarness(t,
+		ext.Bound[ext.PolicyValidator]{Registration: ext.Registration{Provider: "example.com/a"}, Impl: recording{&mu, &a}},
+		ext.Bound[ext.PolicyValidator]{Registration: ext.Registration{Provider: "example.com/b"}, Impl: recording{&mu, &b}},
+	)
+	ctx := t.Context()
+	rep, _, err := h.svc.Validate(ctx, tenant, bundle(plain), "pat@example.com")
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	f := findingWith(rep, "gov.noted")
+	if f == nil || f.ID != "gov.noted/example.com/a/sre" || f.Rule != "sre" || f.Parameters["why"] != "noted" {
+		t.Errorf("the validator's finding = %+v", f)
+	}
+	first, err := h.svc.Upload(ctx, tenant, bundle(plain), author)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if _, err := h.svc.Activate(ctx, tenant, first.Version.Version, nil, author); err != nil {
+		t.Fatalf("activate 1: %v", err)
+	}
+	h.now = h.now.Add(time.Hour)
+	second, err := h.svc.Upload(ctx, tenant, bundle(plain+restricted("logs", "app.example.com", "/usr/bin/uptime")), author)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if _, err := h.svc.Activate(ctx, tenant, second.Version.Version, nil, author); err != nil {
+		t.Fatalf("activate 2: %v", err)
+	}
+
+	type seen struct{ version, active, author, digest string }
+	want := []seen{
+		{"", "", "pat@example.com", authoring.Digest(bundle(plain))},
+		{"", "", author.Subject, first.Version.Digest},
+		{"1", "", author.Subject, first.Version.Digest},
+		{"", "1", author.Subject, second.Version.Digest},
+		{"2", "1", author.Subject, second.Version.Digest},
+	}
+	for name, docs := range map[string][]ext.PolicyDocument{"a": a, "b": b} {
+		if len(docs) != len(want) {
+			t.Fatalf("validator %s ran %d times, want %d", name, len(docs), len(want))
+		}
+		for i, d := range docs {
+			got := seen{d.Ref.Version, d.ActiveVersion, d.AuthorID, d.Ref.Digest}
+			if got != want[i] || d.Ref.Tenant != ext.Tenant(tenant) || len(d.Source) == 0 || d.ContentType == "" {
+				t.Errorf("validator %s, call %d: %+v, want %+v", name, i, got, want[i])
+			}
+		}
+		if !docs[4].ProposedAt.Equal(h.now) || !docs[0].ProposedAt.Equal(h.now.Add(-time.Hour)) {
+			t.Errorf("validator %s was told proposed at %v and %v", name, docs[0].ProposedAt, docs[4].ProposedAt)
+		}
+	}
+}
+
+// The unmet-policy evidence is read newest first up to a limit, and a read
+// that stopped there with more in the window says so: one target reporting
+// often can push every other target's records out, and a report silent about
+// that reads as clean.
+func TestATruncatedUnmetReadSaysSo(t *testing.T) {
+	t.Parallel()
+	h := newHarnessWith(t, func(o *authoring.Options) { o.UnmetLimit = 2 })
+	ingest, err := audit.New(audit.Options{Store: h.st})
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+	unmet := func(n int) {
+		t.Helper()
+		var recs []contract.LogRecord
+		for i := 0; i < n; i++ {
+			recs = append(recs, contract.LogRecord{
+				RecordID: "unmet-" + strconv.Itoa(i) + "-" + strconv.Itoa(n), SessionID: "sess-u",
+				Timestamp: h.now.Add(-time.Duration(i+1) * time.Minute).Format(time.RFC3339),
+				Kind:      "error", Severity: contract.SeverityWarn, Message: "unmet", Target: "noisy.example.com",
+				Attributes: map[string]string{
+					audit.AttrEvent: audit.EventAlgorithmPolicyUnmet, audit.AttrAlgorithmProfile: "default",
+					audit.AttrAlgorithmAxis: "key_exchange", audit.AttrAlgorithmPolicyCause: "profile",
+				},
+			})
+		}
+		if _, err := ingest.Ingest(t.Context(), audit.Submission{Tenant: tenant, ProxyID: "proxy-1", Records: recs}); err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+	}
+	unmet(2)
+	rep, _, err := h.svc.Validate(t.Context(), tenant, bundle(plain), "")
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if f := findingWith(rep, authoring.CodePolicyUnmetTruncated); f != nil {
+		t.Errorf("a read that reached everything said it was cut short: %+v", f)
+	}
+	unmet(1)
+	rep, _, err = h.svc.Validate(t.Context(), tenant, bundle(plain), "")
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	f := findingWith(rep, authoring.CodePolicyUnmetTruncated)
+	if f == nil || f.Severity != authoring.SeverityAdvice || f.Parameters["limit"] != 2 {
+		t.Errorf("a read cut short at 2 of 3: %+v, want advice naming the limit", f)
 	}
 }
