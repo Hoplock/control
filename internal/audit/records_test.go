@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,6 +109,12 @@ func TestSessionLessRecordsAreStoredOnBothPaths(t *testing.T) {
 	}
 	if _, err := reader.SessionLoss(ctx, tenantA, ""); !errors.Is(err, audit.ErrNoSession) {
 		t.Errorf("SessionLoss(\"\") = %v, want ErrNoSession", err)
+	}
+	if _, err := reader.Algorithms(ctx, tenantA, ""); !errors.Is(err, audit.ErrNoSession) {
+		t.Errorf("Algorithms(\"\") = %v, want ErrNoSession", err)
+	}
+	if _, err := reader.SessionCertificates(ctx, tenantA, ""); !errors.Is(err, audit.ErrNoSession) {
+		t.Errorf("SessionCertificates(\"\") = %v, want ErrNoSession", err)
 	}
 }
 
@@ -471,5 +478,207 @@ func TestWhatAProxyCouldNotDeliverIsFindable(t *testing.T) {
 	}
 	if nospan.Gap.FirstAt != nil || nospan.Gap.Records != nil || nospan.Gap.Cause != "evicted" {
 		t.Errorf("g-nospan projected %+v", nospan.Gap)
+	}
+}
+
+// The runbook's third step hands this answer to session_kill, so its limit is a
+// number of SESSIONS (0021). Counted in records, a session with several
+// matching records — a floor is stamped on four of them — crowded the others
+// out of the page, and the sessions left out kept running.
+func TestSessionsByLimitsSessionsNotRecords(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	in := newIngester(t, st)
+	reader := audit.NewReader(st)
+	ctx := t.Context()
+
+	floored := func(id, session string, at time.Time) contract.LogRecord {
+		rec := withAttrs(record(id, session), "provisioning", map[string]string{
+			audit.AttrAlgorithmProfile: "default", audit.AttrAlgorithmFloor: "modern-kex",
+		})
+		rec.Timestamp = at.UTC().Format(time.RFC3339)
+		return rec
+	}
+	now := time.Now()
+	mustIngest(ctx, t, in, tenantA, proxyA,
+		floored("old-1", "sess-old", now.Add(-time.Hour)),
+		floored("new-1", "sess-new", now), floored("new-2", "sess-new", now), floored("new-3", "sess-new", now),
+		floored("orphan", "", now),
+	)
+	got, err := reader.SessionsBy(ctx, tenantA, audit.NegotiatedQuery{Floor: "modern-kex", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"sess-new", "sess-old"}) {
+		t.Errorf("two sessions asked for = %v, want both, newest first, and never the session-less record", got)
+	}
+	if got, _ := reader.SessionsBy(ctx, tenantA, audit.NegotiatedQuery{Floor: "modern-kex", Limit: 1}); !slices.Equal(got, []string{"sess-new"}) {
+		t.Errorf("one session asked for = %v", got)
+	}
+}
+
+// A session's certificate and its algorithms are read from the records that
+// carry them, wherever they fall in the session (0021). Read from the session's
+// first page of records, a long session's answer depended on how much it had
+// done before its target leg came up.
+func TestASessionsCertificateAndAlgorithmsAreFoundPastItsFirstPage(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	in := newIngester(t, st)
+	reader := audit.NewReader(st)
+	ctx := t.Context()
+
+	early := time.Now().Add(-time.Hour)
+	busy := records(600, "sess-long")
+	for i := range busy {
+		busy[i].Timestamp = early.UTC().Format(time.RFC3339)
+	}
+	mustIngest(ctx, t, in, tenantA, proxyA, busy...)
+	mustIngest(ctx, t, in, tenantA, proxyA,
+		withAttrs(record("late-cert", "sess-long"), "provisioning", map[string]string{
+			audit.AttrCredentialMethod: "brokered-certificate", audit.AttrCredentialRung: "1",
+			audit.AttrCertificateSerial: "77", audit.AttrAlgorithmProfile: "default",
+		}),
+		withAttrs(record("late-negotiated", "sess-long"), "provisioning", map[string]string{
+			audit.AttrEvent: audit.EventAlgorithmsNegotiated, audit.AttrTargetKexAlgorithm: "curve25519-sha256",
+		}),
+	)
+
+	presented, err := reader.SessionCertificates(ctx, tenantA, "sess-long")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(presented) != 1 || presented[0].Serial != "77" {
+		t.Errorf("presented = %+v, want the serial on the session's 601st record", presented)
+	}
+	algs, err := reader.Algorithms(ctx, tenantA, "sess-long")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(algs.Negotiated[contract.AxisKeyExchanges], []string{"curve25519-sha256"}) || algs.Profile != "default" {
+		t.Errorf("algorithms = %+v, want what the late records carry", algs)
+	}
+}
+
+// Every reader stays inside its tenant (M18's test class, 0021). The same
+// records are stored under two tenants, and each reader asked in one returns
+// that tenant's alone. Nothing else here held the readers' shared query to
+// its tenant filter: dropping it passed every test in the package.
+func TestEveryReaderStaysInsideItsTenant(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	in := newIngester(t, st)
+	reader := audit.NewReader(st)
+	ctx := t.Context()
+
+	day := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	for _, tenant := range []store.Tenant{tenantA, tenantB} {
+		tag := string(tenant)
+		mustIngest(ctx, t, in, tenant, proxyA,
+			withAttrs(record(tag+"-prov", "sess-shared"), "provisioning", map[string]string{
+				audit.AttrCredentialMethod: "brokered-certificate", audit.AttrCredentialRung: "2",
+				audit.AttrCertificateSerial: "9", audit.AttrAlgorithmProfile: "legacy-sha1",
+				audit.AttrAlgorithmFloor: "modern-kex", audit.AttrAlgorithmBansPrefix + "ciphers": "aes128-cbc",
+				audit.AttrTargetKexAlgorithm: "curve25519-sha256",
+			}),
+			withAttrs(record(tag+"-change", "sess-shared"), "provisioning", map[string]string{
+				audit.AttrEvent: audit.EventDeviceConfigChange, audit.AttrDeviceChangeOp: "create", audit.AttrTargetAccount: "hl-1",
+			}),
+			withAttrs(record(tag+"-unmet", "sess-shared"), "error", map[string]string{
+				audit.AttrEvent: audit.EventAlgorithmPolicyUnmet, audit.AttrAlgorithmAxis: "key_exchange",
+			}),
+			gap(tag+"-gap", "sess-shared", "refused", 2, day, day.Add(time.Hour), map[string]string{audit.AttrGapRecordIDs: "rec-x"}),
+		)
+	}
+
+	own := func(name string, ids []string) {
+		t.Helper()
+		if len(ids) == 0 {
+			t.Errorf("%s: found nothing in its own tenant", name)
+		}
+		for _, id := range ids {
+			if strings.HasPrefix(id, string(tenantB)) {
+				t.Errorf("%s in %s returned %s", name, tenantA, id)
+			}
+		}
+	}
+	ids := func(rows []store.AuditRecord) []string {
+		var out []string
+		for _, r := range rows {
+			out = append(out, r.RecordID)
+		}
+		return out
+	}
+	mustOK := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	found, err := reader.Find(ctx, tenantA, audit.Query{SessionID: "sess-shared"})
+	mustOK(err)
+	own("Find", ids(found))
+	degraded, err := reader.DegradedCredentials(ctx, tenantA, time.Time{}, time.Time{}, 0)
+	mustOK(err)
+	own("DegradedCredentials", ids(degraded))
+	weakened, err := reader.Weakened(ctx, tenantA, time.Time{}, time.Time{}, 0)
+	mustOK(err)
+	own("Weakened", ids(weakened))
+	bySerial, err := reader.CertificateSessions(ctx, tenantA, 9, 0)
+	mustOK(err)
+	own("CertificateSessions", ids(bySerial))
+
+	drift, err := reader.DeviceConfigChanges(ctx, tenantA, audit.DriftQuery{})
+	mustOK(err)
+	var driftIDs []string
+	for _, d := range drift {
+		driftIDs = append(driftIDs, d.RecordID)
+	}
+	own("DeviceConfigChanges", driftIDs)
+
+	unmet, err := reader.AlgorithmPolicyUnmet(ctx, tenantA, "", time.Time{}, time.Time{}, 0)
+	mustOK(err)
+	var unmetIDs []string
+	for _, u := range unmet {
+		unmetIDs = append(unmetIDs, u.RecordID)
+	}
+	own("AlgorithmPolicyUnmet", unmetIDs)
+
+	gaps, err := reader.Gaps(ctx, tenantA, audit.GapQuery{RecordID: "rec-x"})
+	mustOK(err)
+	var gapIDs []string
+	for _, g := range gaps {
+		gapIDs = append(gapIDs, g.RecordID)
+	}
+	own("Gaps", gapIDs)
+
+	certs, err := reader.SessionCertificates(ctx, tenantA, "sess-shared")
+	mustOK(err)
+	var certIDs []string
+	for _, c := range certs {
+		certIDs = append(certIDs, c.RecordID)
+	}
+	own("SessionCertificates", certIDs)
+
+	// Answers with no record ids: counted, so a second tenant shows as a
+	// second share of the count.
+	loss, err := reader.SessionLoss(ctx, tenantA, "sess-shared")
+	mustOK(err)
+	if len(loss) != 1 || loss[0].Reports != 1 || loss[0].Records != 2 {
+		t.Errorf("SessionLoss in %s = %+v, want its one report of 2 records", tenantA, loss)
+	}
+	sessions, err := reader.SessionsBy(ctx, tenantA, audit.NegotiatedQuery{BanAxis: "ciphers", BanName: "aes128-cbc"})
+	mustOK(err)
+	if !slices.Equal(sessions, []string{"sess-shared"}) {
+		t.Errorf("SessionsBy in %s = %v", tenantA, sessions)
+	}
+	if none, err := reader.SessionsBy(ctx, "initech", audit.NegotiatedQuery{BanAxis: "ciphers", BanName: "aes128-cbc"}); err != nil || len(none) != 0 {
+		t.Errorf("SessionsBy in a tenant with no records = %v, %v", none, err)
+	}
+	algs, err := reader.Algorithms(ctx, "initech", "sess-shared")
+	mustOK(err)
+	if len(algs.Negotiated) != 0 || algs.Profile != "" {
+		t.Errorf("Algorithms in a tenant with no records = %+v", algs)
 	}
 }

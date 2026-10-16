@@ -94,14 +94,8 @@ func (r auditRepo) AppendChain(
 	err := r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
 		stored = 0
 
-		// hashtext gives the two int4 keys the advisory lock takes. A
-		// collision costs two streams a shared lock and nothing else:
-		// the chain is still correct, the append is merely serialised
-		// with a stream it need not have waited for.
-		if _, err := q.Exec(ctx,
-			`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
-			string(tenant), stream); err != nil {
-			return wrap(op, err)
+		if err := lockStream(ctx, op, q, tenant, stream); err != nil {
+			return err
 		}
 
 		fresh, err := r.unseen(ctx, op, q, tenant, ids)
@@ -136,6 +130,23 @@ func (r auditRepo) AppendChain(
 		return 0, err
 	}
 	return stored, nil
+}
+
+// lockStream takes one stream's APPEND LOCK for the rest of the transaction.
+// Every append takes it, and so does a retention pass, so a prefix never moves
+// while a record is being chained onto the stream. It is one function so that
+// the two can never take different locks.
+//
+// hashtext gives the two int4 keys the advisory lock takes. A collision costs
+// two streams a shared lock and nothing else: the chain is still correct, the
+// append is merely serialised with a stream it need not have waited for.
+func lockStream(ctx context.Context, op string, q querier, tenant Tenant, stream string) error {
+	if _, err := q.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
+		string(tenant), stream); err != nil {
+		return wrap(op, err)
+	}
+	return nil
 }
 
 // unseen returns the ids not already stored, in the order given and without
@@ -463,8 +474,12 @@ type AuditQuery struct {
 	// counts from 1 and the first choice is rung 1 (Hoplock/proxy#66).
 	Degraded bool
 	// CertificateSerial selects the records naming one brokered certificate,
-	// by its canonical decimal.
+	// by its canonical decimal; HasCertificate the records naming any.
 	CertificateSerial string
+	HasCertificate    bool
+	// HasAlgorithms selects the records that say something about a target
+	// leg's algorithms: what it negotiated, or the profile in force on it.
+	HasAlgorithms bool
 	// AlgorithmFloor selects records stamped with exactly this floor.
 	AlgorithmFloor string
 	// Banned selects records whose bans include one `axis:name`.
@@ -529,6 +544,76 @@ func (r auditRepo) Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]Au
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
+	sql, args := auditQuerySQL(tenant, q)
+	rows, err := r.s.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	return collectAuditRecords(op, rows)
+}
+
+// Sessions answers the distinct sessions whose records match a selection,
+// newest first, and never the empty session, which is no session
+// (Hoplock/proxy#71). Its limit counts SESSIONS: a session with several
+// matching records takes one place, so the answer is the one a caller ending
+// sessions needs. Ascending is not read.
+func (r auditRepo) Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([]string, error) {
+	const op = "store.Audit.Sessions"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	where, args := auditWhere(tenant, q)
+	args = append(args, boundLimit(q.Limit))
+	rows, err := r.s.db.Query(ctx, `
+		SELECT session_id
+		FROM audit_records
+		WHERE `+where+` AND session_id <> ''
+		GROUP BY session_id
+		ORDER BY max(recorded_at) DESC, session_id
+		LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, wrap(op, err)
+		}
+		out = append(out, id)
+	}
+	return out, wrap(op, rows.Err())
+}
+
+// auditQuerySQL renders Query's statement. It is one function so that the test
+// which asks Postgres for the statement's plan reads exactly what Query runs.
+func auditQuerySQL(tenant Tenant, q AuditQuery) (string, []any) {
+	where, args := auditWhere(tenant, q)
+	args = append(args, boundLimit(q.Limit))
+	return `
+		SELECT ` + auditColumns + `
+		FROM audit_records
+		WHERE ` + where + `
+		ORDER BY ` + auditOrder(q.Ascending) + `
+		LIMIT $` + fmt.Sprint(len(args)), args
+}
+
+// auditWhere renders a selection's WHERE clause, the tenant always `$1`.
+//
+// AN INDEX IS ONLY USED BY A PREDICATE IT CAN ANSWER. The array columns carry
+// GIN indexes (migration 0012), and GIN answers containment, `@>`, and never
+// `$1 = ANY(column)`: the two mean the same thing for one value and only the
+// first can use the index, so a filter written the second way reads every
+// record in the tenant. The partial index on the certificate serial covers
+// only non-empty serials, and a plan prepared for any parameter cannot prove
+// `= $n` implies that, so the filter says it in so many words. The test that
+// EXPLAINs each of these is TestEveryIndexedAuditFilterCanUseItsIndex.
+func auditWhere(tenant Tenant, q AuditQuery) (string, []any) {
 	var (
 		where = []string{"tenant = $1"}
 		args  = []any{tenant}
@@ -583,16 +668,22 @@ func (r auditRepo) Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]Au
 		where = append(where, "credential_rung > 1")
 	}
 	if q.CertificateSerial != "" {
-		add("credential_certificate_serial = $%d", q.CertificateSerial)
+		add("credential_certificate_serial = $%d AND credential_certificate_serial <> ''", q.CertificateSerial)
+	}
+	if q.HasCertificate {
+		where = append(where, "credential_certificate_serial <> ''")
+	}
+	if q.HasAlgorithms {
+		where = append(where, "(negotiated <> '{}' OR algorithm_profile <> '')")
 	}
 	if q.AlgorithmFloor != "" {
 		add("algorithm_floor = $%d", q.AlgorithmFloor)
 	}
 	if q.Banned != "" {
-		add("$%d = ANY(algorithm_bans)", q.Banned)
+		add("algorithm_bans @> ARRAY[$%d::text]", q.Banned)
 	}
 	if q.Negotiated != "" {
-		add("$%d = ANY(negotiated)", q.Negotiated)
+		add("negotiated @> ARRAY[$%d::text]", q.Negotiated)
 	}
 	if q.DeviceChangeOp != "" {
 		add("device_change_op = $%d", q.DeviceChangeOp)
@@ -610,10 +701,10 @@ func (r auditRepo) Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]Au
 		add("gap_cause = $%d", q.GapCause)
 	}
 	if q.GapKind != "" {
-		add("$%d = ANY(gap_kinds)", q.GapKind)
+		add("gap_kinds @> ARRAY[$%d::text]", q.GapKind)
 	}
 	if q.GapRecordID != "" {
-		add("$%d = ANY(gap_record_ids)", q.GapRecordID)
+		add("gap_record_ids @> ARRAY[$%d::text]", q.GapRecordID)
 	}
 	if q.GapCritical {
 		where = append(where, "gap_critical > 0")
@@ -630,18 +721,7 @@ func (r auditRepo) Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]Au
 	if !q.To.IsZero() {
 		add("recorded_at < $%d", q.To)
 	}
-	args = append(args, boundLimit(q.Limit))
-
-	rows, err := r.s.db.Query(ctx, `
-		SELECT `+auditColumns+`
-		FROM audit_records
-		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY `+auditOrder(q.Ascending)+`
-		LIMIT $`+fmt.Sprint(len(args)), args...)
-	if err != nil {
-		return nil, wrap(op, err)
-	}
-	return collectAuditRecords(op, rows)
+	return strings.Join(where, " AND "), args
 }
 
 // GapLoss is one session's loss for one cause, SUMMED over its reports: a

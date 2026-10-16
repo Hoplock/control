@@ -26,6 +26,57 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.8.0
+
+The second audit of `v0.6.0`: the audit store, retention and fleet
+configuration delivery, checked against the code, with every defect fixed
+under a test that failed first.
+
+- **Phase:** 0021, the audit of 0019's audit store, retention, fleet
+  configuration, store, configuration and daemon wiring.
+- **Public packages:** no identifier is added, removed or changed. `ext` and
+  `server` are unchanged.
+- **Migration:** none. The audit columns and `audit_retention` are as `v0.6.0`
+  left them.
+- **Behaviour no API diff shows:**
+  - A retention pass (`POST …/audit/retention`, `POST
+    …/audit/captures/retention`) and its `operator.audit.retained` record
+    commit in one transaction. A pass whose record cannot be written deletes
+    nothing and moves no marker. Before, the deletion committed first, so a
+    failure between the two left a deletion nothing recorded.
+  - `POST …/audit/retention` answers `through_hash` on every answer. A pass
+    by `before` that took nothing now carries it too: the marker's hash, or
+    empty when the stream was never retained.
+  - `GET …/audit/negotiated`'s `limit` counts sessions. It counted records,
+    so a session with several matching records could crowd others out of
+    the answer the runbook hands to `session_kill`.
+  - `GET …/audit/sessions/{session}/certificates` and `…/algorithms` read
+    every record of the session that carries a serial or an algorithm. They
+    read the session's first 500 records and missed anything after them.
+  - The negotiated-value, ban, refused-record-id and certificate-serial
+    filters of the audit query use the indexes `v0.6.0` built for them.
+    Before, each one read every record in the tenant.
+  - A proxy whose zone and own scope have nothing published desires no
+    version. Its fetch answers `204`, it is sent no `config_changed`, and the
+    rollout view does not show it as drift, even after it reports its
+    bootstrap file applied. Its first document is `v1`. `v0.6.0` stored the
+    empty composition as `v1`: it announced that version, which the fetch
+    then denied, and showed the proxy behind it for good. A proxy enrolled
+    under `v0.6.0` or `v0.7.0` with nothing published keeps that `v1` until
+    its scope is published. Its fetch now answers `200` with no settings,
+    which the contract treats as the bootstrap file.
+  - A tenant in which a fleet configuration is published or rolled back is
+    one the announcer retries in. A lost announcement there was retried only
+    once a proxy of that tenant subscribed on the same node.
+  - A `config_changed` counts as announced only when a proxy's live event
+    stream on the node took it, or the proxy's report names the document.
+    Each node's announcer delivers to the proxies whose streams it holds, so
+    a publish on one node reaches a proxy subscribed on another within one
+    announce interval (15 s). A publish answers `announced: false` for a proxy
+    not subscribed on the publishing node, saying why, where it answered
+    `true` because the event was retained. Revocations still reach only the
+    publishing node's subscribers, so Control still runs as one node.
+
 ## v0.7.0
 
 The first audit of `v0.6.0`: the south-bound surface and the decision path,

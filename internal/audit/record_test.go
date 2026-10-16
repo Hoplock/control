@@ -449,3 +449,91 @@ func mustBody(t *testing.T, rec contract.LogRecord) string {
 	}
 	return string(body)
 }
+
+// fromBody rebuilds a record from its stored body alone: the bytes the chain
+// hashed, and nothing else the ingest path held.
+func fromBody(t *testing.T, body string) Record {
+	t.Helper()
+	var c canonical
+	if err := json.Unmarshal([]byte(body), &c); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	at, err := time.Parse(time.RFC3339Nano, c.Timestamp)
+	if err != nil {
+		t.Fatalf("body timestamp: %v", err)
+	}
+	if c.Attributes == nil {
+		c.Attributes = map[string]string{} // as Parse leaves a record with none
+	}
+	return Record{
+		RecordID: c.RecordID, SessionID: c.SessionID, RecordedAt: at, Kind: c.Kind,
+		Severity: contract.LogSeverity(c.Severity), Message: c.Message, Subject: c.Subject,
+		Login: c.Login, Target: c.Target, Attributes: c.Attributes, Redacted: c.Redacted,
+	}
+}
+
+// Every derived column is a projection of the hashed body and holds nothing the
+// body does not (migration 0012, PLAN §3): the same row comes back when it is
+// recomputed from the stored bytes alone (0021). A column filled from anything
+// else — the submission, the clock, a lookup — would be an index answering for
+// a fact no record states, and it fails here.
+func TestEveryDerivedColumnIsRecomputableFromTheBody(t *testing.T) {
+	t.Parallel()
+
+	everything := map[string]string{
+		AttrEvent: EventLoggingGap, AttrDecisionID: "dec-1",
+		AttrEnforcementExecution: "account-restricted", AttrEnforcementReach: "proxy-inspected",
+		AttrEnforcementVerified: "false", AttrEnforcementAttestedBy: "driver",
+		AttrCredentialMethod: "brokered-certificate", AttrCredentialRung: "2",
+		AttrCertificateSerial: "0042", AttrAlgorithmProfile: "legacy-sha1",
+		AttrAlgorithmFloor: "modern-kex", AttrAlgorithmBansPrefix + "ciphers": "aes128-cbc, aes128-ctr",
+		AttrAlgorithmBansPrefix + "macs": "hmac-sha1", AttrAlgorithmBansUnmatched: "ciphers:aes128-cbc",
+		AttrTargetKexAlgorithm: "curve25519-sha256", AttrTargetHostKeyAlgorithm: "ssh-ed25519",
+		AttrTargetCipherOut: "aes256-gcm@openssh.com", AttrTargetCipherIn: "aes256-gcm@openssh.com",
+		AttrTargetMACOut: "hmac-sha2-256", AttrTargetMACIn: "hmac-sha2-512",
+		AttrGapCause: "refused", AttrGapRecords: "3", AttrGapBytes: "300",
+		AttrGapFirstAt: "2026-09-20T01:00:00.123456789Z", AttrGapLastAt: "2026-09-20T02:00:00Z",
+		AttrGapKinds: "command,stream", AttrGapCritical: "1", AttrGapRecordIDs: "rec-x,rec-y",
+		AttrGrantSystem: "itsm", AttrGrantReference: "CHG-1",
+		AttrGrantWindowStart: "2026-09-20T00:00:00Z", AttrGrantWindowEnd: "2026-09-20T03:00:00Z",
+		AttrGrantAdditionalPrefix + "ticket": "CHG-1", AttrDeviceFieldPrefix + "vdom": "root",
+	}
+	change := map[string]string{
+		AttrEvent: EventDeviceConfigChange, AttrDeviceChangeOp: "create",
+		AttrTargetAccount: "hl-a7f3c1", AttrDeviceObjectKind: "local-user",
+	}
+	for name, attrs := range map[string]map[string]string{
+		"every projection": everything, "a device change": change, "none at all": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := aRecord()
+			rec.Kind, rec.Attributes = "error", attrs
+			rec.Timestamp = "2026-09-20T03:04:05.5Z"
+			if name == "none at all" {
+				rec.Kind = "stream"
+				rec.Payload = base64.StdEncoding.EncodeToString([]byte("whoami\r\n"))
+			}
+			want := mustRow(t, rec)
+
+			got, err := fromBody(t, want.Body).Row("proxy-1")
+			if err != nil {
+				t.Fatalf("Row from the body: %v", err)
+			}
+			// The capture's bytes are in their own table; the body carries
+			// their size and digest, and those are what the row holds. The
+			// body itself is the source, not a projection.
+			var c canonical
+			if err := json.Unmarshal([]byte(want.Body), &c); err != nil {
+				t.Fatal(err)
+			}
+			got.CaptureBytes, got.CaptureSHA256 = int32(c.CaptureBytes), c.CaptureSHA256
+			got.Body = want.Body
+
+			wantJSON, _ := json.Marshal(want)
+			gotJSON, _ := json.Marshal(got)
+			if string(wantJSON) != string(gotJSON) {
+				t.Errorf("recomputed from the body:\n got %s\nwant %s", gotJSON, wantJSON)
+			}
+		})
+	}
+}

@@ -137,7 +137,7 @@ evidence: a file and line, a test name, or command output.
     - Each register row's status and "Rendered in" must be true.
     - §3's entries must describe the code as it is.
     - §5.6 must survive parts 1–3's corrections.
-    - §10's row for 0019 and the rows for 0020–0028, the renumbering notes, and the composed mapping table must be consistent (`protocol_test.go`).
+    - §10's row for 0019 and the rows for 0020–0030, the renumbering notes, and the composed mapping table must be consistent (`protocol_test.go`).
     - There must be no dated layers and no "now"/"previously" narration (`docs/PROTOCOL.md` §3).
 12. **`CHANGELOG.md` `v0.6.0`.**
     - Check every bullet against the code after parts 1–3. A released section is never edited (M23), so a wrong bullet is corrected in **this** phase's release section, saying what `v0.6.0` stated wrongly.
@@ -147,6 +147,10 @@ evidence: a file and line, a test name, or command output.
     - Check the queued sync file carries them faithfully.
     - Never edit a merged request file. A wrong or missing obligation is this phase's own `## Cross-repo impact` plus a new downstream sync naming the correction. Check whether Enterprise's sync of control#69 has already run (`docs/CROSS-REPO-PROTOCOL.md` §4.3), and say so in the obligation.
 14. **The 0019 learnings as a whole.** List every claim parts 1–3 did not already rule on, and rule on it. The result is a complete account of which 0019 statements are true. Record corrections here; the 0019 file stays as it is.
+15. **Carried from 0021** (found there, on this phase's surface, and left to it).
+    - **Lists without a bound or a cursor.** `GET …/subjects`, `…/policy/bundles`, `…/fleet/algorithms`, `…/fleet/target-observations` and `…/fleet/config/rollouts` each answer a whole tenant. The size depends on the estate, not on the caller, but nothing caps it. Propose the shape `store.Decisions().ListRange` already uses (a limit plus `truncated`), or say why these lists are exempt.
+    - **`GET …/audit/negotiated` gives no truncation signal.** Since 0021 its limit counts sessions, but the runbook's next step ends exactly the sessions it lists. A caller cannot tell a complete answer from one cut at the limit. Propose the signal.
+    - **A refusal quotes an internal name.** A retention pass refused at the head answers `400` with the message `this query cannot be answered: store.Audit.RetainPrefix: invalid: …`. The error is right, but the message names a Go function. Check every `auditFailure` refusal for the same leak.
 
 ## Out of scope
 - New behaviour. A design question that needs more than a local fix is proposed in the PR for the user to decide.

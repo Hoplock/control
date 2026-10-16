@@ -1,4 +1,4 @@
-# 0026 — Cross-repo E2E topology, CI gate & hardening
+# 0028 — Cross-repo E2E topology, CI gate & hardening
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -164,7 +164,7 @@ Each scenario is a product claim, proven across both components:
   in-process handshake tests cover each stranded case and the
   `target.algorithm_policy_unmet` record. So this suite does not stand up a
   legacy target to prove either again. Floors and bans are the same
-  (`Hoplock/proxy#69`): the proxy's own e2e proves them, and 0027 extends this
+  (`Hoplock/proxy#69`): the proxy's own e2e proves them, and 0029 extends this
   suite with the post-quantum floor's scenarios. So build the main target from
   an image whose OpenSSH is 9.9 or later, which offers
   `mlkem768x25519-sha256`. The proxy's own target image, `debian:stable-slim`,
@@ -254,7 +254,7 @@ Each scenario is a product claim, proven across both components:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0026-e2e-topology-and-ci-learnings.md`. Summary block MUST
+`docs/learnings/0028-e2e-topology-and-ci-learnings.md`. Summary block MUST
 document how to run the topology locally, the seed/fixture layout, each scenario
 and what it proves, how the proxy revision is pinned and bumped, how the
 `govulncheck` gate is wired and what to do when it goes red without a code

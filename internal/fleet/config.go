@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -206,6 +207,7 @@ func (r *Registry) PublishConfig(ctx context.Context, tenant store.Tenant, scope
 	if err != nil {
 		return ConfigPublication{}, err
 	}
+	r.TrackConfigTenant(tenant)
 	return ConfigPublication{Version: version, Changed: r.announce(ctx, tenant, changed)}, nil
 }
 
@@ -246,6 +248,7 @@ func (r *Registry) RollbackConfig(ctx context.Context, tenant store.Tenant, scop
 	if err != nil {
 		return ConfigPublication{}, err
 	}
+	r.TrackConfigTenant(tenant)
 	return ConfigPublication{Version: version, Changed: r.announce(ctx, tenant, changed)}, nil
 }
 
@@ -316,13 +319,25 @@ func materialiseConfig(ctx context.Context, tx *store.Store, tenant store.Tenant
 		return store.ProxyConfigState{}, err
 	}
 
-	raw, hash, err := marshalConfig(ComposeConfig(zoneDoc, proxyDoc))
-	if err != nil {
-		return store.ProxyConfigState{}, err
-	}
-
 	current, err := tx.ProxyConfigs().GetState(ctx, tenant, proxyID)
 	if err != nil && !store.IsNotFound(err) {
+		return store.ProxyConfigState{}, err
+	}
+	if zoneDoc == nil && proxyDoc == nil && current.DesiredVersion == 0 {
+		// NOTHING IS PUBLISHED for this proxy, and nothing ever was: the
+		// fetch answers 204 and the proxy runs on its bootstrap file. That
+		// is version 0 — no document to announce, none to be behind — and
+		// never the empty composition stored as a version 1 the fetch would
+		// deny having. The row exists so that the report has one to write.
+		empty := store.ProxyConfigState{ProxyID: proxyID}
+		if err := tx.ProxyConfigs().PutState(ctx, tenant, empty); err != nil {
+			return store.ProxyConfigState{}, err
+		}
+		return empty, nil
+	}
+
+	raw, hash, err := marshalConfig(ComposeConfig(zoneDoc, proxyDoc))
+	if err != nil {
 		return store.ProxyConfigState{}, err
 	}
 	if current.DesiredHash == hash && current.DesiredVersion > 0 {
@@ -381,8 +396,10 @@ func desiredDocument(ctx context.Context, tx *store.Store, tenant store.Tenant, 
 }
 
 // announce emits one `config_changed` per proxy whose composed document moved,
-// and moves each one's announced marker when the stream took it. A failure is
-// reported on the answer and left for [Registry.Announce] to retry.
+// and moves each one's announced marker when a live subscription took it. One
+// that failed, or that no subscription on this node took, is reported on the
+// answer and left for [Registry.Announce] to retry — on whichever node holds
+// the proxy's stream.
 func (r *Registry) announce(ctx context.Context, tenant store.Tenant, changed []store.ProxyConfigState) []ConfigAnnouncement {
 	out := make([]ConfigAnnouncement, 0, len(changed))
 	for _, s := range changed {
@@ -397,11 +414,19 @@ func (r *Registry) announceOne(ctx context.Context, tenant store.Tenant, s store
 		Hash:    WireConfigHash(s.DesiredHash),
 	}
 	a := ConfigAnnouncement{ProxyID: s.ProxyID, Version: ev.Version, Hash: ev.Hash}
-	if err := r.pub.PublishConfigChange(ctx, tenant, s.ProxyID, ev); err != nil {
+	delivered, err := r.pub.PublishConfigChange(ctx, tenant, s.ProxyID, ev)
+	if err != nil {
 		a.Error = err.Error()
 		r.log.WarnContext(ctx, "a config_changed was not taken by the event stream; it will be retried",
 			"event", "config_announce_failed", "tenant", tenant.String(), "proxy_id", s.ProxyID,
 			"version", ev.Version, "error", err.Error())
+		return a
+	}
+	if !delivered {
+		// Retained for replay here, and owed until a live stream takes it:
+		// the node holding this proxy's stream announces it, and a proxy
+		// connected nowhere fetches on reconnect and reports.
+		a.Error = errNotSubscribedHere.Error()
 		return a
 	}
 	if err := r.st.ProxyConfigs().MarkAnnounced(ctx, tenant, s.ProxyID, s.DesiredHash, r.now()); err != nil {
@@ -419,19 +444,41 @@ func (r *Registry) announceOne(ctx context.Context, tenant store.Tenant, s store
 // announced marker is behind its desired document: the retry half of delivery
 // without reconnect. It is run on a timer and once at start; it returns what it
 // tried, and an error only when it could not read the states.
+//
+// It announces only to proxies holding a live subscription ON THIS NODE. The
+// markers are in the store, so every node's announcer sees what is owed, and
+// the one holding a proxy's stream is the one that can deliver it: that is how
+// an announcement made on one node reaches a proxy subscribed on another. A
+// proxy subscribed nowhere is not re-announced into the replay buffer every
+// interval; it fetches when it reconnects, and its report settles the marker.
+// A registry with no subscription state announces to every proxy owed.
 func (r *Registry) Announce(ctx context.Context, tenant store.Tenant) ([]ConfigAnnouncement, error) {
 	states, err := r.st.ProxyConfigs().ListStates(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
+	var local map[string]time.Time
+	if r.subs != nil {
+		if local, err = r.subs.LiveSubscriptions(ctx, tenant); err != nil {
+			return nil, err
+		}
+	}
 	var owed []store.ProxyConfigState
 	for _, s := range states {
-		if s.DesiredVersion > 0 && s.DesiredHash != "" && s.AnnouncedHash != s.DesiredHash {
-			owed = append(owed, s)
+		if s.DesiredVersion == 0 || s.DesiredHash == "" || s.AnnouncedHash == s.DesiredHash {
+			continue
 		}
+		if _, here := local[s.ProxyID]; r.subs != nil && !here {
+			continue
+		}
+		owed = append(owed, s)
 	}
 	return r.announce(ctx, tenant, owed), nil
 }
+
+// errNotSubscribedHere is an announcement this node's bus accepted and no live
+// subscription here took.
+var errNotSubscribedHere = errors.New("fleet: the proxy holds no event subscription on this node; the node holding its stream announces it, and a proxy connected nowhere fetches on reconnect")
 
 // TrackConfigTenant adds a tenant to the set the announcer walks. There is no
 // store read that lists tenants (M18), so the set is learned: the configured
@@ -489,28 +536,18 @@ func (r *Registry) DesiredConfig(ctx context.Context, tenant store.Tenant, proxy
 }
 
 // FetchConfig answers `GET /v1/proxies/{proxy_id}/config`: the document desired
-// for a proxy NOW, or ok false when nothing is published for it — neither its
-// zone nor the proxy itself has a document — in which case the proxy runs on its
-// bootstrap file alone. A proxy the registry does not hold in this tenant is
-// [ErrNotEnrolled]: a registry fact, never a deny (M11).
+// for a proxy NOW, or ok false when nothing is published for it — its state
+// desires version 0, because neither its zone nor the proxy itself has ever had
+// a document — in which case the proxy runs on its bootstrap file alone. It
+// reads the same row the announcer and the drift view read, so the three never
+// disagree about whether there is a document. A proxy the registry does not
+// hold in this tenant is [ErrNotEnrolled]: a registry fact, never a deny (M11).
 func (r *Registry) FetchConfig(ctx context.Context, tenant store.Tenant, proxyID string) (*contract.ProxyConfigDocument, bool, error) {
-	p, err := r.st.Proxies().Get(ctx, tenant, proxyID)
-	if err != nil {
+	if _, err := r.st.Proxies().Get(ctx, tenant, proxyID); err != nil {
 		if store.IsNotFound(err) {
 			return nil, false, ErrNotEnrolled
 		}
 		return nil, false, err
-	}
-	published := false
-	for _, scope := range []store.ConfigScope{ZoneScope(Zone(p.Zone)), ProxyScope(p.ID)} {
-		if _, err := r.st.ProxyConfigs().GetDesired(ctx, tenant, scope); err == nil {
-			published = true
-		} else if !store.IsNotFound(err) {
-			return nil, false, err
-		}
-	}
-	if !published {
-		return nil, false, nil
 	}
 	state, err := r.st.ProxyConfigs().GetState(ctx, tenant, proxyID)
 	if err != nil {
@@ -518,6 +555,9 @@ func (r *Registry) FetchConfig(ctx context.Context, tenant store.Tenant, proxyID
 			return nil, false, nil
 		}
 		return nil, false, err
+	}
+	if state.DesiredVersion == 0 {
+		return nil, false, nil
 	}
 	var settings map[string]any
 	if err := json.Unmarshal(state.DesiredDocument, &settings); err != nil {

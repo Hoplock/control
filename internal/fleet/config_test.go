@@ -4,6 +4,7 @@
 package fleet_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -160,6 +161,15 @@ func TestDriftIsDerivedFromTheReport(t *testing.T) {
 	report(t, r, "p-a", failed, c.now().Add(2*time.Second))
 	if row := rollout(); row.CaughtUp || row.State != "fetch_failed" || row.LastError == "" {
 		t.Errorf("fetch_failed = %+v", row)
+	}
+
+	// Even naming the desired document as running, pending_restart has not
+	// finished: only `applied` is caught up (0021).
+	claimed := applied(state)
+	claimed.State, claimed.RestartRequired = contract.ConfigStatePendingRestart, []string{"logging.batch_size"}
+	report(t, r, "p-a", claimed, c.now().Add(2500*time.Millisecond))
+	if row := rollout(); row.CaughtUp {
+		t.Errorf("pending_restart naming the desired document as running = %+v: it is NOT caught up", row)
 	}
 
 	report(t, r, "p-a", applied(state), c.now().Add(3*time.Second))
@@ -443,5 +453,165 @@ func TestTheDesiredHashIsTheDigestOfTheStoredDocument(t *testing.T) {
 	sum := sha256.Sum256(state.DesiredDocument)
 	if got := hex.EncodeToString(sum[:]); got != state.DesiredHash {
 		t.Errorf("hash of the stored document = %s, stored hash = %s", got, state.DesiredHash)
+	}
+}
+
+// NOTHING PUBLISHED IS ONE ANSWER EVERYWHERE (0021). The fetch answers 204 and
+// the proxy runs on its bootstrap file, so there is no document to announce,
+// none to be behind, and a proxy reporting its bootstrap file is not drift. It
+// used to be all three: enrollment materialised the empty composition as
+// version 1, which the announcer named in a `config_changed` the fetch then
+// denied, and which the rollout view reported as never reached.
+func TestNothingPublishedIsNeitherAnnouncedNorDrift(t *testing.T) {
+	t.Parallel()
+	pub := &recordingPublisher{}
+	_, r, c := newRegistry(t, fleet.WithConfigPublisher(pub))
+	ctx := t.Context()
+	enrolled(t, r, testTenant, "p-a", "region", nil, fleet.Capabilities{})
+
+	if _, ok, err := r.FetchConfig(ctx, testTenant, "p-a"); err != nil || ok {
+		t.Fatalf("fetch with nothing published: ok=%v err=%v, want 204", ok, err)
+	}
+	if tried, err := r.Announce(ctx, testTenant); err != nil || len(tried) != 0 || len(pub.announced()) != 0 {
+		t.Errorf("announced %+v (%v) for a proxy with nothing published", tried, err)
+	}
+	report(t, r, "p-a", contract.ProxyConfigReport{State: contract.ConfigStateApplied}, c.now())
+	if drift, err := r.ConfigDrift(ctx, testTenant); err != nil || len(drift) != 0 {
+		t.Errorf("drift = %+v (%v) for a proxy on its bootstrap file with nothing published", drift, err)
+	}
+
+	// The first publish is the proxy's first document, announced once.
+	publish(t, r, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(128)})
+	doc, ok, err := r.FetchConfig(ctx, testTenant, "p-a")
+	if err != nil || !ok {
+		t.Fatalf("fetch after a publish: %v %v", ok, err)
+	}
+	if got := pub.announced(); len(got) != 1 || pub.events[0].Version != doc.Version || pub.events[0].Hash != doc.Hash {
+		t.Errorf("announced %v %+v, want the one document the fetch serves (%s)", got, pub.events, doc.Version)
+	}
+	if drift, _ := r.ConfigDrift(ctx, testTenant); len(drift) != 1 {
+		t.Errorf("drift = %+v, want p-a behind its first document", drift)
+	}
+}
+
+// A publish is a tenant the announcer walks (0021): an announcement lost in a
+// tenant no proxy had subscribed in on this node, and that is not the
+// configured one, was never retried. Killed between commit and emit here, the
+// announcement reaches the proxy on the announcer's next turn and the proxy
+// converges.
+func TestAnAnnouncementLostInAnyTenantIsRetriedUntilTheProxyConverges(t *testing.T) {
+	t.Parallel()
+	pub := &recordingPublisher{fail: 1}
+	_, r, c := newRegistry(t, fleet.WithConfigPublisher(pub))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	enrolled(t, r, tenantB, "p-b", "region", nil, fleet.Capabilities{})
+
+	p, err := r.PublishConfig(ctx, tenantB, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(64)}, "operator")
+	if err != nil || p.Unannounced() != 1 {
+		t.Fatalf("publication = %+v, %v; want its one announcement lost", p, err)
+	}
+	// An interval longer than the test: only the pass the announcer makes
+	// as it starts can deliver this.
+	go r.WatchAnnouncements(ctx, time.Hour)
+	waitAnnounced(t, pub, 1)
+
+	state, err := r.DesiredConfig(ctx, tenantB, "p-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.RecordConfigReport(ctx, tenantB, "p-b", applied(state), c.now()); err != nil {
+		t.Fatal(err)
+	}
+	if drift, err := r.ConfigDrift(ctx, tenantB); err != nil || len(drift) != 0 {
+		t.Errorf("drift = %+v (%v) after the proxy applied the retried document", drift, err)
+	}
+}
+
+// The announcer retries on its timer as well as at start: an announcement
+// that fails at publish and again on the first pass is delivered by a later
+// one.
+func TestTheAnnouncerRetriesOnItsTimer(t *testing.T) {
+	t.Parallel()
+	pub := &recordingPublisher{fail: 2}
+	_, r, _ := newRegistry(t, fleet.WithConfigPublisher(pub))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	enrolled(t, r, testTenant, "p-a", "region", nil, fleet.Capabilities{})
+	publish(t, r, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(64)})
+	go r.WatchAnnouncements(ctx, 20*time.Millisecond)
+	waitAnnounced(t, pub, 1)
+}
+
+func waitAnnounced(t *testing.T, pub *recordingPublisher, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(pub.announced()) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("announced %v, want %d: the lost announcement was never retried", pub.announced(), n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A report naming the desired document settles its announcement (0021): the
+// proxy knows of it, so nothing more is owed even though the stream never took
+// the `config_changed` — and the announcer, which would otherwise retry it,
+// leaves it alone.
+func TestAReportNamingTheDesiredDocumentSettlesItsAnnouncement(t *testing.T) {
+	t.Parallel()
+	pub := &recordingPublisher{fail: 1}
+	_, r, c := newRegistry(t, fleet.WithConfigPublisher(pub))
+	ctx := t.Context()
+	enrolled(t, r, testTenant, "p-a", "region", nil, fleet.Capabilities{})
+	if p := publish(t, r, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(64)}); p.Unannounced() != 1 {
+		t.Fatalf("publication = %+v, want its announcement lost", p)
+	}
+	state := desired(t, r, "p-a")
+	rep := applied(state)
+	rep.RunningVersion, rep.RunningHash = "", ""
+	rep.State, rep.LastError = contract.ConfigStateFetchFailed, "fetch: connection refused"
+	report(t, r, "p-a", rep, c.now())
+	if tried, err := r.Announce(ctx, testTenant); err != nil || len(tried) != 0 {
+		t.Errorf("Announce = %+v, %v after the proxy reported knowing the document; want nothing owed", tried, err)
+	}
+}
+
+// SEVERAL NODES (0021). A node's event bus reaches only the subscriptions held
+// on that node, so a `config_changed` the publishing node's bus takes reaches
+// nobody when the proxy's stream is held by another node. The announcement is
+// owed until a live subscription takes it, and the node holding the stream —
+// whose announcer walks the same durable markers — delivers it.
+func TestAnAnnouncementReachesAProxySubscribedOnAnotherNode(t *testing.T) {
+	t.Parallel()
+	nodeA := &recordingPublisher{elsewhere: true}
+	st, a, _ := newRegistry(t, fleet.WithConfigPublisher(nodeA), fleet.WithSubscriptionState(subs{}))
+	ctx := t.Context()
+	enrolled(t, a, testTenant, "p-a", "region", nil, fleet.Capabilities{})
+
+	p := publish(t, a, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(64)})
+	if len(p.Changed) != 1 || p.Changed[0].Announced || p.Changed[0].Error == "" {
+		t.Fatalf("publication on a node without the stream = %+v, want it not announced, saying why", p)
+	}
+	if tried, _ := a.Announce(ctx, testTenant); len(tried) != 0 || len(nodeA.missed) != 1 {
+		t.Errorf("node A re-announced %+v to a proxy it holds no stream for (missed %v)", tried, nodeA.missed)
+	}
+
+	// Node B holds p-a's stream: its announcer delivers what A could not.
+	nodeB := &recordingPublisher{}
+	b := fleet.New(st, fleet.WithConfigPublisher(nodeB),
+		fleet.WithSubscriptionState(subs{"p-a": time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)}))
+	tried, err := b.Announce(ctx, testTenant)
+	if err != nil || len(tried) != 1 || !tried[0].Announced {
+		t.Fatalf("node B's announcer = %+v, %v; want p-a announced", tried, err)
+	}
+	if got := nodeB.announced(); len(got) != 1 || got[0] != "p-a" {
+		t.Errorf("node B announced to %v, want p-a", got)
+	}
+	// Delivered once, it is owed by no node.
+	for name, r := range map[string]*fleet.Registry{"A": a, "B": b} {
+		if again, _ := r.Announce(ctx, testTenant); len(again) != 0 {
+			t.Errorf("node %s announced %+v after the stream took it", name, again)
+		}
 	}
 }

@@ -1,4 +1,4 @@
-# 0025 — Management console (web UI)
+# 0027 — Management console (web UI)
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -145,7 +145,7 @@ is written so that half can fail a review rather than merely disappoint one.
 
 ### Deployment identity and tenant context (M18, M19)
 - The console always says **which deployment** this is: name, instance id,
-  version set, and health (0024). An operator with a staging and a production
+  version set, and health (0026). An operator with a staging and a production
   instance open in two tabs must never have to guess which is which, and the
   distinction has to survive a screenshot.
 - Where more than one tenant is in scope, the current tenant is visible in the
@@ -320,7 +320,7 @@ becomes a test that runs today.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0025-management-console-learnings.md`. Summary block MUST give
+`docs/learnings/0027-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it —
 which, per M20, includes how it inherits the tokens and the component set rather

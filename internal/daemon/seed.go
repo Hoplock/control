@@ -28,21 +28,29 @@ import (
 
 // `hoplock-control seed` writes a development and CI fixture set.
 //
-// IT EXISTS BECAUSE THE NORTH-BOUND API DOES NOT YET (0019). The conformance
-// suite grades "a server configured to serve these identities" (M1), and until
-// there is an operator surface there is no way to configure one — so the
-// alternative to this command is a conformance leg that cannot run against
-// this server at all, which is the acceptance criterion phase 0007 is graded
-// on.
+// IT IS THE DATABASE-DIRECT BOOTSTRAP, AND IT STAYS ONE (0019). The conformance
+// suite grades "a server configured to serve these identities" (M1). The
+// north-bound API cannot mint its own first credential, and some of what a
+// fixture needs — subject keys and passwords, MFA enrollments, channel tokens,
+// target host keys — has no north-bound route at all, so this is not a client
+// of that API and does not become one. It also seeds the scoped API tokens
+// (`api_tokens`) the suite publishes events and reads records back through.
 //
-// Three properties keep it from becoming a back door:
+// IT IS NOT A BACK DOOR, because it is no door: it opens the database with the
+// DSN in the configuration file, so it can do nothing its operator could not
+// already do with that credential and psql. What it adds is a reviewable,
+// repeatable way to do it, and three properties keep it from adding more:
 //
 //   - it writes and never reads, so it cannot be used to extract anything;
 //   - it takes a file, so what it wrote is reviewable in version control;
 //   - the credentials it writes are hashed exactly as the running server
-//     writes them — there is no seed-only path into the credential tables.
+//     writes them — there is no seed-only path into the credential tables
+//     (TestASeededAPITokenIsAnIssuedOneHoldingOnlyItsRoles holds the API
+//     token to that).
 //
-// When 0019 lands, this becomes a thin client of that API or it goes away.
+// What it writes is not on the audit chain: an act through the database
+// credential is outside the surface the chain records, which is why a
+// deployment keeps that credential away from anyone who should not hold it.
 func runSeed(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control seed", flag.ContinueOnError)
 	fs.SetOutput(stderr)

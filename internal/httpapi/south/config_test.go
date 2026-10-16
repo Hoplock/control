@@ -57,6 +57,10 @@ func TestTheConfigFetchOverTheWire(t *testing.T) {
 		if notModified.Code != http.StatusNotModified || notModified.Body.Len() != 0 {
 			t.Errorf("If-None-Match %s = %d with %d bytes, want 304 and no body", tag, notModified.Code, notModified.Body.Len())
 		}
+		// RFC 9110 §15.4.5: a 304 carries the ETag the 200 would have.
+		if got := notModified.Header().Get("ETag"); got != res.Header().Get("ETag") {
+			t.Errorf("If-None-Match %s: the 304 carries ETag %q, want %q", tag, got, res.Header().Get("ETag"))
+		}
 	}
 
 	if err := h.store.Proxies().Upsert(ctx, "globex", store.Proxy{

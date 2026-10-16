@@ -172,6 +172,9 @@ type AuditRepository interface {
 	Streams(ctx context.Context, tenant Tenant) ([]string, error)
 	// Query selects records over the dimensions PLAN §7 names.
 	Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]AuditRecord, error)
+	// Sessions answers the distinct sessions whose records match, newest
+	// first and never "", its limit counting sessions rather than records.
+	Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([]string, error)
 	// BlockedCommands is the showcase join: blocked commands on targets
 	// carrying a label, resolved to the decision that permitted the access.
 	BlockedCommands(ctx context.Context, tenant Tenant, q BlockedCommandQuery) ([]BlockedCommand, error)

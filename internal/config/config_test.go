@@ -9,8 +9,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/hoplock/control/internal/config"
 )
@@ -229,6 +233,63 @@ database:
 func TestExampleConfigLoads(t *testing.T) {
 	if _, err := config.Load(filepath.Join("..", "..", "config.example.yaml")); err != nil {
 		t.Fatalf("config.example.yaml does not load: %v", err)
+	}
+}
+
+// ...and it documents every key there is (0021). Strict decoding catches a key
+// the example names and this package does not know, so loading it proves one
+// direction only: a key added here and left out of the example is a setting no
+// operator is told exists, and loads just the same. This walks the other way,
+// from every `yaml` tag reachable from Config to the example's own keys.
+func TestTheExampleDocumentsEveryKey(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "config.example.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	documented := map[string]bool{}
+	var walk func(n *yaml.Node, prefix string)
+	walk = func(n *yaml.Node, prefix string) {
+		switch n.Kind {
+		case yaml.DocumentNode:
+			walk(n.Content[0], prefix)
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				key := prefix + n.Content[i].Value
+				documented[key] = true
+				walk(n.Content[i+1], key+".")
+			}
+		case yaml.SequenceNode, yaml.ScalarNode, yaml.AliasNode:
+			// A value, or a list of them: no key below it.
+		}
+	}
+	walk(&doc, "")
+
+	var keys func(t reflect.Type, prefix string) []string
+	keys = func(typ reflect.Type, prefix string) []string {
+		var out []string
+		for i := range typ.NumField() {
+			f := typ.Field(i)
+			name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+			if name == "" || name == "-" {
+				continue
+			}
+			out = append(out, prefix+name)
+			// A list of sections (access_context.providers) is documented
+			// as the list; its entries are examples in comments.
+			if f.Type.Kind() == reflect.Struct && f.Type != reflect.TypeFor[time.Time]() {
+				out = append(out, keys(f.Type, prefix+name+".")...)
+			}
+		}
+		return out
+	}
+	for _, key := range keys(reflect.TypeFor[config.Config](), "") {
+		if !documented[key] {
+			t.Errorf("config.example.yaml does not document %s", key)
+		}
 	}
 }
 

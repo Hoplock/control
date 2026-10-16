@@ -106,7 +106,7 @@ package sees it. Use space-free substrings.
 
 **Everything the suite knows about a server is in this file.** No login, target,
 fingerprint, token, or URL appears in any Go source file here. That is the
-property phase 0026 needs: pointing the suite at the real server is a new
+property phase 0028 needs: pointing the suite at the real server is a new
 expectation file and no code change at all.
 
 It is decoded **strictly** — an unknown key is an error — and validated for the
@@ -327,7 +327,9 @@ This still means two of PLAN §4's obligations cannot be graded against a server
 that serves only the contract — the difference is that this is now a documented
 boundary with a reason, rather than something the contract forgot. Hoplock
 Proxy's `cmd/mock-control` `GET /debug/logs` and `POST /debug/revoke` are the
-reference shapes. This server answers the second of them with a publish
-listener of its own, off unless `events.publish_listener` is configured and
-credentialled (phase 0009, `internal/daemon/publish.go`); the CI leg
-configures one, which is what makes gap recovery gradeable here.
+reference shapes. This server answers both on its north-bound listener, under
+scoped API tokens, and binds no debug path of its own (0019): `POST
+/api/v1/tenants/{tenant}/revocations` (`session:revoke`) publishes an event, and
+`GET /api/v1/tenants/{tenant}/audit/records/{record_id}` (`audit:read`) reads a
+record back. The CI leg seeds both tokens (`testdata/control-seed.yaml`), which
+is what makes gap recovery and durability gradeable here.

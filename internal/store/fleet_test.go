@@ -596,3 +596,37 @@ func TestProxiesListIsOneTenantInIDOrder(t *testing.T) {
 		t.Errorf("List = %v, want %v", ids, want)
 	}
 }
+
+// The announced marker never moves onto a hash that is no longer desired
+// (0021): an announcement of one document racing a publish of the next must
+// leave the next one owed, or the proxy is never told of it.
+func TestTheAnnouncedMarkerNeverNamesAStaleDocument(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	for _, s := range []store.ProxyConfigState{
+		{ProxyID: "p-a", DesiredVersion: 1, DesiredHash: "h1", DesiredDocument: json.RawMessage(`{"k":1}`), DesiredAt: fleetNow()},
+		{ProxyID: "p-a", DesiredVersion: 2, DesiredHash: "h2", DesiredDocument: json.RawMessage(`{"k":2}`), DesiredAt: fleetNow()},
+	} {
+		if err := st.ProxyConfigs().PutState(ctx, tenantA, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The late mark of h1, after h2 became desired.
+	if err := st.ProxyConfigs().MarkAnnounced(ctx, tenantA, "p-a", "h1", fleetNow()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ProxyConfigs().GetState(ctx, tenantA, "p-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AnnouncedHash != "" {
+		t.Errorf("announced = %q while h2 is desired, want the marker left behind", got.AnnouncedHash)
+	}
+	if err := st.ProxyConfigs().MarkAnnounced(ctx, tenantA, "p-a", "h2", fleetNow()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.ProxyConfigs().GetState(ctx, tenantA, "p-a"); got.AnnouncedHash != "h2" {
+		t.Errorf("announced = %q, want h2", got.AnnouncedHash)
+	}
+}
