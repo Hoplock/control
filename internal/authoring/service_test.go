@@ -413,3 +413,21 @@ func findingWith(rep authoring.Report, code string) *authoring.Finding {
 	}
 	return nil
 }
+
+// A validator's severity is ext's closed enum. One this server does not know
+// is a validator bug, and reading it as anything that gates less — advice, by
+// ext's String default — would let a governance rule pass silently. It is an
+// outage, as a validator's error is.
+func TestAValidatorSeverityOutsideTheEnumIsAnOutage(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, ext.Bound[ext.PolicyValidator]{
+		Registration: ext.Registration{Provider: "example.com/governance"},
+		Impl:         governance{findings: []ext.Finding{{Severity: ext.FindingBlocking + 1, Code: "prod.needs_approval", Path: "sre"}}},
+	})
+	if rep, _, err := h.svc.Validate(t.Context(), tenant, bundle(plain), ""); err == nil {
+		t.Fatalf("a finding of severity %d was reported as %+v, want an outage", ext.FindingBlocking+1, rep.Findings)
+	}
+	if _, err := h.svc.Upload(t.Context(), tenant, bundle(plain), author); err == nil {
+		t.Errorf("an upload stored a bundle a validator could not grade")
+	}
+}

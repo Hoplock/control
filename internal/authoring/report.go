@@ -75,6 +75,12 @@ const (
 	// key does not carry, on a route no grant and no duration bounds.
 	// Warning.
 	CodeCacheHintOutlives = "authoring.cache_hint_outlives_condition"
+	// CodeCacheHintSpansSources: a cache hint on a rule gated by
+	// `context.source_cidrs`. A proxy keys a cached decision on the identity,
+	// target, port, method and hop trail and never on the client address, so
+	// the hint reuses the answer from any address; no duration and no grant
+	// bounds that. Warning.
+	CodeCacheHintSpansSources = "authoring.cache_hint_spans_sources"
 	// CodeFloorUndeclared: a proxy's latest declaration lacks the route's
 	// floor level, so authorize refuses the route there. Warning.
 	CodeFloorUndeclared = "algorithm.floor_undeclared"
@@ -104,7 +110,7 @@ const (
 // can hold the set and a client can enumerate it.
 var ControlCodes = []string{
 	CodeProxiesUnreported, CodeNoProxyProvides, CodeTargetCannotTake, CodeTargetUnproven,
-	CodeInterpreter, CodeCacheHintOutlives,
+	CodeInterpreter, CodeCacheHintOutlives, CodeCacheHintSpansSources,
 	CodeFloorUndeclared, CodeAxisEmptied, CodeAlgorithmUnknown, CodeBanUnmatched,
 	CodeTargetBelowFloor, CodeTargetNotReported, CodePolicyUnmet,
 }

@@ -179,9 +179,11 @@ func canonicalKeyExchange(name string) string {
 // axis, judged from each build's `algorithms`. A typo looks exactly like a
 // working ban, so the publish-time report warns about these and never refuses
 // them: a name no build implements is a ban already satisfied. A declaration
-// with no `algorithms` counts as offering nothing, so an estate that has
-// declared nothing warns on every name — which is the honest answer to "is this
-// a typo" when nobody has said what they offer.
+// with no `algorithms` says nothing about a name and is skipped, so a set in
+// which no build declared its offer returns every name. That is not evidence of
+// a typo — nobody said what they offer — and the publish-time report judges
+// names only when at least one build has declared (M17: the absence of proof
+// is advice).
 func UnmatchedBans(bans *contract.AlgorithmBans, decls []*contract.ProxyCapabilities) map[string][]string {
 	out := map[string][]string{}
 	for _, axis := range contract.Axes {

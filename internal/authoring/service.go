@@ -196,6 +196,14 @@ func (s *Service) findings(ctx context.Context, tenant store.Tenant, cand *Candi
 				return nil, fmt.Errorf("authoring: policy validator %s: %w", v.Registration.Provider, err)
 			}
 			for _, f := range fs {
+				if f.Severity < ext.FindingAdvice || f.Severity > ext.FindingBlocking {
+					// The enum is closed. A value outside it is the
+					// validator's bug, and ext's String renders it
+					// "advice", which gates nothing: a governance rule
+					// would pass silently. Fail it as the outage it is.
+					return nil, fmt.Errorf("authoring: policy validator %s: finding %q has severity %d, "+
+						"outside ext.FindingSeverity", v.Registration.Provider, f.Code, int(f.Severity))
+				}
 				params := make(map[string]any, len(f.Detail))
 				for k, val := range f.Detail {
 					params[k] = val
