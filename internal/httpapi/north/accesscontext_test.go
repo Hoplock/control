@@ -527,6 +527,8 @@ func TestExplainAndSimulationOfExternalContext(t *testing.T) {
 	for _, d := range []store.Decision{
 		{ID: "dec-window", SubjectID: "alice@example.com", Effect: "allow", SessionID: "sess-w", ProxyID: "proxy-1",
 			InputsDigest: "x", Inputs: inputs, DecidedAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC),
+			// A served allow is always recorded with what it served.
+			Snapshot: json.RawMessage(`{"route_type":"direct","target":"db01.example.com"}`),
 			Explanation: json.RawMessage(`{"effect":"allow","rule":"change","grant":"g-ext","external":{"provider":"itsm",` +
 				`"reference":"CHG-42","window_start":"2026-10-01T11:00:00Z","window_end":"2026-10-01T13:00:00Z","arrived":"pushed","confirmed":false}}`)},
 		{ID: "dec-unanswered", SubjectID: "alice@example.com", Effect: "deny", SessionID: "sess-u", ProxyID: "proxy-1",

@@ -185,11 +185,15 @@ func (c *client) call(method, path string, body, out any) ([]byte, error) {
 	return raw, nil
 }
 
+// fieldSafe keeps a field inside its record: a tab would split it into two
+// fields and a line break into two records, and scripts read both by position.
+var fieldSafe = strings.NewReplacer("\t", " ", "\r\n", " ", "\n", " ", "\r", " ")
+
 // line prints one tab-separated record.
 func (c *client) line(fields ...any) {
 	parts := make([]string, 0, len(fields))
 	for _, f := range fields {
-		parts = append(parts, strings.ReplaceAll(fmt.Sprint(f), "\t", " "))
+		parts = append(parts, fieldSafe.Replace(fmt.Sprint(f)))
 	}
 	_, _ = fmt.Fprintln(c.out, strings.Join(parts, "\t"))
 }
@@ -469,6 +473,15 @@ func (c *client) simulate(args []string) (int, error) {
 	source, err := readSource(pos[0])
 	if err != nil {
 		return exitError, err
+	}
+	// A simulation asks something; one that asks nothing is a usage error,
+	// caught here, because the server's refusal would exit 1 — "the policy
+	// is wrong" — and it is not.
+	if *from == "" && *to != "" {
+		return exitError, errors.New("simulate: -to needs -from")
+	}
+	if *from == "" && *casesPath == "" {
+		return exitError, errors.New("simulate asks something: give -from (a replay), -cases (a dry run), or both")
 	}
 	body := map[string]any{"source": source}
 	if *from != "" {

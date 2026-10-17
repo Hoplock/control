@@ -138,12 +138,21 @@ func DiffSources(a, b []byte) (Diff, error) {
 		}
 	}
 
-	text, ok := unified(strings.Split(string(a), "\n"), strings.Split(string(b), "\n"))
+	text, ok := unified(lines(a), lines(b))
 	d.Text, d.TextOmitted = text, !ok
 	if len(bytes.TrimSpace(a)) == 0 {
-		d.Text, d.TextOmitted = unifiedAllAdded(strings.Split(string(b), "\n")), false
+		d.Text, d.TextOmitted = unifiedAllAdded(lines(b)), false
 	}
 	return d, nil
+}
+
+// lines splits a source into its lines. A final line break ends the last line
+// rather than starting an empty one, so a 22-line file is 22 lines here.
+func lines(src []byte) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(string(src), "\n"), "\n")
 }
 
 // sameYAML compares two values by their rendering, which is the authored
@@ -158,13 +167,13 @@ func sameYAML(a, b any) bool {
 	return bytes.Equal(ra, rb)
 }
 
-// maxEdit and maxTrace bound the text diff's work and memory. Past either, the
-// rule-level diff stands alone, rather than a request spending its whole budget
-// on rendering text.
-const (
-	maxEdit  = 2000
-	maxTrace = 4 << 20
-)
+// maxTrace bounds the text diff's memory and work: the search keeps one copy of
+// its frontier (2(n+m)+3 ints) per edit it explores, so it explores at most
+// maxTrace/(2(n+m)+3) edits — fewer the longer the sources — and the trace never
+// holds more than maxTrace ints. Past that, the rule-level diff stands alone
+// and the answer says the text was omitted, rather than a request spending its
+// whole budget on rendering text.
+const maxTrace = 4 << 20
 
 type editOp struct {
 	kind byte // ' ', '-', '+'
@@ -174,7 +183,7 @@ type editOp struct {
 // edits is Myers' O(ND) shortest edit script.
 func edits(a, b []string) ([]editOp, bool) {
 	n, m := len(a), len(b)
-	limit := min(n+m, maxEdit, maxTrace/(2*(n+m)+3))
+	limit := min(n+m, maxTrace/(2*(n+m)+3))
 	offset := n + m + 1
 	v := make([]int, 2*(n+m)+3)
 	var trace [][]int

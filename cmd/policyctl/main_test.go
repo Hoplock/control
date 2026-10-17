@@ -243,7 +243,7 @@ func TestSimulateAndExplain(t *testing.T) {
 	if err := f.st.Decisions().Insert(t.Context(), "default", store.Decision{
 		ID: "dec-1", SubjectID: "alice@example.com", Effect: "allow", SessionID: "sess-1", ProxyID: "proxy-1",
 		InputsDigest: "x", Inputs: inputs, Explanation: json.RawMessage(`{"effect":"allow","rule":"sre","rule_line":5}`),
-		DecidedAt: decided,
+		Snapshot: json.RawMessage(`{"route_type":"direct"}`), DecidedAt: decided,
 	}); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
