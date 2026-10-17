@@ -97,7 +97,7 @@ decision.
 | Decision | Settles | Status | Rendered in |
 | --- | --- | --- | --- |
 | **M1** | the contract is owned upstream and vendored read-only | live | §3, §4, §8, §11 |
-| **M2** | two surfaces, two listeners, two credential types | live | §3, §10 |
+| **M2** | two surfaces, two listeners, two credential types | live | §3, §4, §10 |
 | **M3** | policy is data compiled into a decision program | live | §3, §5, §10 |
 | **M4** | every decision is explainable, durable, addressable | live | §3, §5, §10 |
 | **M5** | the decision path is stateless, bounded, cheap | live | §3, §10, §11 |
@@ -111,7 +111,7 @@ decision.
 | **M13** | tech choices (Go, Postgres, closed enum kinds) | live | §3 |
 | **M14** | licensing: this repository is the open-source plane | live | §8 |
 | **M15** | Enterprise extends this repository; it never forks it | live | §3, §6, §8, §10, §11 |
-| **M16** | external access context is an input; its integrations are extensions | live | §3, §5, §7, §10, §11 |
+| **M16** | external access context is an input; its integrations are extensions | live | §3, §5, §6, §7, §10, §11 |
 | **M17** | the fleet graph carries capabilities, not just reachability | live | §3, §4, §5, §10 |
 | **M18** | tenancy is a request dimension, not a process constant | amended by M24 | §10, §11 |
 | **M19** | a deployment has an identity and can be supervised | live | §3, §10, §11 |
@@ -1289,9 +1289,10 @@ for nothing.
   correlation id (M21), which is also why it owns its own 404 and 405 rather than
   letting `http.ServeMux` answer them in prose.
 
-  Control's own routes, every one under `/api/v1/tenants/{tenant}/` with one
-  permission: federation and sessions; the certificate authority; grants and
-  grant requests; the access-context push and the providers and bindings that
+  Control's own routes: federation and the caller's own session under
+  `/api/v1/session…`, which run before authentication or need only a live
+  principal; and every other one under `/api/v1/tenants/{tenant}/` with one
+  permission — the certificate authority; grants and grant requests; the access-context push and the providers and bindings that
   constrain it (`…/access-context/providers/{provider}/binding`); the policy
   lifecycle and simulation (`…/policy/…`, §5.6) and explain (`…/decisions/{id}`,
   `…/sessions/{id}/decisions`); inventory — targets and their labels, subjects,
@@ -1311,7 +1312,10 @@ for nothing.
   `/api/v1/tenants/{tenant}/`, or a cross-tenant read under
   `/api/v1/cross-tenant/` naming a permission the auditor holds (M24) — the
   only routes of that class, since Control serves none of its own — names a
-  permission Control defines, and answers
+  permission Control defines, takes no path Control serves (its pattern, a
+  method beside it, or a literal under one of Control's wildcards, such as
+  `targets/special` beside `targets/{target}`, which the mux would otherwise
+  hand to the host's more specific pattern), and answers
   through a writer that renders Control's codes and the ones the host declared
   — never a `401`, which is the middleware's alone (M11). There is no second
   router and no second chain, so the isolation test enumerates a host's routes
@@ -1325,7 +1329,12 @@ for nothing.
   body rather than by being in it. An operator's act is recorded here too, as
   `operator.<noun>.<verb>` on the control stream, written in the transaction
   that makes the change wherever there is one, naming the actor, the before
-  and after, and any warning accepted with it.
+  and after, and any warning accepted with it. The before is read in that
+  transaction under the tenant's lock on what the act replaces (a policy
+  version, a target, a subject, the claim mapping), so two operators writing
+  at once leave a chain of records rather than two that each claim the same
+  before. A revocation has no transaction — it is an event on the bus — and
+  is recorded after it is published.
 - **`cmd/policyctl`** — the policy lifecycle from a terminal and from CI, over
   the north-bound API and nothing else: `validate`, `diff`, `apply`,
   `activate`, `versions`, `simulate`, `explain`. It holds an API token, never a
@@ -2522,6 +2531,23 @@ not say why, and a grant the explanation names that the inputs do not hold.
   anything blind, and it reads none of the tenant's audit, decisions or
   identities, which nobody needs in order to ask.
 
+  **What each role may change beyond the read set** is a least-privilege
+  decision per grant, and `TestTheRoleTableIsHeldWhole` holds the table whole.
+  `policy-author` holds `policy:write`, `policy:publish` and `target:write`:
+  a label is a policy input, and the author already changes every decision by
+  publishing. `grant-admin` holds `grant:write`, `grant:approve` and
+  `session:revoke`: every act on the revocation stream narrows access — the
+  worst a desk can do with it is end sessions, which it already does by
+  revoking grants — and each is recorded with its actor. `fleet-admin` holds
+  `fleet:write` and `target:write`: it owns the estate it labels, and a
+  relabel is diffed, simulable and recorded with its before, so a label that
+  changes decisions is never a blind write. `admin` holds every permission,
+  and is alone in holding `identity:write` (the claim mapping can grant
+  groups), `ca:rotate` (it can invalidate every certificate), `audit:retain`
+  (it removes evidence), `access-context:write` (a standing pre-approval for an
+  external system to open access, larger than `grant:write`) and
+  `report:write`.
+
   **A host names a permission; Control defines it (M15).** A host binary's
   routes (0015) name one of these codes and never declare one: declaring a code
   would also mean saying which fixed roles grant it, and then what `admin` means
@@ -2870,7 +2896,9 @@ not say why, and a grant the explanation names that the inputs do not hold.
   comma-joined, on the `provisioning` record) names the bans that build could
   never offer. These records are the only per-session proof that a floor or a
   ban held, and they are how the emergency runbook finds the sessions to end
-  (`GET …/audit/negotiated`).
+  (`GET …/audit/negotiated`, whose limit counts sessions and whose answer says
+  `truncated` when the limit cut it short: the runbook's next step ends exactly
+  the sessions listed, so a caller must know whether they were all of them).
 - **Grant context rides every record for a session** (`grant_context`),
   copied through by the proxy as opaque data. Store it as it arrives —
   including `additional_context`, which is a string **or** an object — and never
