@@ -164,8 +164,9 @@ type Report struct {
 	// carries and the uploader is told.
 	Digest     string      `json:"digest"`
 	Rejections []Rejection `json:"rejections"`
-	// Findings are every check's, Control's first, sorted by severity
-	// (blocking first) and then by id.
+	// Findings are every check's — Control's run first and always, then
+	// every registered validator's — listed by severity (blocking first)
+	// and then by id, whoever produced them.
 	Findings []Finding `json:"findings"`
 }
 

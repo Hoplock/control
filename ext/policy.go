@@ -12,16 +12,21 @@ import (
 type PolicyBundleRef struct {
 	// Tenant owns the bundle.
 	Tenant Tenant
-	// Version is the bundle's version, assigned by Control.
+	// Version is the bundle's version, assigned by Control. It is empty
+	// until Control has assigned one — at validate, and at upload, which
+	// asks before it stores — and the stored version at activation, the
+	// judgement that decides.
 	Version string
 	// Digest is the content hash, so a validator can be certain it is
 	// looking at the bytes that will be activated.
 	Digest string
 }
 
-// PolicyDocument is a bundle as authored, handed to a validator before it is
-// compiled and activated. It is the source rather than the compiled program,
-// because a governance rule is written about what an author wrote.
+// PolicyDocument is a bundle as authored, handed to a validator once the
+// compiler has accepted it: at validate, at upload before it is stored, and
+// again at activation, against the fleet as it is then. A source the compiler
+// refuses reaches no validator. It is the source rather than the compiled
+// program, because a governance rule is written about what an author wrote.
 type PolicyDocument struct {
 	// Ref identifies the bundle.
 	Ref PolicyBundleRef
@@ -29,14 +34,17 @@ type PolicyDocument struct {
 	Source []byte
 	// ContentType is the media type of Source.
 	ContentType string
-	// AuthorID is the subject proposing the bundle.
+	// AuthorID is the subject asking for this judgement: who validates or
+	// uploads it, and at activation who activates it. It is empty for an API
+	// token, which is a credential and no subject.
 	AuthorID string
-	// ProposedAt is when they proposed it.
+	// ProposedAt is when this judgement was asked for: each call's own time.
 	ProposedAt time.Time
-	// ActiveVersion is the version currently serving, empty for a
-	// deployment's first bundle. A validator comparing proposed against
-	// active — "this removes the rule that required approval for production"
-	// — needs to know what it is replacing.
+	// ActiveVersion is the version serving when the validator is asked —
+	// at activation, the one this act would replace — and empty while the
+	// tenant has none. A validator comparing proposed against active — "this
+	// removes the rule that required approval for production" — needs to
+	// know what it is replacing.
 	ActiveVersion string
 }
 
@@ -47,7 +55,9 @@ type PolicyDocument struct {
 // north-bound lifecycle (0019) treats every finding alike, whoever produced it:
 // advice is shown, a warning is shown and must be ACCEPTED by the author — by
 // the finding's id, recorded on the activation's audit record — and a blocking
-// finding stops activation outright.
+// finding stops activation outright. A value outside the three is the
+// validator's error, answered as an outage like any other: never read as
+// advice, which would let a governance rule pass silently.
 type FindingSeverity int
 
 const (
@@ -109,17 +119,20 @@ func (f Finding) Blocking() bool { return f.Severity == FindingBlocking }
 // sit beside the compiler rather than inside it.
 //
 // Validators form a chain, and every registered validator runs on every
-// proposed bundle: a chain that stops at the first blocking finding tells an
-// author one problem at a time, and they deserve the whole list. Any blocking
-// finding stops activation, whoever produced it.
+// bundle that compiles, at validate, upload and activation: a chain that stops
+// at the first blocking finding tells an author one problem at a time, and
+// they deserve the whole list. Any blocking finding stops activation, whoever
+// produced it.
 //
-// When no implementation is registered, the policy compiler's own checks are
-// the whole of validation, and they always run. Those checks are not a
-// formality: the input and output vocabularies are closed, so an unreachable
-// rule, a contradiction, or a reference to something that does not exist is a
-// compile error rather than a runtime surprise (M3). A validator adds rules
-// about who may change what; it never becomes the only thing standing between
-// a bad bundle and the fleet.
+// When no implementation is registered, the policy compiler's checks and
+// Control's own publish-time checks (what the fleet can serve, interpreters in
+// an allow-list, cache hints, the algorithm floor and bans) are the whole of
+// validation, and they always run. Those checks are not a formality: the input
+// and output vocabularies are closed, so an unreachable rule, a contradiction,
+// or a reference to something that does not exist is a compile error rather
+// than a runtime surprise (M3). A validator adds rules about who may change
+// what; it never becomes the only thing standing between a bad bundle and the
+// fleet.
 //
 // Validate must be pure with respect to the bundle: it may read Control's state
 // through whatever the implementation was constructed with, but it must not

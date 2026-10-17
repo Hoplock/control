@@ -602,6 +602,12 @@ func TestFindingIDsAreTheSameOnEveryRun(t *testing.T) {
 	codes := map[string]bool{}
 	for _, f := range first {
 		codes[f.Code] = true
+		// Control's checks never block (M17): what is wrong whatever the
+		// fleet runs is the compiler's, and the rest is a fact that may
+		// change.
+		if f.Severity == SeverityBlocking {
+			t.Errorf("Control's own check blocked: %+v", f)
+		}
 	}
 	if len(codes) < 9 {
 		t.Fatalf("the fixture produces %d codes (%v), want most of them", len(codes), codes)

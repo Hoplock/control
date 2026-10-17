@@ -33,8 +33,9 @@ type Diff struct {
 	// Moved are the rules present in both whose relative order changed,
 	// which changes which of them answers a question both match.
 	Moved []string `json:"moved"`
-	// Document names the top-level declarations that differ: `labels`,
-	// `groups`, `scopes`, `algorithm_bans`, `timezone`, `description`.
+	// Document names the top-level declarations that differ: `tenant`,
+	// `description`, `timezone`, `labels`, `groups`, `scopes`,
+	// `algorithm_bans`.
 	Document []string `json:"document"`
 	// Text is a unified diff of the sources. TextOmitted reports that the
 	// two were too far apart to render one within this server's bound, and

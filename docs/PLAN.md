@@ -1332,8 +1332,8 @@ for nothing.
   database credential, and its output is one tab-separated record per line (or
   `-json`), with exit `0` for success, `1` for a refusal the server answered —
   invalid, unaccepted warnings, a flip under `-fail-on-flip` — and `2` for a
-  usage or transport error, so a pipeline can tell "the policy is wrong" from
-  "the server is unreachable".
+  usage or transport error or an outage (`5xx`), so a pipeline can tell "the
+  policy is wrong" from "the server is unreachable".
 - **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
 - **`internal/access`** — grants: create, read and revoke them, and the requests
   a registered approval workflow decides (M10) — an administrator's, and a
@@ -2347,10 +2347,14 @@ are among them before it evaluates:
 
 A bundle has three states and one pointer. **Uploaded** is a stored, numbered,
 immutable version with the digest of its source (`sha256:<hex>`); an identical
-source is the version already stored, never a duplicate. **Active** is the one
-version the tenant's decisions are taken under, and activating any stored
-version — newer or older — moves the pointer in one transaction; activating an
-older one is a **rollback**, reported as such and needing nothing else.
+source is the version already stored, never a duplicate, found by its digest.
+**Active** is the one version the tenant's decisions are taken under, and
+activating any stored version — newer or older — moves the pointer in one
+transaction; activating an older one is a **rollback**, reported as such and
+needing nothing else. Uploads and activations are serialised per tenant (a
+transaction-scoped lock), so concurrent acts never mint a duplicate or record
+the wrong `before`, and an activation that finds its version already active
+changes and records nothing.
 **Superseded** is every other version: kept, diffable, simulable, activatable.
 No version is edited or deleted. `apply` is upload-then-activate in one call,
 which is GitOps: a pipeline holding an API token with `policy:publish` applies
@@ -2360,21 +2364,29 @@ the file it reviewed.
 is *valid* is the compiler's (§5.3), and its rejections come back verbatim —
 the rule, the line, a stable code and what to do instead (`422
 policy_invalid`). Whether it is *advisable* is the publish-time report's, whose
-findings use `ext.PolicyValidator`'s severities, with Control's checks first
-and a registered validator's after:
+findings use `ext.PolicyValidator`'s severities: Control's checks run first and
+always, then every registered validator's, and the report lists them all by
+severity and then id. A validator runs only on a source that compiles; its
+error, or a severity outside the three, is an outage:
 
 - **advice** is shown and stops nothing. The absence of proof is advice: a
   target whose capability record is stale, undated or absent, a tenant whose
-  proxies have declared nothing, a declaration that cannot judge a ban.
+  proxies have declared nothing, a declaration that cannot judge a ban — or no
+  build having declared what it offers, so a ban's spelling cannot be judged —
+  and a read of the stored unmet records that stopped at its limit.
 - **warning** stops activation **until the author accepts it by id** (`409
   findings_not_accepted`, listing each id). Acceptance is the override: never a
   silent pass, never a refusal, and the activation's audit record names every
   id accepted with it. A rung no declaring proxy provides, a fresh record
   saying a target cannot take a rung, an interpreter in a restricted
-  allow-list, a cache hint that outlives the condition it was gated on, a floor
-  level a build did not declare, an axis a ban empties on a build, a ban
-  nothing offers, a target observed below the floor or under a stored
-  `target.algorithm_policy_unmet`.
+  allow-list, a cache hint that outlives the condition it was gated on, a cache
+  hint on a rule gated by a source network (a proxy reuses a cached decision by
+  identity, target, port, method and hop trail, never by client address, so no
+  duration bounds it), a floor level a build did not declare, an axis a ban
+  empties on a build, a ban no declaring build offers, a target observed below
+  the floor, and a stored `target.algorithm_policy_unmet` for a target the
+  route reaches — under the route's profile, which every route has, or the
+  floor or ban it names.
 - **blocking** stops activation outright (`422 policy_blocked`), and only a
   registered validator produces it: what is wrong whatever the fleet runs is a
   compiler error, and everything else is a fact about a fleet that may change.
@@ -2390,16 +2402,23 @@ every per-build judgement rather than counted as unable.
 stored version, or the active one (`POST …/policy/simulate`):
 
 - **Dry-run** evaluates synthetic inputs and answers each with its effect,
-  rule, line, matched terms and obligations.
+  rule, line, matched terms and obligations. A case that would ask the engine
+  a different question than the one written is refused: no `now`, a source
+  address that does not parse, a grant with no expiry, an origin or an
+  authentication method outside the vocabulary. External context enters as a
+  grant of origin `external`, the form the engine reads it in.
 - **Replay** re-evaluates the decisions recorded in a window — at most
   `10000`, and says when it stopped short — against the candidate, and
   answers how many it replayed, how many were unchanged, and every flip grouped
   by direction and by old and new rule. It is **pure and total**: no clock, no
   store read beyond the window, no provider called, every input taken from the
   stored record — including the external-context windows it counted, so a
-  replay never probes. A record that cannot be replayed is listed with its
-  reason rather than skipped. A relabel can be simulated alone, by overriding
-  named targets' labels under the active bundle.
+  replay never probes. Its only access to state is the bounded window of
+  records it is handed. A record that cannot be replayed faithfully — inputs or
+  an explanation that do not decode, no recorded instant, a recorded address or
+  grant instant that does not parse — is listed with its reason, never skipped
+  and never replayed as a different question. A relabel can be simulated
+  alone, by overriding named targets' labels under the active bundle.
 
 **Explain** resolves a decision id, or a session id to every decision taken for
 it, into its story (`GET …/decisions/{id}`, `…/sessions/{id}/decisions`): the
@@ -2408,7 +2427,10 @@ the active one, the obligations, the grant that decided and its external
 window, the inputs, the explanation and the snapshot exactly as stored, and why
 it was unserved if it was. A record that cannot tell its own story is an
 integrity fault, answered `500 decision_unexplainable` and logged at error —
-never a partial story.
+never a partial story: inputs or an explanation that do not decode, no
+recorded instant, no effect or one this server never writes, an allow the
+engine did not make or that carries no snapshot, an unserved record that does
+not say why, and a grant the explanation names that the inputs do not hold.
 
 ---
 
