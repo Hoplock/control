@@ -399,6 +399,9 @@ func TestAHostThatCannotStartIsRefusedAtOnce(t *testing.T) {
 		"a pattern naming the tenant":     func(o *server.Options) { o.Routes[0].Pattern = "{tenant}/licence" },
 		"a route on Control's own path":   func(o *server.Options) { o.Routes[0].Pattern = "grants" },
 		"a mux conflict":                  func(o *server.Options) { o.Routes[0].Pattern = "grants/{id}" },
+		"a path under Control's wildcard": func(o *server.Options) { o.Routes[0].Pattern = "targets/special" },
+		"a 0019 route's own path":         func(o *server.Options) { o.Routes[0].Pattern = "audit/retention" },
+		"a 0019 error code":               func(o *server.Options) { o.ErrorCodes = []string{"findings_not_accepted"} },
 		"an error code Control owns":      func(o *server.Options) { o.ErrorCodes = []string{"forbidden"} },
 		"an error code not in snake_case": func(o *server.Options) { o.ErrorCodes = []string{"ScheduleExists"} },
 	} {
