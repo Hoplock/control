@@ -304,3 +304,46 @@ func TestTheRequesterRoleCanOnlyAsk(t *testing.T) {
 		t.Errorf("AllRoles = %v, want requester between integration and auditor", identity.AllRoles)
 	}
 }
+
+// The role table, held whole. Every grant is a decision about least privilege,
+// so changing one changes this table in the same commit, and the reasons the
+// plan gives (PLAN §6) are what the change must answer to. The rules above
+// catch a role reading too little or the auditor writing; only this catches a
+// write granted to one more role than intended (0023).
+func TestTheRoleTableIsHeldWhole(t *testing.T) {
+	read := []string{
+		"access-context:read", "audit:read", "ca:read", "decision:read", "extension:read",
+		"fleet:read", "grant:read", "identity:read", "license:read", "policy:read",
+	}
+	with := func(extra ...string) []string {
+		out := append(slices.Clone(read), extra...)
+		slices.Sort(out)
+		return out
+	}
+	var every []string
+	for _, p := range identity.AllPermissions {
+		every = append(every, string(p))
+	}
+	slices.Sort(every)
+	want := map[identity.Role][]string{
+		identity.RoleAdmin:        every,
+		identity.RoleIntegration:  {"access-context:push"},
+		identity.RoleRequester:    {"grant:request"},
+		identity.RoleAuditor:      with(),
+		identity.RolePolicyAuthor: with("policy:publish", "policy:write", "target:write"),
+		identity.RoleGrantAdmin:   with("grant:approve", "grant:write", "session:revoke"),
+		identity.RoleFleetAdmin:   with("fleet:write", "target:write"),
+	}
+	for _, role := range identity.AllRoles {
+		var got []string
+		for _, p := range role.Permissions() {
+			got = append(got, string(p))
+		}
+		if !slices.Equal(got, want[role]) {
+			t.Errorf("%s holds\n  %v\nwant\n  %v", role, got, want[role])
+		}
+	}
+	if len(want) != len(identity.AllRoles) {
+		t.Errorf("%d roles defined, %d held here", len(identity.AllRoles), len(want))
+	}
+}

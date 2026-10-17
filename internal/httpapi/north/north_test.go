@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -750,13 +752,19 @@ func TestNoContractRouteIsReachableOnThisListener(t *testing.T) {
 	token := f.token(t, "tenant-a", map[store.Tenant]identity.RoleSet{
 		"tenant-a": {identity.RoleAdmin},
 	})
-	for _, path := range []string{
-		"/v1/authorize", "/v1/auth/cert", "/v1/auth/password", "/v1/logs/batch",
-		"/v1/hostkeys/report", "/v1/uids/lease",
-	} {
-		resp := f.do(t, "POST", path, token, bytes.NewReader([]byte(`{}`)))
-		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("%s answered %d on the north-bound listener", path, resp.StatusCode)
+	// Every path the vendored contract defines, read from the document
+	// rather than listed here, so a path a later contract adds is probed on
+	// the day it is vendored (0023).
+	paths := contractPaths(t)
+	if len(paths) < 13 {
+		t.Fatalf("read %d paths from the contract, so this probed little", len(paths))
+	}
+	for _, path := range paths {
+		for _, method := range []string{"GET", "POST", "PUT"} {
+			resp := f.do(t, method, samplePath(path, "tenant-a"), token, bytes.NewReader([]byte(`{}`)))
+			if resp.StatusCode != http.StatusNotFound {
+				t.Errorf("%s %s answered %d on the north-bound listener", method, path, resp.StatusCode)
+			}
 		}
 	}
 	for _, route := range f.server.Routes() {
@@ -764,6 +772,23 @@ func TestNoContractRouteIsReachableOnThisListener(t *testing.T) {
 			t.Errorf("%s is registered on the north-bound listener", route)
 		}
 	}
+}
+
+// contractPaths reads the vendored contract's paths: the keys of its `paths`
+// map, indented two spaces.
+func contractPaths(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "contract", "control.yaml"))
+	if err != nil {
+		t.Fatalf("read the contract: %v", err)
+	}
+	var paths []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "  /") && strings.HasSuffix(line, ":") {
+			paths = append(paths, strings.TrimSuffix(strings.TrimSpace(line), ":"))
+		}
+	}
+	return paths
 }
 
 // ---------------------------------------------------------------------------
