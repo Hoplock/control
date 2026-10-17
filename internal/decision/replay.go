@@ -6,6 +6,7 @@ package decision
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/netip"
@@ -42,11 +43,17 @@ import (
 
 // ReplayInput rebuilds the engine input a decision record was evaluated with.
 // A record whose inputs do not decode is an error: replay is total over the
-// records it can read and says which it could not.
+// records it can read and says which it could not. So is one that decodes into
+// a DIFFERENT question — no recorded instant, a source address or a grant
+// window that does not parse — because a zero value in its place is not what
+// was asked: a grant whose expiry does not parse reads as expired.
 func ReplayInput(raw json.RawMessage) (model.Input, error) {
 	var in recordedInputs
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return model.Input{}, fmt.Errorf("decision: the recorded inputs do not decode: %w", err)
+	}
+	if in.Now.IsZero() {
+		return model.Input{}, errors.New("decision: the recorded inputs carry no instant, and time is an input")
 	}
 	out := model.Input{
 		Now: in.Now,
@@ -67,9 +74,11 @@ func ReplayInput(raw json.RawMessage) (model.Input, error) {
 		},
 	}
 	if in.Context.SourceAddr != "" {
-		if addr, err := netip.ParseAddr(in.Context.SourceAddr); err == nil {
-			out.Context.SourceAddr = addr
+		addr, err := netip.ParseAddr(in.Context.SourceAddr)
+		if err != nil {
+			return model.Input{}, fmt.Errorf("decision: the recorded source address %q does not parse", in.Context.SourceAddr)
 		}
+		out.Context.SourceAddr = addr
 	}
 	for _, g := range in.Grants {
 		grant := model.Grant{
@@ -80,36 +89,49 @@ func ReplayInput(raw json.RawMessage) (model.Input, error) {
 				Name: g.Scope.Name, Targets: g.Scope.Targets,
 				Labels: g.Scope.Labels, Zones: g.Scope.Zones,
 			},
-			NotBefore:  parseRecordedTime(g.NotBefore),
-			ExpiresAt:  parseRecordedTime(g.ExpiresAt),
 			Approvers:  g.Approvers,
 			RequestRef: g.RequestID,
 		}
+		if err := parseRecordedTime(g.ID, "not_before", g.NotBefore, &grant.NotBefore); err != nil {
+			return model.Input{}, err
+		}
+		if err := parseRecordedTime(g.ID, "expires_at", g.ExpiresAt, &grant.ExpiresAt); err != nil {
+			return model.Input{}, err
+		}
 		if g.External.System != "" || g.External.Reference != "" {
-			grant.External = &model.ExternalReference{
-				System: g.External.System, Reference: g.External.Reference,
-				WindowStart: parseRecordedTime(g.External.WindowStart),
-				WindowEnd:   parseRecordedTime(g.External.WindowEnd),
+			ext := &model.ExternalReference{System: g.External.System, Reference: g.External.Reference}
+			if err := parseRecordedTime(g.ID, "external.window_start", g.External.WindowStart, &ext.WindowStart); err != nil {
+				return model.Input{}, err
 			}
+			if err := parseRecordedTime(g.ID, "external.window_end", g.External.WindowEnd, &ext.WindowEnd); err != nil {
+				return model.Input{}, err
+			}
+			grant.External = ext
 		}
 		out.Grants = append(out.Grants, grant)
 	}
 	return out, nil
 }
 
-func parseRecordedTime(s string) time.Time {
+// parseRecordedTime reads one recorded instant. Empty is the zero time, which
+// the record means (an open start, no external end); anything else must parse.
+func parseRecordedTime(grant, field, s string, into *time.Time) error {
 	if s == "" {
-		return time.Time{}
+		return nil
 	}
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {
-		return time.Time{}
+		return fmt.Errorf("decision: grant %s's recorded %s %q does not parse", grant, field, s)
 	}
-	return t
+	*into = t
+	return nil
 }
 
-// recordedEffect is the engine's effect a record carries: an unserved decision
-// was an allow the fleet could not serve.
+// recordedEffect is the ENGINE's effect a record carries — the explanation's,
+// never the record's `effect` column, which also says whether the fleet could
+// serve it. So an allow that went unserved compares as the allow it was, and
+// one left undetermined by an unanswered probe (M16) compares as what the
+// engine answered on the windows it counted.
 func recordedEffect(d store.Decision) (string, string, error) {
 	var expl recordedExplanation
 	if err := json.Unmarshal(d.Explanation, &expl); err != nil || expl.Effect == "" {
@@ -179,16 +201,25 @@ type ReplayReport struct {
 	Unreplayable []Unreplayable `json:"unreplayable,omitempty"`
 }
 
+// RecordWindow is everything replay may read: the decisions recorded in one
+// window, bounded. It is the whole of replay's access to state, so that what
+// "no store read beyond the window" promises is a property of the signature —
+// a replay cannot read a subject, a target, a grant or the fleet, because it
+// is handed nothing that can. `store.Store.Decisions()` is one.
+type RecordWindow interface {
+	ListRange(ctx context.Context, tenant store.Tenant, from, to time.Time, limit int) ([]store.Decision, bool, error)
+}
+
 // Replay evaluates a candidate program over the decisions recorded in a window
 // and reports every one whose effect it changes.
-func Replay(ctx context.Context, st *store.Store, tenant store.Tenant, candidate *compile.Program, q ReplayQuery) (ReplayReport, error) {
-	records, truncated, err := st.Decisions().ListRange(ctx, tenant, q.From, q.To, q.Limit)
+func Replay(ctx context.Context, records RecordWindow, tenant store.Tenant, candidate *compile.Program, q ReplayQuery) (ReplayReport, error) {
+	window, truncated, err := records.ListRange(ctx, tenant, q.From, q.To, q.Limit)
 	if err != nil {
 		return ReplayReport{}, err
 	}
 	rep := ReplayReport{From: q.From, To: q.To, Truncated: truncated}
 	var flips []Flip
-	for _, d := range records {
+	for _, d := range window {
 		was, wasRule, err := recordedEffect(d)
 		if err != nil {
 			rep.Unreplayable = append(rep.Unreplayable, Unreplayable{DecisionID: d.ID, Reason: err.Error()})
@@ -205,9 +236,6 @@ func Replay(ctx context.Context, st *store.Store, tenant store.Tenant, candidate
 		_, expl := eval.Evaluate(candidate, in)
 		rep.Replayed++
 		now := string(expl.Effect)
-		if was == EffectUnserved {
-			was = string(model.EffectAllow)
-		}
 		if now == was {
 			rep.Unchanged++
 			continue

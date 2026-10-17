@@ -202,7 +202,7 @@ func (s *Service) Simulate(ctx context.Context, tenant store.Tenant, req Simulat
 		if limit <= 0 || limit > MaxReplayRecords {
 			limit = MaxReplayRecords
 		}
-		rep, err := decision.Replay(ctx, s.st, tenant, cand.Program, decision.ReplayQuery{
+		rep, err := decision.Replay(ctx, s.st.Decisions(), tenant, cand.Program, decision.ReplayQuery{
 			From: w.From, To: w.To, Limit: limit, Labels: req.Labels,
 		})
 		if err != nil {
