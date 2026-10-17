@@ -4,6 +4,14 @@
 package decision_test
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +20,7 @@ import (
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/policy/compile"
 	"github.com/hoplock/control/internal/policy/model"
+	"github.com/hoplock/control/internal/store"
 )
 
 // candidateRules are inserted ahead of the fixture's own: one closes a target
@@ -88,7 +97,7 @@ func TestReplayReportsTheExactSetOfFlips(t *testing.T) {
 	forbidden := h.recordSession(t, "forbidden.example.com", "sess-forbidden")
 
 	candidate := compileSource(t, strings.Replace(testBundle, "rules:\n", "rules:\n"+candidateRules, 1))
-	rep, err := decision.Replay(t.Context(), h.store, testTenant, candidate, decision.ReplayQuery{
+	rep, err := decision.Replay(t.Context(), h.store.Decisions(), testTenant, candidate, decision.ReplayQuery{
 		From: h.clock.Add(-time.Minute), To: h.clock.Add(time.Minute),
 	})
 	if err != nil {
@@ -143,7 +152,7 @@ func TestReplayingTheActivePolicyFlipsNothing(t *testing.T) {
 	h.recordSession(t, "forbidden.example.com", "sess-b")
 
 	// A week later, nothing about the recorded questions has moved.
-	rep, err := decision.Replay(t.Context(), h.store, testTenant, compileSource(t, testBundle), decision.ReplayQuery{
+	rep, err := decision.Replay(t.Context(), h.store.Decisions(), testTenant, compileSource(t, testBundle), decision.ReplayQuery{
 		From: h.clock.Add(-time.Hour), To: h.clock.Add(7 * 24 * time.Hour),
 	})
 	if err != nil {
@@ -163,7 +172,7 @@ func TestReplayBoundsItsWindowAndSaysWhenItWasCut(t *testing.T) {
 	h.recordSession(t, "cached.example.com", "sess-b")
 
 	prog := compileSource(t, testBundle)
-	rep, err := decision.Replay(t.Context(), h.store, testTenant, prog, decision.ReplayQuery{
+	rep, err := decision.Replay(t.Context(), h.store.Decisions(), testTenant, prog, decision.ReplayQuery{
 		From: h.clock.Add(-time.Minute), To: h.clock.Add(time.Minute), Limit: 1,
 	})
 	if err != nil {
@@ -173,7 +182,7 @@ func TestReplayBoundsItsWindowAndSaysWhenItWasCut(t *testing.T) {
 		t.Errorf("limit 1 over two records: replayed %d, truncated %v; want 1, true", rep.Replayed, rep.Truncated)
 	}
 
-	rep, err = decision.Replay(t.Context(), h.store, testTenant, prog, decision.ReplayQuery{
+	rep, err = decision.Replay(t.Context(), h.store.Decisions(), testTenant, prog, decision.ReplayQuery{
 		From: h.clock.Add(time.Second), To: h.clock.Add(time.Hour),
 	})
 	if err != nil {
@@ -201,7 +210,7 @@ func TestARelabelIsSimulatedByNamingTheNewLabels(t *testing.T) {
 
 `
 	prog := compileSource(t, strings.Replace(testBundle, "rules:\n", "rules:\n"+prodOnly, 1))
-	rep, err := decision.Replay(t.Context(), h.store, testTenant, prog, decision.ReplayQuery{
+	rep, err := decision.Replay(t.Context(), h.store.Decisions(), testTenant, prog, decision.ReplayQuery{
 		From: h.clock.Add(-time.Minute), To: h.clock.Add(time.Minute),
 		Labels: decision.LabelOverride{"edge-host.example.com": {"env": "dev"}},
 	})
@@ -231,5 +240,169 @@ func TestADryRunAnswersSyntheticQuestions(t *testing.T) {
 		if got[i].Effect != w.effect || got[i].Rule != w.rule {
 			t.Errorf("%s: %s by %q, want %s by %q", got[i].Name, got[i].Effect, got[i].Rule, w.effect, w.rule)
 		}
+	}
+}
+
+// forge stores a copy of a real record under a new id, its inputs or its
+// explanation rewritten, so replay can be shown a record it cannot read.
+func (h *harness) forge(t *testing.T, from, id string, inputs func(map[string]any) any, explanation func(map[string]any) any) {
+	t.Helper()
+	rec, err := h.store.Decisions().Get(t.Context(), testTenant, from)
+	if err != nil {
+		t.Fatalf("get %s: %v", from, err)
+	}
+	rewrite := func(raw []byte, f func(map[string]any) any) []byte {
+		if f == nil {
+			return raw
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		out, err := json.Marshal(f(doc))
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return out
+	}
+	rec.ID = id
+	rec.Inputs = rewrite(rec.Inputs, inputs)
+	rec.Explanation = rewrite(rec.Explanation, explanation)
+	if err := h.store.Decisions().Insert(t.Context(), testTenant, rec); err != nil {
+		t.Fatalf("insert %s: %v", id, err)
+	}
+}
+
+// A record replay cannot read faithfully is LISTED, with why, and never
+// replayed as a different question: a source address or a grant window that
+// does not parse, an instant that was not recorded, inputs or an explanation
+// that do not decode. Replaying any of them would answer something nobody
+// asked — a grant whose expiry did not parse reads as expired, and the
+// decision "flips".
+func TestARecordReplayCannotReadIsListedNeverReplayed(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	good := h.recordSession(t, "edge-host.example.com", "sess-good")
+	context := func(key string, v any) func(map[string]any) any {
+		return func(doc map[string]any) any {
+			doc["context"].(map[string]any)[key] = v
+			return doc
+		}
+	}
+	h.forge(t, good, "dec-addr", context("source_addr", "not-an-address"), nil)
+	h.forge(t, good, "dec-grant", func(doc map[string]any) any {
+		doc["grants"] = []any{map[string]any{"id": "g-1", "scope": map[string]any{"name": "ops"}, "expires_at": "yesterday"}}
+		return doc
+	}, nil)
+	h.forge(t, good, "dec-window", func(doc map[string]any) any {
+		doc["grants"] = []any{map[string]any{"id": "g-2", "scope": map[string]any{"name": "ops"},
+			"expires_at": h.clock.Add(time.Hour).Format(time.RFC3339),
+			"external":   map[string]any{"system": "scanner", "reference": "scan-1", "window_end": "soon"}}}
+		return doc
+	}, nil)
+	h.forge(t, good, "dec-instant", func(doc map[string]any) any { delete(doc, "now"); return doc }, nil)
+	h.forge(t, good, "dec-inputs", func(map[string]any) any { return []any{} }, nil)
+	h.forge(t, good, "dec-explanation", nil, func(map[string]any) any { return map[string]any{} })
+
+	rep, err := decision.Replay(t.Context(), h.store.Decisions(), testTenant, compileSource(t, testBundle), decision.ReplayQuery{
+		From: h.clock.Add(-time.Minute), To: h.clock.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	var listed []string
+	for _, u := range rep.Unreplayable {
+		if u.Reason == "" {
+			t.Errorf("%s is listed with no reason", u.DecisionID)
+		}
+		listed = append(listed, u.DecisionID)
+	}
+	slices.Sort(listed)
+	want := []string{"dec-addr", "dec-explanation", "dec-grant", "dec-inputs", "dec-instant", "dec-window"}
+	if !slices.Equal(listed, want) {
+		t.Errorf("unreplayable = %v, want %v", listed, want)
+	}
+	if rep.Replayed != 1 || rep.Unchanged != 1 {
+		t.Errorf("replayed %d, unchanged %d; want the one readable record, unchanged", rep.Replayed, rep.Unchanged)
+	}
+}
+
+// window is a RecordWindow that counts what replay asked of it.
+type window struct {
+	records []store.Decision
+	calls   []string
+}
+
+func (w *window) ListRange(_ context.Context, tenant store.Tenant, from, to time.Time, limit int) ([]store.Decision, bool, error) {
+	w.calls = append(w.calls, fmt.Sprintf("%s %s %s %d", tenant, from.Format(time.RFC3339), to.Format(time.RFC3339), limit))
+	return w.records, false, nil
+}
+
+// REPLAY IS PURE. Its only access to state is the record window it is handed
+// (decision.RecordWindow, one method), so a store read beyond the window
+// cannot be added without changing the signature this test calls; it asks
+// that window once, for exactly the window and the limit; and no file on its
+// path reads a clock. An answer computed twice, an hour of wall clock apart,
+// is the same answer.
+func TestReplayIsPure(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	id := h.recordSession(t, "edge-host.example.com", "sess-pure")
+	rec, err := h.store.Decisions().Get(t.Context(), testTenant, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if n := reflect.TypeFor[decision.RecordWindow]().NumMethod(); n != 1 {
+		t.Fatalf("a replay may read through %d methods; it may read through ListRange alone", n)
+	}
+
+	w := &window{records: []store.Decision{rec}}
+	q := decision.ReplayQuery{From: h.clock.Add(-time.Minute), To: h.clock.Add(time.Minute), Limit: 7}
+	prog := compileSource(t, testBundle)
+	first, err := decision.Replay(t.Context(), w, testTenant, prog, q)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	again, err := decision.Replay(t.Context(), w, testTenant, prog, q)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	wantCall := fmt.Sprintf("%s %s %s 7", testTenant, q.From.Format(time.RFC3339), q.To.Format(time.RFC3339))
+	if len(w.calls) != 2 || w.calls[0] != wantCall || w.calls[1] != wantCall {
+		t.Errorf("replay asked its window %v, want %q once per replay", w.calls, wantCall)
+	}
+	if first.Replayed != 1 || !reflect.DeepEqual(first, again) {
+		t.Errorf("two replays of one window disagree: %+v, %+v", first, again)
+	}
+
+	// No clock on the path: replay itself, and the engine it evaluates with.
+	clocks := []string{"Now", "Since", "Until", "After", "Tick", "NewTimer", "NewTicker", "AfterFunc"}
+	files := []string{"replay.go"}
+	for _, dir := range []string{"../policy/eval", "../policy/compile", "../policy/model"} {
+		matches, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range matches {
+			if !strings.HasSuffix(m, "_test.go") {
+				files = append(files, m)
+			}
+		}
+	}
+	for _, file := range files {
+		f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", file, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "time" && slices.Contains(clocks, sel.Sel.Name) {
+				t.Errorf("%s reads a clock: time.%s", file, sel.Sel.Name)
+			}
+			return true
+		})
 	}
 }

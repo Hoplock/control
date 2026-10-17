@@ -75,6 +75,12 @@ const (
 	// key does not carry, on a route no grant and no duration bounds.
 	// Warning.
 	CodeCacheHintOutlives = "authoring.cache_hint_outlives_condition"
+	// CodeCacheHintSpansSources: a cache hint on a rule gated by
+	// `context.source_cidrs`. A proxy keys a cached decision on the identity,
+	// target, port, method and hop trail and never on the client address, so
+	// the hint reuses the answer from any address; no duration and no grant
+	// bounds that. Warning.
+	CodeCacheHintSpansSources = "authoring.cache_hint_spans_sources"
 	// CodeFloorUndeclared: a proxy's latest declaration lacks the route's
 	// floor level, so authorize refuses the route there. Warning.
 	CodeFloorUndeclared = "algorithm.floor_undeclared"
@@ -98,15 +104,19 @@ const (
 	// target the route reaches, under the policy the route names. Warning —
 	// the record is a past observation, and the device may have changed.
 	CodePolicyUnmet = "algorithm.policy_unmet"
+	// CodePolicyUnmetTruncated: the read of stored unmet records stopped at
+	// its limit with more in the window, so the unmet-policy warnings above
+	// may miss a target. Advice — the absence of a warning is not proof.
+	CodePolicyUnmetTruncated = "algorithm.policy_unmet_truncated"
 )
 
 // ControlCodes is every finding code Control's own checks produce, so a test
 // can hold the set and a client can enumerate it.
 var ControlCodes = []string{
 	CodeProxiesUnreported, CodeNoProxyProvides, CodeTargetCannotTake, CodeTargetUnproven,
-	CodeInterpreter, CodeCacheHintOutlives,
+	CodeInterpreter, CodeCacheHintOutlives, CodeCacheHintSpansSources,
 	CodeFloorUndeclared, CodeAxisEmptied, CodeAlgorithmUnknown, CodeBanUnmatched,
-	CodeTargetBelowFloor, CodeTargetNotReported, CodePolicyUnmet,
+	CodeTargetBelowFloor, CodeTargetNotReported, CodePolicyUnmet, CodePolicyUnmetTruncated,
 }
 
 // Finding is one thing a check has to say about a bundle.
@@ -154,8 +164,9 @@ type Report struct {
 	// carries and the uploader is told.
 	Digest     string      `json:"digest"`
 	Rejections []Rejection `json:"rejections"`
-	// Findings are every check's, Control's first, sorted by severity
-	// (blocking first) and then by id.
+	// Findings are every check's — Control's run first and always, then
+	// every registered validator's — listed by severity (blocking first)
+	// and then by id, whoever produced them.
 	Findings []Finding `json:"findings"`
 }
 

@@ -31,12 +31,21 @@ type Facts struct {
 	Declarations []fleet.DeclaredAlgorithms
 	// Kex are the stored key-exchange observations.
 	Kex []fleet.KexObservation
-	// Unmet are the stored `target.algorithm_policy_unmet` records.
-	Unmet []audit.UnmetAlgorithmPolicy
+	// Unmet are the stored `target.algorithm_policy_unmet` records, newest
+	// first. UnmetTruncated is set when the read stopped at its limit with
+	// more in the window, so the records below are not all of them.
+	Unmet          []audit.UnmetAlgorithmPolicy
+	UnmetTruncated *UnmetRead
 	// Now and TTL judge an observation's freshness, in the decision path's
 	// own window.
 	Now time.Time
 	TTL time.Duration
+}
+
+// UnmetRead is how far an unmet-policy read reached when it was cut short.
+type UnmetRead struct {
+	Limit  int
+	Window time.Duration
 }
 
 // DefaultInterpreters is the starting list of executables that hand back a
@@ -272,10 +281,33 @@ func interpreterFindings(rule *compile.Rule, route *model.Route, list []string) 
 // Every other hint is self-limiting — a snapshot's time bounds are absolute
 // instants, and a grant-gated rule always carries the grant's deadline — and a
 // warning on every cached rule is one authors learn to click through.
+//
+// A source network is the one term nothing bounds. A proxy keys a cached
+// decision on the identity, target, port, method and hop trail (the contract's
+// CacheHint) and never on the client address, so a hinted rule gated on
+// `context.source_cidrs` admits the same identity from ANY address for up to
+// the hint's lifetime. A duration or a grant bounds a session, not an
+// admission the rule would never have made, so that one warns whatever else
+// the route says.
 func cacheHintFindings(rule *compile.Rule, authored model.Rule, route *model.Route) []Finding {
 	hint := rule.Cache()
-	if hint == nil || route.MaxSessionDuration != 0 || authored.Match.Grant.Constrained() {
+	if hint == nil {
 		return nil
+	}
+	var out []Finding
+	if c := authored.Match.Context; c != nil && len(c.SourceCIDRs) > 0 {
+		out = append(out, Finding{
+			ID: findingID(CodeCacheHintSpansSources, rule.ID()), Severity: SeverityWarning,
+			Code: CodeCacheHintSpansSources, Source: SourceControl, Rule: rule.ID(), Line: rule.Line(),
+			Parameters: map[string]any{"rule": rule.ID(), "term": "context.source_cidrs", "ttl_seconds": hint.TTLSeconds},
+			Message: fmt.Sprintf("rule %q matches on context.source_cidrs, and a proxy reuses a cached decision "+
+				"by identity, target, port, method and hop trail, never by the client address: for up to %ds "+
+				"the same identity is admitted from any address — drop the cache hint, or accept this finding "+
+				"to publish the trade-off knowingly", rule.ID(), hint.TTLSeconds),
+		})
+	}
+	if route.MaxSessionDuration != 0 || authored.Match.Grant.Constrained() {
+		return out
 	}
 	var terms []string
 	if c := authored.Match.Context; c != nil {
@@ -290,9 +322,9 @@ func cacheHintFindings(rule *compile.Rule, authored model.Rule, route *model.Rou
 		terms = append(terms, "device")
 	}
 	if len(terms) == 0 {
-		return nil
+		return out
 	}
-	return []Finding{{
+	return append(out, Finding{
 		ID: findingID(CodeCacheHintOutlives, rule.ID()), Severity: SeverityWarning,
 		Code: CodeCacheHintOutlives, Source: SourceControl, Rule: rule.ID(), Line: rule.Line(),
 		Parameters: map[string]any{"rule": rule.ID(), "terms": terms, "ttl_seconds": hint.TTLSeconds},
@@ -300,7 +332,7 @@ func cacheHintFindings(rule *compile.Rule, authored model.Rule, route *model.Rou
 			"max_session_duration: a decision is reused for up to %ds after the condition stopped holding, "+
 			"and a session admitted then runs until somebody closes it — add a max_session_duration, or drop "+
 			"the cache hint", rule.ID(), strings.Join(terms, " and "), hint.TTLSeconds),
-	}}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -356,20 +388,29 @@ func algorithmFindings(prog *compile.Program, facts Facts) []Finding {
 			continue
 		}
 		policy := algorithmPolicyOf(route)
+		id := rule.ID()
+		// THE STORED EVIDENCE is about the route's profile first (#66), so it
+		// is read for every allow route: `default` is a profile, and it is the
+		// one that stopped reaching SHA-1-only devices. A floor or a ban only
+		// adds the records that failed one.
+		out = append(out, unmetFindings(rule, policy, reached[id], facts.Unmet)...)
 		if !policy.Constrains() {
 			continue
 		}
-		id := rule.ID()
 
 		// PER BUILD, from each proxy's own latest declaration (#72). A route
-		// that names no profile is judged from `default`'s entry.
-		if len(facts.Declarations) == 0 {
+		// that names no profile is judged from `default`'s entry. Whether a
+		// ban is a typo is judged only against builds that declared what they
+		// offer; when none has, nothing can be judged, which is the absence
+		// of proof and advice (M17), never a warning holding the runbook's ban.
+		judgeable := policy.Bans == nil || slices.ContainsFunc(decls, offers)
+		if len(facts.Declarations) == 0 || !judgeable {
 			out = append(out, Finding{
 				ID: findingID(CodeAlgorithmUnknown, id), Severity: SeverityAdvice, Code: CodeAlgorithmUnknown,
 				Source: SourceControl, Rule: id, Line: rule.Line(),
 				Parameters: map[string]any{"rule": id, "profile": string(policy.ResolvedProfile())},
-				Message: fmt.Sprintf("rule %q names a floor or bans, and no proxy has declared its algorithms "+
-					"yet; it is answered as authored, and each proxy's own check is the backstop", id),
+				Message: fmt.Sprintf("rule %q names a floor or bans, and no proxy has declared the algorithms it "+
+					"offers yet; it is answered as authored, and each proxy's own check is the backstop", id),
 			})
 		}
 		for _, d := range facts.Declarations {
@@ -407,7 +448,7 @@ func algorithmFindings(prog *compile.Program, facts Facts) []Finding {
 				})
 			}
 		}
-		if policy.Bans != nil {
+		if policy.Bans != nil && judgeable {
 			for axis, names := range fleet.UnmatchedBans(policy.Bans, decls) {
 				for _, name := range names {
 					key := axis + ":" + name
@@ -456,7 +497,17 @@ func algorithmFindings(prog *compile.Program, facts Facts) []Finding {
 				})
 			}
 		}
-		out = append(out, unmetFindings(rule, policy, reached[id], facts.Unmet)...)
+	}
+
+	if r := facts.UnmetTruncated; r != nil {
+		out = append(out, Finding{
+			ID: findingID(CodePolicyUnmetTruncated), Severity: SeverityAdvice, Code: CodePolicyUnmetTruncated,
+			Source:     SourceControl,
+			Parameters: map[string]any{"limit": r.Limit, "window_seconds": int64(r.Window / time.Second)},
+			Message: fmt.Sprintf("this report read the newest %d target.algorithm_policy_unmet records of the last %s "+
+				"and there were more, so a target whose records are older than those is missing from the "+
+				"unmet-policy warnings; the audit surface lists one target's records by name", r.Limit, r.Window),
+		})
 	}
 
 	for _, key := range unmatchedOrder {
@@ -472,6 +523,10 @@ func algorithmFindings(prog *compile.Program, facts Facts) []Finding {
 	}
 	return out
 }
+
+// offers reports whether a build declared what it can offer, which is what a
+// ban's spelling is judged against.
+func offers(d *contract.ProxyCapabilities) bool { return d != nil && d.Algorithms != nil }
 
 // freshestKex finds a target's key-exchange observation. Observations are
 // keyed by host and port — the proxy's report carries no platform — so a route

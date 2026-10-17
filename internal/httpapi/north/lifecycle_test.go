@@ -651,17 +651,20 @@ func TestTheEmergencyRunbookIsCallableAndAudited(t *testing.T) {
 	}
 
 	// 1. A ban everywhere: the bundle's own algorithm_bans. No proxy has
-	// declared what it offers, so the name is reported as matching no build
-	// — a warning the author accepts, never a refusal.
+	// declared what it offers, so whether the name is a typo cannot be
+	// judged: that is advice (M17), and the ban publishes at once — the
+	// runbook's first step never waits on an acceptance nothing evidences.
 	banned := strings.Replace(bundleFor(sreRule), "rules:\n",
 		"algorithm_bans:\n  key_exchanges: [diffie-hellman-group14-sha1]\nrules:\n", 1)
 	resp := f.send(t, "POST", api+"/policy/apply", author, map[string]any{"source": banned})
-	mustStatus(t, resp, http.StatusConflict)
-	var accept []string
-	for _, raw := range decodeError(t, resp).Parameters["findings"].([]any) {
-		accept = append(accept, raw.(map[string]any)["id"].(string))
+	mustStatus(t, resp, http.StatusOK)
+	var applied authoring.ApplyResult
+	decodeInto(t, resp, &applied)
+	for _, finding := range applied.Activate.Report.Findings {
+		if finding.Severity == authoring.SeverityWarning && finding.Code == authoring.CodeBanUnmatched {
+			t.Errorf("a ban no build could judge was a warning: %+v", finding)
+		}
 	}
-	mustStatus(t, f.send(t, "POST", api+"/policy/apply", author, map[string]any{"source": banned, "accept": accept}), http.StatusOK)
 
 	// 2. Drop every cached decision, so the ban reaches the next connection.
 	mustStatus(t, f.send(t, "POST", api+"/revocations", desk, map[string]any{"type": "cache_invalidate", "all": true}), http.StatusOK)
@@ -680,8 +683,8 @@ func TestTheEmergencyRunbookIsCallableAndAudited(t *testing.T) {
 		"type": "session_kill", "session_ids": found.Sessions, "reason": "an insecure key exchange was withdrawn",
 	}), http.StatusOK)
 
-	if recs := f.operatorRecords(t, audit.EventPolicyActivated); len(recs) != 1 || recs[0].Attributes[audit.AttrAccepted] == "" {
-		t.Errorf("the ban's activation is not on the record with what was accepted: %+v", recs)
+	if recs := f.operatorRecords(t, audit.EventPolicyActivated); len(recs) != 1 || recs[0].Attributes[audit.AttrAfter] != "1" {
+		t.Errorf("the ban's activation is not on the record: %+v", recs)
 	}
 	revocations := f.operatorRecords(t, audit.EventRevocationPublished)
 	if len(revocations) != 2 {

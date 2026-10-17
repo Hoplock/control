@@ -77,8 +77,20 @@ type DryRunGrant struct {
 
 // input renders the question for the engine. A source address that does not
 // parse is refused rather than treated as none: a dry run that silently dropped
-// it would answer a different question from the one written.
+// it would answer a different question from the one written. So is a grant
+// with no expiry, which is never live, and an origin or an authentication
+// method outside the engine's closed vocabulary, which no rule naming one
+// matches.
+//
+// External context enters a dry run the way the engine reads it: as a grant
+// of origin `external` (M16). The window an external system asserted bounds
+// only the session's deadline, which a dry-run answer does not carry.
 func (in DryRunInput) input() (model.Input, error) {
+	switch m := model.AuthMethod(in.Subject.AuthMethod); m {
+	case model.AuthMethodUnset, model.AuthMethodCert, model.AuthMethodPasswordMFA:
+	default:
+		return model.Input{}, fmt.Errorf("case %q: subject.auth_method %q is none the engine knows (cert, password-mfa)", in.Name, m)
+	}
 	out := model.Input{
 		Now: in.Now,
 		Subject: model.Subject{
@@ -105,8 +117,16 @@ func (in DryRunInput) input() (model.Input, error) {
 	}
 	for _, g := range in.Grants {
 		origin := model.GrantOrigin(g.Origin)
-		if origin == "" {
+		switch origin {
+		case "":
 			origin = model.GrantOriginAdministrator
+		case model.GrantOriginAdministrator, model.GrantOriginWorkflow, model.GrantOriginExternal:
+		default:
+			return model.Input{}, fmt.Errorf("case %q: grant %q's origin %q is none the engine knows "+
+				"(administrator, workflow, external)", in.Name, g.ID, g.Origin)
+		}
+		if g.ExpiresAt.IsZero() {
+			return model.Input{}, fmt.Errorf("case %q: grant %q needs expires_at; a grant with no expiry is never live", in.Name, g.ID)
 		}
 		out.Grants = append(out.Grants, model.Grant{
 			ID: g.ID, Subject: in.Subject.ID, Origin: origin,
@@ -202,7 +222,7 @@ func (s *Service) Simulate(ctx context.Context, tenant store.Tenant, req Simulat
 		if limit <= 0 || limit > MaxReplayRecords {
 			limit = MaxReplayRecords
 		}
-		rep, err := decision.Replay(ctx, s.st, tenant, cand.Program, decision.ReplayQuery{
+		rep, err := decision.Replay(ctx, s.st.Decisions(), tenant, cand.Program, decision.ReplayQuery{
 			From: w.From, To: w.To, Limit: limit, Labels: req.Labels,
 		})
 		if err != nil {

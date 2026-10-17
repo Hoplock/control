@@ -125,8 +125,30 @@ func story(ctx context.Context, active ActiveMapping, tenant store.Tenant, d sto
 	if err := json.Unmarshal(d.Inputs, &in); err != nil || len(d.Inputs) == 0 {
 		return Story{}, fmt.Errorf("%w: %s's inputs do not decode", ErrUnexplainable, d.ID)
 	}
+	if in.Now.IsZero() {
+		return Story{}, fmt.Errorf("%w: %s's inputs carry no instant", ErrUnexplainable, d.ID)
+	}
 	if err := json.Unmarshal(d.Explanation, &expl); err != nil || expl.Effect == "" {
 		return Story{}, fmt.Errorf("%w: %s carries no effect", ErrUnexplainable, d.ID)
+	}
+	// The record's effect against its own story. Each of these is a story
+	// with a part missing or contradicted, which M4 makes impossible to
+	// represent: never rendered, always loud.
+	switch d.Effect {
+	case EffectAllow:
+		if expl.Effect != EffectAllow {
+			return Story{}, fmt.Errorf("%w: %s is an allow the engine answered %q", ErrUnexplainable, d.ID, expl.Effect)
+		}
+		if !hasSnapshot(d.Snapshot) {
+			return Story{}, fmt.Errorf("%w: %s is an allow with no snapshot", ErrUnexplainable, d.ID)
+		}
+	case EffectUnserved:
+		if expl.Unserved == "" {
+			return Story{}, fmt.Errorf("%w: %s went unserved and does not say why", ErrUnexplainable, d.ID)
+		}
+	case EffectDeny:
+	default:
+		return Story{}, fmt.Errorf("%w: %s's effect %q is none this server writes", ErrUnexplainable, d.ID, d.Effect)
 	}
 	s := Story{
 		DecisionID: d.ID, SessionID: d.SessionID, ProxyID: d.ProxyID, Effect: d.Effect,
@@ -164,6 +186,13 @@ func story(ctx context.Context, active ActiveMapping, tenant store.Tenant, d sto
 		s.Mapping.Changed = s.Mapping.Version != 0 && v != s.Mapping.Version
 	}
 	return s, nil
+}
+
+// hasSnapshot reports whether a stored snapshot says anything. The store writes
+// an absent one as `{}`, and a served allow always names its route.
+func hasSnapshot(raw json.RawMessage) bool {
+	var doc map[string]json.RawMessage
+	return json.Unmarshal(raw, &doc) == nil && len(doc) > 0
 }
 
 // StoredActiveMapping reads the active claim mapping from the store. A tenant

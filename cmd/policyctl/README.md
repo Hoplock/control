@@ -22,6 +22,16 @@ explain -session SESSION_ID            the story of every decision taken for a s
 `-server`, `-token` and `-tenant` default to `HOPLOCK_SERVER`, `HOPLOCK_TOKEN`
 and `HOPLOCK_TENANT` (`default`).
 
+`simulate` asks at least one question: `-from` replays the decisions recorded
+from then until `-to` (default now), and `-cases` dry-runs a JSON list of
+synthetic questions, each in the shape `POST …/policy/simulate` takes:
+`{name, now, subject{id, source, groups, claims, auth_method, mfa},
+target{hostname, port, zone, labels}, context{proxy_id, source_addr},
+device{posture}, grants[{id, origin, scope, targets, labels, zones, not_before,
+expires_at}]}`. `now` is required, and so is each grant's `expires_at`; an
+origin or an `auth_method` outside the engine's vocabulary is refused rather
+than answered as a different question.
+
 ## Output is for scripts
 
 Every line is one record, tab-separated, and its first field names its kind, so
@@ -35,7 +45,7 @@ nothing:
 | `finding` | severity (`advice`, `warning`, `blocking`), id, message |
 | `refused` | HTTP status, error code, message, `correlation_id`, id — on stderr |
 | `unaccepted`, `blocking` | finding id, message — on stderr, after `refused` |
-| `version` | version, digest, and on `versions` the uploader, time and `active`/`inactive` |
+| `version` | version, digest, and on `versions` the uploader, time and `active`/`inactive`; on `apply`, `existing` and a bool |
 | `activated` | version, `previous`, N, `rollback`, bool, `unchanged`, bool |
 | `accepted` | a finding id the activation accepted |
 | `from`, `added`, `removed`, `changed`, `moved`, `document`, `text` | a diff: the version diffed against, rule ids, top-level keys, and the unified text one line per record |
@@ -45,7 +55,9 @@ nothing:
 | `unreplayable` | decision id, why |
 | `decision`, `mapping`, `obligation`, `grant`, `unserved` | an explanation |
 
-`-json` prints the server's answer instead, unchanged.
+A tab or a line break inside a field — a validator's message, say — is printed
+as a space, so a record is always one line. `-json` prints the server's answer
+instead, unchanged.
 
 ## Exit codes
 
@@ -53,7 +65,7 @@ nothing:
 | --- | --- |
 | 0 | done |
 | 1 | the server refused, or the bundle is not publishable as it stands: rejections, unaccepted warnings, a blocking finding, or a flip under `-fail-on-flip` |
-| 2 | a usage error, an unreachable server, or an outage (a `5xx`) |
+| 2 | a usage error (a simulation that asks nothing among them), an unreachable server, or an outage (a `5xx`) |
 
 ## GitOps
 

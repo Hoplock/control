@@ -52,7 +52,11 @@ type Options struct {
 	// UnmetWindow is how far back an unmet-policy record still warns. Zero
 	// takes DefaultUnmetWindow.
 	UnmetWindow time.Duration
-	Now         func() time.Time
+	// UnmetLimit bounds how many unmet-policy records one report reads, the
+	// newest first. Zero takes DefaultUnmetLimit. A report that read the
+	// limit and found more says so (CodePolicyUnmetTruncated).
+	UnmetLimit int
+	Now        func() time.Time
 }
 
 // DefaultUnmetWindow is how far back a `target.algorithm_policy_unmet` record
@@ -60,8 +64,8 @@ type Options struct {
 // that a device upgraded last quarter stops being reported.
 const DefaultUnmetWindow = 30 * 24 * time.Hour
 
-// unmetLimit bounds how many unmet records one report reads.
-const unmetLimit = 1000
+// DefaultUnmetLimit is how many unmet-policy records one report reads.
+const DefaultUnmetLimit = 1000
 
 // Service is the policy lifecycle.
 type Service struct {
@@ -72,6 +76,7 @@ type Service struct {
 	validators   []ext.Bound[ext.PolicyValidator]
 	interpreters []string
 	unmetWindow  time.Duration
+	unmetLimit   int
 	now          func() time.Time
 }
 
@@ -82,13 +87,16 @@ func New(o Options) (*Service, error) {
 	}
 	s := &Service{
 		st: o.Store, fleet: o.Fleet, emitter: o.Emitter, reader: o.Reader,
-		validators: o.Validators, interpreters: o.Interpreters, unmetWindow: o.UnmetWindow, now: o.Now,
+		validators: o.Validators, interpreters: o.Interpreters, unmetWindow: o.UnmetWindow, unmetLimit: o.UnmetLimit, now: o.Now,
 	}
 	if len(s.interpreters) == 0 {
 		s.interpreters = DefaultInterpreters
 	}
 	if s.unmetWindow <= 0 {
 		s.unmetWindow = DefaultUnmetWindow
+	}
+	if s.unmetLimit <= 0 {
+		s.unmetLimit = DefaultUnmetLimit
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -196,6 +204,14 @@ func (s *Service) findings(ctx context.Context, tenant store.Tenant, cand *Candi
 				return nil, fmt.Errorf("authoring: policy validator %s: %w", v.Registration.Provider, err)
 			}
 			for _, f := range fs {
+				if f.Severity < ext.FindingAdvice || f.Severity > ext.FindingBlocking {
+					// The enum is closed. A value outside it is the
+					// validator's bug, and ext's String renders it
+					// "advice", which gates nothing: a governance rule
+					// would pass silently. Fail it as the outage it is.
+					return nil, fmt.Errorf("authoring: policy validator %s: finding %q has severity %d, "+
+						"outside ext.FindingSeverity", v.Registration.Provider, f.Code, int(f.Severity))
+				}
 				params := make(map[string]any, len(f.Detail))
 				for k, val := range f.Detail {
 					params[k] = val
@@ -229,9 +245,16 @@ func (s *Service) gather(ctx context.Context, tenant store.Tenant, b *model.Bund
 		return Facts{}, err
 	}
 	if s.reader != nil {
-		facts.Unmet, err = s.reader.AlgorithmPolicyUnmet(ctx, tenant, "", now.Add(-s.unmetWindow), now.Add(time.Minute), unmetLimit)
+		// One more than the limit, so a read cut short is known to be: one
+		// target reporting often can push every other target's records out
+		// of the newest N, and a report that hid that would read as clean.
+		facts.Unmet, err = s.reader.AlgorithmPolicyUnmet(ctx, tenant, "", now.Add(-s.unmetWindow), now.Add(time.Minute), s.unmetLimit+1)
 		if err != nil {
 			return Facts{}, err
+		}
+		if len(facts.Unmet) > s.unmetLimit {
+			facts.Unmet = facts.Unmet[:s.unmetLimit]
+			facts.UnmetTruncated = &UnmetRead{Limit: s.unmetLimit, Window: s.unmetWindow}
 		}
 	}
 	return facts, nil
@@ -295,46 +318,48 @@ func (s *Service) Upload(ctx context.Context, tenant store.Tenant, source []byte
 	if cand == nil {
 		return UploadResult{}, &InvalidError{Report: rep}
 	}
-	existing, err := s.st.PolicyBundles().List(ctx, tenant)
-	if err != nil {
-		return UploadResult{}, err
-	}
-	for _, b := range existing {
-		if b.Hash == cand.Digest {
-			return UploadResult{Version: versionOf(b), Existing: true, Report: rep}, nil
-		}
-	}
-
 	uploader := actor.Subject
 	if uploader == "" {
 		uploader = actor.Principal
 	}
+	// UNDER THE TENANT'S POLICY LOCK: the identical-source check, the
+	// version number and the insert are one act, so two uploads at once
+	// neither mint a duplicate of one source nor race for one number. The
+	// check reads the digest, never every version's source.
 	var stored store.PolicyBundle
-	// Two uploads racing for one version number: the loser's insert is a
-	// conflict, and it takes the next number rather than failing.
-	for attempt := 0; ; attempt++ {
-		err = s.st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
-			next, err := tx.PolicyBundles().NextVersion(ctx, tenant)
-			if err != nil {
-				return err
-			}
-			stored = store.PolicyBundle{Version: next, Source: source, Hash: cand.Digest, UploadedBy: uploader}
-			if err := tx.PolicyBundles().Insert(ctx, tenant, stored); err != nil {
-				return err
-			}
-			return s.emitter.OperatorEvent(ctx, tx, tenant, audit.OperatorAct{
-				Event: audit.EventPolicyUploaded, Actor: actor, After: strconv.FormatInt(next, 10),
-				Fields:   map[string]string{"digest": cand.Digest},
-				Message:  fmt.Sprintf("policy bundle %d uploaded", next),
-				Severity: contract.SeverityInfo,
-			})
-		})
-		if err == nil || !store.IsConflict(err) || attempt >= 2 {
-			break
+	existing := false
+	err = s.st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		if err := tx.PolicyBundles().Lock(ctx, tenant); err != nil {
+			return err
 		}
-	}
+		b, err := tx.PolicyBundles().GetByHash(ctx, tenant, cand.Digest)
+		switch {
+		case err == nil:
+			stored, existing = b, true
+			return nil
+		case !store.IsNotFound(err):
+			return err
+		}
+		next, err := tx.PolicyBundles().NextVersion(ctx, tenant)
+		if err != nil {
+			return err
+		}
+		stored = store.PolicyBundle{Version: next, Source: source, Hash: cand.Digest, UploadedBy: uploader}
+		if err := tx.PolicyBundles().Insert(ctx, tenant, stored); err != nil {
+			return err
+		}
+		return s.emitter.OperatorEvent(ctx, tx, tenant, audit.OperatorAct{
+			Event: audit.EventPolicyUploaded, Actor: actor, After: strconv.FormatInt(next, 10),
+			Fields:   map[string]string{"digest": cand.Digest},
+			Message:  fmt.Sprintf("policy bundle %d uploaded", next),
+			Severity: contract.SeverityInfo,
+		})
+	})
 	if err != nil {
 		return UploadResult{}, err
+	}
+	if existing {
+		return UploadResult{Version: versionOf(stored), Existing: true, Report: rep}, nil
 	}
 	got, err := s.st.PolicyBundles().Get(ctx, tenant, stored.Version)
 	if err != nil {
@@ -387,7 +412,14 @@ func (s *Service) Activate(ctx context.Context, tenant store.Tenant, version int
 	if res.Accepted == nil {
 		res.Accepted = []string{}
 	}
+	// UNDER THE TENANT'S POLICY LOCK, so the active version read here is the
+	// one this act replaces: two activations at once are recorded in order,
+	// each naming the other's version as `before`, and one that finds its
+	// version already active records nothing.
 	err = s.st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		if err := tx.PolicyBundles().Lock(ctx, tenant); err != nil {
+			return err
+		}
 		before, err := tx.PolicyBundles().GetActive(ctx, tenant)
 		switch {
 		case err == nil:

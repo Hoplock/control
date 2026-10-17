@@ -26,6 +26,69 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.9.0
+
+The third audit of `v0.6.0`: the policy lifecycle — the publish-time report,
+upload, activation, simulation, explain and `policyctl` — checked against the
+code, with every defect fixed under a test that failed first.
+
+### Breaking
+
+- **A validator finding whose `ext.FindingSeverity` is none of the three is an
+  outage.** Validate, upload and activate answer it as a validator error
+  does (`5xx`), naming the provider, the code and the value. It was rendered
+  `advice` (`FindingSeverity.String`'s default), which gates nothing, so a
+  governance rule could pass silently.
+- **Two activation-gating warnings arise where they did not.** A cache hint on
+  a rule matching `context.source_cidrs` is the warning
+  `authoring.cache_hint_spans_sources`, whatever bounds the session: a proxy
+  reuses a cached decision by identity, target, port, method and hop trail,
+  never by client address. And `algorithm.policy_unmet` now warns every allow
+  route reaching a target with a stored `target.algorithm_policy_unmet` under
+  its profile, including a route naming no floor and no ban (it warned only
+  those that named one). A bundle that activated under `v0.8.0` may now need
+  these accepted by id to activate again.
+- **`POST …/policy/simulate` refuses a dry-run case that would ask a
+  different question** (`400`): a grant with no `expires_at`, which was never
+  live, and a grant `origin` or a `subject.auth_method` outside the engine's
+  vocabulary, which matched no rule naming one.
+
+- **Phase:** 0022, the audit of 0019's policy lifecycle.
+- **Public packages:** no identifier is added, removed or changed. The doc
+  comments of `ext.PolicyBundleRef.Version`, `ext.PolicyDocument` (and its
+  `AuthorID`, `ProposedAt`, `ActiveVersion`), `ext.FindingSeverity` and
+  `ext.PolicyValidator` now say what Control does: a validator runs only on a
+  source that compiles, at validate, upload and activation; `Version` is
+  empty until a version is stored; `AuthorID` is the subject asking for that
+  judgement, empty for an API token; `ProposedAt` is that call's time;
+  `ActiveVersion` is the version serving when asked; Control's own
+  publish-time checks run beside the compiler's when no validator is
+  registered.
+- **Behaviour no API diff shows:**
+  - Uploads and activations are serialised per tenant. Identical sources
+    uploaded at once are one version, found by digest rather than by reading
+    every stored source. Concurrent activations each record the version they
+    replaced as `before`, and one that finds its version already active
+    records nothing; the loser of a race was a `5xx` from a unique index.
+  - A ban is a typo warning (`algorithm.ban_unmatched`) only when at least one
+    build has declared what it offers. With none, the ban is advice
+    (`algorithm.declaration_unknown`) and the emergency runbook's ban
+    publishes without an acceptance.
+  - A read of the stored unmet records that stops at its limit (1000, newest
+    first) says so: advice, `algorithm.policy_unmet_truncated`.
+  - Replay lists a record whose recorded instant is missing, or whose source
+    address or grant instant does not parse, as unreplayable with its reason;
+    it was replayed with zero values in their place.
+  - Explain answers `500 decision_unexplainable` for five more partial
+    stories: inputs with no instant, an effect this server never writes, an
+    allow the engine did not make, an allow with no snapshot, and an unserved
+    record that does not say why.
+  - The all-added text diff no longer counts a line after the final line
+    break.
+  - `policyctl` prints a tab or a line break inside a field as a space, so a
+    record is one line. `simulate` with neither `-from` nor `-cases`, or with
+    `-to` alone, is a usage error (exit `2`); it exited `1`.
+
 ## v0.8.0
 
 The second audit of `v0.6.0`: the audit store, retention and fleet
