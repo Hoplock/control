@@ -161,11 +161,16 @@ func (r *Registry) Liveness() Liveness { return r.liveness }
 // enrollment
 // ---------------------------------------------------------------------------
 
+// Recorder writes the record of an act inside the transaction that makes it,
+// so the act and its record commit together or not at all.
+type Recorder func(ctx context.Context, tx *store.Store) error
+
 // IssueGrant pre-registers a proxy and returns the token it must present.
 //
 // The token is returned ONCE and only its hash is stored. The caller shows it to
-// the operator and must not log it (see [MintEnrollmentToken]).
-func (r *Registry) IssueGrant(ctx context.Context, tenant store.Tenant, g EnrollmentGrant, expiresAt time.Time) (EnrollmentToken, error) {
+// the operator and must not log it (see [MintEnrollmentToken]). A non-nil
+// record runs inside the transaction that stores the grant.
+func (r *Registry) IssueGrant(ctx context.Context, tenant store.Tenant, g EnrollmentGrant, expiresAt time.Time, record Recorder) (EnrollmentToken, error) {
 	if g.ProxyID == "" {
 		return EnrollmentToken{}, fmt.Errorf("fleet.IssueGrant: proxy id is required")
 	}
@@ -187,12 +192,18 @@ func (r *Registry) IssueGrant(ctx context.Context, tenant store.Tenant, g Enroll
 	}
 	slices.Sort(zones)
 
-	err = r.st.ProxyEnrollments().Create(ctx, tenant, store.ProxyEnrollment{
-		ProxyID:      g.ProxyID,
-		GrantedZones: zones,
-		TokenHash:    token.Hash(),
-		ExpiresAt:    expiresAt,
-		CreatedBy:    g.CreatedBy,
+	err = r.st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		err := tx.ProxyEnrollments().Create(ctx, tenant, store.ProxyEnrollment{
+			ProxyID:      g.ProxyID,
+			GrantedZones: zones,
+			TokenHash:    token.Hash(),
+			ExpiresAt:    expiresAt,
+			CreatedBy:    g.CreatedBy,
+		})
+		if err != nil || record == nil {
+			return err
+		}
+		return record(ctx, tx)
 	})
 	if err != nil {
 		return EnrollmentToken{}, err

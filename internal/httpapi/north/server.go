@@ -277,6 +277,23 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, op string, err err
 	})
 }
 
+// refuseBody answers a body decodeJSON would not read. One past the listener's
+// limit is `413 payload_too_large` naming the limit, because "invalid" would
+// send an author looking for a mistake in a bundle that is merely large; any
+// other is `400` naming the body.
+func (s *Server) refuseBody(w http.ResponseWriter, r *http.Request, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, Error{
+			Code: CodePayloadTooLarge, CorrelationID: CorrelationIDFrom(r.Context()),
+			Message:    "this request's body is larger than this listener accepts",
+			Parameters: map[string]any{"limit": tooLarge.Limit},
+		})
+		return
+	}
+	s.invalid(w, r, "body", access.ProblemInvalid, "")
+}
+
 // refused renders a deliberate refusal, disclosing only what is safe.
 //
 // A broker's Detail is NEVER in the body: "the assertion's audience was

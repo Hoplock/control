@@ -910,7 +910,7 @@ func TestTheClaimMappingRouteNamesItsVersionAndWhatItCanProduce(t *testing.T) {
 		"tenant-a": {identity.RoleAuditor},
 	})
 	if _, err := f.federation.PutMapping(context.Background(), "tenant-a", []byte(
-		"schema_version: 1\nclaims:\n  - claim: email\n    attribute: email\n"), "test"); err != nil {
+		"schema_version: 1\nclaims:\n  - claim: email\n    attribute: email\n"), "test", nil); err != nil {
 		t.Fatalf("mapping: %v", err)
 	}
 

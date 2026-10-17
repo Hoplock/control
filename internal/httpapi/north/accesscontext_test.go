@@ -485,6 +485,61 @@ func TestABindingIsManagedOverTheWire(t *testing.T) {
 	}
 }
 
+// A binding write commits with its record or not at all, as every write on
+// this surface does (TestEveryWriteCommitsWithItsRecordOrNotAtAll): with the
+// record refused, neither a put nor a delete changes the binding (0023).
+func TestABindingWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
+	f := newPushServer(t)
+	admin, _ := f.tokenFor(t, identity.RoleAdmin)
+	_, principal := f.tokenFor(t, identity.RoleIntegration)
+	body := map[string]any{
+		"mode": "push", "scope": "change-window", "subjects": []string{"alice@example.com"},
+		"targets": []string{"*.example.com"}, "max_window": "1h", "push_principals": []string{principal},
+	}
+	ctx := t.Context()
+	if _, err := f.st.Pool().Exec(ctx, `
+		CREATE FUNCTION refuse_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.event LIKE 'access_context.binding_%' THEN
+				RAISE EXCEPTION 'the record of the binding cannot be written';
+			END IF;
+			RETURN NEW;
+		END $$`); err != nil {
+		t.Fatal(err)
+	}
+	refuse := func(on bool) {
+		t.Helper()
+		stmt := `DROP TRIGGER refuse_binding ON audit_records`
+		if on {
+			stmt = `CREATE TRIGGER refuse_binding BEFORE INSERT ON audit_records FOR EACH ROW EXECUTE FUNCTION refuse_binding()`
+		}
+		if _, err := f.st.Pool().Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	refuse(true)
+	if resp := f.send(t, "PUT", bindingPath, admin, body); resp.StatusCode < 500 {
+		t.Errorf("a put whose record was refused answered %d", resp.StatusCode)
+	}
+	refuse(false)
+	if _, err := f.st.AccessContextBindings().Get(ctx, "tenant-a", "itsm"); !store.IsNotFound(err) {
+		t.Fatalf("a put whose record was refused stored the binding: %v", err)
+	}
+
+	if resp := f.send(t, "PUT", bindingPath, admin, body); resp.StatusCode != http.StatusOK {
+		t.Fatalf("put = %d", resp.StatusCode)
+	}
+	refuse(true)
+	if resp := f.send(t, "DELETE", bindingPath, admin, nil); resp.StatusCode < 500 {
+		t.Errorf("a delete whose record was refused answered %d", resp.StatusCode)
+	}
+	refuse(false)
+	if _, err := f.st.AccessContextBindings().Get(ctx, "tenant-a", "itsm"); err != nil {
+		t.Fatalf("a delete whose record was refused removed the binding: %v", err)
+	}
+}
+
 // The provider listing names every provider by its external system's name.
 func TestTheProviderListingNamesEveryProvider(t *testing.T) {
 	f := newPushServer(t)

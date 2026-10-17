@@ -334,7 +334,7 @@ func TestTheNegotiatedRecordsAnswerTheirThreeQuestions(t *testing.T) {
 
 	sessions := func(q audit.NegotiatedQuery) []string {
 		t.Helper()
-		got, err := reader.SessionsBy(ctx, tenantA, q)
+		got, _, err := reader.SessionsBy(ctx, tenantA, q)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -505,15 +505,17 @@ func TestSessionsByLimitsSessionsNotRecords(t *testing.T) {
 		floored("new-1", "sess-new", now), floored("new-2", "sess-new", now), floored("new-3", "sess-new", now),
 		floored("orphan", "", now),
 	)
-	got, err := reader.SessionsBy(ctx, tenantA, audit.NegotiatedQuery{Floor: "modern-kex", Limit: 2})
+	got, truncated, err := reader.SessionsBy(ctx, tenantA, audit.NegotiatedQuery{Floor: "modern-kex", Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got, []string{"sess-new", "sess-old"}) {
-		t.Errorf("two sessions asked for = %v, want both, newest first, and never the session-less record", got)
+	if !slices.Equal(got, []string{"sess-new", "sess-old"}) || truncated {
+		t.Errorf("two sessions asked for = %v (truncated %v), want both, newest first, never the session-less record, and complete", got, truncated)
 	}
-	if got, _ := reader.SessionsBy(ctx, tenantA, audit.NegotiatedQuery{Floor: "modern-kex", Limit: 1}); !slices.Equal(got, []string{"sess-new"}) {
-		t.Errorf("one session asked for = %v", got)
+	// One fewer than matched: the answer says it stopped short, because the
+	// runbook ends exactly the sessions it lists (0023).
+	if got, truncated, _ := reader.SessionsBy(ctx, tenantA, audit.NegotiatedQuery{Floor: "modern-kex", Limit: 1}); !slices.Equal(got, []string{"sess-new"}) || !truncated {
+		t.Errorf("one session asked for = %v (truncated %v), want sess-new and truncated", got, truncated)
 	}
 }
 
@@ -668,12 +670,12 @@ func TestEveryReaderStaysInsideItsTenant(t *testing.T) {
 	if len(loss) != 1 || loss[0].Reports != 1 || loss[0].Records != 2 {
 		t.Errorf("SessionLoss in %s = %+v, want its one report of 2 records", tenantA, loss)
 	}
-	sessions, err := reader.SessionsBy(ctx, tenantA, audit.NegotiatedQuery{BanAxis: "ciphers", BanName: "aes128-cbc"})
+	sessions, _, err := reader.SessionsBy(ctx, tenantA, audit.NegotiatedQuery{BanAxis: "ciphers", BanName: "aes128-cbc"})
 	mustOK(err)
 	if !slices.Equal(sessions, []string{"sess-shared"}) {
 		t.Errorf("SessionsBy in %s = %v", tenantA, sessions)
 	}
-	if none, err := reader.SessionsBy(ctx, "initech", audit.NegotiatedQuery{BanAxis: "ciphers", BanName: "aes128-cbc"}); err != nil || len(none) != 0 {
+	if none, _, err := reader.SessionsBy(ctx, "initech", audit.NegotiatedQuery{BanAxis: "ciphers", BanName: "aes128-cbc"}); err != nil || len(none) != 0 {
 		t.Errorf("SessionsBy in a tenant with no records = %v, %v", none, err)
 	}
 	algs, err := reader.Algorithms(ctx, "initech", "sess-shared")

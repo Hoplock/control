@@ -85,7 +85,7 @@ func enrolled(t *testing.T, r *fleet.Registry, tenant store.Tenant, proxyID stri
 		ProxyID:      proxyID,
 		GrantedZones: []fleet.Zone{zone},
 		CreatedBy:    "operator",
-	}, time.Time{})
+	}, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("IssueGrant %s: %v", proxyID, err)
 	}
@@ -115,7 +115,7 @@ func TestEnrollmentRefusesAZoneItWasNotGranted(t *testing.T) {
 	token, err := r.IssueGrant(ctx, testTenant, fleet.EnrollmentGrant{
 		ProxyID:      "p-edge",
 		GrantedZones: []fleet.Zone{"edge"},
-	}, time.Time{})
+	}, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("IssueGrant: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestEnrollmentTokenIsOneTime(t *testing.T) {
 
 	token, err := r.IssueGrant(ctx, testTenant, fleet.EnrollmentGrant{
 		ProxyID: "p-edge", GrantedZones: []fleet.Zone{"edge"},
-	}, time.Time{})
+	}, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("IssueGrant: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestEnrollmentRefusesAWrongOrExpiredCredential(t *testing.T) {
 
 	if _, err := r.IssueGrant(ctx, testTenant, fleet.EnrollmentGrant{
 		ProxyID: "p-edge", GrantedZones: []fleet.Zone{"edge"},
-	}, c.now().Add(time.Hour)); err != nil {
+	}, c.now().Add(time.Hour), nil); err != nil {
 		t.Fatalf("IssueGrant: %v", err)
 	}
 
@@ -225,7 +225,7 @@ func TestEnrollmentRefusesAWrongOrExpiredCredential(t *testing.T) {
 func TestAGrantMustGrantAZone(t *testing.T) {
 	t.Parallel()
 	_, r, _ := newRegistry(t)
-	if _, err := r.IssueGrant(t.Context(), testTenant, fleet.EnrollmentGrant{ProxyID: "p"}, time.Time{}); err == nil {
+	if _, err := r.IssueGrant(t.Context(), testTenant, fleet.EnrollmentGrant{ProxyID: "p"}, time.Time{}, nil); err == nil {
 		t.Fatal("a grant with no zones was issued")
 	}
 }
@@ -239,7 +239,7 @@ func TestEnrollmentDoesNotMakeAProxyLive(t *testing.T) {
 
 	token, err := r.IssueGrant(ctx, testTenant, fleet.EnrollmentGrant{
 		ProxyID: "p-edge", GrantedZones: []fleet.Zone{"edge"},
-	}, time.Time{})
+	}, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("IssueGrant: %v", err)
 	}

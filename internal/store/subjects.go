@@ -75,6 +75,13 @@ func (r subjectRepo) Upsert(ctx context.Context, tenant Tenant, s Subject) error
 	return wrap(op, err)
 }
 
+// subjectLockPrefix keys the tenant's subject lock (Store.lockTenant).
+const subjectLockPrefix = "subjects\x1f"
+
+func (r subjectRepo) Lock(ctx context.Context, tenant Tenant) error {
+	return r.s.lockTenant(ctx, "store.Subjects.Lock", subjectLockPrefix, tenant)
+}
+
 func (r subjectRepo) Delete(ctx context.Context, tenant Tenant, subjectID string) error {
 	const op = "store.Subjects.Delete"
 	if err := checkTenant(op, tenant); err != nil {

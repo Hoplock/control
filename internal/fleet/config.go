@@ -154,6 +154,41 @@ func (p ConfigPublication) Unannounced() int {
 	return n
 }
 
+// ConfigRecord is what a publish or a rollback did, as its record states it
+// inside its transaction — before anything is announced, which follows the
+// commit.
+type ConfigRecord struct {
+	// Version is the scope version now desired.
+	Version int64
+	// Before is the version it displaced, 0 when the scope had none.
+	Before int64
+	// Changed are the proxies whose composed document moved.
+	Changed []string
+}
+
+// ConfigRecorder writes the record of a publish or a rollback inside the
+// transaction that makes it, so the two commit together or not at all.
+type ConfigRecorder func(ctx context.Context, tx *store.Store, rec ConfigRecord) error
+
+// recordConfig hands a recorder what the transaction did, reading the version
+// displaced from the desired row the transaction just wrote: SetDesired moves
+// previous_version in the same statement that moves version, so the two
+// cannot disagree.
+func recordConfig(ctx context.Context, tx *store.Store, tenant store.Tenant, scope store.ConfigScope, changed []store.ProxyConfigState, record ConfigRecorder) error {
+	if record == nil {
+		return nil
+	}
+	desired, err := tx.ProxyConfigs().GetDesired(ctx, tenant, scope)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(changed))
+	for _, c := range changed {
+		ids = append(ids, c.ProxyID)
+	}
+	return record(ctx, tx, ConfigRecord{Version: desired.Version, Before: desired.PreviousVersion, Changed: ids})
+}
+
 // PublishConfig stores a new version of a scope's document, publishes it,
 // re-materialises every proxy it affects, and announces each one whose composed
 // document moved.
@@ -168,7 +203,8 @@ func (p ConfigPublication) Unannounced() int {
 //
 // An announcement the stream did not take does NOT roll the publish back —
 // the desired version is durable — and it is retried (see the file comment).
-func (r *Registry) PublishConfig(ctx context.Context, tenant store.Tenant, scope store.ConfigScope, doc ConfigDocument, publishedBy string) (ConfigPublication, error) {
+// A non-nil record runs inside the publish's transaction.
+func (r *Registry) PublishConfig(ctx context.Context, tenant store.Tenant, scope store.ConfigScope, doc ConfigDocument, publishedBy string, record ConfigRecorder) (ConfigPublication, error) {
 	if err := ValidateConfigDocument(doc); err != nil {
 		return ConfigPublication{}, err
 	}
@@ -201,8 +237,10 @@ func (r *Registry) PublishConfig(ctx context.Context, tenant store.Tenant, scope
 			return err
 		}
 		version = next
-		changed, err = r.rematerialise(ctx, tx, tenant, scope, now)
-		return err
+		if changed, err = r.rematerialise(ctx, tx, tenant, scope, now); err != nil {
+			return err
+		}
+		return recordConfig(ctx, tx, tenant, scope, changed, record)
 	})
 	if err != nil {
 		return ConfigPublication{}, err
@@ -219,8 +257,9 @@ func (r *Registry) PublishConfig(ctx context.Context, tenant store.Tenant, scope
 // desired.
 //
 // Rolling back moves the desired pointer only; the version it rolls off stays
-// stored, so a rollback is itself reversible.
-func (r *Registry) RollbackConfig(ctx context.Context, tenant store.Tenant, scope store.ConfigScope, publishedBy string) (ConfigPublication, error) {
+// stored, so a rollback is itself reversible. A non-nil record runs inside the
+// rollback's transaction.
+func (r *Registry) RollbackConfig(ctx context.Context, tenant store.Tenant, scope store.ConfigScope, publishedBy string, record ConfigRecorder) (ConfigPublication, error) {
 	now := r.now()
 
 	var (
@@ -242,8 +281,10 @@ func (r *Registry) RollbackConfig(ctx context.Context, tenant store.Tenant, scop
 			return err
 		}
 		version = desired.PreviousVersion
-		changed, err = r.rematerialise(ctx, tx, tenant, scope, now)
-		return err
+		if changed, err = r.rematerialise(ctx, tx, tenant, scope, now); err != nil {
+			return err
+		}
+		return recordConfig(ctx, tx, tenant, scope, changed, record)
 	})
 	if err != nil {
 		return ConfigPublication{}, err

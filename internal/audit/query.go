@@ -340,10 +340,11 @@ type NegotiatedQuery struct {
 }
 
 // SessionsBy answers the first two questions: the distinct sessions whose
-// records match, newest first. Session-less records name no session and are
-// not returned. The limit counts sessions, never records, because the answer
-// is what the runbook's next step ends.
-func (r *Reader) SessionsBy(ctx context.Context, tenant store.Tenant, q NegotiatedQuery) ([]string, error) {
+// records match, newest first, and whether more matched than the limit let it
+// return. Session-less records name no session and are not returned. The
+// limit counts sessions, never records, because the answer is what the
+// runbook's next step ends — and why it says when it stopped short.
+func (r *Reader) SessionsBy(ctx context.Context, tenant store.Tenant, q NegotiatedQuery) ([]string, bool, error) {
 	sq := Query{From: q.From, To: q.To, Limit: q.Limit}
 	switch {
 	case q.Axis != "" && q.Value != "":
@@ -353,7 +354,7 @@ func (r *Reader) SessionsBy(ctx context.Context, tenant store.Tenant, q Negotiat
 	case q.BanAxis != "" && q.BanName != "":
 		sq.Banned = q.BanAxis + ":" + q.BanName
 	default:
-		return nil, errors.New("audit: name an axis and value, a floor, or a banned axis and name")
+		return nil, false, errors.New("audit: name an axis and value, a floor, or a banned axis and name")
 	}
 	return r.store.Audit().Sessions(ctx, tenant, sq)
 }

@@ -290,7 +290,19 @@ func (s *Server) handleNegotiated(w http.ResponseWriter, r *http.Request) {
 		s.invalid(w, r, "query", "exactly_one_of_axis_value_floor_or_ban", "")
 		return
 	}
-	sessions, err := s.reader.SessionsBy(r.Context(), tenant, q)
+	// Each question is asked whole: an axis needs its value, and a banned
+	// axis its name.
+	for _, pair := range [][2]string{{"axis", "value"}, {"ban_axis", "ban_name"}} {
+		if (v.Get(pair[0]) == "") != (v.Get(pair[1]) == "") {
+			missing := pair[0]
+			if v.Get(pair[1]) == "" {
+				missing = pair[1]
+			}
+			s.invalid(w, r, missing, access.ProblemRequired, "")
+			return
+		}
+	}
+	sessions, truncated, err := s.reader.SessionsBy(r.Context(), tenant, q)
 	if err != nil {
 		s.auditFailure(w, r, "negotiated sessions", err)
 		return
@@ -298,7 +310,9 @@ func (s *Server) handleNegotiated(w http.ResponseWriter, r *http.Request) {
 	if sessions == nil {
 		sessions = []string{}
 	}
-	answer(w, http.StatusOK, map[string]any{"sessions": sessions})
+	// truncated says the limit cut the answer short: the runbook's next step
+	// ends exactly these sessions, so the caller asks again for the rest.
+	answer(w, http.StatusOK, map[string]any{"sessions": sessions, "truncated": truncated})
 }
 
 // handleGaps finds what a proxy could not deliver (Hoplock/proxy#71).
@@ -437,10 +451,12 @@ func (s *Server) auditFailure(w http.ResponseWriter, r *http.Request, op string,
 			Message: "there is no such record in this tenant",
 		})
 	case store.IsInvalid(err):
+		// The store's own sentence, never err.Error(): that names the Go
+		// operation that refused (0023).
 		writeError(w, http.StatusBadRequest, Error{
 			Code: CodeInvalidRequest, CorrelationID: CorrelationIDFrom(r.Context()),
 			Parameters: map[string]any{"field": "query", "problem": "invalid"},
-			Message:    "this query cannot be answered: " + err.Error(),
+			Message:    "this query cannot be answered: " + store.Reason(err),
 		})
 	default:
 		s.fail(w, r, op, err)
@@ -474,11 +490,15 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request) {
 	}
 	var body retentionBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	if strings.TrimSpace(body.Stream) == "" {
 		s.invalid(w, r, "stream", access.ProblemRequired, "")
+		return
+	}
+	if body.ThroughSeq < 0 {
+		s.invalid(w, r, "through_seq", access.ProblemInvalid, "")
 		return
 	}
 	if (body.ThroughSeq > 0) == !body.Before.IsZero() {
@@ -515,7 +535,11 @@ func (s *Server) handleCaptureRetention(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body captureRetentionBody
-	if err := decodeJSON(r, &body); err != nil || body.Before.IsZero() {
+	if err := decodeJSON(r, &body); err != nil {
+		s.refuseBody(w, r, err)
+		return
+	}
+	if body.Before.IsZero() {
 		s.invalid(w, r, "before", access.ProblemRequired, "")
 		return
 	}

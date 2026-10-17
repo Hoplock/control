@@ -11,24 +11,11 @@ type bundleRepo struct{ s *Store }
 
 const bundleColumns = `version, source, hash, uploaded_by, uploaded_at, active`
 
-// policyLockPrefix keys the tenant's policy lock in the one-bigint advisory
-// space, apart from the audit chain's two-int4 locks. A hash collision with
-// another key only serialises two unrelated acts.
+// policyLockPrefix keys the tenant's policy lock (Store.lockTenant).
 const policyLockPrefix = "policy_bundles\x1f"
 
 func (r bundleRepo) Lock(ctx context.Context, tenant Tenant) error {
-	const op = "store.PolicyBundles.Lock"
-	if err := checkTenant(op, tenant); err != nil {
-		return err
-	}
-	if r.s.pool != nil {
-		return invalid(op, "the policy lock is taken inside a transaction")
-	}
-	ctx, cancel := r.s.withTimeout(ctx)
-	defer cancel()
-	_, err := r.s.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		policyLockPrefix+string(tenant))
-	return wrap(op, err)
+	return r.s.lockTenant(ctx, "store.PolicyBundles.Lock", policyLockPrefix, tenant)
 }
 
 func (r bundleRepo) GetByHash(ctx context.Context, tenant Tenant, hash string) (PolicyBundle, error) {

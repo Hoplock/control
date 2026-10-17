@@ -58,7 +58,7 @@ func (s *Server) actorOf(w http.ResponseWriter, r *http.Request) (audit.Operator
 // readSource decodes a source body, refusing an empty source by name.
 func (s *Server) readSource(w http.ResponseWriter, r *http.Request, into any, source *string) bool {
 	if err := decodeJSON(r, into); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return false
 	}
 	if strings.TrimSpace(*source) == "" {
@@ -285,7 +285,7 @@ func (s *Server) handlePolicyActivate(w http.ResponseWriter, r *http.Request) {
 	}
 	var body activateBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	res, err := s.authoring.Activate(r.Context(), tenant, version, body.Accept, actor)
@@ -336,7 +336,7 @@ func (s *Server) handlePolicySimulate(w http.ResponseWriter, r *http.Request) {
 	}
 	var body simulateBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	res, err := s.authoring.Simulate(r.Context(), tenant, authoring.SimulateRequest{

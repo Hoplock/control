@@ -369,24 +369,52 @@ func (f *Federation) ActiveMapping(ctx context.Context, tenant store.Tenant) (*M
 	return m, nil
 }
 
+// MappingRecorder writes the record of a mapping write inside the transaction
+// that stores and activates it, told the version it replaced (0 for none), so
+// the write and its record commit together or not at all.
+type MappingRecorder func(ctx context.Context, tx *store.Store, before int, m *Mapping) error
+
 // PutMapping validates and stores a new mapping version, activating it.
 //
 // Validation happens HERE and not at login: a mapping that cannot be applied is
 // a document an operator has to fix, and discovering that at the first login
 // after a change means discovering it during an outage.
-func (f *Federation) PutMapping(ctx context.Context, tenant store.Tenant, document []byte, author string) (*Mapping, error) {
+//
+// The version is stored and activated in one transaction, under the tenant's
+// claim-mapping lock, so the version it replaces is the one it read. A non-nil
+// record runs inside that transaction.
+func (f *Federation) PutMapping(ctx context.Context, tenant store.Tenant, document []byte, author string, record MappingRecorder) (*Mapping, error) {
 	parsed, err := ParseMapping(document)
 	if err != nil {
 		return nil, err
 	}
-	row, err := f.st.ClaimMappings().Put(ctx, tenant, parsed.Document(), parsed.Digest, author)
+	err = f.st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		if err := tx.ClaimMappings().Lock(ctx, tenant); err != nil {
+			return err
+		}
+		before := 0
+		switch active, err := tx.ClaimMappings().Active(ctx, tenant); {
+		case err == nil:
+			before = active.Version
+		case !store.IsNotFound(err):
+			return err
+		}
+		row, err := tx.ClaimMappings().Put(ctx, tenant, parsed.Document(), parsed.Digest, author)
+		if err != nil {
+			return err
+		}
+		if err := tx.ClaimMappings().Activate(ctx, tenant, row.Version); err != nil {
+			return err
+		}
+		parsed.Version = row.Version
+		if record == nil {
+			return nil
+		}
+		return record(ctx, tx, before, parsed)
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := f.st.ClaimMappings().Activate(ctx, tenant, row.Version); err != nil {
-		return nil, err
-	}
-	parsed.Version = row.Version
 	return parsed, nil
 }
 

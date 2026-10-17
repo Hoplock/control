@@ -37,7 +37,7 @@ func TestTheConfigFetchOverTheWire(t *testing.T) {
 
 	if _, err := h.fleet.PublishConfig(ctx, testTenant, fleet.ZoneScope("deep"), fleet.ConfigDocument{
 		"logging.batch_size": float64(128),
-	}, "south_test"); err != nil {
+	}, "south_test", nil); err != nil {
 		t.Fatal(err)
 	}
 	res := h.do("GET", configPath("proxy-2"), nil, h.token())

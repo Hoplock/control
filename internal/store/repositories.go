@@ -38,6 +38,12 @@ type SubjectRepository interface {
 	Delete(ctx context.Context, tenant Tenant, subjectID string) error
 	// List returns every subject in the tenant, in id order.
 	List(ctx context.Context, tenant Tenant) ([]Subject, error)
+	// Lock takes the tenant's subject lock for the rest of the transaction,
+	// so an operator's write reads the row it replaces with no other write
+	// between, and its record names the true before. Outside a transaction
+	// it is refused, because a lock released when the statement ends
+	// serialises nothing.
+	Lock(ctx context.Context, tenant Tenant) error
 }
 
 // TargetRepository stores what is being reached.
@@ -54,6 +60,13 @@ type TargetRepository interface {
 	Upsert(ctx context.Context, tenant Tenant, t Target) error
 	// Delete removes a target. Absent is ErrNotFound.
 	Delete(ctx context.Context, tenant Tenant, targetID string) error
+	// Lock takes the tenant's target lock for the rest of the transaction,
+	// so an operator's write — a relabel above all, which simulates before
+	// it writes — reads the rows it replaces with no other write between,
+	// and its record names the true before. Outside a transaction it is
+	// refused, because a lock released when the statement ends serialises
+	// nothing.
+	Lock(ctx context.Context, tenant Tenant) error
 }
 
 // ProxyRepository stores the fleet. 0006 owns what the states mean.
@@ -185,8 +198,9 @@ type AuditRepository interface {
 	// Query selects records over the dimensions PLAN §7 names.
 	Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]AuditRecord, error)
 	// Sessions answers the distinct sessions whose records match, newest
-	// first and never "", its limit counting sessions rather than records.
-	Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([]string, error)
+	// first and never "", its limit counting sessions rather than records,
+	// and whether more matched than the limit let it return.
+	Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([]string, bool, error)
 	// BlockedCommands is the showcase join: blocked commands on targets
 	// carrying a label, resolved to the decision that permitted the access.
 	BlockedCommands(ctx context.Context, tenant Tenant, q BlockedCommandQuery) ([]BlockedCommand, error)

@@ -148,7 +148,7 @@ func TestEnrollmentHandsBackAWorkingChannelCredential(t *testing.T) {
 
 	grantToken, err := reg.IssueGrant(ctx, uidTenant, fleet.EnrollmentGrant{
 		ProxyID: "proxy-1", GrantedZones: []fleet.Zone{"edge"}, CreatedBy: "operator",
-	}, time.Time{})
+	}, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("IssueGrant: %v", err)
 	}
