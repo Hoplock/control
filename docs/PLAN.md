@@ -786,9 +786,9 @@ decision.
      gets an explicit version, negotiated on the same principle as
      `policy_version` does south-bound (§4): the client names what it can read,
      and the server never answers outside it. **This retires an assumption
-     phase 0031 currently rests on** — "this product ships its proxy and its
+     phase 0032 currently rests on** — "this product ships its proxy and its
      server together and has no installed base" stops being true the moment
-     anyone operates a fleet of deployments, and 0031 must say so.
+     anyone operates a fleet of deployments, and 0032 must say so.
   3. **Outbound supervisory registration.** A supervised deployment sits behind
      NAT and the supervisor cannot dial in. Rather than invent a mechanism, use
      the one the fleet already proved one level down: proxy D11 has a downstream
@@ -1032,7 +1032,7 @@ decision.
      `retract` directive in `go.mod`.
   7. **What it is not.** The module version is one of four version axes, and
      it is none of the other three: the vendored contract's (M1,
-     `contract/UPSTREAM`), `policy_version` (§4, 0031), and the north-bound API
+     `contract/UPSTREAM`), `policy_version` (§4, 0032), and the north-bound API
      version (M19, 0027). M19's "software version" **is** this one.
 
   `make release-check` holds every PR to this decision, and §8 says how. A
@@ -1520,7 +1520,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   added moved nothing (below). Neither did what `#69` and `#72` added to the
   request's `capabilities`, nor what `#69` added to the capability report,
   because the number governs none of it. Read both numbers out of
-  `contract/control.yaml`, never from this line (0031).
+  `contract/control.yaml`, never from this line (0032).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -1601,7 +1601,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   route fit.
 
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
-  `policy_version` (0002, 0031). Nor may it assume the document version only
+  `policy_version` (0002, 0032). Nor may it assume the document version only
   rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
   `Hoplock/proxy#56` then moved it up to `4.1.0` for a field on the event
   stream, `Hoplock/proxy#65` to `4.2.0` for a new event type and two new
@@ -1637,7 +1637,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   present tense, and the tiers above are the server's half of the replacement.
   A session that reads "one
   vocabulary" as "there is nothing to negotiate" would delete the only thing
-  standing between a fleet mid-upgrade and a silently widened session; 0031
+  standing between a fleet mid-upgrade and a silently widened session; 0032
   narrows what this server *supports* to one value and explicitly may not remove
   the field.
 
@@ -2622,8 +2622,8 @@ not say why, and a grant the explanation names that the inputs do not hold.
   path, with the software custodian holding its private half as AES-256-GCM
   ciphertext under a key-encryption key the database never sees. The daemon
   hands the CA that software custodian only: a registered `ext.KeyStore` holds
-  the audit retention keys (§7) and is not yet consulted for the CA, which 0024
-  found and left as it was. Certificates are
+  the audit retention keys (§7) and is not yet consulted for the CA. 0024 found
+  it, and 0030 gives the CA the registered key store when there is one. Certificates are
   minted over a public key **the proxy generated** — no private key ever crosses
   this API — and are scoped to a principal, a target, a session and a window of
   minutes. What SSH can enforce is the principal, the window and the critical
@@ -3095,8 +3095,9 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0027 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
 | 0028 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's per-build finding (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
 | 0029 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
-| 0030 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
-| 0031 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
+| 0030 | CA custody through the key store | the certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; keys that predate a registration never stranded and never rotated behind the operator's back, each key's custodian recorded and shown, and `ca rotate` the operator's move into the registered store (M15, M7, M18, M11, M23) |
+| 0031 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
+| 0032 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 
 > **Audits are not in this table, and not in the queue.**
 > `prompts/audit/` holds prompts that run repeatedly against the whole
@@ -3112,6 +3113,22 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 > the upstream author at merge time, and two of those looks have now described
 > text this repository did not contain. A check that runs once, from one side,
 > needs a compensating pass from this one.
+
+> **Renumbering note (ca-custody revision).** Phase 0030 is new. 0024 found that
+> the certificate authority never consults a registered `ext.KeyStore` — it holds
+> its keys in Control's software custodian whatever a host registers, against
+> what `ext.KeyStore` promises — and the fix is queued at the user's direction:
+> the CA's keys in the registered key store if any, else the software custodian. Under
+> `docs/PROTOCOL.md` §6 the queued prompts after it were renumbered —
+> **0030→0031, 0031→0032** — and no implemented prompt moved.
+>
+> It runs before post-quantum posture because that phase plumbs the CA's
+> algorithm vocabulary (`ext.KeyAlgorithm`), and an algorithm belongs on the
+> custody it will be generated in; it runs after the E2E phase and everything
+> before it because nothing there depends on where the CA's keys live, and moving
+> it earlier would renumber five live phases for no ordering it needs.
+>
+> Anything written before this revision resolves through the table below.
 
 > **Renumbering note (bounded-lists revision).** Phase 0026 is new: an audit
 > of every list this server answers, the one shape a bounded list takes, and
@@ -3307,13 +3324,13 @@ Regenerate it in the PR that renumbers.
 | privileged-access | 0015 | 0029 | `0029-e2e-topology-and-ci` |
 | multi-instance | 0015 | 0028 | `0028-management-console` |
 | multi-instance | 0016 | 0029 | `0029-e2e-topology-and-ci` |
-| multi-instance | 0017 | 0031 | `0031-single-contract-version` |
+| multi-instance | 0017 | 0032 | `0032-single-contract-version` |
 | queue-order | 0014 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
 | queue-order | 0015 | 0027 | `0027-instance-identity-and-supervisory-registration` |
 | queue-order | 0016 | 0028 | `0028-management-console` |
 | queue-order | 0017 | 0029 | `0029-e2e-topology-and-ci` |
-| queue-order | 0018 | 0031 | `0031-single-contract-version` |
-| queue-order | 0019 | 0030 | `0030-post-quantum-posture` |
+| queue-order | 0018 | 0032 | `0032-single-contract-version` |
+| queue-order | 0019 | 0031 | `0031-post-quantum-posture` |
 | queue-order | 0020 | 0016 | `0016-self-service-grant-requests` |
 | queue-order | 0021 | 0015 | `0015-public-server-package-and-host-routes` |
 | queue-order | 0022 | 0017 | `0017-ending-external-windows` |
@@ -3322,23 +3339,25 @@ Regenerate it in the PR that renumbers.
 | cross-tenant | 0019 | 0027 | `0027-instance-identity-and-supervisory-registration` |
 | cross-tenant | 0020 | 0028 | `0028-management-console` |
 | cross-tenant | 0021 | 0029 | `0029-e2e-topology-and-ci` |
-| cross-tenant | 0022 | 0030 | `0030-post-quantum-posture` |
-| cross-tenant | 0023 | 0031 | `0031-single-contract-version` |
+| cross-tenant | 0022 | 0031 | `0031-post-quantum-posture` |
+| cross-tenant | 0023 | 0032 | `0032-single-contract-version` |
 | session-audit | 0020 | 0027 | `0027-instance-identity-and-supervisory-registration` |
 | session-audit | 0021 | 0028 | `0028-management-console` |
 | session-audit | 0022 | 0029 | `0029-e2e-topology-and-ci` |
-| session-audit | 0023 | 0030 | `0030-post-quantum-posture` |
-| session-audit | 0024 | 0031 | `0031-single-contract-version` |
+| session-audit | 0023 | 0031 | `0031-post-quantum-posture` |
+| session-audit | 0024 | 0032 | `0032-single-contract-version` |
 | audit-findings | 0024 | 0027 | `0027-instance-identity-and-supervisory-registration` |
 | audit-findings | 0025 | 0028 | `0028-management-console` |
 | audit-findings | 0026 | 0029 | `0029-e2e-topology-and-ci` |
-| audit-findings | 0027 | 0030 | `0030-post-quantum-posture` |
-| audit-findings | 0028 | 0031 | `0031-single-contract-version` |
+| audit-findings | 0027 | 0031 | `0031-post-quantum-posture` |
+| audit-findings | 0028 | 0032 | `0032-single-contract-version` |
 | bounded-lists | 0026 | 0027 | `0027-instance-identity-and-supervisory-registration` |
 | bounded-lists | 0027 | 0028 | `0028-management-console` |
 | bounded-lists | 0028 | 0029 | `0029-e2e-topology-and-ci` |
-| bounded-lists | 0029 | 0030 | `0030-post-quantum-posture` |
-| bounded-lists | 0030 | 0031 | `0031-single-contract-version` |
+| bounded-lists | 0029 | 0031 | `0031-post-quantum-posture` |
+| bounded-lists | 0030 | 0032 | `0032-single-contract-version` |
+| ca-custody | 0030 | 0031 | `0031-post-quantum-posture` |
+| ca-custody | 0031 | 0032 | `0032-single-contract-version` |
 
 No implemented prompt has ever moved: every row above renumbered a queued prompt
 only.
@@ -3359,11 +3378,11 @@ cross-tenant notes, above).
 Prompts may add or re-order later phases; any prompt that introduces new queued
 prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 
-> **On 0031 running last.** It is an audit, and an audit wants everything that
+> **On 0032 running last.** It is an audit, and an audit wants everything that
 > could hold a version number to exist first. The position is not an invitation
 > to build multi-version machinery in the meantime: this product ships its proxy
 > and its server together and has no installed base, so every phase before it
-> should already carry one version in one place, and 0031 should find little.
+> should already carry one version in one place, and 0032 should find little.
 > What it does own is the decision that a mismatch is a **loud refusal** rather
 > than a thinned answer, and the documents that still describe a mid-upgrade
 > fleet (§4 above among them).
@@ -3371,8 +3390,8 @@ prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 > 0019's tiers (§4) are not new machinery: `5` for `brokered-certificate`
 > (`Hoplock/proxy#68`) and `6` for a floor or a ban (`Hoplock/proxy#69`). They
 > are cases in the gate 0008 already built for the next vocabulary, and they
-> refuse rather than thin. 0031 may fold them into the single-version refusal,
-> because that refusal is stricter. What 0031 may not do is let a proxy be sent
+> refuse rather than thin. 0032 may fold them into the single-version refusal,
+> because that refusal is stricter. What 0032 may not do is let a proxy be sent
 > vocabulary above what it declared. Nor may it fold in the per-level floor
 > rule or the per-proxy ban refusal (`Hoplock/proxy#72`), each a capability
 > (M17) rather than a version.

@@ -104,7 +104,7 @@ A supervisor consuming many deployments meets version skew, so:
   answer says it stopped short — is part of what is promised, list by list,
   so a client paging a list at one version pages it the same way at the next.
 
-**This retires an assumption phase 0031 rests on.** Its premise — "this product
+**This retires an assumption phase 0032 rests on.** Its premise — "this product
 ships its proxy and its server together and has no installed base" — is true
 only while nobody operates a fleet of deployments. Update that phase's prompt in
 this PR to say the north-bound surface is exempt from its single-version rule

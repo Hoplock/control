@@ -216,7 +216,7 @@ document is what is true now. Check this repository's prompts against the
   ```
 - the two version numbers: the document's `info.version` and `policy_version`.
   They move independently and this repository states both in several places
-  (§4, 0002, 0031). Are they current, and is each stated where the phase that
+  (§4, 0002, 0032). Are they current, and is each stated where the phase that
   owns it can see it? Note that `info.version` does **not** only ever rise —
   `#53` moved it `4.3.0` → `4.0.0` and `#56` then moved it to `4.1.0` — so a
   check that assumes monotonicity is itself a finding. Nor does it name one

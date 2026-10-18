@@ -62,6 +62,16 @@ retention records changes.
 (6) Its pin: these hold from v0.11.0, which control#74's merge cuts. Retention
 written by v0.6.0–v0.10.0 is unsigned and is a break until an operator adopts
 it with hoplock-control audit-retention adopt (Control's CHANGELOG v0.11.0).
+(7) Control's queued phases moved again (revision ca-custody): a new 0030, CA
+custody through the key store, gives the certificate authority a registered
+ext.KeyStore when there is one, else Control's software custodian — so an
+Enterprise key store will hold CA keys (ssh-ca:<generation>) once it lands.
+Post-quantum posture is now 0031 and one contract version 0032; instance
+identity (0027), the console (0028) and E2E (0029) did not move. Every
+citation of a Control phase number resolves through Control's docs/PLAN.md §10
+mapping table; cite a phase by name beside its number. Where an Enterprise
+prompt plans HSM or KMS custody for the CA, note that it depends on Control's
+0030, not on any release so far.
 
 Work on the branch this session was given, whatever it is named — if the name
 is yours to choose, claude/sync-<short-description>. Commit with the `sync`

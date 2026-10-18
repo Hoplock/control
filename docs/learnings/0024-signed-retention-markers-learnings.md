@@ -9,7 +9,7 @@
 - **Unsigned pre-existing marker** (`v0.6.0`–`v0.10.0`): a break, and no pass builds on it. `hoplock-control audit-retention adopt` signs it only by its exact `--through-seq`/`--through-hash`, only if the stream verifies from it, recorded `operator.audit.retention_adopted`. Captures: `adopt --captures-before T`.
 - **Key files:** `internal/audit/seal.go`, `retention.go`, `verify.go`; `internal/store/retention.go`; `internal/daemon/auditretention.go`, `north.go` (`buildKeyStore`); `internal/httpapi/north/audit.go`.
 - **Decisions:** M8 revised in place (register row unchanged, `live`); no decision added. Release `v0.11.0`, `### Breaking`. Owes `hoplock/enterprise` a sync; `hoplock/proxy` none.
-- **NEXT must know:** Control's CA ignores a registered `ext.KeyStore` (pre-existing; PLAN §6 now says so). `audit-verify` and `audit-retention` now call `HostConfig`.
+- **NEXT must know:** Control's CA ignores a registered `ext.KeyStore` (pre-existing), queued at the user's direction as **0030**, CA custody through the key store; post-quantum and one contract version moved to 0031 and 0032 (PLAN §10, ca-custody revision). `audit-verify` and `audit-retention` now call `HostConfig`.
 
 ## Details
 
@@ -102,8 +102,11 @@ for CA keys, against `ext.KeyStore`'s own doc ("When no implementation is
 registered, Control holds its own software keys"). Retention uses the
 registered one (`buildKeyStore`). Wiring the CA to it would strand every CA key
 already in `software_keys` for a host that registered one, so it needs its own
-phase with a migration story. PLAN §6 now states it; the PR asks whether to
-queue it.
+phase with a migration story. PLAN §6 now states it. Asked in the PR, the user
+had it queued as **0030** (`prompts/queued/0030-ca-custody-through-the-key-store.md`):
+the registered key store if any, else the software custodian. Post-quantum
+posture moved to 0031 and one contract version to 0032, because post-quantum
+plumbs the CA's algorithms and should land on the custody 0030 settles.
 
 ### Mutations
 
