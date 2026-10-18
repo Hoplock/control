@@ -1,15 +1,15 @@
 # 0023 — audit of 0019, part 4: the north-bound surface and the record — Learnings
 
 ## Summary
-- **Findings:** 15 items, no high-severity defect. Fixed: 5 medium (three writes recorded outside their transaction; a relabel overwrote what was written while it simulated, and concurrent writes recorded stale befores; a host route under one of Control's wildcards took that path from Control; `PUT …/subjects` stored reserved claims such as `chain_hop_proxy_id`; `audit/negotiated` gave no truncation signal), 6 low (an axis without its value was a 500; refusals quoting Go operations, package and SQL text; revocation refusals naming `body`, a blank host key a 409; an oversized body a 400; relabel changes unvalidated; a negative `through_seq` ignored), 7 test gaps a mutation passed, 7 doc errors. **Open:** one proposal, bounded inventory lists (item 15), for the user. Table and mutations in Details.
+- **Findings:** 15 items, no high-severity defect. Fixed: 5 medium (three writes recorded outside their transaction; a relabel overwrote what was written while it simulated, and concurrent writes recorded stale befores; a host route under one of Control's wildcards took that path from Control; `PUT …/subjects` stored reserved claims such as `chain_hop_proxy_id`; `audit/negotiated` gave no truncation signal), 6 low (an axis without its value was a 500; refusals quoting Go operations, package and SQL text; revocation refusals naming `body`, a blank host key a 409; an oversized body a 400; relabel changes unvalidated; a negative `through_seq` ignored), 7 test gaps a mutation passed, 7 doc errors. **Open:** none. Bounded inventory lists (item 15) were proposed, and the user had them queued as **0026**, an audit-and-plan phase that finds every list and queues the work in chunks. Table and mutations in Details.
 - **Fixed, by commit:** `55a410e` host routes under Control's wildcards refused, enumerating test; `f2918e6` role table, code registry, north `401` and M2 guards; `6b55794` records in their transactions, tenant locks, the relabel, subject claims, `truncated`, every refusal (with `TestEveryWriteCommitsWithItsRecordOrNotAtAll`, which fails on `main` on exactly the four writes).
 - **RBAC (item 3): every grant confirmed.** `policy-author`/`fleet-admin` `target:write` (the author already changes every decision by publishing; the fleet owns the estate it labels, and a relabel is diffed, simulable, recorded); `grant-admin` `session:revoke` (every revocation act narrows access); `audit:retain`, `access-context:write` admin-only; readers `access-context:read`, `extension:read`. Now held whole by `TestTheRoleTableIsHeldWhole` and rendered in PLAN §6.
 - **Writes → records:** policy upload/activate/apply `operator.policy.uploaded`/`activated`; target put, relabel, delete `operator.target.put` (+`operator.targets.relabelled`)/`deleted`; subject put/delete; role bind/remove `operator.role.bound`/`unbound`; claim mapping `operator.claim_mapping.activated`; enrollment/withdrawal `operator.proxy.approved`/`withdrawn`; config publish/rollback `operator.fleet_config.published`/`rolled_back`; both retentions `operator.audit.retained`; bindings `access_context.binding_put`/`deleted`. All in the act's transaction (claim mapping, enrollment, config since `6b55794`) but revocations: a bus event with no transaction, recorded after it is published.
 - **`v0.6.0` corrections (in `v0.10.0`):** route list omitted `PUT …/identity/claim-mapping`; `### Breaking` omitted that a host route or code on what it began serving fails start-up; three records were outside their transaction.
-- **Owed to `hoplock/enterprise`** (sync queued, see PR): control#69's (3) was not true until `v0.10.0` (a literal under a Control wildcard was accepted); (5) the fleet configuration record drops `operator.unannounced` and gains `before`; (8) is stale since 0021 renumbered: instance identity is 0026, the console 0027, E2E 0028, post-quantum 0029, one contract version 0030. Its sync of control#69 has **not** run (still queued, no draft move).
+- **Owed to `hoplock/enterprise`** (sync queued, see PR): control#69's (3) was not true until `v0.10.0` (a literal under a Control wildcard was accepted); (5) the fleet configuration record drops `operator.unannounced` and gains `before`; (8) is stale since 0021 renumbered, and this PR moved them once more: instance identity is 0027, the console 0028, E2E 0029, post-quantum 0030, one contract version 0031. Its sync of control#69 has **not** run (still queued, no draft move).
 - **0019 claims that were wrong, all four audits** (each audit's file has its detail): declarations written once per change, the serial "SQL join", the log `400` list, CI running every group, five conformance cases (0020); GIN/partial indexes usable, drift and nothing-published, retention in its transaction, publish tenants tracked, two meta-tests (0021); explain total, replay listing every unreadable record, the unmet and ban-typo warnings' reach, 13 codes, finding ids per proxy/target, `ext.PolicyValidator`'s doc (0022); every write in its transaction, relabel's apply, the host-route promise, M2's register row, §3's route sentence, `v0.6.0`'s list and Breaking, control#69 (3) and (8) (0023).
 - **Decisions:** none added, amended or withdrawn; register rows M2 (now §3, §4, §10) and M16 (adds §6) corrected. **Migrations:** none. Release `v0.10.0`, `### Breaking`. **Proxy:** none owed.
-- **NEXT:** 0024 builds on a surface whose every write is held by an enumerating test; a new write route fails it until listed. Item 15's proposal waits on the user.
+- **NEXT:** 0024 builds on a surface whose every write is held by an enumerating test; a new write route fails it until listed. 0026 (bounded lists) starts from this file's proposal.
 
 ## Details
 
@@ -46,7 +46,7 @@ golangci-lint v2.14.0 built with `GOTOOLCHAIN=go1.27.0`). Export
 | 12 | `CHANGELOG.md` `v0.6.0` | wrong → corrected in `v0.10.0` | Every bullet checked: true except the route list's omission and `### Breaking`'s silence on host start-up refusals. 0020–0022 found the rest of its bullets true. |
 | 13 | control#69's obligations | wrong → sync queued | (1) corrected by 0022's sync; (2) true; (3) not true until `55a410e`; (4) true; (5) true, and the config record's shape changes now; (6), (7) true; (8) stale since 0021's renumber, which queued no sync. The sync file carries the eight faithfully; Enterprise has not run it. |
 | 14 | 0019's learnings | ruled | Below. |
-| 15 | Carried from 0021 | fixed (2), proposed (1) | `negotiated` gives `truncated`; every `auditFailure` refusal (and inventory's, revocation's, config's) is free of internal names. Lists: proposal below. |
+| 15 | Carried from 0021 | fixed (2), queued (1) as 0026 | `negotiated` gives `truncated`; every `auditFailure` refusal (and inventory's, revocation's, config's) is free of internal names. Lists: proposal below. |
 
 ### Mutations, by item
 
@@ -78,10 +78,10 @@ failed. † passed every test before 0023.
 - "The impact preview is `GET …/fleet/target-observations` plus the publish-time findings" — **true**.
 - "CI generates a throwaway CA key for the mock and sets `HOPLOCK_KEK`" — **true** (`ci.yml` `ssh-keygen`, `HOPLOCK_KEK`).
 - Simulation shape — true; the replay also answers `from` and `to`.
-- NEXT's "0024 … 0025 … 0026" — resolve through §10's `audit-findings` rows to 0026, 0027, 0028.
+- NEXT's "0024 … 0025 … 0026" — resolve through §10's `audit-findings` rows to 0027, 0028, 0029.
 - control#69's "a host route on a path Control serves … is refused" — **false until `55a410e`**; its (8) — **stale**.
 
-### Proposal: bounded inventory lists (item 15, open)
+### Proposal: bounded inventory lists (item 15, queued as 0026)
 
 `GET …/subjects`, `…/policy/bundles`, `…/fleet/algorithms`,
 `…/fleet/target-observations` and `…/fleet/config/rollouts` answer a whole
@@ -93,9 +93,13 @@ subjects, targets and role bindings; version for bundles; proxy id for
 declarations, rollouts and proxies; host and port for observations), and
 `{<list>: […], truncated, next}`; the store reads `limit+1`. Exempt:
 `…/extensions` (bounded by the sealed registry) and the access-context lists
-(one binding per configured provider). Not built: it changes eight response
-shapes the console (0027) will read and cuts today's answers for an estate
-over 500, which is the user's to decide.
+(one binding per configured provider). Not built here: it changes eight
+response shapes the console (0028) will read and cuts today's answers for an
+estate over 500. At the user's direction it is queued as **0026**, which
+finds every other list that needs the shape too, records the shape as a
+decision, and queues the implementation in chunks that each fit one session
+(PLAN §10, bounded-lists revision). Its numbers moved instance identity to
+0027 and the console to 0028.
 
 ### Observations, not defects
 

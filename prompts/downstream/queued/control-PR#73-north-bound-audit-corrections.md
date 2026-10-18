@@ -43,12 +43,18 @@ operator.fleet_config.rolled_back drop the attribute operator.unannounced and
 gain before (the version the act displaced). operator.claim_mapping.activated,
 operator.proxy.approved and both fleet_config records now commit in the act's
 transaction. Any SIEM mapping or compliance report naming unannounced changes.
-(3) Correction to control#69's (8). Since control#71 (revision audit-findings)
-Control's queued phases are: instance identity and supervisory registration
-0026 (its E14 builds on it), management console 0027, E2E topology 0028,
-post-quantum posture 0029, one contract version 0030; Control's 0024 is signed
-retention markers and 0025 the shared event plane. Every citation of a Control
-phase number resolves through Control's docs/PLAN.md §10 mapping table.
+(3) Correction to control#69's (8). Control's queued phases moved twice since:
+control#71 (revision audit-findings) queued 0024 signed retention markers and
+0025 the shared event plane, and control#73 (revision bounded-lists) queued
+0026, an audit of every north-bound list that settles one bounded-list shape
+(a limit, a cursor, an answer that says where it stopped) and queues its
+implementation in chunks right after it. So today: instance identity and
+supervisory registration is 0027 (its E14 builds on it), management console
+0028, E2E topology 0029, post-quantum posture 0030, one contract version 0031
+— and 0026's chunks will move them again, each move with its own note. Every
+citation of a Control phase number resolves through Control's docs/PLAN.md §10
+mapping table; cite a phase by name beside its number. Where an Enterprise
+prompt reads a Control list, note that its shape changes in 0026's chunks.
 (4) Observable from v0.10.0: a north-bound body past the listener's limit is
 413 payload_too_large with a limit parameter, host routes included;
 GET .../audit/negotiated answers truncated; PUT .../subjects/{subject} refuses
