@@ -99,9 +99,11 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, h Host) 
 			return runIdentity(ctx, h, args[1:], stdout, stderr)
 		case "ca":
 			return runCA(ctx, h, args[1:], stdout, stderr)
+		case "audit-retention":
+			return runAuditRetention(ctx, h, args[1:], stdout, stderr)
 		default:
 			return fmt.Errorf(
-				"unknown subcommand %q (known: migrate, seed, audit-verify, identity, ca)", args[0])
+				"unknown subcommand %q (known: migrate, seed, audit-verify, audit-retention, identity, ca)", args[0])
 		}
 	}
 
@@ -125,6 +127,43 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, h Host) 
 	return start(ctx, cfg, sections, h, stderr)
 }
 
+// prepareExtensions builds the sealed extension set the way the daemon does,
+// for the daemon and for the subcommands that need what a host registers — its
+// ext.KeyStore above all (0024), which `audit-verify` must check retention
+// against exactly as the server signed it.
+//
+// The host reads its own sections first, before its registry is sealed, so an
+// extension it builds from its configuration can still be registered. Nothing
+// has opened a database or bound a port yet: a host that refuses its
+// configuration stops a server that never started.
+//
+// Extensions are registered before anything starts and are immutable afterwards
+// (PLAN M15), so a request can never see a half-registered seam. Control's own
+// defaults go INTO the host's registry: an extension beats a Control default at
+// a single point in either registration order (0004), so the host's
+// registrations stand.
+func prepareExtensions(cfg *config.Config, sections []config.HostSection, h Host) (*ext.Extensions, error) {
+	for _, s := range sections {
+		if err := h.Config(s.Name, s.Raw); err != nil {
+			return nil, fmt.Errorf("config: section %s: %w", s.Name, err)
+		}
+	}
+	registry := h.Registry
+	if registry == nil {
+		registry = ext.NewRegistry()
+	}
+	if err := extdefault.Register(registry, extdefault.Deps{Node: ext.Node{
+		Version:   versionString(),
+		StartedAt: time.Now().UTC(),
+	}}); err != nil {
+		return nil, err
+	}
+	if err := registerDeclarative(registry, cfg.AccessContext); err != nil {
+		return nil, err
+	}
+	return registry.Seal()
+}
+
 // Run is the daemon alone, with the configuration read from config. The log
 // goes to logOut.
 func Run(ctx context.Context, cfgDoc io.Reader, h Host, logOut io.Writer) error {
@@ -146,37 +185,7 @@ func start(ctx context.Context, cfg *config.Config, sections []config.HostSectio
 	}))
 	slog.SetDefault(log)
 
-	// The host reads its own sections first, before its registry is sealed,
-	// so an extension it builds from its configuration can still be
-	// registered. Nothing has opened a database or bound a port yet: a host
-	// that refuses its configuration stops a server that never started.
-	for _, s := range sections {
-		if err := h.Config(s.Name, s.Raw); err != nil {
-			return fmt.Errorf("config: section %s: %w", s.Name, err)
-		}
-	}
-
-	// Extensions are registered before anything starts and are immutable
-	// afterwards (PLAN M15), so a request can never see a half-registered
-	// seam. Control's own defaults go INTO the host's registry: an extension
-	// beats a Control default at a single point in either registration order
-	// (0004), so the host's registrations stand. The sealed set is logged
-	// point by point, because an operator debugging behaviour has to be able
-	// to see what is in play.
-	registry := h.Registry
-	if registry == nil {
-		registry = ext.NewRegistry()
-	}
-	if err := extdefault.Register(registry, extdefault.Deps{Node: ext.Node{
-		Version:   versionString(),
-		StartedAt: time.Now().UTC(),
-	}}); err != nil {
-		return err
-	}
-	if err := registerDeclarative(registry, cfg.AccessContext); err != nil {
-		return err
-	}
-	extensions, err := registry.Seal()
+	extensions, err := prepareExtensions(cfg, sections, h)
 	if err != nil {
 		return err
 	}
@@ -192,6 +201,8 @@ func start(ctx context.Context, cfg *config.Config, sections []config.HostSectio
 		attrs = append(attrs, "host", h.Provider, "host_sections", len(sections), "host_routes", len(h.Routes))
 	}
 	log.Info("starting", attrs...)
+	// The sealed set is logged point by point, because an operator debugging
+	// behaviour has to be able to see what is in play.
 	extdefault.Log(log, extensions)
 
 	// The store is opened and NOT migrated. Migrations are an explicit

@@ -5,7 +5,9 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/hoplock/control/internal/store"
 )
@@ -27,6 +29,9 @@ type Verifier struct {
 	// store, which is the one thing a routine verification should not do
 	// by accident.
 	captures bool
+	// keys checks retention seals (0024). Nil is a verifier with no key
+	// store, which reports every seal it meets as one it cannot check.
+	keys *RetentionKeys
 }
 
 // VerifierOption configures a Verifier.
@@ -45,6 +50,12 @@ func WithPageSize(n int) VerifierOption {
 // digest inside each hashed record.
 func WithCaptureVerification(on bool) VerifierOption {
 	return func(v *Verifier) { v.captures = on }
+}
+
+// WithRetentionKeys sets the key store retention seals are checked against:
+// the one the server signs with, built from the same configuration.
+func WithRetentionKeys(keys *RetentionKeys) VerifierOption {
+	return func(v *Verifier) { v.keys = keys }
 }
 
 // NewVerifier builds a verifier over a store.
@@ -125,24 +136,54 @@ func (v *Verifier) VerifyTenant(ctx context.Context, tenant store.Tenant) (Resul
 // one the pass recorded, chained onto that record's hash. Resuming there is what
 // lets a lawful deletion verify while a deletion from the middle still breaks.
 //
+// The marker is checked before anything is walked (0024): one whose seal does
+// not hold is a BreakRetentionMarker at the marker, because a deletion made to
+// look lawful is exactly a marker a writer of the database wrote.
+//
 // It stops at the FIRST break. A verifier that carried on would report every
 // later record as broken too — they all chain onto the altered one — and bury
 // the finding that matters in a list of consequences.
 func (v *Verifier) VerifyStream(ctx context.Context, tenant store.Tenant, stream string) (StreamResult, error) {
+	var marker *store.AuditRetention
+	switch got, err := v.store.Audit().Retention(ctx, tenant, stream); {
+	case err == nil:
+		marker = &got
+	case !store.IsNotFound(err):
+		return StreamResult{}, err
+	}
+	if marker != nil {
+		problem, err := v.keys.check(ctx, tenant, sealOf(*marker),
+			RetentionMessage(tenant, stream, marker.ThroughSeq, marker.ThroughHash))
+		if err != nil {
+			return StreamResult{}, err
+		}
+		if problem != "" {
+			return StreamResult{Stream: stream, RetainedThrough: marker.ThroughSeq, Break: &Break{
+				Tenant: string(tenant), Stream: stream, Kind: BreakRetentionMarker,
+				ChainSeq: marker.ThroughSeq, Want: "a retention seal that checks", Got: marker.ThroughHash,
+				Detail: fmt.Sprintf("the retention marker through %d does not verify: %s", marker.ThroughSeq, problem),
+			}}, nil
+		}
+	}
+	return v.walk(ctx, tenant, stream, marker)
+}
+
+// walk verifies a chain from a marker taken as given (nil: from sequence 1).
+// Only VerifyStream, after checking the marker's seal, and the adoption of a
+// marker no pass signed, which checks everything after it, start one.
+func (v *Verifier) walk(ctx context.Context, tenant store.Tenant, stream string, marker *store.AuditRetention) (StreamResult, error) {
 	out := StreamResult{Stream: stream}
 
 	var (
 		prev     store.AuditRecord
 		afterSeq int64
 		expected int64 = 1
+		mark     captureMark
 	)
-	switch marker, err := v.store.Audit().Retention(ctx, tenant, stream); {
-	case err == nil:
+	if marker != nil {
 		prev = store.AuditRecord{Hash: marker.ThroughHash}
 		afterSeq, expected = marker.ThroughSeq, marker.ThroughSeq+1
 		out.RetainedThrough = marker.ThroughSeq
-	case !store.IsNotFound(err):
-		return StreamResult{}, err
 	}
 	for {
 		page, err := v.store.Audit().Chain(ctx, tenant, stream, afterSeq, v.page)
@@ -158,11 +199,17 @@ func (v *Verifier) VerifyStream(ctx context.Context, tenant store.Tenant, stream
 				return out, nil
 			}
 			if v.captures && rec.CaptureSHA256 != "" {
-				if b, err := v.verifyCapture(ctx, tenant, stream, rec); store.IsCaptureRetained(err) {
-					out.CapturesRetained++
-				} else if err != nil {
+				b, err := v.verifyCapture(ctx, tenant, stream, rec)
+				if store.IsCaptureRetained(err) {
+					b, err = v.verifyRetainedCapture(ctx, tenant, stream, rec, &mark)
+					if err == nil && b == nil {
+						out.CapturesRetained++
+					}
+				}
+				if err != nil {
 					return StreamResult{}, err
-				} else if b != nil {
+				}
+				if b != nil {
 					out.Break = b
 					return out, nil
 				}
@@ -174,6 +221,65 @@ func (v *Verifier) VerifyStream(ctx context.Context, tenant store.Tenant, stream
 			expected = rec.ChainSeq + 1
 		}
 	}
+}
+
+// captureMark is the tenant's capture watermark as one walk found it: read and
+// checked once, at the first retained capture.
+type captureMark struct {
+	loaded  bool
+	before  time.Time
+	problem string
+}
+
+// verifyRetainedCapture decides whether a capture whose bytes are gone is gone
+// by a signed pass (0024): the tenant's watermark must carry a seal that holds,
+// and the record's own timestamp — read from the hashed body, never from the
+// derived column a writer could move — must be before it.
+func (v *Verifier) verifyRetainedCapture(ctx context.Context, tenant store.Tenant, stream string, rec store.AuditRecord, mark *captureMark) (*Break, error) {
+	if !mark.loaded {
+		switch wm, err := v.store.Audit().CaptureRetention(ctx, tenant); {
+		case store.IsNotFound(err):
+			mark.problem = "no signed capture pass has reached this tenant"
+		case err != nil:
+			return nil, err
+		default:
+			problem, err := v.keys.check(ctx, tenant,
+				store.RetentionSeal{KeyName: wm.KeyName, Signature: wm.Signature}, CaptureRetentionMessage(tenant, wm.Before))
+			if err != nil {
+				return nil, err
+			}
+			if problem != "" {
+				mark.problem = "the capture retention watermark does not verify: " + problem
+			}
+			mark.before = wm.Before
+		}
+		mark.loaded = true
+	}
+	brk := func(detail string) *Break {
+		return &Break{
+			Tenant: string(tenant), Stream: stream, Kind: BreakRetentionMarker,
+			ChainSeq: rec.ChainSeq, RecordID: rec.RecordID, Want: rec.CaptureSHA256,
+			Detail: "the session capture is marked removed by retention, and " + detail,
+		}
+	}
+	if mark.problem != "" {
+		return brk(mark.problem), nil
+	}
+	var body struct {
+		Timestamp string `json:"timestamp"`
+	}
+	if err := json.Unmarshal([]byte(rec.Body), &body); err != nil {
+		return brk("its record's timestamp cannot be read"), nil
+	}
+	at, err := time.Parse(time.RFC3339Nano, body.Timestamp)
+	if err != nil {
+		return brk("its record's timestamp cannot be read"), nil
+	}
+	if !at.Before(mark.before) {
+		return brk(fmt.Sprintf("its record was made at %s, which no signed capture pass reached (the watermark is %s)",
+			at.UTC().Format(time.RFC3339Nano), mark.before.UTC().Format(time.RFC3339Nano))), nil
+	}
+	return nil, nil
 }
 
 func (v *Verifier) verifyCapture(ctx context.Context, tenant store.Tenant, stream string, rec store.AuditRecord) (*Break, error) {

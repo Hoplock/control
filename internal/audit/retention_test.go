@@ -4,12 +4,14 @@
 package audit_test
 
 import (
+	"bytes"
 	"encoding/base64"
 	"testing"
 	"time"
 
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/extdefault"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -21,7 +23,7 @@ func TestARetentionPassKeepsTheChainVerifying(t *testing.T) {
 	t.Parallel()
 	st := storetest.New(t)
 	in := newIngester(t, st)
-	verifier := audit.NewVerifier(st)
+	verifier := audit.NewVerifier(st, audit.WithRetentionKeys(retentionKeys(t, st)))
 	ctx := t.Context()
 	mustIngest(ctx, t, in, tenantA, proxyA, records(8, "sess-retain")...)
 
@@ -31,23 +33,25 @@ func TestARetentionPassKeepsTheChainVerifying(t *testing.T) {
 	}
 	stream := streams[0]
 
-	marker, deleted, err := st.Audit().RetainPrefix(ctx, tenantA, stream, 5, "admin@example.com")
+	marker, err := retainer(t, st).RetainPrefix(ctx, tenantA, audit.PrefixPass{Stream: stream, ThroughSeq: 5}, retentionActor)
 	if err != nil {
 		t.Fatalf("retain: %v", err)
 	}
-	if deleted != 5 || marker.ThroughSeq != 5 || marker.ThroughHash == "" {
-		t.Fatalf("retained %d through %d (%q), want 5 through 5 with a hash", deleted, marker.ThroughSeq, marker.ThroughHash)
+	if marker.Deleted != 5 || marker.ThroughSeq != 5 || marker.ThroughHash == "" || marker.Signature == "" {
+		t.Fatalf("retained %+v, want 5 through 5 with a hash and a seal", marker)
 	}
 
-	result, err := verifier.VerifyTenant(ctx, tenantA)
+	// The pass's own record joined the control stream, so the proxy's stream
+	// is read by name.
+	result, err := verifier.VerifyStream(ctx, tenantA, stream)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if !result.OK() {
-		t.Fatalf("a lawful retention pass broke the chain: %s", result.Streams[0].Break)
+	if result.Break != nil {
+		t.Fatalf("a lawful retention pass broke the chain: %s", result.Break)
 	}
-	if s := result.Streams[0]; s.Records != 3 || s.RetainedThrough != 5 {
-		t.Errorf("walked %d records from %d, want 3 resuming after 5", s.Records, s.RetainedThrough)
+	if result.Records != 3 || result.RetainedThrough != 5 {
+		t.Errorf("walked %d records from %d, want 3 resuming after 5", result.Records, result.RetainedThrough)
 	}
 
 	// Appending after a pass continues the same chain.
@@ -61,12 +65,12 @@ func TestARetentionPassKeepsTheChainVerifying(t *testing.T) {
 		`DELETE FROM audit_records WHERE tenant = $1 AND stream = $2 AND chain_seq = 7`, tenantA, stream); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	result, err = verifier.VerifyTenant(ctx, tenantA)
+	result, err = verifier.VerifyStream(ctx, tenantA, stream)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if result.OK() || result.Streams[0].Break.Kind != audit.BreakGap {
-		t.Errorf("a deletion from the middle after retention: %+v, want a gap", result.Streams[0])
+	if result.Break == nil || result.Break.Kind != audit.BreakGap {
+		t.Errorf("a deletion from the middle after retention: %+v, want a gap", result)
 	}
 }
 
@@ -79,17 +83,22 @@ func TestRetentionNeverMovesBackAndNeverTakesTheHead(t *testing.T) {
 	mustIngest(ctx, t, in, tenantA, proxyA, records(4, "sess-bounds")...)
 	streams, _ := st.Audit().Streams(ctx, tenantA)
 	stream := streams[0]
+	emitter := retainer(t, st)
+	pass := func(tenant store.Tenant, through int64) error {
+		_, err := emitter.RetainPrefix(ctx, tenant, audit.PrefixPass{Stream: stream, ThroughSeq: through}, retentionActor)
+		return err
+	}
 
-	if _, _, err := st.Audit().RetainPrefix(ctx, tenantA, stream, 4, "x"); !store.IsInvalid(err) {
+	if err := pass(tenantA, 4); !store.IsInvalid(err) {
 		t.Errorf("retaining through the head answered %v, want invalid", err)
 	}
-	if _, _, err := st.Audit().RetainPrefix(ctx, tenantA, stream, 2, "x"); err != nil {
+	if err := pass(tenantA, 2); err != nil {
 		t.Fatalf("retain through 2: %v", err)
 	}
-	if _, _, err := st.Audit().RetainPrefix(ctx, tenantA, stream, 2, "x"); !store.IsInvalid(err) {
+	if err := pass(tenantA, 2); !store.IsInvalid(err) {
 		t.Errorf("retaining through 2 twice answered %v, want invalid", err)
 	}
-	if _, _, err := st.Audit().RetainPrefix(ctx, "other-tenant", stream, 1, "x"); !store.IsNotFound(err) {
+	if err := pass("other-tenant", 1); !store.IsNotFound(err) {
 		t.Errorf("another tenant's retention of this stream answered %v, want not found", err)
 	}
 }
@@ -100,7 +109,7 @@ func TestRetainedCapturesAreGoneNotChanged(t *testing.T) {
 	t.Parallel()
 	st := storetest.New(t)
 	in := newIngester(t, st)
-	verifier := audit.NewVerifier(st, audit.WithCaptureVerification(true))
+	verifier := audit.NewVerifier(st, audit.WithCaptureVerification(true), audit.WithRetentionKeys(retentionKeys(t, st)))
 	ctx := t.Context()
 
 	rec := record("rec-capture", "sess-capture")
@@ -109,29 +118,49 @@ func TestRetainedCapturesAreGoneNotChanged(t *testing.T) {
 	rec.Payload = base64.StdEncoding.EncodeToString([]byte("whoami\r\nroot\r\n"))
 	mustIngest(ctx, t, in, tenantA, proxyA, []contract.LogRecord{rec}...)
 
-	n, err := st.Audit().RetainCaptures(ctx, tenantA, time.Now().Add(-24*time.Hour))
-	if err != nil || n != 1 {
-		t.Fatalf("retain captures = %d, %v; want 1", n, err)
+	out, err := retainer(t, st).RetainCaptures(ctx, tenantA, time.Now().Add(-24*time.Hour), retentionActor)
+	if err != nil || out.Emptied != 1 {
+		t.Fatalf("retain captures = %+v, %v; want 1", out, err)
 	}
 	if _, err := st.Audit().Capture(ctx, tenantA, rec.RecordID); !store.IsCaptureRetained(err) {
 		t.Errorf("reading a retained capture answered %v, want ErrCaptureRetained", err)
 	}
-	result, err := verifier.VerifyTenant(ctx, tenantA)
+	result, err := verifier.VerifyStream(ctx, tenantA, audit.StreamFor(proxyA))
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if !result.OK() || result.Streams[0].CapturesRetained != 1 {
-		t.Errorf("verification after capture retention: %+v", result.Streams[0])
+	if result.Break != nil || result.CapturesRetained != 1 {
+		t.Errorf("verification after capture retention: %+v", result)
 	}
 }
 
 func retainer(t *testing.T, st *store.Store) *audit.Emitter {
 	t.Helper()
-	emitter, err := audit.NewEmitter(newIngester(t, st))
+	emitter, err := audit.NewEmitter(newIngester(t, st), audit.WithRetentionSigner(retentionKeys(t, st)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return emitter
+}
+
+// testKEK is the key-encryption key every test's software custodian shares, so
+// a key one helper generated another can use.
+var testKEK = bytes.Repeat([]byte{0x24}, extdefault.KeyEncryptionKeySize)
+
+// retentionKeys is Control's own custody over the test database: the key store
+// a deployment with a key-encryption key and no ext.KeyStore runs.
+func retentionKeys(t *testing.T, st *store.Store) *audit.RetentionKeys {
+	t.Helper()
+	return audit.NewRetentionKeys(softwareKeyStore(t, st))
+}
+
+func softwareKeyStore(t *testing.T, st *store.Store) *extdefault.SoftwareKeyStore {
+	t.Helper()
+	ks, err := extdefault.NewSoftwareKeyStore(st, testKEK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ks
 }
 
 var retentionActor = audit.OperatorActor{Principal: "tok-admin"}
@@ -215,7 +244,7 @@ func TestARetentionPassByInstantTakesWhatWasReceivedBeforeIt(t *testing.T) {
 	if all.ThroughSeq != 5 {
 		t.Errorf("a pass past every record retained through %d, want 5: the head (6) stays", all.ThroughSeq)
 	}
-	if result, err := audit.NewVerifier(st).VerifyStream(ctx, tenantA, stream); err != nil || result.Break != nil || result.Records != 1 {
+	if result, err := audit.NewVerifier(st, audit.WithRetentionKeys(retentionKeys(t, st))).VerifyStream(ctx, tenantA, stream); err != nil || result.Break != nil || result.Records != 1 {
 		t.Errorf("verification after the passes = %+v, %v; want the head alone, verifying", result, err)
 	}
 	// Two passes took something, so two records; the no-op is not an act.

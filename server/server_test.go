@@ -428,7 +428,7 @@ func TestControlAloneIsUnchanged(t *testing.T) {
 		t.Errorf("--version printed %q", stdout.String())
 	}
 	err := server.Main(context.Background(), []string{"migrat"}, &stdout, &stderr, server.Options{})
-	if err == nil || !strings.Contains(err.Error(), "known: migrate, seed, audit-verify, identity, ca") {
+	if err == nil || !strings.Contains(err.Error(), "known: migrate, seed, audit-verify, audit-retention, identity, ca") {
 		t.Errorf("an unknown subcommand = %v", err)
 	}
 }

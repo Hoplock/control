@@ -78,6 +78,19 @@ const (
 	// error because it is a CONFIGURATION answer, and the message names the
 	// key to set.
 	CodeCANotConfigured = "ca_not_configured"
+	// CodeRetentionKeyNotConfigured is a retention pass on a deployment with
+	// no key store to sign it (0024): no key-encryption key and no
+	// registered ext.KeyStore. It is a configuration answer, like
+	// ca_not_configured, and never a 401 (M11): nothing is deleted, because
+	// a marker nothing signed is one a writer of the database could have
+	// written.
+	CodeRetentionKeyNotConfigured = "retention_key_not_configured"
+	// CodeRetentionUnverified is a retention pass refused because where it
+	// would start does not verify (0024): the stream's marker or the
+	// tenant's capture watermark carries no seal that holds, or the stream
+	// no longer starts where its marker says. A new seal over that start
+	// would launder it, so the operator verifies the stream first.
+	CodeRetentionUnverified = "retention_unverified"
 
 	// CodeGrantRequestDenied is a grant a registered approval workflow
 	// refused (ext.GrantWorkflow, 0012). It is a DECISION, answered 403 like
@@ -161,7 +174,7 @@ var AllCodes = []string{
 	CodeUnauthenticated, CodeForbidden, CodeTenantOutOfScope, CodeTenantAmbiguous,
 	CodeSubjectRequired,
 	CodeNotFound, CodeInvalidRequest, CodeLoginRefused, CodeInternal, CodeMethodNotAllowed,
-	CodeCANotConfigured,
+	CodeCANotConfigured, CodeRetentionKeyNotConfigured, CodeRetentionUnverified,
 	CodeGrantRequestDenied, CodeGrantWorkflowFailed, CodeGrantRequestNotPending,
 	CodeGrantRevocationUndelivered, CodeGrantWorkflowNotRegistered,
 	CodeProviderNotFound, CodePushNotSupported, CodeBindingNotFound, CodeBindingDisabled,
