@@ -218,14 +218,19 @@ type AuditRepository interface {
 	Retention(ctx context.Context, tenant Tenant, stream string) (AuditRetention, error)
 	// RetainPrefix deletes a stream's records through a sequence — a
 	// contiguous prefix, never the head — and records where the chain now
-	// starts, under the stream's append lock.
-	RetainPrefix(ctx context.Context, tenant Tenant, stream string, throughSeq int64, by string) (AuditRetention, int64, error)
+	// starts, with the seal o.Seal made over it, under the stream's append
+	// lock (0024).
+	RetainPrefix(ctx context.Context, tenant Tenant, stream string, throughSeq int64, o RetainPrefixOptions) (AuditRetention, int64, error)
 	// ThroughSeqBefore answers the sequence to retain through to drop what
 	// was received before an instant; zero means nothing.
 	ThroughSeqBefore(ctx context.Context, tenant Tenant, stream string, before time.Time) (int64, error)
 	// RetainCaptures empties the captures of records recorded before an
-	// instant, keeping the records and marking the bytes as retained.
-	RetainCaptures(ctx context.Context, tenant Tenant, recordedBefore time.Time) (int64, error)
+	// instant, keeping the records and marking the bytes as retained, and
+	// moves the tenant's signed watermark forward to the instant (0024).
+	RetainCaptures(ctx context.Context, tenant Tenant, recordedBefore time.Time, o RetainCapturesOptions) (int64, error)
+	// CaptureRetention returns the tenant's capture watermark; ErrNotFound
+	// means no signed capture pass has reached it.
+	CaptureRetention(ctx context.Context, tenant Tenant) (CaptureRetention, error)
 }
 
 // GrantRepository stores JIT access grants (M10).

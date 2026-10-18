@@ -45,6 +45,10 @@ const (
 	EventFleetConfigRolledBack = "operator.fleet_config.rolled_back"
 	EventRevocationPublished   = "operator.revocation.published"
 	EventAuditRetained         = "operator.audit.retained"
+	// EventAuditRetentionKeyRotated is a new generation of a tenant's
+	// retention key: it signs from now on, and older ones still check what
+	// they signed.
+	EventAuditRetentionKeyRotated = "operator.audit.retention_key_rotated"
 )
 
 // OperatorEventPrefix is what every act's event name starts with.

@@ -93,6 +93,9 @@ type lifecycle struct {
 	operator  *revoke.Operator
 	bus       *revoke.Bus
 	emitter   *audit.Emitter
+	// keys is the retention key store the emitter signs with, and what a
+	// test's verifier checks against.
+	keys *audit.RetentionKeys
 }
 
 // withLifecycle fills in a server's 0019 dependencies over a store.
@@ -116,7 +119,14 @@ func newLifecycle(t *testing.T, st *store.Store) *lifecycle {
 	if err != nil {
 		t.Fatalf("audit: %v", err)
 	}
-	emitter, err := audit.NewEmitter(ingest)
+	// Retention is signed by the deployment's key store (0024): the same
+	// software custodian the CA uses, as the daemon wires it.
+	keys, err := extdefault.NewSoftwareKeyStore(st, testKEK)
+	if err != nil {
+		t.Fatalf("key store: %v", err)
+	}
+	retentionKeys := audit.NewRetentionKeys(keys)
+	emitter, err := audit.NewEmitter(ingest, audit.WithRetentionSigner(retentionKeys))
 	if err != nil {
 		t.Fatalf("emitter: %v", err)
 	}
@@ -128,7 +138,7 @@ func newLifecycle(t *testing.T, st *store.Store) *lifecycle {
 	}
 	return &lifecycle{
 		fleet: registry, authoring: lifecycleSvc, operator: revoke.NewOperator(bus, registry),
-		bus: bus, emitter: emitter,
+		bus: bus, emitter: emitter, keys: retentionKeys,
 	}
 }
 

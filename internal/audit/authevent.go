@@ -73,14 +73,30 @@ const (
 type Emitter struct {
 	in  *Ingester
 	now func() time.Time
+	// keys signs retention (0024). Nil is a deployment with no key store,
+	// whose retention passes are refused.
+	keys *RetentionKeys
+}
+
+// EmitterOption configures an Emitter.
+type EmitterOption func(*Emitter)
+
+// WithRetentionSigner sets the keys retention passes are signed with. Without
+// it, retention is refused (ErrRetentionKeyNotConfigured).
+func WithRetentionSigner(keys *RetentionKeys) EmitterOption {
+	return func(e *Emitter) { e.keys = keys }
 }
 
 // NewEmitter builds an emitter over an ingester.
-func NewEmitter(in *Ingester) (*Emitter, error) {
+func NewEmitter(in *Ingester, opts ...EmitterOption) (*Emitter, error) {
 	if in == nil {
 		return nil, fmt.Errorf("audit: an ingester is required")
 	}
-	return &Emitter{in: in, now: time.Now}, nil
+	e := &Emitter{in: in, now: time.Now}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e, nil
 }
 
 // AuthEvent records one authentication outcome. It returns only after the

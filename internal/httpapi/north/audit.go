@@ -445,6 +445,25 @@ func (s *Server) auditFailure(w http.ResponseWriter, r *http.Request, op string,
 	switch {
 	case errors.Is(err, audit.ErrNoSession):
 		s.invalid(w, r, "session", access.ProblemRequired, "")
+	case errors.Is(err, audit.ErrRetentionKeyNotConfigured):
+		writeError(w, http.StatusServiceUnavailable, Error{
+			Code: CodeRetentionKeyNotConfigured, CorrelationID: CorrelationIDFrom(r.Context()),
+			Message: "this deployment has no key store to sign retention, so nothing was deleted: " +
+				"set credential.key_encryption_key_env and restart, or register an ext.KeyStore",
+			Parameters: map[string]any{"config_key": "credential.key_encryption_key_env"},
+		})
+	case audit.IsRetentionUnverified(err):
+		var e *audit.RetentionUnverifiedError
+		errors.As(err, &e)
+		params, what := map[string]any{"captures": true}, "the tenant's capture retention"
+		if e.Stream != "" {
+			params, what = map[string]any{"stream": e.Stream}, "stream "+e.Stream
+		}
+		writeError(w, http.StatusConflict, Error{
+			Code: CodeRetentionUnverified, CorrelationID: CorrelationIDFrom(r.Context()), Parameters: params,
+			Message: what + " does not verify where this pass would start, so nothing was deleted: " + e.Detail +
+				"; run hoplock-control audit-verify",
+		})
 	case store.IsNotFound(err):
 		writeError(w, http.StatusNotFound, Error{
 			Code: CodeNotFound, CorrelationID: CorrelationIDFrom(r.Context()),
@@ -515,6 +534,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request) {
 	}
 	answer(w, http.StatusOK, map[string]any{
 		"stream": out.Stream, "deleted": out.Deleted, "through_seq": out.ThroughSeq, "through_hash": out.ThroughHash,
+		"key": out.KeyName,
 	})
 }
 
@@ -524,7 +544,8 @@ type captureRetentionBody struct {
 
 // handleCaptureRetention removes the bytes of session captures recorded before
 // an instant, keeping their records: the chain still verifies and the store
-// says the bytes are gone rather than changed.
+// says the bytes are gone rather than changed. An instant ahead of the clock
+// runs to now, and the answer's `before` says so.
 func (s *Server) handleCaptureRetention(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
@@ -543,10 +564,10 @@ func (s *Server) handleCaptureRetention(w http.ResponseWriter, r *http.Request) 
 		s.invalid(w, r, "before", access.ProblemRequired, "")
 		return
 	}
-	n, err := s.emitter.RetainCaptures(r.Context(), tenant, body.Before, actor)
+	out, err := s.emitter.RetainCaptures(r.Context(), tenant, body.Before, actor)
 	if err != nil {
 		s.auditFailure(w, r, "retain captures", err)
 		return
 	}
-	answer(w, http.StatusOK, map[string]any{"captures": n, "before": body.Before.UTC()})
+	answer(w, http.StatusOK, map[string]any{"captures": out.Emptied, "before": out.Before, "key": out.KeyName})
 }

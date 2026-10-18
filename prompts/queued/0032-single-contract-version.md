@@ -1,4 +1,4 @@
-# 0031 — One contract version, end to end
+# 0032 — One contract version, end to end
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 ("never edit
@@ -356,7 +356,7 @@ version support back needs the argument, not just the conclusion.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0031-single-contract-version-learnings.md`. The summary block
+`docs/learnings/0032-single-contract-version-learnings.md`. The summary block
 MUST give: where the supported version and the document version are defined and
 how they are tied to the vendored file, the exact refusal behaviour and status
 code, which conformance assertions are contract-level and which are this

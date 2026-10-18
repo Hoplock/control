@@ -39,16 +39,19 @@ import (
 )
 
 // Main is Hoplock Control's command line: the daemon and every subcommand
-// (migrate, seed, audit-verify, identity, ca). hoplock-control's main is one
-// call to it with zero Options; a host binary's main is one call to it with
-// its own.
+// (migrate, seed, audit-verify, audit-retention, identity, ca).
+// hoplock-control's main is one call to it with zero Options; a host binary's
+// main is one call to it with its own.
 //
 // It returns rather than exiting, and it installs no signal handler: the
 // caller owns its exit code and its signals, and cancelling ctx stops the
 // daemon. A host with commands of its own dispatches them before calling Main;
 // Control does not route to them. Every subcommand that reads the
-// configuration accepts the host's sections, and none but the daemon hands
-// them to HostConfig.
+// configuration accepts the host's sections. The daemon, audit-verify and
+// audit-retention hand them to HostConfig and seal o.Registry, because those
+// three use what a host registers: audit-verify and audit-retention check and
+// sign retention with the host's ext.KeyStore exactly as the daemon does
+// (0024). No other subcommand calls HostConfig.
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer, o Options) error {
 	return daemon.Main(ctx, args, stdout, stderr, o.host())
 }
@@ -89,11 +92,12 @@ type Options struct {
 	// may not shadow `listeners`. Every other unknown key is still an
 	// error. Declaring sections requires HostConfig.
 	HostSections []string
-	// HostConfig is called by Run, once per section present in the file and
-	// in file order, with that section re-encoded as YAML — before the
-	// registry is sealed, so a host may register an extension it builds from
-	// its section there, and before anything serves. An error fails
-	// start-up. Absent sections are not called.
+	// HostConfig is called by Run, and by the audit-verify and
+	// audit-retention subcommands (see Main), once per section present in
+	// the file and in file order, with that section re-encoded as YAML —
+	// before the registry is sealed, so a host may register an extension it
+	// builds from its section there, and before anything serves. An error
+	// fails start-up. Absent sections are not called.
 	HostConfig func(section string, raw []byte) error
 
 	// Routes are the host's north-bound routes. See Route.

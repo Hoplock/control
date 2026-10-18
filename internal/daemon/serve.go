@@ -137,7 +137,21 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	// take, on a chain of their own (`audit.StreamControl`): the chain, the
 	// redaction and the idempotency are the parts that must not have a second
 	// implementation.
-	emitter, err := audit.NewEmitter(ingest)
+	//
+	// Retention is signed by the deployment's key store (0024), and refused
+	// without one: a marker nothing signed is one a writer of the database
+	// could have written.
+	keys, err := buildKeyStore(cfg, st, extensions)
+	if err != nil {
+		return err
+	}
+	if keys == nil {
+		log.Warn("this deployment has no key store, so audit retention is refused",
+			"event", "retention_key_not_configured",
+			"note", "set credential.key_encryption_key_env to a variable holding 32 base64 bytes, or register an ext.KeyStore",
+		)
+	}
+	emitter, err := audit.NewEmitter(ingest, audit.WithRetentionSigner(audit.NewRetentionKeys(keys)))
 	if err != nil {
 		return err
 	}

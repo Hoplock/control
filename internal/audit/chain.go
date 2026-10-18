@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -76,18 +77,22 @@ func StreamFor(proxyID string) string {
 // position and still verify, which is exactly the isolation M18 is for.
 func Link(tenant, stream string, seq int64, prevHash, body string) string {
 	h := sha256.New()
-	// Every part is length-prefixed so that no two different tuples can
-	// produce the same byte stream. Without it a stream named `a` with a
-	// body starting `b` hashes the same as a stream `ab` with a shorter
-	// body, and a collision an attacker can construct is not a chain.
-	for _, part := range []string{
-		chainVersion, tenant, stream, strconv.FormatInt(seq, 10), prevHash, body,
-	} {
-		h.Write([]byte(strconv.Itoa(len(part))))
-		h.Write([]byte(":"))
-		h.Write([]byte(part))
-	}
+	writeParts(h, chainVersion, tenant, stream, strconv.FormatInt(seq, 10), prevHash, body)
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
+}
+
+// writeParts writes each part length-prefixed, `<len>:<part>`, so that no two
+// different tuples can produce the same byte stream. Without it a stream named
+// `a` with a body starting `b` hashes the same as a stream `ab` with a shorter
+// body, and a collision an attacker can construct is not a chain. The chain's
+// links and the retention seals (seal.go) are both written by it, so the two
+// encodings cannot drift apart.
+func writeParts(w io.Writer, parts ...string) {
+	for _, part := range parts {
+		_, _ = io.WriteString(w, strconv.Itoa(len(part)))
+		_, _ = io.WriteString(w, ":")
+		_, _ = io.WriteString(w, part)
+	}
 }
 
 // chainVersion is inside every link, so a future change to the construction
@@ -126,6 +131,13 @@ const (
 	// BreakCaptureMismatch is a session capture whose bytes no longer match
 	// the digest inside the hashed record.
 	BreakCaptureMismatch BreakKind = "capture-mismatch"
+	// BreakRetentionMarker is a retention marker, or a retained capture,
+	// whose seal does not hold (0024): unsigned, signed by no key this key
+	// store holds, or signed over something else. It is its own kind so an
+	// operator can tell "a deletion was made to look lawful, or cannot be
+	// shown to be" from "a record was removed": the walk did not start,
+	// because where it would start is what is in question.
+	BreakRetentionMarker BreakKind = "retention-marker"
 	// BreakUnknownVersion is a record whose body was written by an encoding
 	// this build does not know. It is reported rather than treated as a
 	// break, because "I cannot check this" and "this was tampered with" are

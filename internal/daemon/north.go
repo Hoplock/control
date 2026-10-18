@@ -138,27 +138,17 @@ func buildFederation(
 // and unset, or set to something that is not 32 base64 bytes, is an operator who
 // believes they have a CA.
 func buildCA(cfg *config.Config, st *store.Store, log *slog.Logger) (*credential.CA, error) {
-	variable := strings.TrimSpace(cfg.Credential.KeyEncryptionKeyEnv)
-	if variable == "" {
+	kek, err := keyEncryptionKey(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if kek == nil {
 		log.Warn("this deployment has no certificate authority",
 			"event", "ssh_ca_not_configured",
 			"note", "set credential.key_encryption_key_env to a variable holding 32 base64 bytes",
 		)
 		return nil, nil
 	}
-
-	encoded, ok := os.LookupEnv(variable)
-	if !ok || encoded == "" {
-		return nil, fmt.Errorf(
-			"credential.key_encryption_key_env names %s, which is unset: the certificate authority cannot start", variable)
-	}
-	kek, err := decodeKEK(encoded)
-	if err != nil {
-		// The ERROR NAMES THE VARIABLE AND NEVER ITS VALUE, which is the
-		// whole point of reading a secret through a name.
-		return nil, fmt.Errorf("the key in %s could not be read: %w", variable, err)
-	}
-
 	keys, err := extdefault.NewSoftwareKeyStore(st, kek)
 	if err != nil {
 		return nil, err
@@ -169,6 +159,50 @@ func buildCA(cfg *config.Config, st *store.Store, log *slog.Logger) (*credential
 		credential.WithRotationOverlap(cfg.Credential.RotationOverlap),
 		credential.WithLogger(log),
 	)
+}
+
+// keyEncryptionKey reads the software custodian's key-encryption key: nil when
+// the deployment names none, an error when it names one that cannot be used.
+func keyEncryptionKey(cfg *config.Config) ([]byte, error) {
+	variable := strings.TrimSpace(cfg.Credential.KeyEncryptionKeyEnv)
+	if variable == "" {
+		return nil, nil
+	}
+	encoded, ok := os.LookupEnv(variable)
+	if !ok || encoded == "" {
+		return nil, fmt.Errorf(
+			"credential.key_encryption_key_env names %s, which is unset: the key store cannot start", variable)
+	}
+	kek, err := decodeKEK(encoded)
+	if err != nil {
+		// The ERROR NAMES THE VARIABLE AND NEVER ITS VALUE, which is the
+		// whole point of reading a secret through a name.
+		return nil, fmt.Errorf("the key in %s could not be read: %w", variable, err)
+	}
+	return kek, nil
+}
+
+// buildKeyStore is where this deployment's retention keys live (0024,
+// `ext.PointKeyStore`): a registered ext.KeyStore, or Control's software
+// custodian over the key-encryption key, or — with neither — none, and then
+// retention is refused rather than written unsigned. The daemon and
+// `audit-verify` both build it here, so the verifier checks against exactly the
+// key store the server signed with.
+func buildKeyStore(cfg *config.Config, st *store.Store, extensions *ext.Extensions) (ext.KeyStore, error) {
+	if extensions != nil {
+		if ks, ok := extensions.KeyStore(); ok {
+			return ks, nil
+		}
+	}
+	kek, err := keyEncryptionKey(cfg)
+	if err != nil || kek == nil {
+		return nil, err
+	}
+	software, err := extdefault.NewSoftwareKeyStore(st, kek)
+	if err != nil {
+		return nil, err
+	}
+	return software, nil
 }
 
 // decodeKEK reads a base64 key, accepting both alphabets and both paddings —

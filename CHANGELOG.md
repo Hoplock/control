@@ -26,6 +26,68 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.11.0
+
+Signed retention. A retention pass signs what it leaves behind with a
+per-tenant key the database does not hold in usable form, and `audit-verify`
+refuses a marker, or a removed session capture, whose signature does not
+check. A writer of the database alone can no longer delete a stream's oldest
+records — or empty a capture — and make it verify as lawful retention.
+
+### Breaking
+
+- **Retention is refused without a key store.** With no
+  `credential.key_encryption_key_env` and no registered `ext.KeyStore`,
+  `POST …/audit/retention` and `POST …/audit/captures/retention` answer
+  `503 retention_key_not_configured` with `config_key:
+  credential.key_encryption_key_env`, and delete nothing. Both passes ran
+  unsigned before.
+- **Retention written by `v0.6.0`–`v0.10.0` no longer verifies, and nothing
+  builds on it.** Nothing can tell an unsigned marker from a forged one, so it
+  is never silently trusted:
+  - `hoplock-control audit-verify` reports a stream whose marker is unsigned
+    as `BROKEN`, a `retention-marker` break naming the marker's sequence and
+    hash, and exits 1. With `--captures` it does the same for each capture
+    emptied by a pass that signed nothing.
+  - A retention pass over such a marker, or over such captures, is
+    `409 retention_unverified` (`stream`, or `captures: true`) and deletes
+    nothing. So is a pass over a stream that no longer starts where its marker
+    says.
+  - No path signs them after the fact. Nothing is deployed yet, so a
+    database carrying such retention is a development or test one, and is
+    rebuilt rather than migrated.
+- **`audit-verify` and `audit-retention` hand a host's configuration sections
+  to `HostConfig` and seal its registry,** as the daemon does, so they check
+  and sign with a host's `ext.KeyStore`. Every other subcommand still never
+  calls `HostConfig`.
+
+- **Phase:** 0024, signed retention markers.
+- **Public packages:** no identifier is added, removed or changed. The doc
+  comments of `server.Main` and `server.Options.HostConfig` name the
+  subcommands that call `HostConfig`.
+- **Behaviour no API diff shows:**
+  - A registered `ext.KeyStore` now holds keys: one Ed25519 key per tenant,
+    `audit-retention:<generation>`, generated on the first pass. Without one,
+    Control's software custodian holds them, encrypted under the
+    key-encryption key. The certificate authority still uses the software
+    custodian only.
+  - Each marker stores the key that signed it and the signature
+    (migration `0013`: `audit_retention.key_name`, `signature`), so a marker
+    signed before a rotation still verifies after it. A destroyed key makes
+    every marker it signed a `retention-marker` break naming the key.
+  - Capture passes keep a signed per-tenant watermark
+    (`audit_capture_retention`). A capture counts as retained only when its
+    record's own timestamp, read from the hashed body, is before it.
+  - A capture pass whose `before` is ahead of the clock runs to now, and its
+    answer's `before` says so. Both retention answers gain `key`, the key that
+    signed. `operator.audit.retained` carries `operator.key` and
+    `operator.signature`, and a capture pass's also `operator.watermark`.
+  - `hoplock-control audit-retention key | rotate-key`: show the tenant's
+    retention key and its public half, and make a new generation (recorded as
+    `operator.audit.retention_key_rotated`).
+  - New codes: `retention_key_not_configured` (503) and
+    `retention_unverified` (409).
+
 ## v0.10.0
 
 The fourth and last audit of `v0.6.0`: the north-bound surface — its routes,

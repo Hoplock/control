@@ -28,6 +28,11 @@ import (
 //
 // The exit code is the answer: 0 for a chain that verifies, 1 for one that
 // does not, so this is usable from cron without parsing anything.
+//
+// RETENTION SEALS ARE CHECKED AGAINST THE SERVER'S OWN KEY STORE (0024), built
+// from the same configuration and the same host extensions the daemon builds
+// (openRetentionKeys). A marker it cannot check — unsigned, or with no key store
+// configured — is a break, never a pass.
 func runAuditVerify(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hoplock-control audit-verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -40,22 +45,17 @@ func runAuditVerify(ctx context.Context, h Host, args []string, stdout, stderr i
 		return err
 	}
 
-	cfg, err := h.loadConfig(*configPath)
+	cfg, st, keys, err := openRetentionKeys(ctx, h, *configPath)
 	if err != nil {
 		return err
 	}
+	defer st.Close()
 	who := store.Tenant(cfg.Tenant)
 	if *tenant != "" {
 		who = store.Tenant(*tenant)
 	}
 
-	st, err := store.Open(ctx, cfg.Database.DSN)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	verifier := audit.NewVerifier(st, audit.WithCaptureVerification(*captures))
+	verifier := audit.NewVerifier(st, audit.WithCaptureVerification(*captures), audit.WithRetentionKeys(keys))
 
 	var result audit.Result
 	if *stream != "" {

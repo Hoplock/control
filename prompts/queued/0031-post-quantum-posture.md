@@ -1,4 +1,4 @@
-# 0030 — Post-quantum posture: state the wire, plumb the algorithms
+# 0031 — Post-quantum posture: state the wire, plumb the algorithms
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 (**never edit
@@ -33,6 +33,12 @@
 > ports and 0028 is serving the console over the north-bound one. Doing TLS
 > before then means doing it twice. It also extends 0029's topology and scenario
 > suite rather than standing up its own.
+>
+> **And after 0030**, which gives the CA a registered `ext.KeyStore` when there
+> is one. An algorithm this phase adds to `ext.KeyAlgorithm` is one a host's key
+> store may be asked to generate for the CA, so read `0030`'s learnings summary
+> for where the CA's keys now live before deciding what an unsupported algorithm
+> does.
 
 ## Objective
 Make Hoplock Control's cryptographic posture a **stated, asserted property of
@@ -287,7 +293,7 @@ with one. A floor the target cannot meet fails the session as an outage (PLAN
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0030-post-quantum-posture-learnings.md`. The summary block MUST
+`docs/learnings/0031-post-quantum-posture-learnings.md`. The summary block MUST
 give: the config keys added, the default posture and the one knob that changes
 it, the decision's `M` id, the `ext/` behaviour change and why it is safe, and —
 as its own line — **what the floor scenarios proved against the real proxy**:
