@@ -170,8 +170,7 @@ func (v *Verifier) VerifyStream(ctx context.Context, tenant store.Tenant, stream
 }
 
 // walk verifies a chain from a marker taken as given (nil: from sequence 1).
-// Only VerifyStream, after checking the marker's seal, and the adoption of a
-// marker no pass signed, which checks everything after it, start one.
+// Only VerifyStream starts one, after checking the marker's seal.
 func (v *Verifier) walk(ctx context.Context, tenant store.Tenant, stream string, marker *store.AuditRetention) (StreamResult, error) {
 	out := StreamResult{Stream: stream}
 

@@ -462,7 +462,7 @@ func (s *Server) auditFailure(w http.ResponseWriter, r *http.Request, op string,
 		writeError(w, http.StatusConflict, Error{
 			Code: CodeRetentionUnverified, CorrelationID: CorrelationIDFrom(r.Context()), Parameters: params,
 			Message: what + " does not verify where this pass would start, so nothing was deleted: " + e.Detail +
-				"; run hoplock-control audit-verify, and adopt a marker written before v0.11.0 with hoplock-control audit-retention adopt",
+				"; run hoplock-control audit-verify",
 		})
 	case store.IsNotFound(err):
 		writeError(w, http.StatusNotFound, Error{

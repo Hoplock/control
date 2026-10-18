@@ -146,8 +146,6 @@ bin/hoplock-control ca rotate [--compromise]       # routine, or revoke what is 
 bin/hoplock-control audit-verify --tenant default   # exit 1 on a break, retention seals included
 bin/hoplock-control audit-retention key            # the tenant's retention key and its public half
 bin/hoplock-control audit-retention rotate-key     # a new generation; older markers still verify
-bin/hoplock-control audit-retention adopt \
-    --stream S --through-seq N --through-hash H    # sign a marker v0.6.0–v0.10.0 wrote unsigned
 ```
 
 The `go` directive in `go.mod` is a **floor**, not a preference: CI builds on

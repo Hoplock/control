@@ -42,9 +42,9 @@ records — or empty a capture — and make it verify as lawful retention.
   `503 retention_key_not_configured` with `config_key:
   credential.key_encryption_key_env`, and delete nothing. Both passes ran
   unsigned before.
-- **Retention written by `v0.6.0`–`v0.10.0` no longer verifies, and is not
-  built on until an operator adopts it.** Nothing can tell an unsigned marker
-  from a forged one, so it is never silently trusted:
+- **Retention written by `v0.6.0`–`v0.10.0` no longer verifies, and nothing
+  builds on it.** Nothing can tell an unsigned marker from a forged one, so it
+  is never silently trusted:
   - `hoplock-control audit-verify` reports a stream whose marker is unsigned
     as `BROKEN`, a `retention-marker` break naming the marker's sequence and
     hash, and exits 1. With `--captures` it does the same for each capture
@@ -53,16 +53,9 @@ records — or empty a capture — and make it verify as lawful retention.
     `409 retention_unverified` (`stream`, or `captures: true`) and deletes
     nothing. So is a pass over a stream that no longer starts where its marker
     says.
-  - **What to do:** run `audit-verify`, compare each unsigned marker with
-    the `operator.audit.retained` record of the pass you ran, then run
-    `hoplock-control audit-retention adopt --stream S --through-seq N
-    --through-hash H` with the values `audit-verify` printed. It signs only
-    that marker, only when every record after it chains onto it, and records
-    `operator.audit.retention_adopted` under the account that ran it. For
-    captures, `audit-retention adopt --captures-before T` signs a watermark at
-    an instant that has passed and that no retained capture's record is at or
-    after — the `captures_before` of your last capture pass, normally. Whether
-    the deletion was lawful is your attestation: no check can make it for you.
+  - No path signs them after the fact. Nothing is deployed yet, so a
+    database carrying such retention is a development or test one, and is
+    rebuilt rather than migrated.
 - **`audit-verify` and `audit-retention` hand a host's configuration sections
   to `HostConfig` and seal its registry,** as the daemon does, so they check
   and sign with a host's `ext.KeyStore`. Every other subcommand still never
@@ -89,10 +82,9 @@ records — or empty a capture — and make it verify as lawful retention.
     answer's `before` says so. Both retention answers gain `key`, the key that
     signed. `operator.audit.retained` carries `operator.key` and
     `operator.signature`, and a capture pass's also `operator.watermark`.
-  - `hoplock-control audit-retention key | rotate-key | adopt`: show the
-    tenant's retention key and its public half, make a new generation
-    (recorded as `operator.audit.retention_key_rotated`), and adopt retention
-    written before this release.
+  - `hoplock-control audit-retention key | rotate-key`: show the tenant's
+    retention key and its public half, and make a new generation (recorded as
+    `operator.audit.retention_key_rotated`).
   - New codes: `retention_key_not_configured` (503) and
     `retention_unverified` (409).
 

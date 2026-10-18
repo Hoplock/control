@@ -221,10 +221,6 @@ type AuditRepository interface {
 	// starts, with the seal o.Seal made over it, under the stream's append
 	// lock (0024).
 	RetainPrefix(ctx context.Context, tenant Tenant, stream string, throughSeq int64, o RetainPrefixOptions) (AuditRetention, int64, error)
-	// SealRetention seals a marker no pass signed, the one naming throughSeq
-	// and throughHash and no other: the adoption of a marker written before
-	// 0024.
-	SealRetention(ctx context.Context, tenant Tenant, stream string, throughSeq int64, throughHash string, seal RetentionSeal) (AuditRetention, error)
 	// ThroughSeqBefore answers the sequence to retain through to drop what
 	// was received before an instant; zero means nothing.
 	ThroughSeqBefore(ctx context.Context, tenant Tenant, stream string, before time.Time) (int64, error)
@@ -235,9 +231,6 @@ type AuditRepository interface {
 	// CaptureRetention returns the tenant's capture watermark; ErrNotFound
 	// means no signed capture pass has reached it.
 	CaptureRetention(ctx context.Context, tenant Tenant) (CaptureRetention, error)
-	// SealCaptureRetention writes a tenant's first capture watermark
-	// without a pass: the adoption of captures emptied before 0024.
-	SealCaptureRetention(ctx context.Context, tenant Tenant, before time.Time, seal RetentionSeal, by string) (CaptureRetention, error)
 }
 
 // GrantRepository stores JIT access grants (M10).

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os/user"
-	"time"
 
 	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/audit"
@@ -18,27 +17,24 @@ import (
 	"github.com/hoplock/control/internal/store"
 )
 
-// runAuditRetention is `hoplock-control audit-retention`: the retention key and
-// what an operator does with retention no pass signed (0024).
+// runAuditRetention is `hoplock-control audit-retention`: the tenant's
+// retention key, which signs every retention pass (0024).
 //
-// IT IS A COMMAND ON THE BOX, NOT AN ENDPOINT, for the reason `ca issue` is. A
-// seal is a statement that a deletion was lawful; adopting one is an operator's
-// attestation that nothing can check for them, and it should take a shell, the
-// database credential and the key store — the highest privilege there is —
-// rather than a token a north-bound caller could hold.
+// IT IS A COMMAND ON THE BOX, NOT AN ENDPOINT, for the reason `ca issue` is: a
+// new key generation changes what every later seal is signed with, and that
+// should take a shell, the database credential and the key store — the highest
+// privilege there is — rather than a token a north-bound caller could hold.
 func runAuditRetention(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("audit-retention: a command is required (key, rotate-key, adopt)")
+		return fmt.Errorf("audit-retention: a command is required (key, rotate-key)")
 	}
 	switch args[0] {
 	case "key":
 		return runRetentionKey(ctx, h, args[1:], stdout, stderr)
 	case "rotate-key":
 		return runRetentionRotate(ctx, h, args[1:], stdout, stderr)
-	case "adopt":
-		return runRetentionAdopt(ctx, h, args[1:], stdout, stderr)
 	}
-	return fmt.Errorf("audit-retention: unknown command %q (known: key, rotate-key, adopt)", args[0])
+	return fmt.Errorf("audit-retention: unknown command %q (known: key, rotate-key)", args[0])
 }
 
 func retentionFlags(name string, stderr io.Writer) (*flag.FlagSet, *string, *string) {
@@ -170,62 +166,5 @@ func runRetentionRotate(ctx context.Context, h Host, args []string, stdout, stde
 		return err
 	}
 	_, err = fmt.Fprintf(stdout, "  it signs every retention pass from now on; older keys still check what they signed\n")
-	return err
-}
-
-// runRetentionAdopt seals retention written before v0.11.0, which no check can
-// tell from a forgery: a stream's unsigned marker, or the captures emptied by
-// an unsigned pass.
-//
-// The operator names exactly what audit-verify printed — the marker's sequence
-// and hash, or the instant that covers the emptied captures — and the command
-// refuses anything else. A marker is adopted only when every record after it
-// chains onto it. What it cannot check is whether the deletion was lawful; the
-// adoption is recorded on the control chain under the account that ran it.
-func runRetentionAdopt(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
-	fs, configPath, tenantFlag := retentionFlags("adopt", stderr)
-	stream := fs.String("stream", "", "the stream whose unsigned marker to adopt")
-	throughSeq := fs.Int64("through-seq", 0, "the marker's sequence, as audit-verify printed it")
-	throughHash := fs.String("through-hash", "", "the marker's hash, as audit-verify printed it")
-	capturesBefore := fs.String("captures-before", "",
-		"adopt the captures emptied before this RFC 3339 instant instead: every capture marked retained must have been recorded before it")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	byStream := *stream != "" || *throughSeq != 0 || *throughHash != ""
-	if byStream == (*capturesBefore != "") {
-		return fmt.Errorf("audit-retention adopt: name a marker (--stream, --through-seq, --through-hash) or --captures-before, exactly one")
-	}
-	if byStream && (*stream == "" || *throughSeq <= 0 || *throughHash == "") {
-		return fmt.Errorf("audit-retention adopt: --stream, --through-seq and --through-hash are all required to adopt a marker")
-	}
-	var before time.Time
-	if !byStream {
-		var err error
-		if before, err = time.Parse(time.RFC3339Nano, *capturesBefore); err != nil {
-			return fmt.Errorf("audit-retention adopt: --captures-before %q is not RFC 3339", *capturesBefore)
-		}
-	}
-
-	emitter, _, st, tenant, err := openRetention(ctx, h, *configPath, *tenantFlag)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	if byStream {
-		marker, err := emitter.AdoptRetention(ctx, tenant, *stream, *throughSeq, *throughHash, localActor())
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(stdout, "tenant %s stream %s: marker through %d adopted, signed by %s\n",
-			tenant, *stream, marker.ThroughSeq, marker.KeyName)
-		return err
-	}
-	mark, err := emitter.AdoptCaptureRetention(ctx, tenant, before, localActor())
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(stdout, "tenant %s: captures retained before %s adopted, signed by %s\n",
-		tenant, mark.Before.UTC().Format(time.RFC3339Nano), mark.KeyName)
 	return err
 }

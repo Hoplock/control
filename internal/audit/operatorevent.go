@@ -45,10 +45,6 @@ const (
 	EventFleetConfigRolledBack = "operator.fleet_config.rolled_back"
 	EventRevocationPublished   = "operator.revocation.published"
 	EventAuditRetained         = "operator.audit.retained"
-	// EventAuditRetentionAdopted is a seal written over retention no pass
-	// signed — a marker or the captures emptied before 0024 — by an operator
-	// on the box, after the stream verified from it.
-	EventAuditRetentionAdopted = "operator.audit.retention_adopted"
 	// EventAuditRetentionKeyRotated is a new generation of a tenant's
 	// retention key: it signs from now on, and older ones still check what
 	// they signed.

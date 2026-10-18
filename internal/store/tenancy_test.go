@@ -260,10 +260,6 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, _, err := s.Audit().RetainPrefix(ctx, "", "s", 1, RetainPrefixOptions{})
 			return err
 		},
-		"Audit.SealRetention": func() error {
-			_, err := s.Audit().SealRetention(ctx, "", "s", 1, "h", RetentionSeal{KeyName: "k", Signature: "s"})
-			return err
-		},
 		"Audit.ThroughSeqBefore": func() error {
 			_, err := s.Audit().ThroughSeqBefore(ctx, "", "s", time.Now())
 			return err
@@ -273,10 +269,6 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return err
 		},
 		"Audit.CaptureRetention": func() error { _, err := s.Audit().CaptureRetention(ctx, ""); return err },
-		"Audit.SealCaptureRetention": func() error {
-			_, err := s.Audit().SealCaptureRetention(ctx, "", time.Now(), RetentionSeal{KeyName: "k", Signature: "s"}, "x")
-			return err
-		},
 		"Grants.Insert": func() error {
 			return s.Grants().Insert(ctx, "", Grant{ID: "g", Origin: GrantOriginManual, ExpiresAt: nowForTest()})
 		},

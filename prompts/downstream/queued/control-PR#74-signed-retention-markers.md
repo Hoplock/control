@@ -56,12 +56,12 @@ does; no other subcommand does. A HostConfig with side effects must tolerate
 being called by them.
 (5) Records and answers: operator.audit.retained gains operator.key and
 operator.signature (a capture pass's also operator.watermark); new
-operator.audit.retention_adopted and operator.audit.retention_key_rotated;
-both retention answers gain key. Any SIEM mapping or compliance report naming
+operator.audit.retention_key_rotated; both retention answers gain key. Any SIEM mapping or compliance report naming
 retention records changes.
 (6) Its pin: these hold from v0.11.0, which control#74's merge cuts. Retention
-written by v0.6.0–v0.10.0 is unsigned and is a break until an operator adopts
-it with hoplock-control audit-retention adopt (Control's CHANGELOG v0.11.0).
+written by v0.6.0–v0.10.0 is unsigned and stays a break: nothing is deployed,
+so no path signs it after the fact, and a test fixture or development
+database carrying it is rebuilt (Control's CHANGELOG v0.11.0).
 (7) Control's queued phases moved again (revision ca-custody): a new 0030, CA
 custody through the key store, gives the certificate authority a registered
 ext.KeyStore when there is one, else Control's software custodian — so an

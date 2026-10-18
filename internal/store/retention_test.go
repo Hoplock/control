@@ -82,9 +82,8 @@ var testSeal = store.RetainPrefixOptions{
 	},
 }
 
-// The store writes no marker and no watermark without a seal, and seals only
-// the unsigned marker it is told about: the adoption of one written before
-// 0024 can neither replace a pass's seal nor seal a marker that moved.
+// The store writes no marker and no watermark without a seal, and a pass that
+// carries one writes it beside the marker.
 func TestTheStoreWritesNoRetentionWithoutASeal(t *testing.T) {
 	t.Parallel()
 	st := storetest.New(t)
@@ -117,17 +116,7 @@ func TestTheStoreWritesNoRetentionWithoutASeal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seal := store.RetentionSeal{KeyName: "audit-retention:other", Signature: "b3RoZXI="}
-	if _, err := st.Audit().SealRetention(ctx, tenantA, stream, 2, marker.ThroughHash, seal); !store.IsConflict(err) {
-		t.Errorf("sealing a marker a pass sealed answered %v", err)
-	}
-	if _, err := st.Pool().Exec(ctx, `UPDATE audit_retention SET signature = '' WHERE tenant = $1 AND stream = $2`, tenantA, stream); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Audit().SealRetention(ctx, tenantA, stream, 1, marker.ThroughHash, seal); !store.IsConflict(err) {
-		t.Errorf("sealing a marker by the wrong sequence answered %v", err)
-	}
-	if got, err := st.Audit().SealRetention(ctx, tenantA, stream, 2, marker.ThroughHash, seal); err != nil || got.KeyName != seal.KeyName {
-		t.Errorf("sealing the unsigned marker = %+v, %v", got, err)
+	if marker.KeyName != "audit-retention:test" || marker.Signature != "c2ln" {
+		t.Errorf("the marker carries %q/%q, not the pass's seal", marker.KeyName, marker.Signature)
 	}
 }

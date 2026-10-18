@@ -213,48 +213,6 @@ func (r auditRepo) chainStart(ctx context.Context, op string, q querier, tenant 
 	return scanAuditRecord(op, row)
 }
 
-// SealRetention writes a seal on a marker that has none: the adoption of a
-// marker written before 0024, after an operator has verified the stream from
-// it. It takes the stream's append lock, and it is refused as a conflict unless
-// the marker exists, carries no seal, and still names throughSeq and
-// throughHash — so it can never seal a marker other than the one that was
-// checked, nor replace a seal a pass wrote.
-func (r auditRepo) SealRetention(ctx context.Context, tenant Tenant, stream string, throughSeq int64, throughHash string, seal RetentionSeal) (AuditRetention, error) {
-	const op = "store.Audit.SealRetention"
-	if err := checkTenant(op, tenant); err != nil {
-		return AuditRetention{}, err
-	}
-	if stream == "" || throughSeq <= 0 || throughHash == "" {
-		return AuditRetention{}, invalid(op, "stream, through_seq and through_hash are required")
-	}
-	if seal.KeyName == "" || seal.Signature == "" {
-		return AuditRetention{}, invalid(op, "a seal names its key and carries its signature")
-	}
-	var out AuditRetention
-	err := r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
-		if err := lockStream(ctx, op, q, tenant, stream); err != nil {
-			return err
-		}
-		tag, err := q.Exec(ctx, `
-			UPDATE audit_retention SET key_name = $5, signature = $6
-			WHERE tenant = $1 AND stream = $2 AND through_seq = $3 AND through_hash = $4
-			  AND signature = ''`, tenant, stream, throughSeq, throughHash, seal.KeyName, seal.Signature)
-		if err != nil {
-			return wrap(op, err)
-		}
-		if tag.RowsAffected() == 0 {
-			return &Error{Op: op, Kind: KindConflict, Err: fmt.Errorf(
-				"stream %s has no unsigned marker through %d with hash %s", stream, throughSeq, throughHash)}
-		}
-		out, err = r.retention(ctx, op, q, tenant, stream)
-		return err
-	})
-	if err != nil {
-		return AuditRetention{}, wrapExisting(op, err)
-	}
-	return out, nil
-}
-
 // CaptureRetention is how far capture retention has lawfully reached in a
 // tenant (0024): every capture whose record was recorded before Before may have
 // had its bytes emptied by a pass, and the seal says a pass signed that.
@@ -402,55 +360,6 @@ func (r auditRepo) RetainCaptures(ctx context.Context, tenant Tenant, recordedBe
 		return 0, wrapExisting(op, err)
 	}
 	return emptied, nil
-}
-
-// SealCaptureRetention writes a tenant's first capture watermark without a
-// pass: the adoption of captures emptied before 0024, after an operator has
-// named the instant that covers them. It is refused as a conflict when the
-// tenant already has a watermark, and as invalid when any capture is marked
-// retained at or after the instant — so it covers what is already gone and
-// nothing an operator did not name.
-func (r auditRepo) SealCaptureRetention(ctx context.Context, tenant Tenant, before time.Time, seal RetentionSeal, by string) (CaptureRetention, error) {
-	const op = "store.Audit.SealCaptureRetention"
-	if err := checkTenant(op, tenant); err != nil {
-		return CaptureRetention{}, err
-	}
-	if before.IsZero() {
-		return CaptureRetention{}, invalid(op, "an instant is required")
-	}
-	if seal.KeyName == "" || seal.Signature == "" {
-		return CaptureRetention{}, invalid(op, "a seal names its key and carries its signature")
-	}
-	var out CaptureRetention
-	err := r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
-		if err := lockCaptureRetention(ctx, op, q, tenant); err != nil {
-			return err
-		}
-		switch _, err := r.captureRetention(ctx, op, q, tenant); {
-		case err == nil:
-			return &Error{Op: op, Kind: KindConflict, Err: fmt.Errorf("tenant %s already has a capture retention watermark", tenant)}
-		case !IsNotFound(err):
-			return err
-		}
-		outside, err := r.retainedOutside(ctx, op, q, tenant, &CaptureRetention{Before: before})
-		if err != nil {
-			return err
-		}
-		if outside > 0 {
-			return invalid(op, fmt.Sprintf("%d capture(s) recorded at or after %s are marked retained", outside, before.UTC().Format(time.RFC3339Nano)))
-		}
-		if _, err := q.Exec(ctx, `
-			INSERT INTO audit_capture_retention (tenant, retained_before, key_name, signature, retained_by)
-			VALUES ($1, $2, $3, $4, $5)`, tenant, before, seal.KeyName, seal.Signature, by); err != nil {
-			return wrap(op, err)
-		}
-		out, err = r.captureRetention(ctx, op, q, tenant)
-		return err
-	})
-	if err != nil {
-		return CaptureRetention{}, wrapExisting(op, err)
-	}
-	return out, nil
 }
 
 // ThroughSeqBefore answers the last sequence of a stream that could be retained

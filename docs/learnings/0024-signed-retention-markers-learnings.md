@@ -6,7 +6,7 @@
 - **Signed bytes:** `writeParts` (the chain's `<len>:<part>` encoder) over `hoplock.retention/1`, tenant, stream, `through_seq`, `through_hash`. Captures: `hoplock.capture-retention/1`, tenant, instant (UTC, µs).
 - **Migration `0013`:** `audit_retention.key_name`, `.signature` (base64, `''` = unsigned); `audit_capture_retention(tenant PK, retained_before, key_name, signature, retained_at, retained_by)`.
 - **Break kind** `retention-marker` (`audit.BreakRetentionMarker`). **Codes** `503 retention_key_not_configured` (no key store, nothing deleted) and `409 retention_unverified` (a pass over a start that does not verify).
-- **Unsigned pre-existing marker** (`v0.6.0`–`v0.10.0`): a break, and no pass builds on it. `hoplock-control audit-retention adopt` signs it only by its exact `--through-seq`/`--through-hash`, only if the stream verifies from it, recorded `operator.audit.retention_adopted`. Captures: `adopt --captures-before T`.
+- **Unsigned pre-existing marker** (`v0.6.0`–`v0.10.0`): a break, and no pass builds on it (`409 retention_unverified`). No path signs one after the fact: nothing is deployed, so the user had the adopt command built here removed (Details).
 - **Key files:** `internal/audit/seal.go`, `retention.go`, `verify.go`; `internal/store/retention.go`; `internal/daemon/auditretention.go`, `north.go` (`buildKeyStore`); `internal/httpapi/north/audit.go`.
 - **Decisions:** M8 revised in place (register row unchanged, `live`); no decision added. Release `v0.11.0`, `### Breaking`. Owes `hoplock/enterprise` a sync; `hoplock/proxy` none.
 - **NEXT must know:** Control's CA ignores a registered `ext.KeyStore` (pre-existing), queued at the user's direction as **0030**, CA custody through the key store; post-quantum and one contract version moved to 0031 and 0032 (PLAN §10, ca-custody revision). `audit-verify` and `audit-retention` now call `HostConfig`.
@@ -23,7 +23,7 @@ server's configuration; cost in proportion.
 | Approach | Closes it? | Why / why not |
 | --- | --- | --- |
 | 1. Signed markers | **yes** | The signature needs a private half the database holds only as AES-256-GCM ciphertext under a KEK it never sees (or not at all, with an HSM). One path: `ext.KeyStore.Signer`. `audit-verify` builds the same key store. Cost: one migration, one signer, one check. |
-| 2. Cross-check against the control chain | no — **0021 confirmed** | `Link` hashes public data only. The writer reads the control head, computes `Link(tenant, "control", head+1, headHash, body)` for a forged `operator.audit.retained` naming the stream, sequence and hash, takes `pg_advisory_xact_lock` itself, and appends it at the head. Nothing later is rewritten. The adoption path below does not require this record for the same reason: requiring it would be theatre. |
+| 2. Cross-check against the control chain | no — **0021 confirmed** | `Link` hashes public data only. The writer reads the control head, computes `Link(tenant, "control", head+1, headHash, body)` for a forged `operator.audit.retained` naming the stream, sequence and hash, takes `pg_advisory_xact_lock` itself, and appends it at the head. Nothing later is rewritten. |
 | 3. Checkpoint record in the stream | no | Same unkeyed chain: a forged checkpoint appended at the head verifies. And it puts server-written records into a proxy's stream (§7: a stream is the submitting proxy). |
 | 4. Keyed links (HMAC per record) | **no, on its own** | The prompt calls it stronger, and for rewriting it is — but the marker is still a row. Delete the prefix, write `(N, hash of N)`: the first surviving record's MAC is valid and chains onto it. The marker would need its own MAC, which is option 1 plus a rewrite of every record, the body version and every verifier. `ext.KeyStore` exposes `crypto.Signer`, no MAC (an `ext` break to add one), a verifier holding the HMAC key can forge, and an HSM round trip per record at ~9 400 records/s is out of the question. |
 | 5. External anchor of stream heads | **no, as stated** | An anchor saying "head N had hash H" stays consistent after a prefix below N is deleted. Closing the gap needs the *marker* published outside too — option 1's statement, published. It is the only option that would also defend against a key holder, a server-controller and tail truncation, but it is a new extension point, a default for Control alone (M15), a schedule and an outside read in the verifier. Recorded as the next step, not built. |
@@ -76,6 +76,14 @@ the swap buys nothing above. A follow-up, if anyone wants it.
   pass deletes was not built: it reads the whole prefix, under the append lock
   or racing it, and `audit-verify` already reports such a break to anyone who
   runs it. Recorded, not proposed.
+- **No adopt path, at the user's direction.** The phase first built
+  `audit-retention adopt`, which signed a `v0.6.0`–`v0.10.0` marker by its
+  exact sequence and hash once the stream verified from it, and a capture
+  watermark by a named instant. Told there is no deployment of Control or the
+  proxy yet, the user had it removed: with no installed base it was code nobody
+  runs. An unsigned marker stays a break, a pass over one is still refused, and
+  a development database carrying one is rebuilt. If an installed base ever
+  predates a change like this, that phase builds its own path.
 - **Rotation is a command** (`audit-retention rotate-key`), not a route: the
   CA's rotation is on both, but a new route is surface Enterprise inherits and
   the prompt did not ask for one. Generation names are fixed-width instants,
@@ -111,8 +119,8 @@ plumbs the CA's algorithms and should land on the custody 0030 settles.
 ### Mutations
 
 Each was applied by a throwaway script, the named packages' tests run, and
-reverted; every row is reproducible by hand from its description. All 23
-failed:
+reverted; every row is reproducible by hand from its description. All 21
+failed (two more held the adopt path, removed since):
 
 | Mutation | Caught by |
 | --- | --- |
@@ -131,8 +139,6 @@ failed:
 | emitter's no-key-store refusal removed | `TestRetentionWithoutAKeyStoreIsRefusedAndDeletesNothing`, `…OverTheWire` |
 | `buildKeyStore` ignores a host's key store | `TestAuditVerifyChecksSealsWithTheServersOwnKeyStore` |
 | `audit-verify` built without the key store | same |
-| adoption skips the walk | `TestAnUnsignedMarkerIsAdoptedOnlyAsVerified` |
-| adoption ignores the named values | same — **survived at first**: the store's `SealRetention` refuses the same thing as a conflict, so the emitter's refusal was unasserted; the test now holds its message, which names the marker's values |
 | north maps no key store to a 500 | `TestRetentionWithoutAKeyStoreIsRefusedOverTheWire` |
 
 ### Verified by hand
