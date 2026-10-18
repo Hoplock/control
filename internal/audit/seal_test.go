@@ -481,11 +481,14 @@ func TestAnUnsignedMarkerIsAdoptedOnlyAsVerified(t *testing.T) {
 	s.exec(t, `UPDATE audit_retention SET key_name = '', signature = '' WHERE tenant = $1 AND stream = $2`, tenantA, s.stream)
 	wantSealBreak(t, s.verify(t, tenantA), s.stream, "written before v0.11.0")
 
-	if _, err := s.emitter.AdoptRetention(ctx, tenantA, s.stream, 3, pass.ThroughHash, retentionActor); err == nil {
-		t.Error("adopting a marker by the wrong sequence succeeded")
+	// The refusal names the marker's own values, so the operator can see
+	// what they named and what is there.
+	want := "is through 4 with hash " + pass.ThroughHash
+	if _, err := s.emitter.AdoptRetention(ctx, tenantA, s.stream, 3, pass.ThroughHash, retentionActor); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("adopting a marker by the wrong sequence answered %v", err)
 	}
-	if _, err := s.emitter.AdoptRetention(ctx, tenantA, s.stream, 4, "sha256:00", retentionActor); err == nil {
-		t.Error("adopting a marker by the wrong hash succeeded")
+	if _, err := s.emitter.AdoptRetention(ctx, tenantA, s.stream, 4, "sha256:00", retentionActor); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("adopting a marker by the wrong hash answered %v", err)
 	}
 	// Over a broken stream: a record after the marker removed.
 	s.exec(t, `DELETE FROM audit_records WHERE tenant = $1 AND stream = $2 AND chain_seq = 6`, tenantA, s.stream)
