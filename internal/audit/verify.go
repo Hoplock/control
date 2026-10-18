@@ -160,8 +160,9 @@ func (v *Verifier) VerifyStream(ctx context.Context, tenant store.Tenant, stream
 		if problem != "" {
 			return StreamResult{Stream: stream, RetainedThrough: marker.ThroughSeq, Break: &Break{
 				Tenant: string(tenant), Stream: stream, Kind: BreakRetentionMarker,
-				ChainSeq: marker.ThroughSeq, Want: "a retention seal that checks", Got: marker.ThroughHash,
-				Detail: fmt.Sprintf("the retention marker through %d does not verify: %s", marker.ThroughSeq, problem),
+				ChainSeq: marker.ThroughSeq,
+				Detail: fmt.Sprintf("the retention marker through %d (hash %s) does not verify: %s",
+					marker.ThroughSeq, marker.ThroughHash, problem),
 			}}, nil
 		}
 	}
