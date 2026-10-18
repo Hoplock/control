@@ -1,4 +1,4 @@
-# 0028 — Management console (web UI)
+# 0029 — Management console (web UI)
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -16,7 +16,11 @@
   every route and its required role), `0011` (RBAC), `0010` (audit query),
   `0006` (proxy health), and `0026` with the chunks it queued: every list this
   console renders pages through the bounded-list shape 0026 decided, and
-  never assumes one answer holds the whole tenant.
+  never assumes one answer holds the whole tenant. Open `0027` too: it
+  reserved where this console is served, where a host's screens and assets go
+  and how a host's catalogue keys are namespaced, and it rewrote this prompt
+  to match. Build into those namespaces, and never serve a console path inside
+  the one reserved for a host.
 - `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
   algorithm bullet (the floor and the bans), and **M17**, for what
   `Hoplock/proxy#69` added and 0019 serves: the impact preview, the fleet
@@ -48,6 +52,21 @@ is written so that half can fail a review rather than merely disappoint one.
 - `ui/`: a single-page app served by `cmd/hoplock-control` from embedded assets
   (`embed.FS`), so a deployment is still one binary. No separate web server, no
   Node runtime in production.
+- **Served inside its own namespace, and nowhere else.** 0027 reserved four
+  prefixes on the north-bound listener: Control's API, a host's API, this
+  console and a host's console. It also built the tests that hold them apart.
+  - Every path this console serves is under its own prefix: the shell, every
+    asset, and every deep link and URL-serialisable filter it writes.
+  - Nothing is served at `/` but the redirect 0027 put there. The history
+    fallback, the index for a deep link the app does not know, answers only
+    inside the console prefix. An unknown path outside it is Control's `404`,
+    and a path under `/api/v1/` is never answered with the console's index.
+  - A host's screens and assets load from the host's console prefix, never
+    from inside this one, and none of this console's paths sits under the
+    host's. Catalogue keys are split the way 0027 decided (M21).
+  - If a screen needs a path outside these rules, the namespace is wrong.
+    Change 0027's decision in this PR and say why, rather than serving around
+    it.
 - **It is an API client and nothing more.** The console calls the north-bound
   API (0019) with the operator's own session; it never reaches into the database
   and never has a privileged path of its own. Any capability the console has,
@@ -147,7 +166,7 @@ is written so that half can fail a review rather than merely disappoint one.
 
 ### Deployment identity and tenant context (M18, M19)
 - The console always says **which deployment** this is: name, instance id,
-  version set, and health (0027). An operator with a staging and a production
+  version set, and health (0028). An operator with a staging and a production
   instance open in two tabs must never have to guess which is which, and the
   distinction has to survive a screenshot.
 - Where more than one tenant is in scope, the current tenant is visible in the
@@ -244,7 +263,8 @@ becomes a test that runs today.
 
 ## Out of scope
 - Enterprise screens (approval inboxes, compliance reports). Enterprise adds its
-  own, served through the same shell — define how in learnings so it can. They
+  own, served through the same shell under the paths 0027 reserved for a
+  host — define how in learnings so it can. They
   inherit these tokens and this component set; a second visual identity inside
   one console is the thing M20 exists to prevent.
 - Dashboards and charts beyond fleet health and simple audit counts. The two
@@ -262,6 +282,13 @@ becomes a test that runs today.
 
 **Function**
 - `make build` produces one binary serving the console with no Node present.
+- 0027's namespace tests pass with the real console mounted in place of its
+  stub:
+  - every path the console serves is under its own prefix, and none is under
+    `/api/v1/` or a host's prefix;
+  - an unknown API path answers the API's `404` envelope, never `index.html`;
+  - a deep link outside the console prefix does not load the console;
+  - a host screen's assets cannot shadow one of the console's.
 - Every screen works against a seeded database; end-to-end tests drive the
   critical paths (explain, policy activate, grant create) headlessly.
 - An RBAC test: an auditor session sees read-only views and the API refuses the
@@ -322,7 +349,7 @@ becomes a test that runs today.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0028-management-console-learnings.md`. Summary block MUST give
+`docs/learnings/0029-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it —
 which, per M20, includes how it inherits the tokens and the component set rather
