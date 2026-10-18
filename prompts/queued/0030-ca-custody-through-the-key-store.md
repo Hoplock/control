@@ -46,8 +46,13 @@ key has no CA at all (`ca_not_configured`).
 
 0024 found this. Retention already resolves its key store correctly
 (`buildKeyStore`: a registered `ext.KeyStore`, else the software custodian,
-else none). The CA was left as it was, because moving it strands every CA key
-a host already holds in `software_keys`.
+else none). The CA was left as it was, out of that phase's scope.
+
+**There is no deployment of Control or the proxy yet** — no installed base
+(PLAN §10, "On 0032 running last"). So no CA key anywhere is held by a custodian
+other than the one this phase resolves, and nothing here migrates one: a path
+for keys stranded by an upgrade would be code nobody runs, and a second
+custodian answering for them is the second code path M15 rules out.
 
 ## Objective
 The CA's keys live where the user asked:
@@ -56,8 +61,8 @@ The CA's keys live where the user asked:
 - with neither, there is no CA, as today.
 
 Retention and the CA use one resolution, so the two never disagree about where
-this deployment's keys live. No key that already signs is stranded, and no
-trust bundle changes behind an operator's back.
+this deployment's keys live, and the CA reads every key's signer from that one
+store and no other.
 
 ## In scope
 
@@ -77,48 +82,32 @@ trust bundle changes behind an operator's back.
 - A test holds the one resolution. For example, a source or behaviour test
   that fails if the CA and retention can be handed different key stores.
 
-### Keys that predate the registration
-A deployment that ran `v0.1.0`–`v0.11.0` with a host's key store registered has
-CA keys in `software_keys`: the active key, and any retired key still inside its
-overlap. The registered store does not hold them. Decide what happens to them,
-under these constraints:
-- **Never strand a key that signs.** An active key the resolved store does not
-  hold must not turn every brokered-certificate session into an outage.
-  Whatever answers instead is never a `401` (M11).
-- **Never rotate behind the operator's back.** A rotation changes the trust
-  bundle, and targets must trust the new key before it signs. That is why `ca
-  rotate` prints the bundle to publish. Moving the active key into the
-  registered store is therefore the operator's act, and nothing does it on
-  boot.
-- **Say it loudly.**
-  - `ca show` names each key's custodian truthfully: from `ext.KeyInfo.Custodian`
-    as the key was generated, never derived from a name as `custodianOf` does
-    today.
-  - Start-up logs, per tenant, an active key the resolved store does not hold,
-    and names the command that moves it.
-- **One code path above the seam.** Whatever reads a key's signer goes through
-  `ext.KeyStore`. If a key's custodian must be recorded, record it on its row:
-  in a forward migration with the next free number, or in `private_ref`. Do not
-  edit `0007`. Its comment and the code disagree about what `private_ref`
-  holds, so settle that and say what you found.
-
-**The recommended answer**, to confirm or refute before building:
-- Each CA key row records the custodian that holds it.
-- A key keeps signing from the custodian that holds it until it is rotated, so
-  the software custodian still answers for the keys it holds while a
-  key-encryption key is configured.
-- `ca rotate` generates the new key in the resolved store, and the routine
-  overlap keeps the old key trusted.
-- `CHANGELOG.md` gives the migration: `ca rotate`, publish the bundle, wait out
-  the overlap.
-
-If something else is better, say why in the learnings and the PR. Ask the user
-before building anything that changes this phase's objective.
-
-Also decide, and say:
-- what happens when a key store that holds a tenant's active CA key is
-  unregistered or unreachable;
-- what a compromise rotation does when the retired key's custodian is gone.
+### A key the resolved store does not hold
+With no installed base, the only way to meet one is a store registered,
+swapped or unregistered after keys were made: a development or test database,
+or an operator changing custody by hand. Answer it plainly rather than build a
+migration:
+- **Issuance is refused, never a `401` (M11) and never a fallback.** A tenant
+  whose active CA key the resolved store does not hold gets a `5xx` from
+  `POST /v1/credentials/certificate` and the CA routes, naming the key and the
+  store asked. The CA never reaches for another custodian to sign: that would
+  be the second code path, and it would sign with a key the operator believes
+  is somewhere else.
+- **Unreachable is not absent.** A store that cannot be asked (`ext`'s
+  `KindUnavailable`, a timeout) is an outage too, distinct in the message from
+  a key the store answers it does not hold.
+- **Start-up says so** per configured tenant, and `ca show` names each key's
+  custodian truthfully — from the key store's `KeyInfo.Custodian`, never
+  derived from a name as `custodianOf` does today.
+- **The way out is `ca rotate`**, which generates the new key in the resolved
+  store; nothing rotates on boot, because targets must trust a new key before
+  it signs (§6). A compromise rotation whose retired key the store does not
+  hold still removes it from the trust bundle and revokes what it signed:
+  neither needs the private half.
+- `tenant_ca_keys.private_ref`'s comment in `0007` says it names the custodian;
+  the code stores the key's name there. Settle which is true — in code, or in
+  a forward migration with the next free number if a column is needed — and
+  never edit `0007`. Say what you found.
 
 ## Out of scope
 - Binding the software custodian's ciphertext to its row with associated data.
@@ -141,12 +130,12 @@ Also decide, and say:
 - **A key-encryption key alone:** behaviour is unchanged.
 - **Neither:** the CA routes answer `503 ca_not_configured`, and the answer
   names both settings.
-- **A tenant whose CA keys predate the registration:**
-  - issuance continues and is never a `401`, per the decision above;
-  - the state is logged and shown by `ca show`;
-  - `ca rotate` moves the active key into the registered store, and the old key
-    stays trusted for the overlap;
-  - a compromise rotation does what the decision says.
+- **An active key the resolved store does not hold:** issuance answers a `5xx`
+  naming the key, never a `401`, and nothing is signed by another custodian;
+  an unreachable store is an outage told apart from an absent key; start-up
+  logs it and `ca show` names the custodian; `ca rotate` puts the new key in
+  the resolved store, with the old one in the trust bundle for the overlap; a
+  compromise rotation removes the old one and revokes what it signed.
 - The `ca` subcommands resolve the same key store as the daemon, host registry
   included. A test runs them through `Main` with a registered store.
 - One resolution serves the CA and retention, held by a test.
@@ -154,7 +143,8 @@ Also decide, and say:
   mutation and the test it failed. At least these four mutations:
   - the registered store ignored;
   - the software custodian preferred over it;
-  - a predating key turned into an outage or a `401`;
+  - a key the resolved store lacks signed by the software custodian instead;
+  - that refusal answered `401`;
   - the subcommands built without the host's registry.
 - `go build`, `go vet`, `go test ./...` and `-race` on the changed packages
   pass, and `golangci-lint` at CI's pin reports 0 issues.
@@ -167,9 +157,9 @@ Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
 `docs/learnings/0030-ca-custody-through-the-key-store-learnings.md`. Its
 summary block MUST give:
 - the resolution order;
-- what a predating key does, and the operator's migration;
-- where a key's custodian is recorded, and the migration if one was added;
-- what an unregistered or unreachable key store does to issuance.
+- what a key the resolved store does not hold, and a store that cannot be
+  asked, do to issuance, and the code each answers;
+- where a key's custodian comes from, and the migration if one was added.
 
 Revise PLAN §6 in place. "The CA is built" carries 0024's sentence saying a
 registered key store is not yet consulted for the CA. Revise §3's
@@ -178,15 +168,20 @@ and M15 only if its text claims otherwise. No decision is expected. If the
 phase adds one, update the §2 register.
 
 **Release.** The next MINOR after the latest tag (M23). Under `### Breaking`, list
-that a host with an `ext.KeyStore` now has its CA keys generated there, and
-that the `ca` subcommands call `HostConfig`.
+that a host with an `ext.KeyStore` now has its CA keys generated there — and
+that a CA key made earlier in Control's software custodian is refused rather
+than used, with `ca rotate` the way out — and that the `ca` subcommands call
+`HostConfig`. There is no installed base, so the changelog states the
+behaviour and owes no migration guide.
 
 **Cross-repo impact.** For `hoplock/enterprise`, state in the PR's
 `## Cross-repo impact` section:
 - what its key store must now support for the CA: generate, sign and describe
   Ed25519 keys named `ssh-ca:<generation>`, per tenant, kept for the rotation
   overlap;
-- the migration a host with existing tenants owes;
+- that a CA key made in Control's software custodian before its key store was
+  registered is refused, not used — a test fixture or development database,
+  since nothing is deployed;
 - the `server` doc change.
 
 Queue the "Downstream sync" kickoff from `docs/KICKOFF.md` as
