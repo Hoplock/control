@@ -391,6 +391,19 @@ func TestAForgedCaptureRetentionIsABreak(t *testing.T) {
 	s.exec(t, `UPDATE audit_records SET recorded_at = recorded_at - interval '30 days' WHERE tenant = $1 AND record_id = $2`, tenantA, recent.RecordID)
 	wantSealBreak(t, s.verify(t, tenantA), s.stream, "which no signed capture pass reached")
 
+	// A pass ahead of the clock runs only to now: a watermark in the future
+	// would vouch for captures not yet recorded.
+	s.exec(t, `UPDATE audit_captures SET bytes = $3, retained_at = NULL WHERE tenant = $1 AND record_id = $2`,
+		tenantA, recent.RecordID, []byte("whoami\r\n"+recent.RecordID))
+	s.exec(t, `UPDATE audit_records SET recorded_at = recorded_at + interval '30 days' WHERE tenant = $1 AND record_id = $2`, tenantA, recent.RecordID)
+	ahead, err := s.emitter.RetainCaptures(ctx, tenantA, time.Now().Add(24*time.Hour), retentionActor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ahead.Before.After(time.Now()) {
+		t.Errorf("a pass asked to run a day ahead signed a watermark at %s", ahead.Before)
+	}
+
 	// A watermark the writer moves forward without a signature to match.
 	s.exec(t, `UPDATE audit_capture_retention SET retained_before = now() WHERE tenant = $1`, tenantA)
 	wantSealBreak(t, s.verify(t, tenantA), s.stream, "the capture retention watermark does not verify")
