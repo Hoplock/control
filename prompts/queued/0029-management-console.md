@@ -1,4 +1,4 @@
-# 0028 — Management console (web UI)
+# 0029 — Management console (web UI)
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -16,7 +16,11 @@
   every route and its required role), `0011` (RBAC), `0010` (audit query),
   `0006` (proxy health), and `0026` with the chunks it queued: every list this
   console renders pages through the bounded-list shape 0026 decided, and
-  never assumes one answer holds the whole tenant.
+  never assumes one answer holds the whole tenant. Open `0027` too: it
+  reserved where this console is served, where a host's screens and assets go
+  and how a host's catalogue keys are namespaced, and it rewrote this prompt
+  to match. Build into those namespaces, and never serve a console path inside
+  the one reserved for a host.
 - `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
   algorithm bullet (the floor and the bans), and **M17**, for what
   `Hoplock/proxy#69` added and 0019 serves: the impact preview, the fleet
@@ -147,7 +151,7 @@ is written so that half can fail a review rather than merely disappoint one.
 
 ### Deployment identity and tenant context (M18, M19)
 - The console always says **which deployment** this is: name, instance id,
-  version set, and health (0027). An operator with a staging and a production
+  version set, and health (0028). An operator with a staging and a production
   instance open in two tabs must never have to guess which is which, and the
   distinction has to survive a screenshot.
 - Where more than one tenant is in scope, the current tenant is visible in the
@@ -244,7 +248,8 @@ becomes a test that runs today.
 
 ## Out of scope
 - Enterprise screens (approval inboxes, compliance reports). Enterprise adds its
-  own, served through the same shell — define how in learnings so it can. They
+  own, served through the same shell under the paths 0027 reserved for a
+  host — define how in learnings so it can. They
   inherit these tokens and this component set; a second visual identity inside
   one console is the thing M20 exists to prevent.
 - Dashboards and charts beyond fleet health and simple audit counts. The two
@@ -322,7 +327,7 @@ becomes a test that runs today.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0028-management-console-learnings.md`. Summary block MUST give
+`docs/learnings/0029-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it —
 which, per M20, includes how it inherits the tokens and the component set rather
