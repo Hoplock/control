@@ -36,12 +36,14 @@ cite each by name beside its new number. Every citation of a Control phase
 number resolves through Control's docs/PLAN.md §10 mapping table. Citations
 of merged Control phases do not move.
 (2) A Control phase that will move every host route is queued, not merged:
-0027, host routes in a namespace of their own. It will mount a host's routes
-of both classes, and its console screens, in a namespace no route of
-Control's enters, and it owes this repository a sync of its own when it
-merges. Until then this repository builds against the paths it has. Where
-docs/PLAN.md §3 and prompts/queued/0001 describe where a host's routes are
-mounted, name 0027 as queued and say the paths will move. Do not describe a
+0027, host routes and the console in namespaces of their own. It will give
+the north-bound listener four namespaces with no path in two: Control's API,
+a host's API (both classes), Control's console, and a host's console screens.
+It owes this repository a sync of its own when it merges. Until then this
+repository builds against the paths it has. Where docs/PLAN.md §3 and
+prompts/queued/0001 describe where a host's routes are mounted, and where
+prompts/queued/0016 describes where its console screens are served, name 0027
+as queued and say the paths will move. Do not describe a
 namespace that does not exist yet (§2). Where this repository keeps its own
 rule that no pattern sits under one of Control's families, keep it: 0027
 decides whether that rule is still needed.

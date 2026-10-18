@@ -52,6 +52,21 @@ is written so that half can fail a review rather than merely disappoint one.
 - `ui/`: a single-page app served by `cmd/hoplock-control` from embedded assets
   (`embed.FS`), so a deployment is still one binary. No separate web server, no
   Node runtime in production.
+- **Served inside its own namespace, and nowhere else.** 0027 reserved four
+  prefixes on the north-bound listener: Control's API, a host's API, this
+  console and a host's console. It also built the tests that hold them apart.
+  - Every path this console serves is under its own prefix: the shell, every
+    asset, and every deep link and URL-serialisable filter it writes.
+  - Nothing is served at `/` but the redirect 0027 put there. The history
+    fallback, the index for a deep link the app does not know, answers only
+    inside the console prefix. An unknown path outside it is Control's `404`,
+    and a path under `/api/v1/` is never answered with the console's index.
+  - A host's screens and assets load from the host's console prefix, never
+    from inside this one, and none of this console's paths sits under the
+    host's. Catalogue keys are split the way 0027 decided (M21).
+  - If a screen needs a path outside these rules, the namespace is wrong.
+    Change 0027's decision in this PR and say why, rather than serving around
+    it.
 - **It is an API client and nothing more.** The console calls the north-bound
   API (0019) with the operator's own session; it never reaches into the database
   and never has a privileged path of its own. Any capability the console has,
@@ -267,6 +282,13 @@ becomes a test that runs today.
 
 **Function**
 - `make build` produces one binary serving the console with no Node present.
+- 0027's namespace tests pass with the real console mounted in place of its
+  stub:
+  - every path the console serves is under its own prefix, and none is under
+    `/api/v1/` or a host's prefix;
+  - an unknown API path answers the API's `404` envelope, never `index.html`;
+  - a deep link outside the console prefix does not load the console;
+  - a host screen's assets cannot shadow one of the console's.
 - Every screen works against a seeded database; end-to-end tests drive the
   critical paths (explain, policy activate, grant create) headlessly.
 - An RBAC test: an auditor session sees read-only views and the API refuses the
