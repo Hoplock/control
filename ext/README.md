@@ -209,7 +209,7 @@ half of the promise. A host binary's `main` registers what it brings into an
 
 - **`server.Main(ctx, args, stdout, stderr, server.Options)`** is Control's
   whole command line — the daemon and every subcommand (`migrate`, `seed`,
-  `audit-verify`, `identity`, `ca`). `hoplock-control` is this call with zero
+  `audit-verify`, `audit-retention`, `identity`, `ca`). `hoplock-control` is this call with zero
   `Options`, so the two binaries start Control the same way. A host owns its
   signals and its exit code, and dispatches commands of its own before calling
   it.

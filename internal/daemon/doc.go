@@ -3,7 +3,7 @@
 
 // Package daemon is Hoplock Control's command line and its bring-up: the
 // daemon that serves both listeners (M2), and the operator subcommands —
-// migrate, seed, audit-verify, identity and ca.
+// migrate, seed, audit-verify, audit-retention, identity and ca.
 //
 // It is the one start-up path. hoplock-control's main is a call to the public
 // server package, which forwards here, and a host binary such as Hoplock

@@ -286,6 +286,14 @@ decision.
   record removed anywhere else still does not. Capture bytes are retained
   separately, leaving the digest the chain covers, and the verifier counts a
   retained capture rather than failing it.
+
+  **Retention is signed, and the database cannot sign** (0024). Each marker,
+  and a per-tenant watermark for capture passes, carries an Ed25519 signature
+  by the tenant's retention key behind `ext.KeyStore`, and the verifier checks
+  it against the key store's signer — never a public half a row holds — so a
+  marker or a retained capture a writer of the database wrote is a break of its
+  own kind. Without a key store, retention is refused. What this claims, and
+  what it does not, is §7's.
 - **M9 — Revocation is fan-out with replay, and it is the kill switch.** The
   proxy holds one long-lived outbound NDJSON subscription (proxy §6.4). This
   server fans an operator action out to every proxy that needs it, survives a
@@ -1334,7 +1342,11 @@ for nothing.
   version, a target, a subject, the claim mapping), so two operators writing
   at once leave a chain of records rather than two that each claim the same
   before. A revocation has no transaction — it is an event on the bus — and
-  is recorded after it is published.
+  is recorded after it is published. Retention is the one job that deletes
+  here, and every pass signs what it leaves behind with the tenant's retention
+  key through `ext.KeyStore` (`audit.RetentionKeys`); the verifier checks those
+  seals against the same key store, which the daemon and `audit-verify` both
+  build from the configuration and the host's registry (§7).
 - **`cmd/policyctl`** — the policy lifecycle from a terminal and from CI, over
   the north-bound API and nothing else: `validate`, `diff`, `apply`,
   `activate`, `versions`, `simulate`, `explain`. It holds an API token, never a
@@ -2608,7 +2620,10 @@ not say why, and a grant the explanation names that the inputs do not hold.
   **The CA is built** (`internal/credential`): per tenant, keyed through the
   `ext.KeyStore` seam so that custody can move to an HSM without a second code
   path, with the software custodian holding its private half as AES-256-GCM
-  ciphertext under a key-encryption key the database never sees. Certificates are
+  ciphertext under a key-encryption key the database never sees. The daemon
+  hands the CA that software custodian only: a registered `ext.KeyStore` holds
+  the audit retention keys (§7) and is not yet consulted for the CA, which 0024
+  found and left as it was. Certificates are
   minted over a public key **the proxy generated** — no private key ever crosses
   this API — and are scoped to a principal, a target, a session and a window of
   minutes. What SSH can enforce is the principal, the window and the critical
@@ -2775,12 +2790,32 @@ not say why, and a grant the explanation names that the inputs do not hold.
   anchor published outside this system on a schedule, which is future work and
   is deliberately not claimed: an audit store that overstates its guarantee is
   worse than one that states a smaller one, because the overstatement is what
-  somebody builds a compliance claim on. **One gap falls short even of that
-  guarantee: a retained prefix.** The verifier trusts `audit_retention`, so a
-  writer of the database alone can delete a stream's oldest records and write
-  one marker that makes the deletion look lawful, without rewriting any later
-  record. 0024 closes it (signed markers, if that phase confirms them as the
-  fix).
+  somebody builds a compliance claim on. Deleting a stream's newest records,
+  or a whole stream, rewrites no later record either: the chain cannot see it,
+  and only that anchor would.
+
+  **Retention holds to the same guarantee because it is signed** (0024). A pass
+  signs where it left the stream — the tenant, the stream, the sequence it
+  deleted through and that record's hash (`audit.RetentionMessage`) — with the
+  tenant's retention key, and a capture pass signs the instant before which
+  captures may be gone. The key is per tenant (M18), Ed25519, named
+  `audit-retention:<generation>`, and held by `ext.KeyStore`: a host's, or
+  Control's software custodian, whose private half is ciphertext under a
+  key-encryption key the database never sees (§6). The verifier checks each
+  seal against the key store's signer and never against a public half a row
+  holds, because a stored public key is replaced together with the marker it
+  vouches for. So a writer of the database alone cannot make a deleted prefix,
+  or an emptied capture, verify as lawful retention: an unsigned marker, a
+  signature that does not check, a key the store does not hold, or a retained
+  capture whose record — by the timestamp inside its hashed body — is not
+  before a signed watermark, is a `retention-marker` break. **It claims no more
+  than that.** Whoever holds the key — the key-encryption key and the
+  database together, or the key store — or controls this server signs what it
+  likes; the anchor above is what would close that too. A marker written before
+  0024 is unsigned, cannot be told from a forgery, and is a break until an
+  operator verifies the stream from it and adopts it
+  (`hoplock-control audit-retention adopt`), which is the operator's
+  attestation, recorded as `operator.audit.retention_adopted`.
 - **Redaction is recorded, not silent.** A password-shaped attribute is
   replaced before anything is hashed, and the key is listed in the record's own
   `redacted` field — a record carrying a credential is still a record of
@@ -2918,13 +2953,24 @@ not say why, and a grant the explanation names that the inputs do not hold.
   record on the control stream, committed in the pass's own transaction
   (`audit.Emitter.RetainPrefix`, `RetainCaptures`): a deletion the chain does
   not state, or a statement of one that never happened, would be exactly the
-  silent gap M8 exists to rule out. Capture bytes are the exception
+  silent gap M8 exists to rule out. The marker carries the pass's seal and the
+  key that made it (`audit_retention.key_name`, `signature`), so a marker signed
+  before a rotation still verifies after it, and destroying a key makes every
+  marker it signed a break that names it. A pass refuses to sign over a start
+  that does not verify — a marker whose seal does not hold, a stream that no
+  longer starts where its marker says, captures retained outside any signed
+  pass (`409 retention_unverified`) — because a new seal there would launder
+  it; and with no key store it is refused before anything is deleted
+  (`503 retention_key_not_configured`, never a `401`, M11). Capture bytes are the exception
   that motivates it: a pty stream dwarfs everything else in the store, so
   "delete captures older than N days, keep the records" is the first retention
   rule anybody writes (`POST …/audit/captures/retention`) — and it is safe
   precisely because the record keeps the digest, so what is verifiable
   afterwards is that the capture is gone rather than that it was changed
-  (`audit_captures.retained_at`).
+  (`audit_captures.retained_at`) — and, by the tenant's signed watermark
+  (`audit_capture_retention`), that a pass removed it. A capture pass ahead of
+  the clock runs to now, because a watermark in the future would vouch for
+  captures not yet recorded.
 - **Export** — Splunk / Sentinel / Elastic sinks behind one interface, with
   backpressure and retry. Downstream consumer only (M8).
 - **Redaction** — the initial-auth password never reaches this server and must
@@ -3043,7 +3089,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0021 | Audit of 0019, part 2: audit store & fleet configuration | the same for migration `0012`, the derived columns and readers, retention and the resumed verifier, fleet configuration delivery (D18), the store's changes, the deleted debug paths, `seed`, configuration and the daemon's wiring (M8, M6, M12, M2) |
 | 0022 | Audit of 0019, part 3: the policy lifecycle | the same for the publish-time report and its severity model, finding ids, upload, activation and rollback, validators and `ext.FindingWarning`'s new meaning, diff, replay's purity, dry-run, explain and `policyctl` (M3, M4, M17, M21, M15) |
 | 0023 | Audit of 0019, part 4: north-bound surface & the record | the same for the route table, RBAC, error codes, the operator audit of every write, each handler and a security review; then the record as a whole — the register, §3, §5.6, §10, `CHANGELOG.md` `v0.6.0` and what control#69 told `hoplock/enterprise` — reconciled after parts 1–3 (M2, M11, M18, M21, M24) |
-| 0024 | Signed retention markers | a retention marker a writer of the database alone cannot forge: `audit_retention` signed over the tenant, stream, `through_seq` and `through_hash` by a per-tenant key behind `ext.KeyStore`, checked by the verifier against the key and never against a public half the database holds, a marker unsigned or mismatched reported as a break, and retention refused without a key — after the session has first weighed the alternatives and shown this one is the right fix for the gap 0021 found (M8, M7, M15, M23) |
+| 0024 | Signed retention markers | retention a writer of the database alone cannot forge, chosen over a control-chain cross-check, an in-stream checkpoint, keyed links and an external anchor: `audit_retention` and a per-tenant capture watermark signed over versioned, length-prefixed bytes by a per-tenant Ed25519 key behind `ext.KeyStore`, checked against the key store's signer and never a stored public half, a seal that does not hold a `retention-marker` break, retention refused without a key store or over a start that does not verify, and `hoplock-control audit-retention` to show and rotate the key and adopt what `v0.6.0`–`v0.10.0` wrote unsigned (M8, M7, M15, M23) |
 | 0025 | Shared event plane | the event stream correct on several nodes: a revocation and a `config_changed` reach a proxy whichever node holds its stream, event ids and replay that survive a node and a restart, the subscription set the cache-hint gate reads shared rather than per node — Control's half, through `ext.ClusterCoordinator` and the store; the election and the cross-node transport stay Enterprise's (its E9) (M9, M5, M15, M18) |
 | 0026 | Bounded lists: audit and plan | every list this server answers, found by enumerating the router and the store's readers rather than from memory — the eight 0023 found answering a whole tenant (`targets`, `subjects`, `role-bindings`, `policy/bundles`, `proxies`, `fleet/config/rollouts`, `fleet/algorithms`, `fleet/target-observations`), the audit reads and per-session reads capped silently, and earlier phases' lists — each classified with its reader, its bound and its verdict; one bounded-list shape (a limit, a keyset cursor, an answer that says where it stopped) recorded as a decision; and the implementing prompts queued right after it in chunks each sized to keep its session under 60% context, the first building the mechanism and an enumerating test whose pending list each later chunk empties. It changes no behaviour (M19, M21, M5, M18, M15, M23) |
 | 0027 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
