@@ -126,7 +126,7 @@ func (s *Server) handleTargetPut(w http.ResponseWriter, r *http.Request) {
 	}
 	var body targetBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	if strings.TrimSpace(body.Hostname) == "" {
@@ -136,6 +136,10 @@ func (s *Server) handleTargetPut(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("target")
 	var stored store.Target
 	err := s.st.InTx(r.Context(), func(ctx context.Context, tx *store.Store) error {
+		// Under the target lock, the row read is the row replaced.
+		if err := tx.Targets().Lock(ctx, tenant); err != nil {
+			return err
+		}
 		before, err := tx.Targets().Get(ctx, tenant, id)
 		existed := err == nil
 		if err != nil && !store.IsNotFound(err) {
@@ -182,6 +186,9 @@ func (s *Server) handleTargetDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("target")
 	err := s.st.InTx(r.Context(), func(ctx context.Context, tx *store.Store) error {
+		if err := tx.Targets().Lock(ctx, tenant); err != nil {
+			return err
+		}
 		before, err := tx.Targets().Get(ctx, tenant, id)
 		if err != nil {
 			return err
@@ -248,6 +255,29 @@ func diffLabels(before, after map[string]string) (added, removed, changed []stri
 	return added, removed, changed
 }
 
+// relabelDiffOf is one change's diff against a target as read.
+func relabelDiffOf(t store.Target, labels map[string]string) relabelDiff {
+	added, removed, changed := diffLabels(t.Labels, labels)
+	return relabelDiff{
+		Target: t.ID, Hostname: t.Hostname, Before: nonNilLabels(t.Labels), After: nonNilLabels(labels),
+		Added: added, Removed: removed, Changed: changed,
+	}
+}
+
+// relabelFailure answers a relabel's failure, naming the target that is not
+// there when that is what failed: a 404 among many changes says which.
+func (s *Server) relabelFailure(w http.ResponseWriter, r *http.Request, target string, err error) {
+	if store.IsNotFound(err) && target != "" {
+		writeError(w, http.StatusNotFound, Error{
+			Code: CodeNotFound, CorrelationID: CorrelationIDFrom(r.Context()),
+			Parameters: map[string]any{"target": target},
+			Message:    "there is no such target in this tenant",
+		})
+		return
+	}
+	s.inventoryFailure(w, r, "relabel targets", err)
+}
+
 func (s *Server) handleTargetRelabel(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
@@ -259,31 +289,39 @@ func (s *Server) handleTargetRelabel(w http.ResponseWriter, r *http.Request) {
 	}
 	var body relabelBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	if len(body.Changes) == 0 {
 		s.invalid(w, r, "changes", access.ProblemRequired, "")
 		return
 	}
+	seen := map[string]bool{}
+	for i, c := range body.Changes {
+		field := fmt.Sprintf("changes[%d].target", i)
+		switch {
+		case strings.TrimSpace(c.Target) == "":
+			s.invalid(w, r, field, access.ProblemRequired, "")
+			return
+		case seen[c.Target]:
+			// Two changes to one target would simulate one and write
+			// the other.
+			s.invalid(w, r, field, "repeated", "")
+			return
+		}
+		seen[c.Target] = true
+	}
 
 	diffs := make([]relabelDiff, 0, len(body.Changes))
-	targets := make([]store.Target, 0, len(body.Changes))
 	override := decision.LabelOverride{}
 	for _, c := range body.Changes {
 		t, err := s.st.Targets().Get(r.Context(), tenant, c.Target)
 		if err != nil {
-			s.inventoryFailure(w, r, "read target", err)
+			s.relabelFailure(w, r, c.Target, err)
 			return
 		}
-		added, removed, changed := diffLabels(t.Labels, c.Labels)
-		diffs = append(diffs, relabelDiff{
-			Target: t.ID, Hostname: t.Hostname, Before: nonNilLabels(t.Labels), After: nonNilLabels(c.Labels),
-			Added: added, Removed: removed, Changed: changed,
-		})
+		diffs = append(diffs, relabelDiffOf(t, c.Labels))
 		override[t.Hostname] = nonNilLabels(c.Labels)
-		t.Labels = c.Labels
-		targets = append(targets, t)
 	}
 
 	out := map[string]any{"changes": diffs, "applied": false}
@@ -296,22 +334,40 @@ func (s *Server) handleTargetRelabel(w http.ResponseWriter, r *http.Request) {
 		out["replay"] = res.Replay
 	}
 	if body.Apply {
+		// The simulation above may have taken a while. The write re-reads
+		// every target under the tenant's target lock and changes only its
+		// labels, so a hostname, zone or credential method written in the
+		// meantime is kept, and the record's before is what it replaced.
+		var missing string
 		err := s.st.InTx(r.Context(), func(ctx context.Context, tx *store.Store) error {
-			ids := make([]string, 0, len(targets))
-			for i, t := range targets {
+			if err := tx.Targets().Lock(ctx, tenant); err != nil {
+				return err
+			}
+			applied := make([]relabelDiff, 0, len(body.Changes))
+			ids := make([]string, 0, len(body.Changes))
+			for _, c := range body.Changes {
+				t, err := tx.Targets().Get(ctx, tenant, c.Target)
+				if err != nil {
+					missing = c.Target
+					return err
+				}
+				applied = append(applied, relabelDiffOf(t, c.Labels))
+				before := t.Labels
+				t.Labels = c.Labels
 				if err := tx.Targets().Upsert(ctx, tenant, t); err != nil {
 					return err
 				}
 				ids = append(ids, t.ID)
 				if err := s.emitter.OperatorEvent(ctx, tx, tenant, audit.OperatorAct{
 					Event: audit.EventTargetPut, Actor: actor, Target: t.Hostname,
-					Before: labelString(diffs[i].Before), After: labelString(t.Labels),
+					Before: labelString(before), After: labelString(t.Labels),
 					Fields:  map[string]string{"target_id": t.ID, "relabel": "true"},
 					Message: "target " + t.ID + " relabelled",
 				}); err != nil {
 					return err
 				}
 			}
+			out["changes"] = applied
 			return s.emitter.OperatorEvent(ctx, tx, tenant, audit.OperatorAct{
 				Event: audit.EventTargetsRelabelled, Actor: actor,
 				Fields:  map[string]string{"targets": strings.Join(ids, ","), "count": strconv.Itoa(len(ids))},
@@ -319,7 +375,7 @@ func (s *Server) handleTargetRelabel(w http.ResponseWriter, r *http.Request) {
 			})
 		})
 		if err != nil {
-			s.inventoryFailure(w, r, "relabel targets", err)
+			s.relabelFailure(w, r, missing, err)
 			return
 		}
 		out["applied"] = true
@@ -400,8 +456,18 @@ func (s *Server) handleSubjectPut(w http.ResponseWriter, r *http.Request) {
 	}
 	var body subjectBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
+	}
+	// A stored claim is a policy attribute on every decision for this
+	// subject, so it is held to the claim mapping's rule: a name this
+	// server sets for itself, chain_hop_proxy_id above all, is never
+	// written here either (0023).
+	for _, name := range slices.Sorted(maps.Keys(body.Claims)) {
+		if problem := identity.AttributeProblem(name); problem != "" {
+			s.invalid(w, r, "claims."+name, problem, "")
+			return
+		}
 	}
 	id := r.PathValue("subject")
 	source := strings.TrimSpace(body.Source)
@@ -410,6 +476,10 @@ func (s *Server) handleSubjectPut(w http.ResponseWriter, r *http.Request) {
 	}
 	var stored store.Subject
 	err := s.st.InTx(r.Context(), func(ctx context.Context, tx *store.Store) error {
+		// Under the subject lock, the row read is the row replaced.
+		if err := tx.Subjects().Lock(ctx, tenant); err != nil {
+			return err
+		}
 		before, err := tx.Subjects().Get(ctx, tenant, id)
 		existed := err == nil
 		if err != nil && !store.IsNotFound(err) {
@@ -457,6 +527,9 @@ func (s *Server) handleSubjectDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("subject")
 	err := s.st.InTx(r.Context(), func(ctx context.Context, tx *store.Store) error {
+		if err := tx.Subjects().Lock(ctx, tenant); err != nil {
+			return err
+		}
 		before, err := tx.Subjects().Get(ctx, tenant, id)
 		if err != nil {
 			return err
@@ -542,7 +615,7 @@ func (s *Server) roleBindingAct(w http.ResponseWriter, r *http.Request, bind boo
 	}
 	var body roleBindingBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	b, ok := s.bindingFrom(w, r, body)
@@ -600,19 +673,29 @@ func (s *Server) handleClaimMappingPut(w http.ResponseWriter, r *http.Request) {
 	}
 	var body claimMappingBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	if strings.TrimSpace(body.Document) == "" {
 		s.invalid(w, r, "document", access.ProblemRequired, "")
 		return
 	}
-	before, err := s.mapping(r.Context(), tenant)
-	if err != nil {
-		s.fail(w, r, "read claim mapping", err)
-		return
-	}
-	m, err := s.federation.PutMapping(r.Context(), tenant, []byte(body.Document), actor.Subject)
+	// The version is stored, activated and recorded in one transaction,
+	// with the version it replaced read under the tenant's lock.
+	previous := 0
+	m, err := s.federation.PutMapping(r.Context(), tenant, []byte(body.Document), actor.Subject,
+		func(ctx context.Context, tx *store.Store, before int, m *identity.Mapping) error {
+			previous = before
+			act := audit.OperatorAct{
+				Event: audit.EventClaimMappingActivated, Actor: actor,
+				After: strconv.Itoa(m.Version), Fields: map[string]string{"digest": m.Digest},
+				Message: fmt.Sprintf("claim mapping %d activated", m.Version),
+			}
+			if before != 0 {
+				act.Before = strconv.Itoa(before)
+			}
+			return s.emitter.OperatorEvent(ctx, tx, tenant, act)
+		})
 	if err != nil {
 		var rejected *identity.MappingRejected
 		if errors.As(err, &rejected) {
@@ -625,22 +708,10 @@ func (s *Server) handleClaimMappingPut(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		s.fail(w, r, "write claim mapping", err)
+		s.inventoryFailure(w, r, "write claim mapping", err)
 		return
 	}
-	beforeStr := ""
-	if before != 0 {
-		beforeStr = strconv.Itoa(before)
-	}
-	if err := s.emitter.OperatorEvent(r.Context(), nil, tenant, audit.OperatorAct{
-		Event: audit.EventClaimMappingActivated, Actor: actor,
-		Before: beforeStr, After: strconv.Itoa(m.Version), Fields: map[string]string{"digest": m.Digest},
-		Message: fmt.Sprintf("claim mapping %d activated", m.Version),
-	}); err != nil {
-		s.fail(w, r, "record claim mapping", err)
-		return
-	}
-	answer(w, http.StatusOK, map[string]any{"version": m.Version, "digest": m.Digest, "previous": before})
+	answer(w, http.StatusOK, map[string]any{"version": m.Version, "digest": m.Digest, "previous": previous})
 }
 
 // ---------------------------------------------------------------------------
@@ -685,7 +756,7 @@ func (s *Server) handleProxyEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 	var body enrollmentBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	if strings.TrimSpace(body.ProxyID) == "" {
@@ -705,22 +776,21 @@ func (s *Server) handleProxyEnrollment(w http.ResponseWriter, r *http.Request) {
 	for _, z := range body.Zones {
 		zones = append(zones, fleet.Zone(z))
 	}
+	// The grant and its record commit together.
 	token, err := s.fleet.IssueGrant(r.Context(), tenant, fleet.EnrollmentGrant{
 		ProxyID: body.ProxyID, GrantedZones: zones, CreatedBy: actor.Principal,
-	}, expiresAt)
+	}, expiresAt, func(ctx context.Context, tx *store.Store) error {
+		return s.emitter.OperatorEvent(ctx, tx, tenant, audit.OperatorAct{
+			Event: audit.EventProxyApproved, Actor: actor,
+			Fields: map[string]string{
+				"proxy_id": body.ProxyID, "zones": strings.Join(body.Zones, ","),
+				"expires_at": expiresAt.Format(time.RFC3339),
+			},
+			Message: "enrollment approved for proxy " + body.ProxyID,
+		})
+	})
 	if err != nil {
 		s.inventoryFailure(w, r, "issue enrollment", err)
-		return
-	}
-	if err := s.emitter.OperatorEvent(r.Context(), nil, tenant, audit.OperatorAct{
-		Event: audit.EventProxyApproved, Actor: actor,
-		Fields: map[string]string{
-			"proxy_id": body.ProxyID, "zones": strings.Join(body.Zones, ","),
-			"expires_at": expiresAt.Format(time.RFC3339),
-		},
-		Message: "enrollment approved for proxy " + body.ProxyID,
-	}); err != nil {
-		s.fail(w, r, "record enrollment", err)
 		return
 	}
 	answer(w, http.StatusCreated, map[string]any{
@@ -823,39 +893,42 @@ func (s *Server) configAct(w http.ResponseWriter, r *http.Request, rollback bool
 	if !ok {
 		return
 	}
-	var (
-		pub   fleet.ConfigPublication
-		err   error
-		event = audit.EventFleetConfigPublished
-	)
+	event := audit.EventFleetConfigPublished
 	if rollback {
 		event = audit.EventFleetConfigRolledBack
-		pub, err = s.fleet.RollbackConfig(r.Context(), tenant, scope, actor.Principal)
+	}
+	// The publication and its record commit together, before anything is
+	// announced: the record states the act, and the answer says which
+	// announcements the stream took.
+	record := func(ctx context.Context, tx *store.Store, rec fleet.ConfigRecord) error {
+		act := audit.OperatorAct{
+			Event: event, Actor: actor, After: strconv.FormatInt(rec.Version, 10),
+			Fields: map[string]string{
+				"scope": string(scope.Kind) + ":" + scope.ID, "changed": strings.Join(rec.Changed, ","),
+			},
+			Message: fmt.Sprintf("fleet configuration %s:%s at version %d", scope.Kind, scope.ID, rec.Version),
+		}
+		if rec.Before != 0 {
+			act.Before = strconv.FormatInt(rec.Before, 10)
+		}
+		return s.emitter.OperatorEvent(ctx, tx, tenant, act)
+	}
+	var (
+		pub fleet.ConfigPublication
+		err error
+	)
+	if rollback {
+		pub, err = s.fleet.RollbackConfig(r.Context(), tenant, scope, actor.Principal, record)
 	} else {
 		var body configBody
 		if derr := decodeJSON(r, &body); derr != nil {
-			s.invalid(w, r, "body", access.ProblemInvalid, "")
+			s.refuseBody(w, r, derr)
 			return
 		}
-		pub, err = s.fleet.PublishConfig(r.Context(), tenant, scope, fleet.ConfigDocument(body.Settings), actor.Principal)
+		pub, err = s.fleet.PublishConfig(r.Context(), tenant, scope, fleet.ConfigDocument(body.Settings), actor.Principal, record)
 	}
 	if err != nil {
 		s.configFailure(w, r, err)
-		return
-	}
-	changed := make([]string, 0, len(pub.Changed))
-	for _, c := range pub.Changed {
-		changed = append(changed, c.ProxyID)
-	}
-	if err := s.emitter.OperatorEvent(r.Context(), nil, tenant, audit.OperatorAct{
-		Event: event, Actor: actor, After: strconv.FormatInt(pub.Version, 10),
-		Fields: map[string]string{
-			"scope": string(scope.Kind) + ":" + scope.ID, "changed": strings.Join(changed, ","),
-			"unannounced": strconv.Itoa(pub.Unannounced()),
-		},
-		Message: fmt.Sprintf("fleet configuration %s:%s at version %d", scope.Kind, scope.ID, pub.Version),
-	}); err != nil {
-		s.fail(w, r, "record configuration", err)
 		return
 	}
 	if pub.Changed == nil {
@@ -874,10 +947,14 @@ func (s *Server) configFailure(w http.ResponseWriter, r *http.Request, err error
 			code = CodeConfigValueInvalid
 		}
 		params := map[string]any{"key": ke.Key}
+		message := fmt.Sprintf("%q is not a fleet-owned setting: the proxy keeps it in its bootstrap file and rejects a document naming it", ke.Key)
 		if ke.Want != "" {
 			params["want"] = ke.Want
 		}
-		writeError(w, http.StatusUnprocessableEntity, Error{Code: code, CorrelationID: id, Parameters: params, Message: ke.Error()})
+		if code == CodeConfigValueInvalid {
+			message = fmt.Sprintf("setting %q must be %s", ke.Key, ke.Want)
+		}
+		writeError(w, http.StatusUnprocessableEntity, Error{Code: code, CorrelationID: id, Parameters: params, Message: message})
 	case errors.Is(err, fleet.ErrNoRollbackTarget):
 		writeError(w, http.StatusConflict, Error{
 			Code: CodeInvalidRequest, CorrelationID: id,
@@ -1008,10 +1085,13 @@ func (s *Server) inventoryFailure(w http.ResponseWriter, r *http.Request, op str
 			Message:    "this conflicts with what is already stored",
 		})
 	case store.IsInvalid(err):
+		// The store's own sentence, never err.Error(): that names the Go
+		// operation that refused, and a database refusal's text names its
+		// tables and constraints (0023).
 		writeError(w, http.StatusBadRequest, Error{
 			Code: CodeInvalidRequest, CorrelationID: id,
 			Parameters: map[string]any{"field": "body", "problem": "invalid"},
-			Message:    "this cannot be stored: " + err.Error(),
+			Message:    "this cannot be stored: " + store.Reason(err),
 		})
 	default:
 		s.fail(w, r, op, err)

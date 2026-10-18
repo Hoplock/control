@@ -6,6 +6,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -137,5 +139,37 @@ func TestZeroKindIsInternal(t *testing.T) {
 	}
 	if IsNotFound(&Error{Op: "store.Test"}) {
 		t.Error("an unclassified store error reads as not-found, want outage")
+	}
+}
+
+// A store error's reason is fit to answer a caller with: this package's own
+// sentence without the operation that wrote it, and nothing of the database's
+// text, which names tables and constraints (0023).
+func TestAReasonNamesNoOperationAndNoDatabaseText(t *testing.T) {
+	t.Parallel()
+	check := &pgconn.PgError{Code: pgerrCheckViolation, Message: `new row for relation "targets" violates check constraint "targets_zone_check"`}
+	for name, c := range map[string]struct {
+		err  error
+		want string
+	}{
+		"this package's refusal": {invalid("store.Audit.RetainPrefix", "the head of stream s is 4, and the head is never retained"),
+			"the head of stream s is 4, and the head is never retained"},
+		"wrapped by its caller": {fmt.Errorf("audit: retain: %w", invalid("store.Targets.Upsert", "target hostname is required")),
+			"target hostname is required"},
+		"the database's refusal":  {wrap("store.Targets.Upsert", check), "invalid"},
+		"a unique violation":      {wrap("store.Targets.Upsert", &pgconn.PgError{Code: pgerrUniqueViolation}), "conflict"},
+		"an absent row":           {wrap("store.Targets.Get", pgx.ErrNoRows), "not_found"},
+		"a bare kind":             {notFound("store.Targets.Get"), "not_found"},
+		"not this package's":      {errors.New("from somewhere else"), ""},
+		"a conflict this wrote":   {conflict("store.X.Put", "already decided"), "already decided"},
+		"exhausted with sentence": {exhausted("store.UIDs.Lease", "the range is used up"), "the range is used up"},
+	} {
+		got := Reason(c.err)
+		if got != c.want {
+			t.Errorf("%s: Reason = %q, want %q", name, got, c.want)
+		}
+		if strings.Contains(got, "store.") || strings.Contains(got, "relation") {
+			t.Errorf("%s: %q names an operation or a table", name, got)
+		}
 	}
 }

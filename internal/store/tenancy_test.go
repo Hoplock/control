@@ -221,6 +221,9 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"PolicyBundles.List":        func() error { _, err := s.PolicyBundles().List(ctx, ""); return err },
 		"PolicyBundles.GetByHash":   func() error { _, err := s.PolicyBundles().GetByHash(ctx, "", "h"); return err },
 		"PolicyBundles.Lock":        func() error { return s.PolicyBundles().Lock(ctx, "") },
+		"Targets.Lock":              func() error { return s.Targets().Lock(ctx, "") },
+		"Subjects.Lock":             func() error { return s.Subjects().Lock(ctx, "") },
+		"ClaimMappings.Lock":        func() error { return s.ClaimMappings().Lock(ctx, "") },
 		"Decisions.Insert": func() error {
 			return s.Decisions().Insert(ctx, "", Decision{ID: "d", InputsDigest: "x"})
 		},
@@ -244,7 +247,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		},
 		"Audit.Streams":  func() error { _, err := s.Audit().Streams(ctx, ""); return err },
 		"Audit.Query":    func() error { _, err := s.Audit().Query(ctx, "", AuditQuery{}); return err },
-		"Audit.Sessions": func() error { _, err := s.Audit().Sessions(ctx, "", AuditQuery{}); return err },
+		"Audit.Sessions": func() error { _, _, err := s.Audit().Sessions(ctx, "", AuditQuery{}); return err },
 		"Audit.BlockedCommands": func() error {
 			_, err := s.Audit().BlockedCommands(ctx, "", BlockedCommandQuery{LabelName: "env"})
 			return err

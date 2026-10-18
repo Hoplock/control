@@ -106,6 +106,13 @@ func (r targetRepo) Upsert(ctx context.Context, tenant Tenant, t Target) error {
 	return wrap(op, err)
 }
 
+// targetLockPrefix keys the tenant's target lock (Store.lockTenant).
+const targetLockPrefix = "targets\x1f"
+
+func (r targetRepo) Lock(ctx context.Context, tenant Tenant) error {
+	return r.s.lockTenant(ctx, "store.Targets.Lock", targetLockPrefix, tenant)
+}
+
 func (r targetRepo) Delete(ctx context.Context, tenant Tenant, targetID string) error {
 	const op = "store.Targets.Delete"
 	if err := checkTenant(op, tenant); err != nil {

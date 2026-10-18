@@ -75,7 +75,7 @@ func (s *Server) handleRevocation(w http.ResponseWriter, r *http.Request) {
 	}
 	var body revocationBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	audience := revoke.Everyone()
@@ -100,8 +100,17 @@ func (s *Server) handleRevocation(w http.ResponseWriter, r *http.Request) {
 	case "resync":
 		rcpt, err = s.revocations.Resync(ctx, tenant, audience)
 	case "host_key_withdraw":
-		if body.HostKey == nil {
+		// The key is resolved from the record by target and fingerprint,
+		// so a blank one is a request to fix, never "no such record".
+		switch {
+		case body.HostKey == nil:
 			s.invalid(w, r, "host_key", access.ProblemRequired, "")
+			return
+		case strings.TrimSpace(body.HostKey.Target) == "":
+			s.invalid(w, r, "host_key.target", access.ProblemRequired, "")
+			return
+		case strings.TrimSpace(body.HostKey.Fingerprint) == "":
+			s.invalid(w, r, "host_key.fingerprint", access.ProblemRequired, "")
 			return
 		}
 		rcpt, err = s.revocations.WithdrawHostKey(ctx, tenant, audience, revoke.HostKeyRef{
@@ -112,7 +121,7 @@ func (s *Server) handleRevocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.revocationFailure(w, r, err)
+		s.revocationFailure(w, r, body.Type, err)
 		return
 	}
 
@@ -160,15 +169,21 @@ func audienceString(ids []string) string {
 	return strings.Join(ids, ",")
 }
 
-func (s *Server) revocationFailure(w http.ResponseWriter, r *http.Request, err error) {
+func (s *Server) revocationFailure(w http.ResponseWriter, r *http.Request, eventType string, err error) {
 	id := CorrelationIDFrom(r.Context())
 	switch {
-	case errors.Is(err, revoke.ErrNoAudience), errors.Is(err, revoke.ErrNoSelector), errors.Is(err, revoke.ErrNoReason):
-		writeError(w, http.StatusBadRequest, Error{
-			Code: CodeInvalidRequest, CorrelationID: id,
-			Parameters: map[string]any{"field": "body", "problem": "invalid"},
-			Message:    err.Error(),
-		})
+	// revoke.Operator's refusals, each naming the field to fix in this
+	// body's terms rather than quoting the package's own sentence.
+	case errors.Is(err, revoke.ErrNoAudience):
+		s.invalid(w, r, "proxy_ids", access.ProblemInvalid, "")
+	case errors.Is(err, revoke.ErrNoSelector):
+		field, problem := "session_ids", "exactly_one_of_session_ids_subject_or_all"
+		if eventType == "cache_invalidate" {
+			field, problem = "keys", "exactly_one_of_keys_subject_or_all"
+		}
+		s.invalid(w, r, field, problem, "")
+	case errors.Is(err, revoke.ErrNoReason):
+		s.invalid(w, r, "reason", access.ProblemRequired, "")
 	case errors.Is(err, fleet.ErrNoHostKeyRecord), errors.Is(err, fleet.ErrNoHostKeyCacheKey):
 		reason := "no_record"
 		if errors.Is(err, fleet.ErrNoHostKeyCacheKey) {

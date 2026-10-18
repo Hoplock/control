@@ -161,6 +161,24 @@ func ErrorKind(err error) Kind {
 	return KindInternal
 }
 
+// Reason is what a store error says about the caller's input, fit to answer
+// the caller with: the sentence this package wrote when it refused the
+// arguments, without the Go operation that refused them, and nothing of the
+// database's own text, which names tables and constraints. A refusal the
+// database made is rendered as its kind alone. It is "" for an error that is
+// not this package's.
+func Reason(err error) string {
+	var e *Error
+	if !errors.As(err, &e) {
+		return ""
+	}
+	var pgErr *pgconn.PgError
+	if e.Err == nil || errors.As(e.Err, &pgErr) || errors.Is(e.Err, pgx.ErrNoRows) {
+		return e.Kind.String()
+	}
+	return e.Err.Error()
+}
+
 // errEnrollmentConsumed reports a one-time enrollment token used twice.
 var errEnrollmentConsumed = errors.New("enrollment token has already been consumed")
 

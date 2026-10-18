@@ -36,7 +36,7 @@ func desired(t *testing.T, r *fleet.Registry, proxyID string) store.ProxyConfigS
 
 func publish(t *testing.T, r *fleet.Registry, scope store.ConfigScope, doc fleet.ConfigDocument) fleet.ConfigPublication {
 	t.Helper()
-	p, err := r.PublishConfig(t.Context(), testTenant, scope, doc, "operator")
+	p, err := r.PublishConfig(t.Context(), testTenant, scope, doc, "operator", nil)
 	if err != nil {
 		t.Fatalf("PublishConfig: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestEnrollmentHandsBackTheComposedConfig(t *testing.T) {
 	publish(t, r, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(128)})
 	token, err := r.IssueGrant(ctx, testTenant, fleet.EnrollmentGrant{
 		ProxyID: "p-late", GrantedZones: []fleet.Zone{"region"},
-	}, time.Time{})
+	}, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("IssueGrant: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestAPublishOfANonFleetOwnedKeyStoresNothing(t *testing.T) {
 	ctx := t.Context()
 	enrolled(t, r, testTenant, "p-a", "region", nil, fleet.Capabilities{})
 	for _, scope := range []store.ConfigScope{fleet.ZoneScope("region"), fleet.ProxyScope("p-a")} {
-		_, err := r.PublishConfig(ctx, testTenant, scope, fleet.ConfigDocument{"control.endpoint": "https://x"}, "operator")
+		_, err := r.PublishConfig(ctx, testTenant, scope, fleet.ConfigDocument{"control.endpoint": "https://x"}, "operator", nil)
 		var ke *fleet.ConfigKeyError
 		if !asKeyError(err, &ke) || ke.Key != "control.endpoint" {
 			t.Errorf("%s: %v, want a refusal naming control.endpoint", scope.Kind, err)
@@ -385,7 +385,7 @@ func TestRollbackIsFirstClass(t *testing.T) {
 
 	v1 := publish(t, r, fleet.ZoneScope("region"), fleet.ConfigDocument{"chain.max_hops": float64(2)})
 	publish(t, r, fleet.ZoneScope("region"), fleet.ConfigDocument{"chain.max_hops": float64(9)})
-	back, err := r.RollbackConfig(ctx, testTenant, fleet.ZoneScope("region"), "operator")
+	back, err := r.RollbackConfig(ctx, testTenant, fleet.ZoneScope("region"), "operator", nil)
 	if err != nil {
 		t.Fatalf("RollbackConfig: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestRollbackIsFirstClass(t *testing.T) {
 	if got := decodeConfig(t, desired(t, r, "p-a").DesiredDocument)["chain.max_hops"]; got != float64(2) {
 		t.Errorf("after the rollback chain.max_hops = %v, want 2", got)
 	}
-	forward, err := r.RollbackConfig(ctx, testTenant, fleet.ZoneScope("region"), "operator")
+	forward, err := r.RollbackConfig(ctx, testTenant, fleet.ZoneScope("region"), "operator", nil)
 	if err != nil || forward.Version == v1.Version {
 		t.Errorf("rolling back twice = %+v %v", forward, err)
 	}
@@ -405,12 +405,12 @@ func TestRollbackWithNoTargetIsRefused(t *testing.T) {
 	t.Parallel()
 	_, r, _ := newRegistry(t)
 	ctx := t.Context()
-	if _, err := r.RollbackConfig(ctx, testTenant, fleet.ZoneScope("region"), "operator"); !errorsIs(err, fleet.ErrNoRollbackTarget) {
+	if _, err := r.RollbackConfig(ctx, testTenant, fleet.ZoneScope("region"), "operator", nil); !errorsIs(err, fleet.ErrNoRollbackTarget) {
 		t.Errorf("rollback with no published version: %v, want ErrNoRollbackTarget", err)
 	}
 	enrolled(t, r, testTenant, "p-a", "region", nil, fleet.Capabilities{})
 	publish(t, r, fleet.ZoneScope("region"), fleet.ConfigDocument{"chain.max_hops": float64(2)})
-	if _, err := r.RollbackConfig(ctx, testTenant, fleet.ZoneScope("region"), "operator"); !errorsIs(err, fleet.ErrNoRollbackTarget) {
+	if _, err := r.RollbackConfig(ctx, testTenant, fleet.ZoneScope("region"), "operator", nil); !errorsIs(err, fleet.ErrNoRollbackTarget) {
 		t.Errorf("rollback from the first version: %v, want ErrNoRollbackTarget", err)
 	}
 }
@@ -507,7 +507,7 @@ func TestAnAnnouncementLostInAnyTenantIsRetriedUntilTheProxyConverges(t *testing
 	defer cancel()
 	enrolled(t, r, tenantB, "p-b", "region", nil, fleet.Capabilities{})
 
-	p, err := r.PublishConfig(ctx, tenantB, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(64)}, "operator")
+	p, err := r.PublishConfig(ctx, tenantB, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(64)}, "operator", nil)
 	if err != nil || p.Unannounced() != 1 {
 		t.Fatalf("publication = %+v, %v; want its one announcement lost", p, err)
 	}

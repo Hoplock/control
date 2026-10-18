@@ -97,7 +97,7 @@ decision.
 | Decision | Settles | Status | Rendered in |
 | --- | --- | --- | --- |
 | **M1** | the contract is owned upstream and vendored read-only | live | §3, §4, §8, §11 |
-| **M2** | two surfaces, two listeners, two credential types | live | §3, §10 |
+| **M2** | two surfaces, two listeners, two credential types | live | §3, §4, §10 |
 | **M3** | policy is data compiled into a decision program | live | §3, §5, §10 |
 | **M4** | every decision is explainable, durable, addressable | live | §3, §5, §10 |
 | **M5** | the decision path is stateless, bounded, cheap | live | §3, §10, §11 |
@@ -111,7 +111,7 @@ decision.
 | **M13** | tech choices (Go, Postgres, closed enum kinds) | live | §3 |
 | **M14** | licensing: this repository is the open-source plane | live | §8 |
 | **M15** | Enterprise extends this repository; it never forks it | live | §3, §6, §8, §10, §11 |
-| **M16** | external access context is an input; its integrations are extensions | live | §3, §5, §7, §10, §11 |
+| **M16** | external access context is an input; its integrations are extensions | live | §3, §5, §6, §7, §10, §11 |
 | **M17** | the fleet graph carries capabilities, not just reachability | live | §3, §4, §5, §10 |
 | **M18** | tenancy is a request dimension, not a process constant | amended by M24 | §10, §11 |
 | **M19** | a deployment has an identity and can be supervised | live | §3, §10, §11 |
@@ -778,9 +778,9 @@ decision.
      gets an explicit version, negotiated on the same principle as
      `policy_version` does south-bound (§4): the client names what it can read,
      and the server never answers outside it. **This retires an assumption
-     phase 0030 currently rests on** — "this product ships its proxy and its
+     phase 0031 currently rests on** — "this product ships its proxy and its
      server together and has no installed base" stops being true the moment
-     anyone operates a fleet of deployments, and 0030 must say so.
+     anyone operates a fleet of deployments, and 0031 must say so.
   3. **Outbound supervisory registration.** A supervised deployment sits behind
      NAT and the supervisor cannot dial in. Rather than invent a mechanism, use
      the one the fleet already proved one level down: proxy D11 has a downstream
@@ -820,7 +820,7 @@ decision.
   honest default here, the packaged product on top of it there.
 
 - **M20 — The console is a product surface, and its design is specified rather
-  than improvised (new).** Phase 0027 builds an operator console, and every
+  than improvised (new).** Phase 0028 builds an operator console, and every
   acceptance criterion it carries is functional: does the screen work, does RBAC
   hold, does `make build` run without Node. Nothing in this plan said what the
   result should *look* like, and a phase whose criteria can all be met by
@@ -1024,8 +1024,8 @@ decision.
      `retract` directive in `go.mod`.
   7. **What it is not.** The module version is one of four version axes, and
      it is none of the other three: the vendored contract's (M1,
-     `contract/UPSTREAM`), `policy_version` (§4, 0030), and the north-bound API
-     version (M19, 0026). M19's "software version" **is** this one.
+     `contract/UPSTREAM`), `policy_version` (§4, 0031), and the north-bound API
+     version (M19, 0027). M19's "software version" **is** this one.
 
   `make release-check` holds every PR to this decision, and §8 says how. A
   build reports the version Go stamps from the tags, and when Control is built
@@ -1289,9 +1289,10 @@ for nothing.
   correlation id (M21), which is also why it owns its own 404 and 405 rather than
   letting `http.ServeMux` answer them in prose.
 
-  Control's own routes, every one under `/api/v1/tenants/{tenant}/` with one
-  permission: federation and sessions; the certificate authority; grants and
-  grant requests; the access-context push and the providers and bindings that
+  Control's own routes: federation and the caller's own session under
+  `/api/v1/session…`, which run before authentication or need only a live
+  principal; and every other one under `/api/v1/tenants/{tenant}/` with one
+  permission — the certificate authority; grants and grant requests; the access-context push and the providers and bindings that
   constrain it (`…/access-context/providers/{provider}/binding`); the policy
   lifecycle and simulation (`…/policy/…`, §5.6) and explain (`…/decisions/{id}`,
   `…/sessions/{id}/decisions`); inventory — targets and their labels, subjects,
@@ -1311,7 +1312,10 @@ for nothing.
   `/api/v1/tenants/{tenant}/`, or a cross-tenant read under
   `/api/v1/cross-tenant/` naming a permission the auditor holds (M24) — the
   only routes of that class, since Control serves none of its own — names a
-  permission Control defines, and answers
+  permission Control defines, takes no path Control serves (its pattern, a
+  method beside it, or a literal under one of Control's wildcards, such as
+  `targets/special` beside `targets/{target}`, which the mux would otherwise
+  hand to the host's more specific pattern), and answers
   through a writer that renders Control's codes and the ones the host declared
   — never a `401`, which is the middleware's alone (M11). There is no second
   router and no second chain, so the isolation test enumerates a host's routes
@@ -1325,7 +1329,12 @@ for nothing.
   body rather than by being in it. An operator's act is recorded here too, as
   `operator.<noun>.<verb>` on the control stream, written in the transaction
   that makes the change wherever there is one, naming the actor, the before
-  and after, and any warning accepted with it.
+  and after, and any warning accepted with it. The before is read in that
+  transaction under the tenant's lock on what the act replaces (a policy
+  version, a target, a subject, the claim mapping), so two operators writing
+  at once leave a chain of records rather than two that each claim the same
+  before. A revocation has no transaction — it is an event on the bus — and
+  is recorded after it is published.
 - **`cmd/policyctl`** — the policy lifecycle from a terminal and from CI, over
   the north-bound API and nothing else: `validate`, `diff`, `apply`,
   `activate`, `versions`, `simulate`, `explain`. It holds an API token, never a
@@ -1499,7 +1508,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   added moved nothing (below). Neither did what `#69` and `#72` added to the
   request's `capabilities`, nor what `#69` added to the capability report,
   because the number governs none of it. Read both numbers out of
-  `contract/control.yaml`, never from this line (0030).
+  `contract/control.yaml`, never from this line (0031).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -1580,7 +1589,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   route fit.
 
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
-  `policy_version` (0002, 0030). Nor may it assume the document version only
+  `policy_version` (0002, 0031). Nor may it assume the document version only
   rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
   `Hoplock/proxy#56` then moved it up to `4.1.0` for a field on the event
   stream, `Hoplock/proxy#65` to `4.2.0` for a new event type and two new
@@ -1616,7 +1625,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   present tense, and the tiers above are the server's half of the replacement.
   A session that reads "one
   vocabulary" as "there is nothing to negotiate" would delete the only thing
-  standing between a fleet mid-upgrade and a silently widened session; 0030
+  standing between a fleet mid-upgrade and a silently widened session; 0031
   narrows what this server *supports* to one value and explicitly may not remove
   the field.
 
@@ -1672,7 +1681,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   time, so a stale observation costs a refused session and never a session
   below its floor. It is what lets an author see, before raising a route's
   floor, which targets the raise would break: the publish-time report warns
-  from it and `GET …/fleet/target-observations` serves it (0027 renders it).
+  from it and `GET …/fleet/target-observations` serves it (0028 renders it).
   The key-exchange observation is stored by host and port
   (`target_kex_observations`), never by platform, because the proxy's report
   names no platform.
@@ -1790,7 +1799,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   every entry in it can only cause a refusal, which is exactly why it is safe to
   accept from a caller. The authority on a leg is the previous hop's key, above.
 
-  Phases: 0007 and 0008 respectively; 0028 proves the pair against a real proxy.
+  Phases: 0007 and 0008 respectively; 0029 proves the pair against a real proxy.
 - **A certificate is minted per session, never carried on a decision.**
   Upstream `Hoplock/proxy#68` (merged) answered 0011's request for a way to
   reach a proxy with the certificate authority (§6). The shape it chose is the
@@ -2098,7 +2107,7 @@ the connection's lifetime (proxy D2):
   allow route's. The emergency runbook for an advisory is that ban
   (`POST …/policy/apply`), then `cache_invalidate` with `all`, then
   `session_kill` for the running sessions found by what they negotiated
-  (`GET …/audit/negotiated`, then `POST …/revocations`; §7, 0027);
+  (`GET …/audit/negotiated`, then `POST …/revocations`; §7, 0028);
 - **additional device fields** on `ephemeral-account` routes — the open
   `device_field.<name>` namespace that sits beside the five
   `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
@@ -2500,7 +2509,7 @@ not say why, and a grant the explanation names that the inputs do not hold.
   cross-tenant read, the set of tenants where the permission is held (M24) —
   and checks that permission before a handler runs. A handler is never asked,
   because M18's failure mode is not a wrong decision in the middleware — it is
-  one handler that read the tenant from the path itself, or chose its own set. The console (0027) reaches it through the
+  one handler that read the tenant from the path itself, or chose its own set. The console (0028) reaches it through the
   API, so there is no second enforcement point to keep in step.
 
   **"Own" is an access class, never a branch in a handler (0016).** A route
@@ -2521,6 +2530,23 @@ not say why, and a grant the explanation names that the inputs do not hold.
   own requests through the self routes and nowhere else — so it never changes
   anything blind, and it reads none of the tenant's audit, decisions or
   identities, which nobody needs in order to ask.
+
+  **What each role may change beyond the read set** is a least-privilege
+  decision per grant, and `TestTheRoleTableIsHeldWhole` holds the table whole.
+  `policy-author` holds `policy:write`, `policy:publish` and `target:write`:
+  a label is a policy input, and the author already changes every decision by
+  publishing. `grant-admin` holds `grant:write`, `grant:approve` and
+  `session:revoke`: every act on the revocation stream narrows access — the
+  worst a desk can do with it is end sessions, which it already does by
+  revoking grants — and each is recorded with its actor. `fleet-admin` holds
+  `fleet:write` and `target:write`: it owns the estate it labels, and a
+  relabel is diffed, simulable and recorded with its before, so a label that
+  changes decisions is never a blind write. `admin` holds every permission,
+  and is alone in holding `identity:write` (the claim mapping can grant
+  groups), `ca:rotate` (it can invalidate every certificate), `audit:retain`
+  (it removes evidence), `access-context:write` (a standing pre-approval for an
+  external system to open access, larger than `grant:write`) and
+  `report:write`.
 
   **A host names a permission; Control defines it (M15).** A host binary's
   routes (0015) name one of these codes and never declare one: declaring a code
@@ -2731,7 +2757,7 @@ not say why, and a grant the explanation names that the inputs do not hold.
   tampering: `audit-verify` reports a break, and the gap records report a hole.
   The gap records are stored and indexed by session, `gap_cause` and span
   (derived `gap_*` columns, with `gap_critical` a count), a session's loss is
-  summed across its reports (`Reader.SessionLoss`), and **0027** shows them.
+  summed across its reports (`Reader.SessionLoss`), and **0028** shows them.
 - **Storage** — append-only, hash-chained per tenant per stream; a verifier can
   prove no record was altered or removed, and reports the first break with the
   record, the position and both hashes. A **stream is the submitting proxy**:
@@ -2870,7 +2896,9 @@ not say why, and a grant the explanation names that the inputs do not hold.
   comma-joined, on the `provisioning` record) names the bans that build could
   never offer. These records are the only per-session proof that a floor or a
   ban held, and they are how the emergency runbook finds the sessions to end
-  (`GET …/audit/negotiated`).
+  (`GET …/audit/negotiated`, whose limit counts sessions and whose answer says
+  `truncated` when the limit cut it short: the runbook's next step ends exactly
+  the sessions listed, so a caller must know whether they were all of them).
 - **Grant context rides every record for a session** (`grant_context`),
   copied through by the proxy as opaque data. Store it as it arrives —
   including `additional_context`, which is a string **or** an object — and never
@@ -3017,11 +3045,12 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0023 | Audit of 0019, part 4: north-bound surface & the record | the same for the route table, RBAC, error codes, the operator audit of every write, each handler and a security review; then the record as a whole — the register, §3, §5.6, §10, `CHANGELOG.md` `v0.6.0` and what control#69 told `hoplock/enterprise` — reconciled after parts 1–3 (M2, M11, M18, M21, M24) |
 | 0024 | Signed retention markers | a retention marker a writer of the database alone cannot forge: `audit_retention` signed over the tenant, stream, `through_seq` and `through_hash` by a per-tenant key behind `ext.KeyStore`, checked by the verifier against the key and never against a public half the database holds, a marker unsigned or mismatched reported as a break, and retention refused without a key — after the session has first weighed the alternatives and shown this one is the right fix for the gap 0021 found (M8, M7, M15, M23) |
 | 0025 | Shared event plane | the event stream correct on several nodes: a revocation and a `config_changed` reach a proxy whichever node holds its stream, event ids and replay that survive a node and a restart, the subscription set the cache-hint gate reads shared rather than per node — Control's half, through `ext.ClusterCoordinator` and the store; the election and the cross-node transport stay Enterprise's (its E9) (M9, M5, M15, M18) |
-| 0026 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
-| 0027 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's per-build finding (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
-| 0028 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
-| 0029 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
-| 0030 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
+| 0026 | Bounded lists: audit and plan | every list this server answers, found by enumerating the router and the store's readers rather than from memory — the eight 0023 found answering a whole tenant (`targets`, `subjects`, `role-bindings`, `policy/bundles`, `proxies`, `fleet/config/rollouts`, `fleet/algorithms`, `fleet/target-observations`), the audit reads and per-session reads capped silently, and earlier phases' lists — each classified with its reader, its bound and its verdict; one bounded-list shape (a limit, a keyset cursor, an answer that says where it stopped) recorded as a decision; and the implementing prompts queued right after it in chunks each sized to keep its session under 60% context, the first building the mechanism and an enumerating test whose pending list each later chunk empties. It changes no behaviour (M19, M21, M5, M18, M15, M23) |
+| 0027 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
+| 0028 | Management console | operator web UI served from the binary: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's per-build finding (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
+| 0029 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
+| 0030 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
+| 0031 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 
 > **Audits are not in this table, and not in the queue.**
 > `prompts/audit/` holds prompts that run repeatedly against the whole
@@ -3037,6 +3066,27 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 > the upstream author at merge time, and two of those looks have now described
 > text this repository did not contain. A check that runs once, from one side,
 > needs a compensating pass from this one.
+
+> **Renumbering note (bounded-lists revision).** Phase 0026 is new: an audit
+> of every list this server answers, the one shape a bounded list takes, and
+> the implementing prompts queued in chunks after it. 0023 found eight
+> north-bound lists that answer a whole tenant, and others capped silently;
+> fixing all of them, and finding the rest, is more than one session holds
+> under `docs/PROTOCOL.md` §1's budget, so this phase finds and decides, and
+> the chunks it queues implement. Under `docs/PROTOCOL.md` §6 the queued
+> prompts after it were renumbered — **0026→0027, 0027→0028, 0028→0029,
+> 0029→0030, 0030→0031** — and no implemented prompt moved.
+>
+> It runs before instance identity because that phase makes the north-bound
+> API a compatibility promise (M19), and changing eight response shapes after
+> the promise is made would cost a version; and before the console, which
+> renders these lists and should be built on their final shape. It runs after
+> 0024 and 0025, which close gaps that are live today and touch none of these
+> routes. The chunks 0026 queues are numbered right after it, which moves
+> instance identity and everything after it again; that renumbering is 0026's
+> own, with its own note.
+>
+> Anything written before this revision resolves through the table below.
 
 > **Renumbering note (audit-findings revision).** Phases 0024 and 0025 are new.
 > Both come from what the audit of 0019's audit store and fleet configuration
@@ -3207,37 +3257,42 @@ Regenerate it in the PR that renumbers.
 | Revision | Written as | Is now | Phase |
 | --- | --- | --- | --- |
 | privileged-access | 0013 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
-| privileged-access | 0014 | 0027 | `0027-management-console` |
-| privileged-access | 0015 | 0028 | `0028-e2e-topology-and-ci` |
-| multi-instance | 0015 | 0027 | `0027-management-console` |
-| multi-instance | 0016 | 0028 | `0028-e2e-topology-and-ci` |
-| multi-instance | 0017 | 0030 | `0030-single-contract-version` |
+| privileged-access | 0014 | 0028 | `0028-management-console` |
+| privileged-access | 0015 | 0029 | `0029-e2e-topology-and-ci` |
+| multi-instance | 0015 | 0028 | `0028-management-console` |
+| multi-instance | 0016 | 0029 | `0029-e2e-topology-and-ci` |
+| multi-instance | 0017 | 0031 | `0031-single-contract-version` |
 | queue-order | 0014 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
-| queue-order | 0015 | 0026 | `0026-instance-identity-and-supervisory-registration` |
-| queue-order | 0016 | 0027 | `0027-management-console` |
-| queue-order | 0017 | 0028 | `0028-e2e-topology-and-ci` |
-| queue-order | 0018 | 0030 | `0030-single-contract-version` |
-| queue-order | 0019 | 0029 | `0029-post-quantum-posture` |
+| queue-order | 0015 | 0027 | `0027-instance-identity-and-supervisory-registration` |
+| queue-order | 0016 | 0028 | `0028-management-console` |
+| queue-order | 0017 | 0029 | `0029-e2e-topology-and-ci` |
+| queue-order | 0018 | 0031 | `0031-single-contract-version` |
+| queue-order | 0019 | 0030 | `0030-post-quantum-posture` |
 | queue-order | 0020 | 0016 | `0016-self-service-grant-requests` |
 | queue-order | 0021 | 0015 | `0015-public-server-package-and-host-routes` |
 | queue-order | 0022 | 0017 | `0017-ending-external-windows` |
 | queue-order | 0023 | 0014 | `0014-tagged-releases` |
 | cross-tenant | 0018 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
-| cross-tenant | 0019 | 0026 | `0026-instance-identity-and-supervisory-registration` |
-| cross-tenant | 0020 | 0027 | `0027-management-console` |
-| cross-tenant | 0021 | 0028 | `0028-e2e-topology-and-ci` |
-| cross-tenant | 0022 | 0029 | `0029-post-quantum-posture` |
-| cross-tenant | 0023 | 0030 | `0030-single-contract-version` |
-| session-audit | 0020 | 0026 | `0026-instance-identity-and-supervisory-registration` |
-| session-audit | 0021 | 0027 | `0027-management-console` |
-| session-audit | 0022 | 0028 | `0028-e2e-topology-and-ci` |
-| session-audit | 0023 | 0029 | `0029-post-quantum-posture` |
-| session-audit | 0024 | 0030 | `0030-single-contract-version` |
-| audit-findings | 0024 | 0026 | `0026-instance-identity-and-supervisory-registration` |
-| audit-findings | 0025 | 0027 | `0027-management-console` |
-| audit-findings | 0026 | 0028 | `0028-e2e-topology-and-ci` |
-| audit-findings | 0027 | 0029 | `0029-post-quantum-posture` |
-| audit-findings | 0028 | 0030 | `0030-single-contract-version` |
+| cross-tenant | 0019 | 0027 | `0027-instance-identity-and-supervisory-registration` |
+| cross-tenant | 0020 | 0028 | `0028-management-console` |
+| cross-tenant | 0021 | 0029 | `0029-e2e-topology-and-ci` |
+| cross-tenant | 0022 | 0030 | `0030-post-quantum-posture` |
+| cross-tenant | 0023 | 0031 | `0031-single-contract-version` |
+| session-audit | 0020 | 0027 | `0027-instance-identity-and-supervisory-registration` |
+| session-audit | 0021 | 0028 | `0028-management-console` |
+| session-audit | 0022 | 0029 | `0029-e2e-topology-and-ci` |
+| session-audit | 0023 | 0030 | `0030-post-quantum-posture` |
+| session-audit | 0024 | 0031 | `0031-single-contract-version` |
+| audit-findings | 0024 | 0027 | `0027-instance-identity-and-supervisory-registration` |
+| audit-findings | 0025 | 0028 | `0028-management-console` |
+| audit-findings | 0026 | 0029 | `0029-e2e-topology-and-ci` |
+| audit-findings | 0027 | 0030 | `0030-post-quantum-posture` |
+| audit-findings | 0028 | 0031 | `0031-single-contract-version` |
+| bounded-lists | 0026 | 0027 | `0027-instance-identity-and-supervisory-registration` |
+| bounded-lists | 0027 | 0028 | `0028-management-console` |
+| bounded-lists | 0028 | 0029 | `0029-e2e-topology-and-ci` |
+| bounded-lists | 0029 | 0030 | `0030-post-quantum-posture` |
+| bounded-lists | 0030 | 0031 | `0031-single-contract-version` |
 
 No implemented prompt has ever moved: every row above renumbered a queued prompt
 only.
@@ -3258,11 +3313,11 @@ cross-tenant notes, above).
 Prompts may add or re-order later phases; any prompt that introduces new queued
 prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 
-> **On 0030 running last.** It is an audit, and an audit wants everything that
+> **On 0031 running last.** It is an audit, and an audit wants everything that
 > could hold a version number to exist first. The position is not an invitation
 > to build multi-version machinery in the meantime: this product ships its proxy
 > and its server together and has no installed base, so every phase before it
-> should already carry one version in one place, and 0030 should find little.
+> should already carry one version in one place, and 0031 should find little.
 > What it does own is the decision that a mismatch is a **loud refusal** rather
 > than a thinned answer, and the documents that still describe a mid-upgrade
 > fleet (§4 above among them).
@@ -3270,8 +3325,8 @@ prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 > 0019's tiers (§4) are not new machinery: `5` for `brokered-certificate`
 > (`Hoplock/proxy#68`) and `6` for a floor or a ban (`Hoplock/proxy#69`). They
 > are cases in the gate 0008 already built for the next vocabulary, and they
-> refuse rather than thin. 0030 may fold them into the single-version refusal,
-> because that refusal is stricter. What 0030 may not do is let a proxy be sent
+> refuse rather than thin. 0031 may fold them into the single-version refusal,
+> because that refusal is stricter. What 0031 may not do is let a proxy be sent
 > vocabulary above what it declared. Nor may it fold in the per-level floor
 > rule or the per-proxy ban refusal (`Hoplock/proxy#72`), each a capability
 > (M17) rather than a version.

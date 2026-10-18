@@ -556,18 +556,21 @@ func (r auditRepo) Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]Au
 // newest first, and never the empty session, which is no session
 // (Hoplock/proxy#71). Its limit counts SESSIONS: a session with several
 // matching records takes one place, so the answer is the one a caller ending
-// sessions needs. Ascending is not read.
-func (r auditRepo) Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([]string, error) {
+// sessions needs. It reads one session past the limit to say whether the
+// answer stopped short, because a caller that ends the sessions it was given
+// must know whether those were all of them (0023). Ascending is not read.
+func (r auditRepo) Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([]string, bool, error) {
 	const op = "store.Audit.Sessions"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
+	limit := boundLimit(q.Limit)
 	where, args := auditWhere(tenant, q)
-	args = append(args, boundLimit(q.Limit))
+	args = append(args, limit+1)
 	rows, err := r.s.db.Query(ctx, `
 		SELECT session_id
 		FROM audit_records
@@ -576,18 +579,24 @@ func (r auditRepo) Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([
 		ORDER BY max(recorded_at) DESC, session_id
 		LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
-		return nil, wrap(op, err)
+		return nil, false, wrap(op, err)
 	}
 	defer rows.Close()
 	var out []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, wrap(op, err)
+			return nil, false, wrap(op, err)
 		}
 		out = append(out, id)
 	}
-	return out, wrap(op, rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, false, wrap(op, err)
+	}
+	if len(out) > limit {
+		return out[:limit], true, nil
+	}
+	return out, false, nil
 }
 
 // auditQuerySQL renders Query's statement. It is one function so that the test

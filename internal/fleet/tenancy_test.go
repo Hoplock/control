@@ -143,7 +143,7 @@ func TestAnEnrollmentTokenCannotReachAnotherTenant(t *testing.T) {
 
 	token, err := r.IssueGrant(ctx, tenantA, fleet.EnrollmentGrant{
 		ProxyID: "p-edge", GrantedZones: []fleet.Zone{"edge"},
-	}, time.Time{})
+	}, time.Time{}, nil)
 	if err != nil {
 		t.Fatalf("IssueGrant: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestAnEnrollmentTokenCannotReachAnotherTenant(t *testing.T) {
 	// Tenant B issues its own grant for the same proxy id, in the same zone.
 	if _, err := r.IssueGrant(ctx, tenantB, fleet.EnrollmentGrant{
 		ProxyID: "p-edge", GrantedZones: []fleet.Zone{"edge"},
-	}, time.Time{}); err != nil {
+	}, time.Time{}, nil); err != nil {
 		t.Fatalf("IssueGrant for tenant B: %v", err)
 	}
 

@@ -26,6 +26,77 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.10.0
+
+The fourth and last audit of `v0.6.0`: the north-bound surface — its routes,
+roles, error codes, the record every write leaves, each handler — and what
+`v0.6.0` and its pull request said, checked against the code, with every
+defect fixed under a test that failed first.
+
+### Breaking
+
+- **A host route on a path Control serves through a wildcard is refused at
+  start-up.** `server.Main` and `server.Run` refused a host pattern equal to
+  one of Control's, a method beside one, or one the mux found ambiguous, but
+  accepted a literal under one of Control's wildcards — `targets/special`
+  beside `targets/{target}`, `access-context/bindings/push` beside
+  `access-context/{provider}/push` — and the mux then routed that path to the
+  host. No identifier changed.
+- **`PUT …/subjects/{subject}` refuses a claim the claim mapping would
+  refuse** (`400`, `field: claims.<name>`, `problem: reserved` or `invalid`):
+  `chain_hop_proxy_id`, any `hoplock.*` name, and a name outside the attribute
+  pattern. A stored claim is a policy attribute on every decision for the
+  subject, so a reserved name stored here stood beside every login as if a
+  proxy's key had authenticated a chain leg.
+- **Refusals that changed status or field:**
+  - a body past the listener's limit is `413 payload_too_large` with
+    `limit`; it was `400 invalid_request`, `field: body`;
+  - `POST …/revocations`: a `host_key_withdraw` with a blank `target` or
+    `fingerprint` is `400` naming `host_key.target` or
+    `host_key.fingerprint`, where it was `409 host_key_unresolved`; a
+    selector, reason or audience refusal names `session_ids`, `keys`,
+    `reason` or `proxy_ids` rather than `body`;
+  - `POST …/targets/relabel`: a change naming no target, or a target a
+    second time, is `400` naming `changes[<i>].target`; a target that is not
+    there is `404` with `target`;
+  - `POST …/audit/retention` with a negative `through_seq` is `400`; it was
+    read as absent.
+- **The fleet configuration records drop `operator.unannounced`.** The
+  record is now written in the publish's transaction, before anything is
+  announced; which announcements the stream took is in the answer, as it
+  was. The record gains `before`: the version the publish displaced.
+
+- **Phase:** 0023, the audit of 0019's north-bound surface and of the record.
+- **Public packages:** no identifier is added, removed or changed. The doc
+  comment of `server.Route` names the paths a host may not take.
+- **Behaviour no API diff shows:**
+  - Three writes now commit with their record: `PUT …/identity/claim-mapping`
+    (which also stored and activated the version in two statements),
+    `POST …/proxies/enrollments`, and `PUT …/fleet/config/{scope}/{id}` with
+    its `rollback`. Each was recorded after it committed, so a failed record
+    left a change the chain did not state.
+  - A target, subject or claim-mapping write reads what it replaces under the
+    tenant's lock for that collection, so concurrent writes record a chain of
+    befores. A relabel's write re-reads each target under that lock and
+    changes only its labels: a hostname, zone or credential method written
+    while it simulated is kept, where it was overwritten with the values the
+    preview read.
+  - `GET …/audit/negotiated` answers `truncated`, true when its limit cut the
+    list short: the runbook's next step ends exactly the sessions listed. An
+    `axis` without its `value`, or a `ban_axis` without its `ban_name`, is
+    `400` naming the missing one; it was a `500`.
+  - No refusal quotes a Go operation, a package's error text, or the
+    database's: `this query cannot be answered: store.Audit.RetainPrefix:
+    invalid: …` is `this query cannot be answered: the head of stream … is
+    never retained`.
+- **What `v0.6.0` stated wrongly or left out:**
+  - its route list omitted `PUT …/identity/claim-mapping` (`identity:write`);
+  - its `### Breaking` did not say that a host route on a path it began
+    serving, or a host code equal to one of its eight new codes, is refused at
+    start-up — a host binary that started under `v0.5.0` could fail to start;
+  - "every operator act is recorded" held, but three of those records were
+    written outside the act's transaction, against PLAN §3's rule (above).
+
 ## v0.9.0
 
 The third audit of `v0.6.0`: the policy lifecycle — the publish-time report,

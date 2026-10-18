@@ -44,8 +44,11 @@ const (
 // that starts with "/", names "{tenant}", climbs with "..", or carries a method
 // prefix; a Permission that is not one of Control's, or on an AccessCrossTenant
 // route one the auditor role does not hold; a nil Handler; a duplicate of any
-// route, Control's or a host's; a Pattern on a path Control already serves; and
-// a Pattern the standard library's mux reports as conflicting with another.
+// route, Control's or a host's; a Pattern on a path Control already serves —
+// one of its patterns, or a literal under one of its wildcards, such as
+// "targets/special" beside Control's "targets/{target}", which the mux would
+// otherwise route to the host; and a Pattern the standard library's mux
+// reports as conflicting with another.
 type Route struct {
 	// Method is the HTTP method; one per route.
 	Method string

@@ -272,7 +272,7 @@ func runMappingPut(ctx context.Context, h Host, args []string, stdout, stderr io
 	if err != nil {
 		return err
 	}
-	mapping, err := federation.PutMapping(ctx, tenant, document, "cli")
+	mapping, err := federation.PutMapping(ctx, tenant, document, "cli", nil)
 	if err != nil {
 		return err
 	}

@@ -376,6 +376,51 @@ func TestAHostRouteControlWillNotMountIsRefusedAtStartUp(t *testing.T) {
 	}
 }
 
+// A host takes no path Control serves and no code Control answers, whichever
+// phase added them: every one of Control's tenant routes is walked, so a route
+// added later is covered on the day it is added. A literal path under one of
+// Control's wildcards is Control's too — `targets/special` beside
+// `targets/{target}` — because the mux would let the host's more specific
+// pattern take it (0023).
+func TestAHostCanTakeNoPathAndNoCodeControlServes(t *testing.T) {
+	ok := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	table, err := north.Table("", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	walked := 0
+	for _, route := range table {
+		if route.Access != "tenant" {
+			continue
+		}
+		walked++
+		relative := strings.TrimPrefix(route.Pattern, north.HostPrefix)
+		literal := samplePath(relative, "x")
+		for _, pattern := range []string{relative, literal} {
+			for _, method := range []string{"GET", "POST"} {
+				host := north.HostRoute{Method: method, Pattern: pattern, Access: north.AccessTenant,
+					Permission: identity.PermAuditRead, Summary: "x", Handler: ok}
+				if err := north.CheckHost(testHostProvider, []north.HostRoute{host}, nil); err == nil {
+					t.Errorf("a host took %s %s, which Control serves at %s", method, pattern, route.Pattern)
+				}
+			}
+		}
+	}
+	if walked < 50 {
+		t.Fatalf("walked %d of Control's tenant routes, so this asserted little", walked)
+	}
+	for _, code := range north.AllCodes {
+		if err := north.CheckHost(testHostProvider, nil, []string{code}); err == nil {
+			t.Errorf("a host declared %q, which is Control's", code)
+		}
+	}
+	// What a host may still take: a family of its own, and its own literal
+	// beside its own wildcard.
+	if err := north.CheckHost(testHostProvider, testHostRoutes(), []string{"report_not_found"}); err != nil {
+		t.Fatalf("the test host's own routes were refused: %v", err)
+	}
+}
+
 func TestAHostErrorCodeMustBeNewAndSnakeCase(t *testing.T) {
 	for name, codes := range map[string][]string{
 		"Control's own code": {north.CodeForbidden},

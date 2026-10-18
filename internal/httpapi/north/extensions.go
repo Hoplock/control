@@ -210,7 +210,7 @@ func (s *Server) handleBindingPut(w http.ResponseWriter, r *http.Request) {
 	}
 	var body bindingBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	b := store.AccessContextBinding{

@@ -75,7 +75,7 @@ func (f *federationFixture) connect(t *testing.T, tenant store.Tenant, name stri
 
 func (f *federationFixture) mapping(t *testing.T, tenant store.Tenant, document string) *identity.Mapping {
 	t.Helper()
-	mapping, err := f.federation.PutMapping(context.Background(), tenant, []byte(document), "test")
+	mapping, err := f.federation.PutMapping(context.Background(), tenant, []byte(document), "test", nil)
 	if err != nil {
 		t.Fatalf("mapping: %v", err)
 	}

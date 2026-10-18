@@ -61,6 +61,28 @@ var reservedAttributes = []string{ClaimChainHop}
 // claim this server needs to set for itself.
 const reservedPrefix = "hoplock."
 
+// The two reasons a name cannot be a subject's attribute.
+const (
+	// AttributeInvalid is a name outside the attribute pattern.
+	AttributeInvalid = "invalid"
+	// AttributeReserved is a name this server sets for itself.
+	AttributeReserved = "reserved"
+)
+
+// AttributeProblem says why name cannot be a subject's attribute: "" when it
+// can, AttributeInvalid, or AttributeReserved. It is the one rule for every
+// door an attribute comes through — a mapped claim, and a claim an operator
+// stores on a subject — so a reserved name is closed on all of them.
+func AttributeProblem(name string) string {
+	switch {
+	case !attributeNamePattern.MatchString(name):
+		return AttributeInvalid
+	case slices.Contains(reservedAttributes, name) || strings.HasPrefix(name, reservedPrefix):
+		return AttributeReserved
+	}
+	return ""
+}
+
 // attributeNamePattern is what a policy attribute may be called. It is
 // deliberately narrower than what an IdP may call a claim: the mapping is a
 // translation, and the side this server matches on is the side it constrains.
@@ -244,12 +266,12 @@ func ParseMapping(document []byte) (*Mapping, error) {
 				Code: RejectMappingAttributeName, Field: field + ".attribute",
 				Message: "a mapping entry must name the attribute it produces",
 			})
-		case !attributeNamePattern.MatchString(attribute):
+		case AttributeProblem(attribute) == AttributeInvalid:
 			rej = append(rej, MappingRejection{
 				Code: RejectMappingAttributeName, Field: field + ".attribute",
 				Message: "an attribute name is lower-case letters, digits and underscores, optionally dotted",
 			})
-		case slices.Contains(reservedAttributes, attribute) || strings.HasPrefix(attribute, reservedPrefix):
+		case AttributeProblem(attribute) == AttributeReserved:
 			// The security rule: an IdP may not assert an attribute
 			// this server sets for itself.
 			rej = append(rej, MappingRejection{

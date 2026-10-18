@@ -487,6 +487,20 @@ type ClaimMappingRepository interface {
 	Put(ctx context.Context, tenant Tenant, document, digest, createdBy string) (ClaimMapping, error)
 	// Activate makes a version the one logins use. Absent is ErrNotFound.
 	Activate(ctx context.Context, tenant Tenant, version int) error
+	// Lock takes the tenant's claim-mapping lock for the rest of the
+	// transaction, so a write reads the version it replaces and allocates
+	// the next one with no other write between. Outside a transaction it is
+	// refused, because a lock released when the statement ends serialises
+	// nothing.
+	Lock(ctx context.Context, tenant Tenant) error
+}
+
+// claimMappingLockPrefix keys the tenant's claim-mapping lock
+// (Store.lockTenant).
+const claimMappingLockPrefix = "claim_mappings\x1f"
+
+func (r claimMappingRepo) Lock(ctx context.Context, tenant Tenant) error {
+	return r.s.lockTenant(ctx, "store.ClaimMappings.Lock", claimMappingLockPrefix, tenant)
 }
 
 type claimMappingRepo struct{ s *Store }

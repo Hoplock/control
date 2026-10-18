@@ -188,6 +188,24 @@ func (s *Store) inTx(ctx context.Context, op string, fn func(context.Context, qu
 	return nil
 }
 
+// lockTenant takes a transaction-scoped advisory lock on one of a tenant's
+// collections, keyed by prefix and tenant in the one-bigint advisory space,
+// apart from the audit chain's two-int4 locks. A hash collision with another
+// key only serialises two unrelated acts. Outside a transaction it is refused,
+// because a lock released when the statement ends serialises nothing.
+func (s *Store) lockTenant(ctx context.Context, op, prefix string, tenant Tenant) error {
+	if err := checkTenant(op, tenant); err != nil {
+		return err
+	}
+	if s.pool != nil {
+		return invalid(op, "the lock is taken inside a transaction")
+	}
+	ctx, cancel := s.withTimeout(ctx)
+	defer cancel()
+	_, err := s.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, prefix+string(tenant))
+	return wrap(op, err)
+}
+
 // errNestedTx reports InTx called on a Store that is already inside one.
 var errNestedTx = fmt.Errorf("InTx on a transaction-bound Store: nest the work in the existing transaction instead")
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -210,11 +211,64 @@ func declaredCodes(provider string, host []string) (map[string]bool, error) {
 	return codes, nil
 }
 
+// controlPaths is Control's own table, mounted on a mux of its own so that a
+// host route is judged against Control's routes and never against another of
+// the host's.
+type controlPaths struct {
+	patterns map[string]bool
+	mux      *http.ServeMux
+}
+
+func newControlPaths() *controlPaths {
+	return &controlPaths{patterns: map[string]bool{}, mux: http.NewServeMux()}
+}
+
+// add records one of Control's patterns. The router has already mounted it,
+// so it mounts here too.
+func (c *controlPaths) add(pattern string) {
+	if c.patterns[pattern] {
+		return
+	}
+	c.patterns[pattern] = true
+	c.mux.Handle(pattern, http.NotFoundHandler())
+}
+
+// hostSampleSegment stands in for a host pattern's wildcard when asking which
+// of Control's patterns would serve it: a value no Control route names.
+const hostSampleSegment = "hoplock-host-sample"
+
+// servedBy returns the Control pattern that serves a host pattern's paths, or
+// "". That is the pattern itself, or one of Control's wildcards that a literal
+// host path falls under — `targets/special` beside Control's
+// `targets/{target}` — which the mux would otherwise let the host's more
+// specific pattern take from Control.
+func (c *controlPaths) servedBy(pattern string) string {
+	if c.patterns[pattern] {
+		return pattern
+	}
+	segments := strings.Split(pattern, "/")
+	for i, segment := range segments {
+		switch {
+		case segment == "{$}":
+			segments[i] = ""
+		case strings.HasPrefix(segment, "{"):
+			segments[i] = hostSampleSegment
+		}
+	}
+	_, matched := c.mux.Handler(&http.Request{Method: http.MethodGet, URL: &url.URL{Path: strings.Join(segments, "/")}})
+	if c.patterns[matched] {
+		return matched
+	}
+	return ""
+}
+
 // hostRoute turns a host's route into a table entry, refusing one Control
 // will not mount. Control's own patterns are passed in because a host may not
-// add a method to a path Control serves: the 405 and the listing would then
-// describe a path that is half Control's.
-func (s *Server) hostRoute(provider string, hr HostRoute, control map[string]bool) (Route, error) {
+// take a path Control serves: neither by adding a method to it — the 405 and
+// the listing would then describe a path that is half Control's — nor by a
+// literal path under one of Control's wildcards, which would take that path
+// from Control.
+func (s *Server) hostRoute(provider string, hr HostRoute, control *controlPaths) (Route, error) {
 	name := fmt.Sprintf("%s route %s %q", provider, hr.Method, hr.Pattern)
 	switch {
 	case hr.Method == "":
@@ -243,8 +297,11 @@ func (s *Server) hostRoute(provider string, hr HostRoute, control map[string]boo
 		return Route{}, fmt.Errorf("httpapi/north: %s: %w", name, err)
 	}
 	pattern := prefix + hr.Pattern
-	if control[pattern] {
+	switch served := control.servedBy(pattern); {
+	case served == pattern:
 		return Route{}, fmt.Errorf("httpapi/north: %s collides with Control's route at %s", name, pattern)
+	case served != "":
+		return Route{}, fmt.Errorf("httpapi/north: %s would take paths Control serves at %s", name, served)
 	}
 
 	handler := hr.Handler
@@ -308,12 +365,12 @@ func (s *Server) withHostRequest(r *http.Request, provider string) context.Conte
 // registerTable registers Control's routes, then the host's, through the one
 // enforcement point.
 func (s *Server) registerTable(provider string, host []HostRoute) error {
-	control := map[string]bool{}
+	control := newControlPaths()
 	for _, route := range s.routes() {
 		if err := s.router.Register(route); err != nil {
 			return err
 		}
-		control[route.Pattern] = true
+		control.add(route.Pattern)
 	}
 	for _, hr := range host {
 		route, err := s.hostRoute(provider, hr, control)

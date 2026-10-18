@@ -203,7 +203,7 @@ func (s *Server) handleGrantCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var body grantRequestBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	spec, err := body.spec()
@@ -362,7 +362,7 @@ func (s *Server) handleGrantRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	var body revokeBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	rev, err := s.grants.Revoke(r.Context(), tenant, actor, r.PathValue("grant"), body.Reason)
@@ -433,7 +433,7 @@ func (s *Server) cancelBodyFrom(w http.ResponseWriter, r *http.Request) (cancelB
 	var body cancelBody
 	if r.ContentLength != 0 {
 		if err := decodeJSON(r, &body); err != nil {
-			s.invalid(w, r, "body", access.ProblemInvalid, "")
+			s.refuseBody(w, r, err)
 			return cancelBody{}, false
 		}
 	}
@@ -499,7 +499,7 @@ func (s *Server) handleOwnRequestCreate(w http.ResponseWriter, r *http.Request) 
 	}
 	var body grantSpecBody
 	if err := decodeJSON(r, &body); err != nil {
-		s.invalid(w, r, "body", access.ProblemInvalid, "")
+		s.refuseBody(w, r, err)
 		return
 	}
 	spec, err := body.spec()
