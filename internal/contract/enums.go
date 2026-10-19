@@ -25,7 +25,7 @@ package contract
 // document; the checksum in contract/UPSTREAM does.
 //
 // It is the vocabulary of the vendored document, and nothing ties the two
-// together but this line until phase 0035: a re-vendor that moves the number
+// together but this line until phase 0036: a re-vendor that moves the number
 // must move this constant in the same change, or this server hands a proxy a
 // field it refuses the whole response over.
 const PolicyVersion int32 = VocabularyAlgorithmFloor

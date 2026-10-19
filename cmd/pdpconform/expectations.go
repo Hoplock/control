@@ -16,7 +16,7 @@ import (
 
 // The expectation file is everything the suite knows about the server in front
 // of it. No login, target, fingerprint, token, or URL is hard-coded anywhere in
-// this binary, which is the property phase 0032 needs: pointing the suite at the
+// this binary, which is the property phase 0033 needs: pointing the suite at the
 // real server is a new expectation file, not a code change.
 //
 // It is decoded STRICTLY. An unknown key is a typo that would otherwise silently

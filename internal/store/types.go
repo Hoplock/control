@@ -127,7 +127,7 @@ type Proxy struct {
 	// proxy D13 makes first-class. 0006 owns the shape.
 	DeclaredCapabilities json.RawMessage
 	// SessionCount, LastError and LastErrorAt are health, as an operator
-	// needs them during an incident (0031 renders them).
+	// needs them during an incident (0032 renders them).
 	SessionCount int
 	LastError    string
 	LastErrorAt  time.Time

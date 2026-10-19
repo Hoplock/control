@@ -1,4 +1,4 @@
-# 0030 — Instance identity, north-bound compatibility & supervisory registration
+# 0031 — Instance identity, north-bound compatibility & supervisory registration
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -10,16 +10,18 @@
   pattern the north-bound version promise copies.
 - `docs/learnings/` — read summaries; open `0004` (the `ext` package and
   `ClusterCoordinator`'s default), `0009` (the event stream, its replay and
-  `resync` — this phase reuses its shape pointing the other way), `0026` (the
+  `resync` — this phase reuses its shape pointing the other way), `0027` (the
   shared event plane: event ids and replay that survive a node, which a
   registration that moves with leadership resumes from), `0011` (tokens,
-  scopes, RBAC), `0019` (the north-bound API this phase versions), and `0027`
+  scopes, RBAC), `0019` (the north-bound API this phase versions), and `0028`
   with the chunks it queued (the bounded-list shape every north-bound list
-  answers in, which this phase's promise covers), `0028` (the namespace a
-  host's routes live in, which this phase's promise covers too), `0029`
+  answers in, which this phase's promise covers), `0029` (the namespace a
+  host's routes live in, which this phase's promise covers too), `0030`
   (the lock and quarantine routes and fields, which the promise covers as
-  well), and `0025` (the fields both retention answers gained and the
-  `retention_not_archived` refusal, which the promise covers too).
+  well), `0025` (the fields both retention answers gained and the
+  `retention_not_archived` refusal, which the promise covers too), and
+  `0026` (each audit sink's lag on `GET …/extensions`, which the promise
+  covers as well).
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` **D11** and §6.1 —
   outbound relay registration. This phase is that idea one level up, and it
   should be recognisably the same idea in the code.
@@ -104,11 +106,11 @@ A supervisor consuming many deployments meets version skew, so:
   it does to the JSON;
 - a deprecation window is stated in the documentation, not discovered by a
   client that broke;
-- the bounded-list shape 0027 decided — the limit, the cursor and how an
+- the bounded-list shape 0028 decided — the limit, the cursor and how an
   answer says it stopped short — is part of what is promised, list by list,
   so a client paging a list at one version pages it the same way at the next.
 
-**This retires an assumption phase 0035 rests on.** Its premise — "this product
+**This retires an assumption phase 0036 rests on.** Its premise — "this product
 ships its proxy and its server together and has no installed base" — is true
 only while nobody operates a fleet of deployments. Update that phase's prompt in
 this PR to say the north-bound surface is exempt from its single-version rule
@@ -125,7 +127,7 @@ An opt-in outbound registration to a supervisor, off by default:
   guarantees pointed the other way: heartbeats, monotonic event ids, replay from
   a `last_event_id`, and `resync` when replay is impossible. Do not invent a
   second streaming mechanism; if 0009's cannot be reused directly, say precisely
-  why in the learnings. Since 0026 the ids and the replay log are shared across
+  why in the learnings. Since 0027 the ids and the replay log are shared across
   nodes, so a registration that moves to another node with leadership resumes
   from its last event id rather than resyncing; build on that, not on a
   per-process ring.
@@ -159,7 +161,7 @@ An opt-in outbound registration to a supervisor, off by default:
   attributed to the supervisor rather than folded into an anonymous "API"
   actor. The operator being supervised must be able to read what was done to
   them, in their own audit store, without asking the supervisor.
-- Its scope is visible in the north-bound API and in the console (0031), and it
+- Its scope is visible in the north-bound API and in the console (0032), and it
   is revocable there.
 
 ## Out of scope
@@ -210,7 +212,7 @@ An opt-in outbound registration to a supervisor, off by default:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0030-instance-identity-and-supervision-learnings.md`. Summary
+`docs/learnings/0031-instance-identity-and-supervision-learnings.md`. Summary
 block MUST give: the identity shape and where it is persisted; the health model
 at all three levels, its states, its freshness bounds, and how "absent" is
 distinguished from "healthy"; the north-bound
