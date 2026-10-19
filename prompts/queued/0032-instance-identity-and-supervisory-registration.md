@@ -1,4 +1,4 @@
-# 0031 — Instance identity, north-bound compatibility & supervisory registration
+# 0032 — Instance identity, north-bound compatibility & supervisory registration
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -19,9 +19,11 @@
   host's routes live in, which this phase's promise covers too), `0030`
   (the lock and quarantine routes and fields, which the promise covers as
   well), `0025` (the fields both retention answers gained and the
-  `retention_not_archived` refusal, which the promise covers too), and
+  `retention_not_archived` refusal, which the promise covers too),
   `0026` (each audit sink's lag on `GET …/extensions`, which the promise
-  covers as well).
+  covers as well), and `0031` (the directory-managed and deactivated fields
+  on the subject reads, the `subject_directory_managed` refusal and the
+  identity sync's started state, which the promise covers too).
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` **D11** and §6.1 —
   outbound relay registration. This phase is that idea one level up, and it
   should be recognisably the same idea in the code.
@@ -110,7 +112,7 @@ A supervisor consuming many deployments meets version skew, so:
   answer says it stopped short — is part of what is promised, list by list,
   so a client paging a list at one version pages it the same way at the next.
 
-**This retires an assumption phase 0036 rests on.** Its premise — "this product
+**This retires an assumption phase 0037 rests on.** Its premise — "this product
 ships its proxy and its server together and has no installed base" — is true
 only while nobody operates a fleet of deployments. Update that phase's prompt in
 this PR to say the north-bound surface is exempt from its single-version rule
@@ -161,7 +163,7 @@ An opt-in outbound registration to a supervisor, off by default:
   attributed to the supervisor rather than folded into an anonymous "API"
   actor. The operator being supervised must be able to read what was done to
   them, in their own audit store, without asking the supervisor.
-- Its scope is visible in the north-bound API and in the console (0032), and it
+- Its scope is visible in the north-bound API and in the console (0033), and it
   is revocable there.
 
 ## Out of scope
@@ -212,7 +214,7 @@ An opt-in outbound registration to a supervisor, off by default:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0031-instance-identity-and-supervision-learnings.md`. Summary
+`docs/learnings/0032-instance-identity-and-supervision-learnings.md`. Summary
 block MUST give: the identity shape and where it is persisted; the health model
 at all three levels, its states, its freshness bounds, and how "absent" is
 distinguished from "healthy"; the north-bound

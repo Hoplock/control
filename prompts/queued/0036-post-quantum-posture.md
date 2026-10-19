@@ -1,4 +1,4 @@
-# 0035 — Post-quantum posture: state the wire, plumb the algorithms
+# 0036 — Post-quantum posture: state the wire, plumb the algorithms
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 (**never edit
@@ -19,7 +19,7 @@
 - `docs/learnings/` — read summaries; open **`0011`** (the CA, `ext.KeyStore`
   custody, the JOSE subset and *why the algorithm comes from the key*), **`0008`**
   (how `algorithm_profile` reaches the snapshot), **`0010`** (the audit record's
-  derived columns, including `algorithm_profile`), **`0033`** (the topology
+  derived columns, including `algorithm_profile`), **`0034`** (the topology
   and scenario suite this phase extends), and **`0019`** (how `algorithm_floor`
   is authored and served, and where the negotiated-algorithm records and each
   target's key-exchange observation are stored).
@@ -28,15 +28,15 @@
   than `default` is a weakening, and the floor's levels), plus
   `KexObservation`. You do not need the rest of the document.
 
-> **This phase runs after 0033 on purpose.** It touches both listeners, and the
+> **This phase runs after 0034 on purpose.** It touches both listeners, and the
 > listeners stop moving only once 0019 has replaced the two temporary operator
-> ports and 0032 is serving the console over the north-bound one. Doing TLS
-> before then means doing it twice. It also extends 0033's topology and scenario
+> ports and 0033 is serving the console over the north-bound one. Doing TLS
+> before then means doing it twice. It also extends 0034's topology and scenario
 > suite rather than standing up its own.
 >
-> **And after 0034**, which gives the CA a registered `ext.KeyStore` when there
+> **And after 0035**, which gives the CA a registered `ext.KeyStore` when there
 > is one. An algorithm this phase adds to `ext.KeyAlgorithm` is one a host's key
-> store may be asked to generate for the CA, so read `0034`'s learnings summary
+> store may be asked to generate for the CA, so read `0035`'s learnings summary
 > for where the CA's keys now live before deciding what an unsupported algorithm
 > does.
 
@@ -173,14 +173,14 @@ register's `Rendered in` column requires (PROTOCOL §3).
   certificate algorithms contain no post-quantum signature algorithm, and fail
   with a message naming what to do when one appears. The point is that the next
   session learns by the build going red rather than by reading this prompt.
-- Extend 0033's scenario suite and `deploy/` topology so the topology runs with
+- Extend 0034's scenario suite and `deploy/` topology so the topology runs with
   TLS configured on both listeners, and the suite asserts the posture rather than
   assuming it. The floor scenarios of item 6 go in the same suite.
-- `govulncheck` already gates every PR (0033); nothing new is needed there.
+- `govulncheck` already gates every PR (0034); nothing new is needed there.
 
 ### 6. Assert the proxy→target floor end to end (`Hoplock/proxy#69`)
 0019 makes `algorithm_floor` authorable and serves it. This phase proves its
-post-quantum level against a real proxy and a real target, on 0033's topology,
+post-quantum level against a real proxy and a real target, on 0034's topology,
 because only there do "decides" and "enforces" meet:
 
 - A route whose floor is `pq-hybrid-kex` succeeds against a target whose
@@ -206,7 +206,7 @@ because only there do "decides" and "enforces" meet:
   the startup log states it (item 1). For the proxy→target leg it is per route
   and per session: the floor in force, as policy states it, and the negotiated
   exchange, as each session's record proves it. Name where an operator reads
-  each (0019's query, 0032's views). Add no configuration knob for it here: a
+  each (0019's query, 0033's views). Add no configuration knob for it here: a
   floor is route policy, not a property of this server's listeners.
 
 ## Out of scope
@@ -281,19 +281,19 @@ with one. A floor the target cannot meet fails the session as an outage (PLAN
   post-quantum certificate algorithm.
 - `docs/PLAN.md` carries the new decision, its register row, and the §8
   subsection on what is already adequate.
-- 0033's topology runs with TLS on both listeners and its suite asserts the
+- 0034's topology runs with TLS on both listeners and its suite asserts the
   posture.
 - A `pq-hybrid-kex` route to a target on OpenSSH 9.9 or later stores
   `target_kex_algorithm: mlkem768x25519-sha256` beside the floor in force. The
   same floor fails as an outage, and stores a `target.algorithm_policy_unmet`
   with cause `floor`, against a target with no hybrid and against one whose
-  only hybrid is sntrup761. All three are asserted on stored records in 0033's
+  only hybrid is sntrup761. All three are asserted on stored records in 0034's
   topology.
 - **No change to `contract/`**, and `make contract-check` passes.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0035-post-quantum-posture-learnings.md`. The summary block MUST
+`docs/learnings/0036-post-quantum-posture-learnings.md`. The summary block MUST
 give: the config keys added, the default posture and the one knob that changes
 it, the decision's `M` id, the `ext/` behaviour change and why it is safe, and —
 as its own line — **what the floor scenarios proved against the real proxy**:
