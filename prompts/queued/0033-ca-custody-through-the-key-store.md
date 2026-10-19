@@ -1,4 +1,4 @@
-# 0032 — CA custody through the key store: a registered ext.KeyStore holds the CA's keys
+# 0033 — CA custody through the key store: a registered ext.KeyStore holds the CA's keys
 
 ## Read first
 - `docs/PROTOCOL.md`: the session workflow, §3, §4, §5 and §9.
@@ -49,7 +49,7 @@ key has no CA at all (`ca_not_configured`).
 else none). The CA was left as it was, out of that phase's scope.
 
 **There is no deployment of Control or the proxy yet** — no installed base
-(PLAN §10, "On 0034 running last"). So no CA key anywhere is held by a custodian
+(PLAN §10, "On 0035 running last"). So no CA key anywhere is held by a custodian
 other than the one this phase resolves, and nothing here migrates one: a path
 for keys stranded by an upgrade would be code nobody runs, and a second
 custodian answering for them is the second code path M15 rules out.
@@ -115,7 +115,7 @@ migration:
   it matters for the CA. Do not build it.
 - Any change to `ext.KeyStore`'s interface. A method added to it breaks every
   implementer (M23). The phase must work with the interface as it is.
-- Post-quantum algorithms and `ext.KeyAlgorithm`'s vocabulary. They are 0033's,
+- Post-quantum algorithms and `ext.KeyAlgorithm`'s vocabulary. They are 0034's,
   which runs after this phase on purpose: its algorithm plumbing should land on
   the custody this phase settles.
 - Retention, which 0024 already wired to `buildKeyStore`.
@@ -154,7 +154,7 @@ migration:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0032-ca-custody-through-the-key-store-learnings.md`. Its
+`docs/learnings/0033-ca-custody-through-the-key-store-learnings.md`. Its
 summary block MUST give:
 - the resolution order;
 - what a key the resolved store does not hold, and a store that cannot be

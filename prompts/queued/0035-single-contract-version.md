@@ -1,4 +1,4 @@
-# 0034 — One contract version, end to end
+# 0035 — One contract version, end to end
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 ("never edit
@@ -52,7 +52,7 @@ exists moves them as a pair.
 > deployment could be supervised: a supervisory plane consumes many deployments
 > at many versions, so the north-bound surface has *exactly* the mid-upgrade
 > problem this phase is narrowing away south-bound, and it has it permanently.
-> Phase 0029 gives that surface its own version and its own negotiation. This
+> Phase 0030 gives that surface its own version and its own negotiation. This
 > phase must not touch it, must not fold its number into the contract's, and
 > must state the split in its learnings — the two numbers move independently and
 > for different reasons, which is the same lesson §4 already records about
@@ -304,7 +304,7 @@ version support back needs the argument, not just the conclusion.
 - **It may not delete the negotiation tests**, only re-aim them (above).
 
 ## Out of scope
-- The **north-bound API version** and its negotiation (M19, phase 0029). It is a
+- The **north-bound API version** and its negotiation (M19, phase 0030). It is a
   separate number with a separate lifecycle and a real installed base; leave it
   alone and say in the learnings that you did.
 - Vendoring a new contract version. A downstream **sync** updates the text that
@@ -356,7 +356,7 @@ version support back needs the argument, not just the conclusion.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0034-single-contract-version-learnings.md`. The summary block
+`docs/learnings/0035-single-contract-version-learnings.md`. The summary block
 MUST give: where the supported version and the document version are defined and
 how they are tied to the vendored file, the exact refusal behaviour and status
 code, which conformance assertions are contract-level and which are this

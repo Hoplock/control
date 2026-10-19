@@ -1,4 +1,4 @@
-# 0027 — Host routes and the console in namespaces of their own: verify every refusal, then make a collision impossible
+# 0028 — Host routes and the console in namespaces of their own: verify every refusal, then make a collision impossible
 
 ## Read first
 - `docs/PROTOCOL.md`: §1, §3, §4, §5, and §6 for the register.
@@ -11,7 +11,7 @@
     a route class only a host serves, at `/api/v1/cross-tenant/`), **M18**
     (the tenant is resolved from the caller, never chosen by a path a host
     controls), **M2** (two listeners), **M11** (a `401` is the middleware's
-    alone), **M19** (0029 makes the north-bound API a compatibility promise,
+    alone), **M19** (0030 makes the north-bound API a compatibility promise,
     the reason this phase runs first), **M20** and **M21** (the console and its
     catalogue, which a host's screens join), and **M23** (what this phase's
     release promises);
@@ -41,7 +41,7 @@
     - `TestControlServesNoCrossTenantRouteOfItsOwn` (`crosstenant_test.go`);
     - `TestAHostThatCannotStartIsRefusedAtOnce` (`server/server_test.go`).
 - `ui/DESIGN.md`, for the URLs the console writes (its deep links and
-  URL-serialisable filters), and `prompts/queued/0030-management-console.md`,
+  URL-serialisable filters), and `prompts/queued/0031-management-console.md`,
   which this phase rewrites to build into the console's namespace.
 - In **`hoplock/enterprise`**, read only, `docs/PLAN.md` §3 at "One route
   table, mounted by Control" and "Start-up's refusal is the backstop, not the
@@ -99,14 +99,14 @@ one, either of two things happens, and neither is acceptable:
 A catch-all may also answer what Control would have answered `404` or `405`
 in its own envelope (M21). Verify that rather than assume it.
 
-The console (0030) will add paths of its own to the north-bound listener, and
+The console (0031) will add paths of its own to the north-bound listener, and
 a host's screens will sit beside them. Today nothing says where either goes.
 A single-page app's usual shape, served at `/` with a fallback that answers
 any unknown path with its index, would be a catch-all over the whole
 listener. The user asked for the console's paths to have a namespace of their
 own as well.
 
-This phase runs before instance identity (0029), which makes the north-bound
+This phase runs before instance identity (0030), which makes the north-bound
 API a compatibility promise (M19). Moving every host path after the promise
 would cost a version. It also runs before the console, so that both the
 console and a host's screens are laid out in their own namespaces from the
@@ -191,11 +191,11 @@ them:
   what reads well in the route listing and in Enterprise's console, and what
   a caller of both surfaces has to know.
 - **Record it.** Make it a new decision with its register row, using the next
-  free `M` id (0026 is expected to take `M25`), rendered in §3. Amend M15's,
+  free `M` id (0027 is expected to take `M25`), rendered in §3. Amend M15's,
   M20's and M24's rows wherever their text changes.
 
 ### The console's namespaces
-The console (0030) is not built yet, so this is the one moment its paths can
+The console (0031) is not built yet, so this is the one moment its paths can
 be placed without moving anything. The user asked that they have a namespace
 of their own, like a host's routes. So the north-bound listener ends this
 phase with **four namespaces, each under a prefix of its own, and no path in
@@ -235,9 +235,9 @@ These requirements bind it:
   one of Control's is refused when the host's catalogue is loaded.
 - **Reserved before the console exists.** This phase builds the prefixes, a
   mount point that refuses anything outside its prefix, and the pairwise
-  tests. A stub handler stands in for each console in the tests. 0030 then
+  tests. A stub handler stands in for each console in the tests. 0031 then
   builds into a namespace the tests already hold, and fails them if it strays.
-- **Bind 0030.** Rewrite `prompts/queued/0030-management-console.md` in this
+- **Bind 0031.** Rewrite `prompts/queued/0031-management-console.md` in this
   PR, so that it states the prefixes, where a host's screens load from, and the
   tests it must keep green. Change `ui/DESIGN.md` too wherever it says where a
   URL goes.
@@ -268,9 +268,9 @@ These requirements bind it:
 - Error codes and permissions. A host still declares none of Control's codes
   and names only Control's permissions, and start-up still refuses the rest
   (0015, 0023).
-- Building the console (0030). This phase reserves its paths and rewrites its
+- Building the console (0031). This phase reserves its paths and rewrites its
   prompt, nothing more.
-- The north-bound API's version and its negotiation (0029, M19).
+- The north-bound API's version and its negotiation (0030, M19).
 - Enterprise's own routes. They move in the sync this phase queues.
 
 ## Cross-repo
@@ -316,7 +316,7 @@ These requirements bind it:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move the prompt to `implemented/` and add
-`docs/learnings/0027-host-route-namespace-learnings.md`. Its summary block MUST
+`docs/learnings/0028-host-route-namespace-learnings.md`. Its summary block MUST
 give:
 - the four prefixes — Control's API, a host's API (each class), Control's
   console and a host's console — and how the catalogue keys are split;
