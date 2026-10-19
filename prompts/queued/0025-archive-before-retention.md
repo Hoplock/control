@@ -6,11 +6,13 @@
 > `prompts/upstream/queued/enterprise-PR#26-archive-before-retention.md`, and
 > answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 >
-> **Where it sits.** First in the queue, before the shared event plane (0026),
-> bounded lists (0027), host namespaces (0028) and the action executor (0029),
-> none of which changes what it builds on. Before instance identity (0030), the
-> console (0031) and the E2E topology (0032). The archive-before-retention
-> renumbering note in `docs/PLAN.md` §10 gives the reasons. It depends only on
+> **Where it sits.** First in the queue. Right before sink delivery (0026),
+> which reuses this phase's feed and the fields it adds to `ext.AuditRecord`.
+> Before the shared event plane (0027), bounded lists (0028), host namespaces
+> (0029) and the action executor (0030), none of which changes what it builds
+> on. Before instance identity (0031), the console (0032) and the E2E topology
+> (0033). The archive-before-retention and sink-delivery renumbering notes in
+> `docs/PLAN.md` §10 give the reasons. It depends only on
 > merged phases: 0010 (the audit store and its chain), 0019 (the retention
 > routes and the operator records) and 0024 (signed retention).
 
@@ -256,7 +258,7 @@ then what to build.
   sequence, its hash and when it was confirmed. Nothing about the feed lives
   only in memory (M5).
 - **Several nodes.** Every node may run the feed, and it must be correct
-  without the shared event plane (0026). A stream is fed by one node at a
+  without the shared event plane (0027). A stream is fed by one node at a
   time, by a lease in its position row or a lock in the store, and never by
   `ext.ClusterCoordinator`, which this phase does not depend on. Two nodes
   that overlap cost a duplicate batch, which `Archive` already tolerates
@@ -273,12 +275,11 @@ then what to build.
   `audit.max_batch_records`, a capture batch's total bytes, an attempt
   timeout, an idle interval, and a backoff cap. Name and default them in
   `config.go`, and document each where the others are documented.
-- **Reuse.** Enterprise has also queued sink delivery
-  (`enterprise-PR#26-audit-sink-delivery.md`), which needs a feed of the same
-  shape with a position per sink. Build no sink delivery here. If keying a
-  position by a consumer's name costs nothing, do it, and say so in the
-  learnings. The phase that answers that request decides whether it reuses
-  this feed.
+- **Reuse.** Sink delivery is queued next, as 0026. It needs a feed of the
+  same shape with a position per sink, and it reuses this one rather than
+  building a second. Build no sink delivery here. If keying a position by a
+  consumer's name costs nothing, do it, and say so in the learnings. 0026
+  generalises the feed either way, so nothing here is held for it.
 
 ### 2. What crosses the seam (`ext/`)
 - `AuditRecord` gains `Stream`, `PrevHash` and `Body` (item 2 and item 3
@@ -352,7 +353,7 @@ then what to build.
   when an archive is registered: how many streams are behind their head, the
   `recorded_at` of the oldest record not yet confirmed, and how many captures
   are waiting. These are scalars, never a list of streams, so bounded lists
-  (0027) inherits nothing unbounded.
+  (0028) inherits nothing unbounded.
 - Nothing new is required of `audit-verify`. It still resumes at the marker.
 
 ### 5. The documents
@@ -367,7 +368,7 @@ then what to build.
   - §10's row, revised to what was built.
 
   §11 is unchanged: the archive itself stays Enterprise's.
-- The console prompt (0031). Its audit view shows the archive's lag, and says
+- The console prompt (0032). Its audit view shows the archive's lag, and says
   when a retention pass was held back.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR with `### Breaking`
   (M23).
@@ -377,11 +378,10 @@ then what to build.
   per-label policies, legal hold, search, its verifier and replay.
 - **Serving archive search.** Control calls `Search` nowhere and adds no route
   for it. If Enterprise needs Control to serve it, that is a new request.
-- **Sink delivery** (`enterprise-PR#26-audit-sink-delivery.md`), beyond
-  leaving the feed reusable (§1).
+- **Sink delivery** (0026), beyond leaving the feed reusable (§1).
 - **Scheduled retention.** A pass stays an operator's act on the two routes.
 - **An external anchor** for the chain (§7 names it as future work).
-- **Delivery through `ext.ClusterCoordinator`**, and anything 0026 builds.
+- **Delivery through `ext.ClusterCoordinator`**, and anything 0027 builds.
 - **`contract/` (M1).** Nothing on the wire changes.
 - **Bounding the position table's growth** beyond one row per tenant and
   stream. Note it in the learnings if it matters.
@@ -474,8 +474,8 @@ one. State at least these obligations:
    Turn its skipped end-to-end criteria into real ones, and replace its
    verifier's plan where it assumed it must reimplement Control's link.
 2. **Its 0006 (SIEM export).** `ext.AuditRecord` gains fields every sink sees
-   too. Sink delivery itself is still the separate request, unanswered by this
-   phase.
+   too. Sink delivery itself is Control's 0026, the next phase, which owes its
+   own sync.
 3. **Its plan.** §4's `ArchiveStore` row and its misreadings, and wherever E6
    says what reaches the archive.
 4. **Its pin, and the break.** Every obligation holds from the release this PR
