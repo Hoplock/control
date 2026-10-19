@@ -1,4 +1,4 @@
-# 0025 — Shared event plane: the event stream correct on several nodes
+# 0026 — Shared event plane: the event stream correct on several nodes
 
 ## Read first
 - `docs/PROTOCOL.md`: the session workflow, §3, §4 and §5.
@@ -102,7 +102,7 @@ documentation. Enterprise's implementation is written against that text.
 - An election, membership or a cross-node transport of Control's own beyond
   what the decision above settles. Clustering is Enterprise's (its E9).
 - HA of Postgres, and multi-region.
-- The supervisory registration (0029), which builds on this phase's shape.
+- The supervisory registration (0030), which builds on this phase's shape.
 
 ## Acceptance criteria
 - An in-process test runs two buses over one store and a coordinator that fans
@@ -123,7 +123,7 @@ documentation. Enterprise's implementation is written against that text.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0025-shared-event-plane-learnings.md`. Its summary block MUST
+`docs/learnings/0026-shared-event-plane-learnings.md`. Its summary block MUST
 give:
 - where each piece of shared state lives;
 - the event id format;
