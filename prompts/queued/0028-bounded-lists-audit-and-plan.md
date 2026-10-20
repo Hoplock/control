@@ -10,7 +10,7 @@
   host routes are asked to follow would be a convention on `server/`.
 - `docs/PLAN.md`:
   - §2: the register, then **M19** (the north-bound API becomes a
-    compatibility promise in 0031, the reason this phase runs first),
+    compatibility promise in 0032, the reason this phase runs first),
     **M21** (machine-readable errors), **M5** (nothing on or beside the
     decision path does unbounded work), **M11**, **M18** (a cursor is a value
     the caller controls, so it never selects a tenant), **M15** (host routes)
@@ -43,9 +43,9 @@ across six packages, then changing them with their tests and record, is more
 than a session should hold. So this phase does the finding and the deciding,
 and it queues the implementation in chunks that each fit.
 
-It runs before 0031. That phase makes the north-bound API a compatibility
+It runs before 0032. That phase makes the north-bound API a compatibility
 promise (M19), and changing eight response shapes after the promise is made
-would cost a version. It also runs before the console (0032), which renders
+would cost a version. It also runs before the console (0033), which renders
 these lists and should be built on their final shape.
 
 ## Objective
@@ -150,7 +150,7 @@ Start from 0023's proposal and decide each of these points:
 ### The chunks
 Queue the implementing prompts in `prompts/queued/`, numbered right after this
 phase. Under §6, renumber every queued prompt after them, including the
-action executor (0030), instance identity (0031) and the console, with a
+action executor (0030), instance identity (0032) and the console, with a
 renumbering note in `docs/PLAN.md` §10 and the composed mapping table
 regenerated. Each chunk:
 

@@ -7,10 +7,11 @@
 > here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 >
 > **Where it sits.** After the shared event plane (0027), bounded lists (0028)
-> with every chunk it queues, and host namespaces (0029). Before instance
-> identity (0031), the console (0032) and the E2E topology (0033). The
-> action-executor renumbering note in `docs/PLAN.md` §10 gives one line of
-> reasons for each. On one node it depends only on merged phases: 0009 (the
+> with every chunk it queues, and host namespaces (0029). Before identity sync
+> (0031), which runs next and builds its deactivation beside this phase's lock,
+> and before instance identity (0032), the console (0033) and the E2E topology
+> (0034). The action-executor and identity-sync renumbering notes in
+> `docs/PLAN.md` §10 give one line of reasons for each. On one node it depends only on merged phases: 0009 (the
 > event stream), 0012 (grant revocation) and 0019 (the north-bound surface and
 > its operator records). It needs 0027 for a kill to reach a proxy whichever
 > node holds its stream. If 0028's chunks have renumbered it, the order still
@@ -408,11 +409,11 @@ things around the shape. Each item below says why, then what to build.
   - §10's row, revised to what was built.
 
   §11 is unchanged: SOAR itself stays Enterprise's.
-- The console prompt (0032). It shows a lock and a quarantine wherever it
+- The console prompt (0033). It shows a lock and a quarantine wherever it
   shows a subject or a target. It offers lock, unlock, quarantine and release
   under the same permission, because Enterprise's 0007 relies on an operator
   releasing a lockout there.
-- The E2E prompt (0033). Add one scenario in which an action handler kills a
+- The E2E prompt (0034). Add one scenario in which an action handler kills a
   session and locks its subject.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR (M23).
 
@@ -428,11 +429,15 @@ things around the shape. Each item below says why, then what to build.
 - **A kind to lift a quarantine**, or any other new `ActionKind` or `ext`
   signature.
 - **Identity sync's deactivation.** Enterprise queued it separately, as
-  `enterprise-PR#26-identity-sync-sink.md`. A deactivated subject is not a
-  locked one. The phase that answers that request decides whether it reuses
-  this denial, and reads this phase's learnings to decide.
+  `enterprise-PR#26-identity-sync-sink.md`, and it is answered by 0031, which
+  runs next. A deactivated subject is not a locked one: the directory places
+  and lifts a deactivation, and an operator or a handler places and lifts a
+  lock, so neither may lift the other. 0031 reads both on the round trip this
+  phase builds and extends this phase's decision to cover both. So build that
+  read and the decision's text so a second standing denial on a subject joins
+  them without a second query. Do not build the deactivation here.
 - **Delivery on several nodes**, beyond what 0027 built.
-- **The console screens** (0032).
+- **The console screens** (0033).
 - **`contract/` (M1).** Nothing on the wire changes: `session_kill`,
   `cache_invalidate` and a deny all exist.
 - **Bounding the idempotency table's growth.** Note it in the learnings.

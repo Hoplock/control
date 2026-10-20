@@ -10,7 +10,7 @@
 > and whose `ext.AuditRecord` fields it needs. Before the shared event plane
 > (0027), bounded lists (0028), host namespaces (0029) and the action executor
 > (0030), none of which changes what it builds on. Before instance identity
-> (0031), the console (0032) and the E2E topology (0033). The sink-delivery
+> (0032), the console (0033) and the E2E topology (0034). The sink-delivery
 > renumbering note in `docs/PLAN.md` §10 gives the reasons. It depends on
 > 0025, and otherwise only on merged phases: 0010 (the audit store and its
 > chain) and 0019 (the extensions listing and the retention routes).
@@ -298,7 +298,7 @@ No signature changes. The doc comments say what is now true:
 
   §11 is unchanged: SIEM export itself stays Enterprise's.
 - `internal/export/doc.go`, revised to what the package does.
-- The console prompt (0032). Its extensions screen shows each sink's lag, and
+- The console prompt (0033). Its extensions screen shows each sink's lag, and
   a sink that is failing or skipped by retention.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR (M23). No
   `### Breaking`, since no signature changes. The entry names what

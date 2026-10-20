@@ -11,7 +11,7 @@
     a route class only a host serves, at `/api/v1/cross-tenant/`), **M18**
     (the tenant is resolved from the caller, never chosen by a path a host
     controls), **M2** (two listeners), **M11** (a `401` is the middleware's
-    alone), **M19** (0031 makes the north-bound API a compatibility promise,
+    alone), **M19** (0032 makes the north-bound API a compatibility promise,
     the reason this phase runs first), **M20** and **M21** (the console and its
     catalogue, which a host's screens join), and **M23** (what this phase's
     release promises);
@@ -41,7 +41,7 @@
     - `TestControlServesNoCrossTenantRouteOfItsOwn` (`crosstenant_test.go`);
     - `TestAHostThatCannotStartIsRefusedAtOnce` (`server/server_test.go`).
 - `ui/DESIGN.md`, for the URLs the console writes (its deep links and
-  URL-serialisable filters), and `prompts/queued/0032-management-console.md`,
+  URL-serialisable filters), and `prompts/queued/0033-management-console.md`,
   which this phase rewrites to build into the console's namespace.
 - In **`hoplock/enterprise`**, read only, `docs/PLAN.md` §3 at "One route
   table, mounted by Control" and "Start-up's refusal is the backstop, not the
@@ -99,14 +99,14 @@ one, either of two things happens, and neither is acceptable:
 A catch-all may also answer what Control would have answered `404` or `405`
 in its own envelope (M21). Verify that rather than assume it.
 
-The console (0032) will add paths of its own to the north-bound listener, and
+The console (0033) will add paths of its own to the north-bound listener, and
 a host's screens will sit beside them. Today nothing says where either goes.
 A single-page app's usual shape, served at `/` with a fallback that answers
 any unknown path with its index, would be a catch-all over the whole
 listener. The user asked for the console's paths to have a namespace of their
 own as well.
 
-This phase runs before instance identity (0031), which makes the north-bound
+This phase runs before instance identity (0032), which makes the north-bound
 API a compatibility promise (M19). Moving every host path after the promise
 would cost a version. It also runs before the console, so that both the
 console and a host's screens are laid out in their own namespaces from the
@@ -195,7 +195,7 @@ them:
   M20's and M24's rows wherever their text changes.
 
 ### The console's namespaces
-The console (0032) is not built yet, so this is the one moment its paths can
+The console (0033) is not built yet, so this is the one moment its paths can
 be placed without moving anything. The user asked that they have a namespace
 of their own, like a host's routes. So the north-bound listener ends this
 phase with **four namespaces, each under a prefix of its own, and no path in
@@ -235,9 +235,9 @@ These requirements bind it:
   one of Control's is refused when the host's catalogue is loaded.
 - **Reserved before the console exists.** This phase builds the prefixes, a
   mount point that refuses anything outside its prefix, and the pairwise
-  tests. A stub handler stands in for each console in the tests. 0032 then
+  tests. A stub handler stands in for each console in the tests. 0033 then
   builds into a namespace the tests already hold, and fails them if it strays.
-- **Bind 0032.** Rewrite `prompts/queued/0032-management-console.md` in this
+- **Bind 0033.** Rewrite `prompts/queued/0033-management-console.md` in this
   PR, so that it states the prefixes, where a host's screens load from, and the
   tests it must keep green. Change `ui/DESIGN.md` too wherever it says where a
   URL goes.
@@ -268,9 +268,9 @@ These requirements bind it:
 - Error codes and permissions. A host still declares none of Control's codes
   and names only Control's permissions, and start-up still refuses the rest
   (0015, 0023).
-- Building the console (0032). This phase reserves its paths and rewrites its
+- Building the console (0033). This phase reserves its paths and rewrites its
   prompt, nothing more.
-- The north-bound API's version and its negotiation (0031, M19).
+- The north-bound API's version and its negotiation (0032, M19).
 - Enterprise's own routes. They move in the sync this phase queues.
 
 ## Cross-repo
