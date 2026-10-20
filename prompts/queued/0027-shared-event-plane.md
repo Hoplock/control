@@ -102,7 +102,7 @@ documentation. Enterprise's implementation is written against that text.
 - An election, membership or a cross-node transport of Control's own beyond
   what the decision above settles. Clustering is Enterprise's (its E9).
 - HA of Postgres, and multi-region.
-- The supervisory registration (0032), which builds on this phase's shape.
+- The supervisory registration (0033), which builds on this phase's shape.
 
 ## Acceptance criteria
 - An in-process test runs two buses over one store and a coordinator that fans

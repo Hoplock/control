@@ -10,8 +10,8 @@
 > which reuses this phase's feed and the fields it adds to `ext.AuditRecord`.
 > Before the shared event plane (0027), bounded lists (0028), host namespaces
 > (0029) and the action executor (0030), none of which changes what it builds
-> on. Before instance identity (0032), the console (0033) and the E2E topology
-> (0034). The archive-before-retention and sink-delivery renumbering notes in
+> on. Before instance identity (0033), the console (0034) and the E2E topology
+> (0035). The archive-before-retention and sink-delivery renumbering notes in
 > `docs/PLAN.md` §10 give the reasons. It depends only on
 > merged phases: 0010 (the audit store and its chain), 0019 (the retention
 > routes and the operator records) and 0024 (signed retention).
@@ -368,7 +368,7 @@ then what to build.
   - §10's row, revised to what was built.
 
   §11 is unchanged: the archive itself stays Enterprise's.
-- The console prompt (0033). Its audit view shows the archive's lag, and says
+- The console prompt (0034). Its audit view shows the archive's lag, and says
   when a retention pass was held back.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR with `### Breaking`
   (M23).

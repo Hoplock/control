@@ -1,4 +1,4 @@
-# 0033 — Management console (web UI)
+# 0034 — Management console (web UI)
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -20,7 +20,8 @@
   reserved where this console is served, where a host's screens and assets go
   and how a host's catalogue keys are namespaced, and it rewrote this prompt
   to match. Build into those namespaces, and never serve a console path inside
-  the one reserved for a host.
+  the one reserved for a host. Open `0032` for the report routes the Reports
+  screen consumes (below).
 - `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
   algorithm bullet (the floor and the bans), and **M17**, for what
   `Hoplock/proxy#69` added and 0019 serves: the impact preview, the fleet
@@ -154,6 +155,18 @@ is written so that half can fail a review rather than merely disappoint one.
      Each shows what the call reported covering, and the workflow never skips
      the second step, because a ban that stops at activation reaches only new
      decisions.
+  8. **Reports** — every registered report pack this tenant can generate, from
+     `GET …/reports` (0032), and a form that generates one through
+     `POST …/reports/generate` and saves the file. The form is built from the
+     descriptor: the period, each parameter (a closed set as a choice,
+     required ones marked), and the formats it lists. A report is named
+     through the catalogue of the host that registered it, under the keys
+     0029 namespaced, and by its code where no catalogue names it (M21). A
+     provider listed with an error is shown as unavailable, never as having
+     no packs. With no provider registered, the screen says that the audit
+     view is the reporting available, which is the point's own answer (M15),
+     and is not shown as broken. A generation that ends broken is shown as
+     failed, never offered as a saved report.
 - **Auth**: OIDC for humans, the same session the API issues. No separate login.
 - Build: assets built and checked in, or built in CI with a reproducible step;
   `make build` must work on a machine with no Node installed. Say which you
@@ -166,7 +179,7 @@ is written so that half can fail a review rather than merely disappoint one.
 
 ### Deployment identity and tenant context (M18, M19)
 - The console always says **which deployment** this is: name, instance id,
-  version set, and health (0032). An operator with a staging and a production
+  version set, and health (0033). An operator with a staging and a production
   instance open in two tabs must never have to guess which is which, and the
   distinction has to survive a screenshot.
 - Where more than one tenant is in scope, the current tenant is visible in the
@@ -262,7 +275,9 @@ becomes a test that runs today.
 
 
 ## Out of scope
-- Enterprise screens (approval inboxes, compliance reports). Enterprise adds its
+- Enterprise screens (approval inboxes, report schedules and history,
+  recertification campaigns). Listing and generating a registered pack is the
+  Reports screen above, and Control's. Enterprise adds its
   own, served through the same shell under the paths 0029 reserved for a
   host — define how in learnings so it can. They
   inherit these tokens and this component set; a second visual identity inside
@@ -297,6 +312,10 @@ becomes a test that runs today.
 - No API route is reachable from the console that RBAC would deny.
 - The console degrades honestly when an extension point is absent: an Enterprise
   feature that is not installed is not shown as broken.
+- With a fake report provider registered, the Reports screen lists its pack
+  and generates it with a parameter and a format chosen. A second provider
+  listed with an error is shown as unavailable, and its absence of packs is
+  never shown as "none".
 - The floor's impact preview names a target whose observed level is below a
   candidate floor, shows a target with no observation or a stale one as `Not
   reported`, and names a proxy that cannot enforce the level. The fleet view
@@ -349,7 +368,7 @@ becomes a test that runs today.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0033-management-console-learnings.md`. Summary block MUST give
+`docs/learnings/0034-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it —
 which, per M20, includes how it inherits the tokens and the component set rather

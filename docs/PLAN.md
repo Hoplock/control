@@ -786,9 +786,9 @@ decision.
      gets an explicit version, negotiated on the same principle as
      `policy_version` does south-bound (§4): the client names what it can read,
      and the server never answers outside it. **This retires an assumption
-     phase 0037 currently rests on** — "this product ships its proxy and its
+     phase 0038 currently rests on** — "this product ships its proxy and its
      server together and has no installed base" stops being true the moment
-     anyone operates a fleet of deployments, and 0037 must say so.
+     anyone operates a fleet of deployments, and 0038 must say so.
   3. **Outbound supervisory registration.** A supervised deployment sits behind
      NAT and the supervisor cannot dial in. Rather than invent a mechanism, use
      the one the fleet already proved one level down: proxy D11 has a downstream
@@ -828,7 +828,7 @@ decision.
   honest default here, the packaged product on top of it there.
 
 - **M20 — The console is a product surface, and its design is specified rather
-  than improvised (new).** Phase 0033 builds an operator console, and every
+  than improvised (new).** Phase 0034 builds an operator console, and every
   acceptance criterion it carries is functional: does the screen work, does RBAC
   hold, does `make build` run without Node. Nothing in this plan said what the
   result should *look* like, and a phase whose criteria can all be met by
@@ -1032,8 +1032,8 @@ decision.
      `retract` directive in `go.mod`.
   7. **What it is not.** The module version is one of four version axes, and
      it is none of the other three: the vendored contract's (M1,
-     `contract/UPSTREAM`), `policy_version` (§4, 0037), and the north-bound API
-     version (M19, 0032). M19's "software version" **is** this one.
+     `contract/UPSTREAM`), `policy_version` (§4, 0038), and the north-bound API
+     version (M19, 0033). M19's "software version" **is** this one.
 
   `make release-check` holds every PR to this decision, and §8 says how. A
   build reports the version Go stamps from the tags, and when Control is built
@@ -1520,7 +1520,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   added moved nothing (below). Neither did what `#69` and `#72` added to the
   request's `capabilities`, nor what `#69` added to the capability report,
   because the number governs none of it. Read both numbers out of
-  `contract/control.yaml`, never from this line (0037).
+  `contract/control.yaml`, never from this line (0038).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -1601,7 +1601,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   route fit.
 
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
-  `policy_version` (0002, 0037). Nor may it assume the document version only
+  `policy_version` (0002, 0038). Nor may it assume the document version only
   rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
   `Hoplock/proxy#56` then moved it up to `4.1.0` for a field on the event
   stream, `Hoplock/proxy#65` to `4.2.0` for a new event type and two new
@@ -1637,7 +1637,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   present tense, and the tiers above are the server's half of the replacement.
   A session that reads "one
   vocabulary" as "there is nothing to negotiate" would delete the only thing
-  standing between a fleet mid-upgrade and a silently widened session; 0037
+  standing between a fleet mid-upgrade and a silently widened session; 0038
   narrows what this server *supports* to one value and explicitly may not remove
   the field.
 
@@ -1693,7 +1693,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   time, so a stale observation costs a refused session and never a session
   below its floor. It is what lets an author see, before raising a route's
   floor, which targets the raise would break: the publish-time report warns
-  from it and `GET …/fleet/target-observations` serves it (0033 renders it).
+  from it and `GET …/fleet/target-observations` serves it (0034 renders it).
   The key-exchange observation is stored by host and port
   (`target_kex_observations`), never by platform, because the proxy's report
   names no platform.
@@ -1811,7 +1811,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   every entry in it can only cause a refusal, which is exactly why it is safe to
   accept from a caller. The authority on a leg is the previous hop's key, above.
 
-  Phases: 0007 and 0008 respectively; 0034 proves the pair against a real proxy.
+  Phases: 0007 and 0008 respectively; 0035 proves the pair against a real proxy.
 - **A certificate is minted per session, never carried on a decision.**
   Upstream `Hoplock/proxy#68` (merged) answered 0011's request for a way to
   reach a proxy with the certificate authority (§6). The shape it chose is the
@@ -2119,7 +2119,7 @@ the connection's lifetime (proxy D2):
   allow route's. The emergency runbook for an advisory is that ban
   (`POST …/policy/apply`), then `cache_invalidate` with `all`, then
   `session_kill` for the running sessions found by what they negotiated
-  (`GET …/audit/negotiated`, then `POST …/revocations`; §7, 0033);
+  (`GET …/audit/negotiated`, then `POST …/revocations`; §7, 0034);
 - **additional device fields** on `ephemeral-account` routes — the open
   `device_field.<name>` namespace that sits beside the five
   `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
@@ -2521,7 +2521,7 @@ not say why, and a grant the explanation names that the inputs do not hold.
   cross-tenant read, the set of tenants where the permission is held (M24) —
   and checks that permission before a handler runs. A handler is never asked,
   because M18's failure mode is not a wrong decision in the middleware — it is
-  one handler that read the tenant from the path itself, or chose its own set. The console (0033) reaches it through the
+  one handler that read the tenant from the path itself, or chose its own set. The console (0034) reaches it through the
   API, so there is no second enforcement point to keep in step.
 
   **"Own" is an access class, never a branch in a handler (0016).** A route
@@ -2623,7 +2623,7 @@ not say why, and a grant the explanation names that the inputs do not hold.
   ciphertext under a key-encryption key the database never sees. The daemon
   hands the CA that software custodian only: a registered `ext.KeyStore` holds
   the audit retention keys (§7) and is not yet consulted for the CA. 0024 found
-  it, and 0035 gives the CA the registered key store when there is one. Certificates are
+  it, and 0036 gives the CA the registered key store when there is one. Certificates are
   minted over a public key **the proxy generated** — no private key ever crosses
   this API — and are scoped to a principal, a target, a session and a window of
   minutes. What SSH can enforce is the principal, the window and the critical
@@ -2772,7 +2772,7 @@ not say why, and a grant the explanation names that the inputs do not hold.
   tampering: `audit-verify` reports a break, and the gap records report a hole.
   The gap records are stored and indexed by session, `gap_cause` and span
   (derived `gap_*` columns, with `gap_critical` a count), a session's loss is
-  summed across its reports (`Reader.SessionLoss`), and **0033** shows them.
+  summed across its reports (`Reader.SessionLoss`), and **0034** shows them.
 - **Storage** — append-only, hash-chained per tenant per stream; a verifier can
   prove no record was altered or removed, and reports the first break with the
   record, the position and both hashes. A **stream is the submitting proxy**:
@@ -3095,12 +3095,13 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0029 | Host routes and the console in namespaces of their own | every way a host route can overlap a path Control serves, verified against the real route table and at the request level, with each guard proven by a mutation; then four namespaces on the north-bound listener, each under a prefix of its own — Control's API, a host's API of both classes, Control's console and a host's console screens — with no path in two, held pairwise by tests in both directions, both consoles reserved before either is built, no catch-all outside its own prefix, and start-up's refusal kept as defence in depth; a decision, a `### Breaking` release, and the sync `hoplock/enterprise` is owed (M15, M24, M18, M19, M20, M21, M23). Queued at the user's direction |
 | 0030 | Inbound actions: the executor, a subject lock & a target quarantine | Control's `ext.ActionExecutor` (`internal/action`), executing every `ActionKind` through the service an operator's route calls: `kill_session` by session or by subject through the event stream (M9), `revoke_grant` through 0012's revocation (M10), and `lock_subject`, `unlock_subject` and `quarantine_target` through a subject lock and a target quarantine this phase adds. A lock and a quarantine are standing denials applied above the engine, so no policy rule can write around one; each is recorded with the decision it denied and explained (M3, M4, M17, M5), and an operator places and lifts each on north-bound routes of its own. The executor is idempotent per tenant on `ActionID`, with a different action under one id a conflict (M16's precedent). It refuses to lock a break-glass subject (M7) and shows the holder `ReasonText` once validated, or Control's own text. Every execution is recorded on the control stream with the handler as actor and the external reference. The registered `ext.ActionHandler` is started after the registry is sealed and before the listeners open, and stopped on shutdown, and a failed `Start` never stops Control. No `ext` signature changes. A new decision, and a MINOR release (M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; on one node it depends only on merged phases (0009, 0012, 0019) |
 | 0031 | Identity sync: Control's sync sink & de-provisioning | Control's `ext.SyncSink` (`internal/provision`) over its identity store, handed to the registered `ext.IdentitySync`, which is started after the registry is sealed and before the listeners open and stopped on shutdown, a failed `Start` never stopping Control: a provisioned subject joined on `ExternalID` by a link row and never on the username, its principals exactly the directory's username and unique in the tenant, every method idempotent on `ExternalID` and ordered by `UpdatedAt`, with a deactivation or a group tombstone kept for an id not yet linked (0017's precedent) and Control's clock ordering a re-activation; what the directory holds reaching policy only through the tenant's claim mapping (M7); the directory the only writer of what it provisions (`409 subject_directory_managed`); a connector's `directory_claim`, through which a login reaches the provisioned subject or is refused (`federation.not_provisioned`); a deactivation a standing denial of its own beside 0030's lock, read in the same round trip, denied as `subject_deactivated` and lifted only by the directory, revoking grants, pending requests, north-bound credentials, certificates and live sessions through the services an operator's levers call, with a retry that finishes it; every applied call recorded on the control stream with the sync as actor. No `ext` signature changes. 0030's decision extended, and a MINOR release (M7, M15, M9, M10, M5, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0030 and 0027, and on merged phases (0011, 0012, 0016, 0019) |
-| 0032 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
-| 0033 | Management console | operator web UI served from the binary, inside the console namespace 0029 reserves and nowhere else, with a host's screens under the host's: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's per-build finding (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
-| 0034 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
-| 0035 | CA custody through the key store | the certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |
-| 0036 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
-| 0037 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
+| 0032 | Registered reports served | every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (a report is the audit store, summarised): `GET …/reports` lists each provider's `Reports(ctx, tenant)` with a provider that failed listed with its failure rather than dropped, and `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), checks it against the descriptor the provider listed for that tenant before `Generate` is called, and streams the body with the format's own media type, `nosniff` and `attachment`, never the provider's; a generation with its own bound (`north.report_timeout`) and a per-node ceiling (`north.max_concurrent_reports`, past it `503 report_generation_busy`) beside the decision path (M5), and a body that fails after its first byte aborts the response rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation; `ErrNotFound` `404`, `ErrInvalid` `400`, and every other failure `502 report_provider_failed` or `503 report_provider_unavailable`, never a `401` or a `403` of a provider's (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
+| 0033 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
+| 0034 | Management console | operator web UI served from the binary, inside the console namespace 0029 reserves and nowhere else, with a host's screens under the host's: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's per-build finding (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
+| 0035 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
+| 0036 | CA custody through the key store | the certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |
+| 0037 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
+| 0038 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 
 > **Audits are not in this table, and not in the queue.**
 > `prompts/audit/` holds prompts that run repeatedly against the whole
@@ -3116,6 +3117,46 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 > the upstream author at merge time, and two of those looks have now described
 > text this repository did not contain. A check that runs once, from one side,
 > needs a compensating pass from this one.
+
+> **Renumbering note (report-provider revision).** Phase 0032 is new: Control
+> serves every registered `ext.ReportProvider` on the north-bound API, listing
+> each provider's reports for the tenant and generating one on request. It was
+> raised by `hoplock/enterprise` (enterprise#26). At `v0.6.0`, and on `main`
+> when this was queued, nothing calls `Extensions.ReportProviders`,
+> `Reports` or `Generate`, and no route lists or produces a provider's report.
+> So a registered pack is listed by `GET …/extensions` and reaches nobody
+> through Control, although `ext.ReportFormat`'s doc comment speaks of what
+> "the north-bound API" can offer and `ext.ReportDescriptor`'s of the console's
+> catalogue. Enterprise's compliance phase (its 0009) serves its packs through
+> its own routes until this lands. Under `docs/PROTOCOL.md` §6 the queued
+> prompts after it were renumbered — **0032→0033, 0033→0034, 0034→0035,
+> 0035→0036, 0036→0037, 0037→0038** — and no implemented prompt moved.
+>
+> - **After identity sync (0031) and the action executor (0030).** Neither is
+>   a dependency. Both have a better claim on the earlier place: each leaves a
+>   person's access standing until it lands, and Enterprise has no way around
+>   either. A report pack has one, its own routes, so its gap is that the
+>   registration adds nothing, not that anything stays open.
+> - **After bounded lists (0028) and every chunk it queues.** `GET …/reports`
+>   is a list, and the enumerating test the first chunk adds fails on a list
+>   that neither answers in the shape nor is listed exempt with a reason.
+> - **After host namespaces (0029).** The `reports` family becomes Control's,
+>   inside Control's API namespace, so it can never collide with a host's
+>   report routes, which sit in the host's. Run first, the family would be
+>   claimed while a host's literal under it is still a start-up refusal.
+> - **Before instance identity (0033).** That phase makes the north-bound API
+>   a compatibility promise (M19). The two routes and the three new codes join
+>   the surface before the promise is made.
+> - **Before the console (0034) and the E2E topology (0035).** The console
+>   lists a registered pack and generates it, as the seam's own doc comment
+>   expects of it.
+>
+> Nothing queued after it has a better claim. The requesting repository is
+> waiting.
+>
+> Anything written before this revision resolves through the table below. That
+> includes merged learnings and request files, which are never edited, and
+> `hoplock/enterprise`'s citations until its sync lands.
 
 > **Renumbering note (identity-sync revision).** Phase 0031 is new: Control
 > implements `ext.SyncSink` over its identity store and starts the registered
@@ -3520,82 +3561,88 @@ Regenerate it in the PR that renumbers.
 | Revision | Written as | Is now | Phase |
 | --- | --- | --- | --- |
 | privileged-access | 0013 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
-| privileged-access | 0014 | 0033 | `0033-management-console` |
-| privileged-access | 0015 | 0034 | `0034-e2e-topology-and-ci` |
-| multi-instance | 0015 | 0033 | `0033-management-console` |
-| multi-instance | 0016 | 0034 | `0034-e2e-topology-and-ci` |
-| multi-instance | 0017 | 0037 | `0037-single-contract-version` |
+| privileged-access | 0014 | 0034 | `0034-management-console` |
+| privileged-access | 0015 | 0035 | `0035-e2e-topology-and-ci` |
+| multi-instance | 0015 | 0034 | `0034-management-console` |
+| multi-instance | 0016 | 0035 | `0035-e2e-topology-and-ci` |
+| multi-instance | 0017 | 0038 | `0038-single-contract-version` |
 | queue-order | 0014 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
-| queue-order | 0015 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| queue-order | 0016 | 0033 | `0033-management-console` |
-| queue-order | 0017 | 0034 | `0034-e2e-topology-and-ci` |
-| queue-order | 0018 | 0037 | `0037-single-contract-version` |
-| queue-order | 0019 | 0036 | `0036-post-quantum-posture` |
+| queue-order | 0015 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| queue-order | 0016 | 0034 | `0034-management-console` |
+| queue-order | 0017 | 0035 | `0035-e2e-topology-and-ci` |
+| queue-order | 0018 | 0038 | `0038-single-contract-version` |
+| queue-order | 0019 | 0037 | `0037-post-quantum-posture` |
 | queue-order | 0020 | 0016 | `0016-self-service-grant-requests` |
 | queue-order | 0021 | 0015 | `0015-public-server-package-and-host-routes` |
 | queue-order | 0022 | 0017 | `0017-ending-external-windows` |
 | queue-order | 0023 | 0014 | `0014-tagged-releases` |
 | cross-tenant | 0018 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
-| cross-tenant | 0019 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| cross-tenant | 0020 | 0033 | `0033-management-console` |
-| cross-tenant | 0021 | 0034 | `0034-e2e-topology-and-ci` |
-| cross-tenant | 0022 | 0036 | `0036-post-quantum-posture` |
-| cross-tenant | 0023 | 0037 | `0037-single-contract-version` |
-| session-audit | 0020 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| session-audit | 0021 | 0033 | `0033-management-console` |
-| session-audit | 0022 | 0034 | `0034-e2e-topology-and-ci` |
-| session-audit | 0023 | 0036 | `0036-post-quantum-posture` |
-| session-audit | 0024 | 0037 | `0037-single-contract-version` |
-| audit-findings | 0024 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| audit-findings | 0025 | 0033 | `0033-management-console` |
-| audit-findings | 0026 | 0034 | `0034-e2e-topology-and-ci` |
-| audit-findings | 0027 | 0036 | `0036-post-quantum-posture` |
-| audit-findings | 0028 | 0037 | `0037-single-contract-version` |
-| bounded-lists | 0026 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| bounded-lists | 0027 | 0033 | `0033-management-console` |
-| bounded-lists | 0028 | 0034 | `0034-e2e-topology-and-ci` |
-| bounded-lists | 0029 | 0036 | `0036-post-quantum-posture` |
-| bounded-lists | 0030 | 0037 | `0037-single-contract-version` |
-| ca-custody | 0030 | 0036 | `0036-post-quantum-posture` |
-| ca-custody | 0031 | 0037 | `0037-single-contract-version` |
-| host-namespace | 0027 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| host-namespace | 0028 | 0033 | `0033-management-console` |
-| host-namespace | 0029 | 0034 | `0034-e2e-topology-and-ci` |
-| host-namespace | 0030 | 0035 | `0035-ca-custody-through-the-key-store` |
-| host-namespace | 0031 | 0036 | `0036-post-quantum-posture` |
-| host-namespace | 0032 | 0037 | `0037-single-contract-version` |
-| action-executor | 0028 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| action-executor | 0029 | 0033 | `0033-management-console` |
-| action-executor | 0030 | 0034 | `0034-e2e-topology-and-ci` |
-| action-executor | 0031 | 0035 | `0035-ca-custody-through-the-key-store` |
-| action-executor | 0032 | 0036 | `0036-post-quantum-posture` |
-| action-executor | 0033 | 0037 | `0037-single-contract-version` |
+| cross-tenant | 0019 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| cross-tenant | 0020 | 0034 | `0034-management-console` |
+| cross-tenant | 0021 | 0035 | `0035-e2e-topology-and-ci` |
+| cross-tenant | 0022 | 0037 | `0037-post-quantum-posture` |
+| cross-tenant | 0023 | 0038 | `0038-single-contract-version` |
+| session-audit | 0020 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| session-audit | 0021 | 0034 | `0034-management-console` |
+| session-audit | 0022 | 0035 | `0035-e2e-topology-and-ci` |
+| session-audit | 0023 | 0037 | `0037-post-quantum-posture` |
+| session-audit | 0024 | 0038 | `0038-single-contract-version` |
+| audit-findings | 0024 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| audit-findings | 0025 | 0034 | `0034-management-console` |
+| audit-findings | 0026 | 0035 | `0035-e2e-topology-and-ci` |
+| audit-findings | 0027 | 0037 | `0037-post-quantum-posture` |
+| audit-findings | 0028 | 0038 | `0038-single-contract-version` |
+| bounded-lists | 0026 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| bounded-lists | 0027 | 0034 | `0034-management-console` |
+| bounded-lists | 0028 | 0035 | `0035-e2e-topology-and-ci` |
+| bounded-lists | 0029 | 0037 | `0037-post-quantum-posture` |
+| bounded-lists | 0030 | 0038 | `0038-single-contract-version` |
+| ca-custody | 0030 | 0037 | `0037-post-quantum-posture` |
+| ca-custody | 0031 | 0038 | `0038-single-contract-version` |
+| host-namespace | 0027 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| host-namespace | 0028 | 0034 | `0034-management-console` |
+| host-namespace | 0029 | 0035 | `0035-e2e-topology-and-ci` |
+| host-namespace | 0030 | 0036 | `0036-ca-custody-through-the-key-store` |
+| host-namespace | 0031 | 0037 | `0037-post-quantum-posture` |
+| host-namespace | 0032 | 0038 | `0038-single-contract-version` |
+| action-executor | 0028 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| action-executor | 0029 | 0034 | `0034-management-console` |
+| action-executor | 0030 | 0035 | `0035-e2e-topology-and-ci` |
+| action-executor | 0031 | 0036 | `0036-ca-custody-through-the-key-store` |
+| action-executor | 0032 | 0037 | `0037-post-quantum-posture` |
+| action-executor | 0033 | 0038 | `0038-single-contract-version` |
 | archive-before-retention | 0025 | 0027 | `0027-shared-event-plane` |
 | archive-before-retention | 0026 | 0028 | `0028-bounded-lists-audit-and-plan` |
 | archive-before-retention | 0027 | 0029 | `0029-host-route-namespace` |
 | archive-before-retention | 0028 | 0030 | `0030-action-executor-lock-and-quarantine` |
-| archive-before-retention | 0029 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| archive-before-retention | 0030 | 0033 | `0033-management-console` |
-| archive-before-retention | 0031 | 0034 | `0034-e2e-topology-and-ci` |
-| archive-before-retention | 0032 | 0035 | `0035-ca-custody-through-the-key-store` |
-| archive-before-retention | 0033 | 0036 | `0036-post-quantum-posture` |
-| archive-before-retention | 0034 | 0037 | `0037-single-contract-version` |
+| archive-before-retention | 0029 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| archive-before-retention | 0030 | 0034 | `0034-management-console` |
+| archive-before-retention | 0031 | 0035 | `0035-e2e-topology-and-ci` |
+| archive-before-retention | 0032 | 0036 | `0036-ca-custody-through-the-key-store` |
+| archive-before-retention | 0033 | 0037 | `0037-post-quantum-posture` |
+| archive-before-retention | 0034 | 0038 | `0038-single-contract-version` |
 | sink-delivery | 0026 | 0027 | `0027-shared-event-plane` |
 | sink-delivery | 0027 | 0028 | `0028-bounded-lists-audit-and-plan` |
 | sink-delivery | 0028 | 0029 | `0029-host-route-namespace` |
 | sink-delivery | 0029 | 0030 | `0030-action-executor-lock-and-quarantine` |
-| sink-delivery | 0030 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| sink-delivery | 0031 | 0033 | `0033-management-console` |
-| sink-delivery | 0032 | 0034 | `0034-e2e-topology-and-ci` |
-| sink-delivery | 0033 | 0035 | `0035-ca-custody-through-the-key-store` |
-| sink-delivery | 0034 | 0036 | `0036-post-quantum-posture` |
-| sink-delivery | 0035 | 0037 | `0037-single-contract-version` |
-| identity-sync | 0031 | 0032 | `0032-instance-identity-and-supervisory-registration` |
-| identity-sync | 0032 | 0033 | `0033-management-console` |
-| identity-sync | 0033 | 0034 | `0034-e2e-topology-and-ci` |
-| identity-sync | 0034 | 0035 | `0035-ca-custody-through-the-key-store` |
-| identity-sync | 0035 | 0036 | `0036-post-quantum-posture` |
-| identity-sync | 0036 | 0037 | `0037-single-contract-version` |
+| sink-delivery | 0030 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| sink-delivery | 0031 | 0034 | `0034-management-console` |
+| sink-delivery | 0032 | 0035 | `0035-e2e-topology-and-ci` |
+| sink-delivery | 0033 | 0036 | `0036-ca-custody-through-the-key-store` |
+| sink-delivery | 0034 | 0037 | `0037-post-quantum-posture` |
+| sink-delivery | 0035 | 0038 | `0038-single-contract-version` |
+| identity-sync | 0031 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| identity-sync | 0032 | 0034 | `0034-management-console` |
+| identity-sync | 0033 | 0035 | `0035-e2e-topology-and-ci` |
+| identity-sync | 0034 | 0036 | `0036-ca-custody-through-the-key-store` |
+| identity-sync | 0035 | 0037 | `0037-post-quantum-posture` |
+| identity-sync | 0036 | 0038 | `0038-single-contract-version` |
+| report-provider | 0032 | 0033 | `0033-instance-identity-and-supervisory-registration` |
+| report-provider | 0033 | 0034 | `0034-management-console` |
+| report-provider | 0034 | 0035 | `0035-e2e-topology-and-ci` |
+| report-provider | 0035 | 0036 | `0036-ca-custody-through-the-key-store` |
+| report-provider | 0036 | 0037 | `0037-post-quantum-posture` |
+| report-provider | 0037 | 0038 | `0038-single-contract-version` |
 
 No implemented prompt has ever moved: every row above renumbered a queued prompt
 only.
@@ -3616,11 +3663,11 @@ cross-tenant notes, above).
 Prompts may add or re-order later phases; any prompt that introduces new queued
 prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 
-> **On 0037 running last.** It is an audit, and an audit wants everything that
+> **On 0038 running last.** It is an audit, and an audit wants everything that
 > could hold a version number to exist first. The position is not an invitation
 > to build multi-version machinery in the meantime: this product ships its proxy
 > and its server together and has no installed base, so every phase before it
-> should already carry one version in one place, and 0037 should find little.
+> should already carry one version in one place, and 0038 should find little.
 > What it does own is the decision that a mismatch is a **loud refusal** rather
 > than a thinned answer, and the documents that still describe a mid-upgrade
 > fleet (§4 above among them).
@@ -3628,8 +3675,8 @@ prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 > 0019's tiers (§4) are not new machinery: `5` for `brokered-certificate`
 > (`Hoplock/proxy#68`) and `6` for a floor or a ban (`Hoplock/proxy#69`). They
 > are cases in the gate 0008 already built for the next vocabulary, and they
-> refuse rather than thin. 0037 may fold them into the single-version refusal,
-> because that refusal is stricter. What 0037 may not do is let a proxy be sent
+> refuse rather than thin. 0038 may fold them into the single-version refusal,
+> because that refusal is stricter. What 0038 may not do is let a proxy be sent
 > vocabulary above what it declared. Nor may it fold in the per-level floor
 > rule or the per-proxy ban refusal (`Hoplock/proxy#72`), each a capability
 > (M17) rather than a version.
