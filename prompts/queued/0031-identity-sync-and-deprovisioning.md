@@ -9,7 +9,7 @@
 > **Where it sits.** Right after the action executor (0030), and after
 > everything 0030 runs after: the shared event plane (0027), bounded lists
 > (0028) with every chunk it queues, and host namespaces (0029). Before
-> instance identity (0032), the console (0033) and the E2E topology (0034).
+> instance identity (0033), the console (0034) and the E2E topology (0035).
 > The identity-sync renumbering note in `docs/PLAN.md` §10 gives one line of
 > reasons for each. It needs 0030's subject read and standing-denial decision,
 > and 0027 for a deactivation's kill to reach a proxy whichever node holds its
@@ -455,10 +455,10 @@ build.
   - §10's row, revised to what was built.
 
   §11 is unchanged: SCIM itself stays Enterprise's.
-- The console prompt (0033). It shows a directory-managed subject and a
+- The console prompt (0034). It shows a directory-managed subject and a
   deactivation wherever it shows a subject. It offers no edit or delete of a
   directory-managed subject, and it shows a connector's `directory_claim`.
-- The E2E prompt (0034). Add one scenario in which a fake sync deactivates a
+- The E2E prompt (0035). Add one scenario in which a fake sync deactivates a
   subject with a live session: the session is killed, the next authorize is
   denied, and the console login is refused.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR with no
@@ -480,7 +480,7 @@ build.
 - **An operator lever that lifts a deactivation.** Only the directory does.
 - **Any new `ext` method or signature.**
 - **Delivery on several nodes**, beyond what 0027 built.
-- **The console screens** (0033).
+- **The console screens** (0034).
 - **`contract/` (M1).** Nothing on the wire changes: `session_kill`,
   `cache_invalidate` and a deny all exist.
 
