@@ -11,14 +11,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The audit feed's positions (0025, PLAN §7, M5).
+// The audit feed's positions (0025, 0026, PLAN §7, M5).
 //
-// A consumer of the audit store — the registered archive — is handed every
-// committed record, per tenant and stream in ascending sequence, and confirms
-// what it took. How far it confirmed is kept here, one row per tenant,
-// consumer and stream, because it changes an answer: with an archive
-// registered, retention never deletes past it. A node may remember nothing of
-// it that another node could not read back (M5).
+// A consumer of the audit store — the registered archive, and each registered
+// sink — is handed every committed record, per tenant and stream in ascending
+// sequence, and confirms what it took. How far it confirmed is kept here, one
+// row per tenant, consumer and stream, because it changes an answer: with an
+// archive registered, retention never deletes past the archive's, and a sink
+// resumes from its own after a restart on any node. A node may remember nothing
+// of it that another node could not read back (M5).
 //
 // ORDER IS THE APPEND LOCK'S. Every append takes its stream's transaction-scoped
 // lock (lockStream) and holds it to its commit, and the next append reads the
@@ -31,6 +32,15 @@ import (
 // the only consumer whose confirmations gate retention, and the only one whose
 // captures cross the seam (audit_captures.archived_at).
 const ArchiveConsumer = "archive"
+
+// sinkConsumerPrefix keeps a sink's position key apart from the archive's.
+const sinkConsumerPrefix = "sink:"
+
+// SinkConsumer is the position key of the registered ext.AuditSink its
+// Registration.Provider names (0026). The registry holds a provider unique
+// within the point, so the name is the sink: a provider that registers again
+// resumes from its positions, and one under a new name is a new sink.
+func SinkConsumer(provider string) string { return sinkConsumerPrefix + provider }
 
 // FeedPosition is how far one consumer has confirmed one stream, and who holds
 // the lease to feed it next.
@@ -46,7 +56,28 @@ type FeedPosition struct {
 	// when, by the database's clock.
 	LeaseHolder string
 	LeaseUntil  time.Time
+	// SkippedRecords counts the records a retention pass removed before the
+	// consumer confirmed them, over the row's life, and SkippedBehind those
+	// since it last confirmed through the stream's head (Skip). Both are
+	// zero for the archive, which retention waits on.
+	SkippedRecords int64
+	SkippedBehind  int64
+	// FailingSince is the first failed attempt of the current run of them,
+	// and zero while delivery succeeds.
+	FailingSince time.Time
 }
+
+// FeedSkip is a run of records a retention pass removed before a consumer
+// confirmed them: the consumer stood at From, and the stream now starts after
+// Through, the pass's marker, whose record hashed to Hash.
+type FeedSkip struct {
+	From    int64
+	Through int64
+	Hash    string
+}
+
+// Records is how many records the run held.
+func (s FeedSkip) Records() int64 { return s.Through - s.From }
 
 // FeedStream is one stream of a tenant as a feed sees it: how far the chain
 // reaches, where it starts, and how far the consumer has confirmed.
@@ -98,9 +129,20 @@ type FeedLag struct {
 	// CapturesWaiting counts the captures not yet confirmed, whether or
 	// not their records are (ArchiveConsumer only).
 	CapturesWaiting int64
+	// Failing reports that delivery to the consumer is failing for at
+	// least one stream.
+	Failing bool
+	// SkippedByRetention counts the records retention removed before the
+	// consumer confirmed them, since it last caught up with each stream
+	// (FeedPosition.SkippedBehind, summed). Always zero for the archive.
+	SkippedByRetention int64
 }
 
 type feedRepo struct{ s *Store }
+
+// feedPositionColumns is what scanFeedPosition reads, in its order.
+const feedPositionColumns = `confirmed_seq, confirmed_hash, confirmed_at, lease_holder, lease_until,
+	skipped_records, skipped_behind, failing_since`
 
 // Feed returns the audit feed's position repository (0025).
 func (s *Store) Feed() FeedRepository { return feedRepo{s} }
@@ -203,7 +245,7 @@ func (r feedRepo) Position(ctx context.Context, tenant Tenant, consumer, stream 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 	return scanFeedPosition(op, stream, r.s.db.QueryRow(ctx, `
-		SELECT confirmed_seq, confirmed_hash, confirmed_at, lease_holder, lease_until
+		SELECT `+feedPositionColumns+`
 		FROM audit_feed_positions WHERE tenant = $1 AND consumer = $2 AND stream = $3`,
 		tenant, consumer, stream))
 }
@@ -232,7 +274,7 @@ func (r feedRepo) Claim(ctx context.Context, tenant Tenant, consumer, stream, ho
 		SET lease_holder = EXCLUDED.lease_holder, lease_until = EXCLUDED.lease_until
 		WHERE audit_feed_positions.lease_holder = EXCLUDED.lease_holder
 		   OR audit_feed_positions.lease_until <= now()
-		RETURNING confirmed_seq, confirmed_hash, confirmed_at, lease_holder, lease_until`,
+		RETURNING `+feedPositionColumns,
 		tenant, consumer, stream, holder, ttl.Microseconds()))
 	if IsNotFound(err) {
 		return FeedPosition{}, false, nil
@@ -262,7 +304,9 @@ func (r feedRepo) Release(ctx context.Context, tenant Tenant, consumer, stream, 
 // Confirm moves a consumer's position in a stream to a record it confirmed. It
 // never moves it backwards: a confirmation at or behind the position changes
 // nothing, which is what lets two nodes whose turns overlapped both confirm.
-// It answers the position after the call.
+// A confirmation that moves it ends a run of failures, and one that reaches
+// the stream's head sets SkippedBehind back to zero: the consumer has caught
+// up. It answers the position after the call.
 func (r feedRepo) Confirm(ctx context.Context, tenant Tenant, consumer, stream string, seq int64, hash string) (FeedPosition, error) {
 	const op = "store.Feed.Confirm"
 	if err := checkTenant(op, tenant); err != nil {
@@ -281,15 +325,158 @@ func (r feedRepo) Confirm(ctx context.Context, tenant Tenant, consumer, stream s
 		VALUES ($1, $2, $3, $4, $5, now())
 		ON CONFLICT (tenant, consumer, stream) DO UPDATE
 		SET confirmed_seq = EXCLUDED.confirmed_seq, confirmed_hash = EXCLUDED.confirmed_hash,
-		    confirmed_at = EXCLUDED.confirmed_at
+		    confirmed_at = EXCLUDED.confirmed_at, failing_since = NULL,
+		    skipped_behind = CASE
+		        WHEN EXCLUDED.confirmed_seq >= (
+		            SELECT chain_seq FROM audit_records
+		            WHERE tenant = $1 AND stream = $3 ORDER BY chain_seq DESC LIMIT 1)
+		        THEN 0 ELSE audit_feed_positions.skipped_behind END
 		WHERE audit_feed_positions.confirmed_seq < EXCLUDED.confirmed_seq`,
 		tenant, consumer, stream, seq, hash); err != nil {
 		return FeedPosition{}, wrap(op, err)
 	}
 	return scanFeedPosition(op, stream, r.s.db.QueryRow(ctx, `
-		SELECT confirmed_seq, confirmed_hash, confirmed_at, lease_holder, lease_until
+		SELECT `+feedPositionColumns+`
 		FROM audit_feed_positions WHERE tenant = $1 AND consumer = $2 AND stream = $3`,
 		tenant, consumer, stream))
+}
+
+// Begin creates a sink's position in a stream at the stream's chain start —
+// after its retention marker, whose record's hash it keeps — when it has none,
+// and changes nothing when it has one. A sink starts where the chain does when
+// Control first delivers the stream to it, so a prefix retained before then
+// was never the sink's to receive and is not counted by Skip; one retained
+// after then is.
+//
+// The archive never begins this way: its position is what retention waits on,
+// and a position at a marker would claim it holds records it was never handed.
+func (r feedRepo) Begin(ctx context.Context, tenant Tenant, consumer, stream string) error {
+	const op = "store.Feed.Begin"
+	if err := checkTenant(op, tenant); err != nil {
+		return err
+	}
+	switch {
+	case consumer == "" || stream == "":
+		return invalid(op, "a consumer and a stream are required")
+	case consumer == ArchiveConsumer:
+		return invalid(op, "the archive's position starts at zero, because retention waits on it")
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	_, err := r.s.db.Exec(ctx, `
+		INSERT INTO audit_feed_positions (tenant, consumer, stream, confirmed_seq, confirmed_hash)
+		SELECT $1, $2, $3, COALESCE(m.through_seq, 0), COALESCE(m.through_hash, '')
+		FROM (VALUES (1)) AS one(x)
+		LEFT JOIN audit_retention m ON m.tenant = $1 AND m.stream = $3
+		ON CONFLICT (tenant, consumer, stream) DO NOTHING`,
+		tenant, consumer, stream)
+	return wrap(op, err)
+}
+
+// Skip moves a consumer that retention does not wait on past the records a
+// retention pass removed before it confirmed them: when the stream's marker is
+// beyond its position, the position moves to the marker and the run is added
+// to SkippedRecords and SkippedBehind, in one transaction under the row's lock.
+// It answers the run and true when it moved the position — exactly one caller
+// does, however many nodes look at once — and false when the marker is at or
+// behind it, or the consumer has no position in the stream.
+//
+// It is refused for the archive, whose position a pass never passes.
+func (r feedRepo) Skip(ctx context.Context, tenant Tenant, consumer, stream string) (FeedSkip, bool, error) {
+	const op = "store.Feed.Skip"
+	if err := checkTenant(op, tenant); err != nil {
+		return FeedSkip{}, false, err
+	}
+	switch {
+	case consumer == "" || stream == "":
+		return FeedSkip{}, false, invalid(op, "a consumer and a stream are required")
+	case consumer == ArchiveConsumer:
+		return FeedSkip{}, false, invalid(op, "retention waits on the archive, so it never skips")
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	var (
+		skip  FeedSkip
+		moved bool
+	)
+	err := r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
+		var from, through *int64
+		var hash *string
+		if err := q.QueryRow(ctx, `
+			SELECT p.confirmed_seq, m.through_seq, m.through_hash
+			FROM audit_feed_positions p
+			LEFT JOIN audit_retention m ON m.tenant = p.tenant AND m.stream = p.stream
+			WHERE p.tenant = $1 AND p.consumer = $2 AND p.stream = $3
+			FOR UPDATE OF p`, tenant, consumer, stream).Scan(&from, &through, &hash); err != nil {
+			if IsNotFound(wrap(op, err)) {
+				return nil
+			}
+			return wrap(op, err)
+		}
+		if from == nil || through == nil || hash == nil || *through <= *from {
+			return nil
+		}
+		skip = FeedSkip{From: *from, Through: *through, Hash: *hash}
+		if _, err := q.Exec(ctx, `
+			UPDATE audit_feed_positions
+			SET confirmed_seq = $4, confirmed_hash = $5,
+			    skipped_records = skipped_records + ($4 - confirmed_seq),
+			    skipped_behind = skipped_behind + ($4 - confirmed_seq)
+			WHERE tenant = $1 AND consumer = $2 AND stream = $3`,
+			tenant, consumer, stream, skip.Through, skip.Hash); err != nil {
+			return wrap(op, err)
+		}
+		moved = true
+		return nil
+	})
+	if err != nil {
+		return FeedSkip{}, false, err
+	}
+	return skip, moved, nil
+}
+
+// Fail records that holder's attempt to deliver a stream failed: it holds the
+// lease for ttl — the backoff and a lease beyond it — so no other node tries
+// the stream sooner, and marks the stream failing from now unless it already
+// is. It changes nothing when another node holds a live lease, and creates no
+// position: a sink's begins at the chain start (Begin), never here.
+func (r feedRepo) Fail(ctx context.Context, tenant Tenant, consumer, stream, holder string, ttl time.Duration) error {
+	const op = "store.Feed.Fail"
+	if err := checkTenant(op, tenant); err != nil {
+		return err
+	}
+	switch {
+	case consumer == "" || stream == "" || holder == "":
+		return invalid(op, "a consumer, a stream and a holder are required")
+	case ttl <= 0:
+		return invalid(op, "a lease must last")
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	_, err := r.s.db.Exec(ctx, `
+		UPDATE audit_feed_positions
+		SET lease_holder = $4, lease_until = now() + $5::bigint * interval '1 microsecond',
+		    failing_since = COALESCE(failing_since, now())
+		WHERE tenant = $1 AND consumer = $2 AND stream = $3
+		  AND (lease_holder = $4 OR lease_until <= now())`,
+		tenant, consumer, stream, holder, ttl.Microseconds())
+	return wrap(op, err)
+}
+
+// Recovered ends a stream's run of failures for a consumer. A confirmation
+// ends one too; this is for an attempt that succeeded with nothing to confirm.
+func (r feedRepo) Recovered(ctx context.Context, tenant Tenant, consumer, stream string) error {
+	const op = "store.Feed.Recovered"
+	if err := checkTenant(op, tenant); err != nil {
+		return err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	_, err := r.s.db.Exec(ctx, `
+		UPDATE audit_feed_positions SET failing_since = NULL
+		WHERE tenant = $1 AND consumer = $2 AND stream = $3 AND failing_since IS NOT NULL`,
+		tenant, consumer, stream)
+	return wrap(op, err)
 }
 
 // PendingCaptures returns a stream's captures waiting for the archive whose
@@ -482,17 +669,27 @@ func (r feedRepo) Lag(ctx context.Context, tenant Tenant, consumer string) (Feed
 			return FeedLag{}, wrap(op, err)
 		}
 	}
+	if err := r.s.db.QueryRow(ctx, `
+		SELECT COALESCE(sum(skipped_behind), 0), COALESCE(bool_or(failing_since IS NOT NULL), false)
+		FROM audit_feed_positions WHERE tenant = $1 AND consumer = $2`,
+		tenant, consumer).Scan(&lag.SkippedByRetention, &lag.Failing); err != nil {
+		return FeedLag{}, wrap(op, err)
+	}
 	return lag, nil
 }
 
 func scanFeedPosition(op, stream string, row pgx.Row) (FeedPosition, error) {
 	p := FeedPosition{Stream: stream}
-	var confirmedAt *time.Time
-	if err := row.Scan(&p.ConfirmedSeq, &p.ConfirmedHash, &confirmedAt, &p.LeaseHolder, &p.LeaseUntil); err != nil {
+	var confirmedAt, failingSince *time.Time
+	if err := row.Scan(&p.ConfirmedSeq, &p.ConfirmedHash, &confirmedAt, &p.LeaseHolder, &p.LeaseUntil,
+		&p.SkippedRecords, &p.SkippedBehind, &failingSince); err != nil {
 		return FeedPosition{}, wrap(op, err)
 	}
 	if confirmedAt != nil {
 		p.ConfirmedAt = confirmedAt.UTC()
+	}
+	if failingSince != nil {
+		p.FailingSince = failingSince.UTC()
 	}
 	return p, nil
 }

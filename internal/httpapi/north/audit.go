@@ -535,7 +535,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request) {
 		s.invalid(w, r, "through_seq", "exactly_one_of_through_seq_or_before", "")
 		return
 	}
-	s.trackArchive(tenant)
+	s.trackFeeds(tenant)
 	// The pass and its record are one transaction (internal/audit/retention.go).
 	out, err := s.emitter.RetainPrefix(r.Context(), tenant, audit.PrefixPass{
 		Stream: body.Stream, ThroughSeq: body.ThroughSeq, Before: body.Before,
@@ -580,7 +580,7 @@ func (s *Server) handleCaptureRetention(w http.ResponseWriter, r *http.Request) 
 		s.invalid(w, r, "before", access.ProblemRequired, "")
 		return
 	}
-	s.trackArchive(tenant)
+	s.trackFeeds(tenant)
 	out, err := s.emitter.RetainCaptures(r.Context(), tenant, body.Before, actor)
 	if err != nil {
 		s.auditFailure(w, r, "retain captures", err)
@@ -591,12 +591,16 @@ func (s *Server) handleCaptureRetention(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// trackArchive tells the archive feed, when there is one, that a retention pass
-// ran in a tenant. A pass the archive held back is one whose tenant the feed
-// must deliver, and this process may not have seen the tenant since it started:
-// the store cannot list tenants (M18).
-func (s *Server) trackArchive(tenant store.Tenant) {
+// trackFeeds tells the archive feed and sink delivery, when there are any, that
+// a retention pass ran in a tenant. A pass the archive held back is one whose
+// tenant the feed must deliver, and one that overtook a sink is one whose sink
+// must resume after it; this process may not have seen the tenant since it
+// started, because the store cannot list tenants (M18).
+func (s *Server) trackFeeds(tenant store.Tenant) {
 	if s.archive != nil {
 		s.archive.Track(tenant)
+	}
+	if s.sinks != nil {
+		s.sinks.Track(tenant)
 	}
 }

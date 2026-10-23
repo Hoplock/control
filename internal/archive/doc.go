@@ -8,7 +8,14 @@
 // store, so retention — which never deletes past it — and every node read the
 // same answer (M5).
 //
+// The feed is also the one implementation every other consumer of the audit
+// store runs on: internal/export builds one per registered ext.AuditSink
+// (0026), with positions of its own, delivery bounded by the batches in flight
+// to the sink, and no captures. Retention waits on the archive and on no sink,
+// so a sink a pass overtakes is moved past what the pass removed, and the run
+// is counted.
+//
 // It runs off ingest and the decision path. Nothing a proxy waits on calls
 // into it; the ingester only tells it which tenants it has seen, which never
-// blocks. With no archive registered, the daemon builds no feed.
+// blocks. With no archive registered, the daemon builds no feed to one.
 package archive

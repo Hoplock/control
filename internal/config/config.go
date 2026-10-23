@@ -94,8 +94,20 @@ const (
 	DefaultArchiveBackoffCap              = 5 * time.Minute
 	// MinArchiveBackoffCap is the smallest backoff cap accepted: the feed's
 	// first retry waits a second, and a cap below it would retry a failing
-	// archive in a loop.
+	// archive in a loop. A sink's backoff cap has the same floor.
 	MinArchiveBackoffCap = time.Second
+	// Delivery to registered sinks' defaults (0026), each the value a zero
+	// `audit.sinks.<key>` takes. They start where the archive's do, and are
+	// separate keys because a SIEM and an archive are tuned differently: a
+	// SOC may want a shorter idle interval, and a SIEM's ingestion API a
+	// smaller batch. Four batches in flight per sink is the archive's worker
+	// bound, for the same reason: a worker holds a database connection
+	// between its calls to the sink.
+	DefaultSinkBatchRecords   = 500
+	DefaultSinkAttemptTimeout = 30 * time.Second
+	DefaultSinkIdleInterval   = 5 * time.Second
+	DefaultSinkBackoffCap     = 5 * time.Minute
+	DefaultSinkMaxInFlight    = 4
 	// LogRecordEnvelopeBytes is the room one record needs on a log path
 	// beside its capture and its canonical body: the request's own keys, the
 	// record's field names and its payload key. Generous by design: it only
@@ -253,6 +265,34 @@ type AuditConfig struct {
 	// Archive bounds the feed to a registered ext.ArchiveStore (0025). It
 	// is read only when an archive is registered.
 	Archive ArchiveFeedConfig `yaml:"archive"`
+	// Sinks bounds delivery to every registered ext.AuditSink (0026). It is
+	// read only when a sink is registered, and applies to each sink alike: a
+	// sink's own settings are its host's configuration.
+	Sinks SinkDeliveryConfig `yaml:"sinks"`
+}
+
+// SinkDeliveryConfig bounds delivery to each registered ext.AuditSink: every
+// committed record, per tenant and stream in ascending sequence (0026, PLAN
+// §7). Each zero takes its default, and each is bounded at start-up. Delivery
+// runs off ingest and the decision path (M5), so what it costs is the
+// database's time and the sink's, never a proxy's.
+type SinkDeliveryConfig struct {
+	// BatchRecords is the most records one Export call carries, one
+	// stream's. It is no larger than audit.max_batch_records.
+	BatchRecords int `yaml:"batch_records"`
+	// AttemptTimeout is the deadline on each call to a sink. A call that
+	// runs past it confirms nothing and is offered again.
+	AttemptTimeout time.Duration `yaml:"attempt_timeout"`
+	// IdleInterval is how long delivery waits, with nothing to deliver,
+	// before it looks again.
+	IdleInterval time.Duration `yaml:"idle_interval"`
+	// BackoffCap is the longest wait between attempts on a stream whose
+	// Export keeps failing. The wait starts at a second and doubles.
+	BackoffCap time.Duration `yaml:"backoff_cap"`
+	// MaxInFlight is the most batches in flight to one sink at once, each
+	// of a different stream; a call past its deadline counts until it
+	// returns.
+	MaxInFlight int `yaml:"max_in_flight"`
 }
 
 // ArchiveFeedConfig bounds the feed that hands a registered ext.ArchiveStore
@@ -666,6 +706,7 @@ func (c *Config) applyDefaults() {
 	}
 	c.AccessContext.applyDefaults()
 	c.Audit.Archive.applyDefaults(c.Audit)
+	c.Audit.Sinks.applyDefaults(c.Audit)
 	if c.Notify.WebhookTimeout == 0 {
 		c.Notify.WebhookTimeout = DefaultWebhookTimeout
 	}
@@ -987,7 +1028,10 @@ func (a AuditConfig) validate() error {
 		}
 	}
 
-	return a.Archive.validate(a)
+	if err := a.Archive.validate(a); err != nil {
+		return err
+	}
+	return a.Sinks.validate(a)
 }
 
 // applyDefaults fills the archive feed's zeros. The batch's default is no
@@ -1028,6 +1072,47 @@ func (a ArchiveFeedConfig) validate(audit AuditConfig) error {
 		return &FieldError{Field: "audit.archive.idle_interval", Msg: "must be a positive duration, or absent for the default"}
 	case a.BackoffCap < MinArchiveBackoffCap:
 		return &FieldError{Field: "audit.archive.backoff_cap", Msg: "must be at least 1s, or absent for the default"}
+	}
+	return nil
+}
+
+// applyDefaults fills sink delivery's zeros. The batch's default is no larger
+// than the ingest batch bound, which an operator may have set lower.
+func (d *SinkDeliveryConfig) applyDefaults(audit AuditConfig) {
+	if d.BatchRecords == 0 {
+		d.BatchRecords = min(DefaultSinkBatchRecords, maxBatchRecords(audit))
+	}
+	if d.AttemptTimeout == 0 {
+		d.AttemptTimeout = DefaultSinkAttemptTimeout
+	}
+	if d.IdleInterval == 0 {
+		d.IdleInterval = DefaultSinkIdleInterval
+	}
+	if d.BackoffCap == 0 {
+		d.BackoffCap = DefaultSinkBackoffCap
+	}
+	if d.MaxInFlight == 0 {
+		d.MaxInFlight = DefaultSinkMaxInFlight
+	}
+}
+
+// validate reports the first sink delivery setting that cannot be acted on,
+// after the defaults.
+func (d SinkDeliveryConfig) validate(audit AuditConfig) error {
+	switch {
+	case d.BatchRecords <= 0:
+		return &FieldError{Field: "audit.sinks.batch_records", Msg: "must be a positive number of records, or absent for the default"}
+	case d.BatchRecords > maxBatchRecords(audit):
+		return &FieldError{Field: "audit.sinks.batch_records", Msg: fmt.Sprintf(
+			"must be no more than audit.max_batch_records (%d)", maxBatchRecords(audit))}
+	case d.AttemptTimeout <= 0:
+		return &FieldError{Field: "audit.sinks.attempt_timeout", Msg: "must be a positive duration, or absent for the default"}
+	case d.IdleInterval <= 0:
+		return &FieldError{Field: "audit.sinks.idle_interval", Msg: "must be a positive duration, or absent for the default"}
+	case d.BackoffCap < MinArchiveBackoffCap:
+		return &FieldError{Field: "audit.sinks.backoff_cap", Msg: "must be at least 1s, or absent for the default"}
+	case d.MaxInFlight <= 0:
+		return &FieldError{Field: "audit.sinks.max_in_flight", Msg: "must be a positive number of batches, or absent for the default"}
 	}
 	return nil
 }

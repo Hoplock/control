@@ -235,8 +235,10 @@ type AuditRepository interface {
 
 // FeedRepository keeps how far each consumer of the audit store has confirmed
 // each stream, and the lease that keeps one node feeding a stream at a time
-// (0025). Positions only move forward, and a retention pass with an archive
-// registered deletes no further than ArchivedThrough.
+// (0025): the archive's, and each sink's (0026). Positions only move forward,
+// and a retention pass with an archive registered deletes no further than
+// ArchivedThrough. No pass waits on a sink, which Skip moves past what a pass
+// removed before it confirmed it.
 type FeedRepository interface {
 	// Streams lists a tenant's streams with their heads, retention markers
 	// and the consumer's positions, by stream.
@@ -251,6 +253,17 @@ type FeedRepository interface {
 	Release(ctx context.Context, tenant Tenant, consumer, stream, holder string) error
 	// Confirm moves a position forward to a confirmed record, never back.
 	Confirm(ctx context.Context, tenant Tenant, consumer, stream string, seq int64, hash string) (FeedPosition, error)
+	// Begin creates a sink's position at a stream's chain start when it has
+	// none.
+	Begin(ctx context.Context, tenant Tenant, consumer, stream string) error
+	// Skip moves a sink's position past records a retention pass removed
+	// before it confirmed them, and counts them.
+	Skip(ctx context.Context, tenant Tenant, consumer, stream string) (FeedSkip, bool, error)
+	// Fail holds a failing stream's lease over its backoff and marks it
+	// failing.
+	Fail(ctx context.Context, tenant Tenant, consumer, stream, holder string, ttl time.Duration) error
+	// Recovered ends a stream's run of failures.
+	Recovered(ctx context.Context, tenant Tenant, consumer, stream string) error
 	// PendingCaptures returns a stream's captures waiting for the archive
 	// whose records it confirmed, bounded by a count and by bytes.
 	PendingCaptures(ctx context.Context, tenant Tenant, stream string, throughSeq int64, limit int, maxBytes int64) ([]FeedCapture, error)

@@ -30,6 +30,10 @@ type extensionRegistrationView struct {
 	Version  string `json:"version,omitempty"`
 	// Default marks Control's own implementation rather than an extension.
 	Default bool `json:"default"`
+	// Lag is how far delivery to this sink is behind in the caller's tenant
+	// (0026), on each registration at the audit sink point and nowhere
+	// else: that point takes several, and each has its own delivery.
+	Lag *feedLagView `json:"lag,omitempty"`
 }
 
 type extensionPointView struct {
@@ -46,20 +50,29 @@ type extensionPointView struct {
 	// Lag is how far the feed to the registered archive is behind in the
 	// caller's tenant (0025), on the archive's row and only while one is
 	// registered.
-	Lag *archiveLagView `json:"lag,omitempty"`
+	Lag *feedLagView `json:"lag,omitempty"`
 }
 
-// archiveLagView is the archive's lag in one tenant, as scalars: a list of
-// streams here would be a list nobody bounds.
-type archiveLagView struct {
-	// StreamsBehind counts the streams with records the archive has not
+// feedLagView is how far one consumer of the audit store — the archive, or a
+// sink — is behind in one tenant, as scalars: a list of streams here would be
+// a list nobody bounds. The archive's and a sink's share their field names, so
+// one renderer reads both.
+type feedLagView struct {
+	// StreamsBehind counts the streams with records the consumer has not
 	// confirmed.
 	StreamsBehind int `json:"streams_behind"`
 	// OldestUnconfirmedAt is the recorded_at of the earliest first record
 	// not yet confirmed across those streams; absent when none is.
 	OldestUnconfirmedAt time.Time `json:"oldest_unconfirmed_at,omitzero"`
-	// CapturesWaiting counts the session captures not yet confirmed.
-	CapturesWaiting int64 `json:"captures_waiting"`
+	// Failing reports that delivery is failing for at least one stream.
+	Failing bool `json:"failing"`
+	// CapturesWaiting counts the session captures not yet confirmed: the
+	// archive's alone, because captures never cross to a sink.
+	CapturesWaiting *int64 `json:"captures_waiting,omitempty"`
+	// SkippedByRetention counts the records a retention pass removed before
+	// the sink confirmed them, since it last caught up with each stream: a
+	// sink's alone, because retention waits on the archive.
+	SkippedByRetention *int64 `json:"skipped_by_retention,omitempty"`
 }
 
 func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
@@ -67,16 +80,16 @@ func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var lag *archiveLagView
+	var lag *feedLagView
 	if s.archive != nil {
 		got, err := s.archive.Lag(r.Context(), tenant)
 		if err != nil {
 			s.fail(w, r, "archive lag", err)
 			return
 		}
-		lag = &archiveLagView{
+		lag = &feedLagView{
 			StreamsBehind: got.StreamsBehind, OldestUnconfirmedAt: got.OldestUnconfirmed,
-			CapturesWaiting: got.CapturesWaiting,
+			Failing: got.Failing, CapturesWaiting: &got.CapturesWaiting,
 		}
 	}
 	rows := s.extensions.Status()
@@ -88,9 +101,21 @@ func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
 			WhenAbsent: st.Info.WhenAbsent.String(), Absent: st.Info.Absent, ControlShips: st.Info.ControlShips,
 		}
 		for _, reg := range st.Registrations {
-			v.Registrations = append(v.Registrations, extensionRegistrationView{
-				Provider: reg.Provider, Version: reg.Version, Default: reg.Default,
-			})
+			rv := extensionRegistrationView{Provider: reg.Provider, Version: reg.Version, Default: reg.Default}
+			if st.Info.Point == ext.PointAuditSink && s.sinks != nil {
+				got, ok, err := s.sinks.Lag(r.Context(), tenant, reg.Provider)
+				if err != nil {
+					s.fail(w, r, "sink lag", err)
+					return
+				}
+				if ok {
+					rv.Lag = &feedLagView{
+						StreamsBehind: got.StreamsBehind, OldestUnconfirmedAt: got.OldestUnconfirmed,
+						Failing: got.Failing, SkippedByRetention: &got.SkippedByRetention,
+					}
+				}
+			}
+			v.Registrations = append(v.Registrations, rv)
 		}
 		if st.Info.Point == ext.PointArchiveStore && st.Registered() {
 			v.Lag = lag

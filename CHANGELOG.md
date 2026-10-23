@@ -26,6 +26,70 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.13.0
+
+Audit sink delivery. With one or more `ext.AuditSink`s registered, Control
+hands each of them every record it commits, keeps a durable position per sink,
+and offers again what a sink did not confirm. A sink that is down or slow
+slows nothing but its own delivery. Retention does not wait on a sink. With no
+sink registered, nothing changes.
+
+- **Phase:** 0026, audit sink delivery.
+- **Public packages:** no signature changes. `ext.AuditSink`'s doc comment now
+  says what Control does with one, and `ext.AuditRecord.Sequence`'s says when a
+  gap is not a drop. An implementation written to the old comment should check
+  these:
+  - **`Export` is now called, concurrently.** Control may have batches of
+    different streams or tenants in flight to one sink at once, up to
+    `audit.sinks.max_in_flight` (default 4), so `Export` must be safe for
+    concurrent use. It never has two batches of one stream in flight, and
+    offers a stream's next batch only after the previous one returned. The
+    old comment implied one call at a time.
+  - Each batch is one tenant's and one stream's records, in ascending
+    `Sequence`, at least once; every tenant's records go to every sink. A nil
+    return confirms the batch; an error confirms nothing, and the same
+    records are offered again after a backoff. `Export` must be idempotent
+    on `RecordID`.
+  - The position is Control's, in its store per sink, tenant and stream; a
+    sink keeps no cursor. A sink is named by its `Registration.Provider`: one
+    that registers again under the same name resumes from its positions, and
+    a new name is a new sink, starting each stream at its chain start.
+  - A call past its deadline confirms nothing and keeps one of the sink's
+    places in flight until it returns, so a sink that ignores its deadline
+    stalls only itself.
+  - **Retention does not wait on a sink.** When a retention pass removes
+    records a sink has not confirmed, the sink resumes after the pass's
+    marker. The gap is explained by the pass's `operator.audit.retained`
+    record on the control stream, which the sink is handed too.
+  - Delivery writes no audit record, and captures' bytes never cross to a
+    sink.
+- **Behaviour no API diff shows:**
+  - Delivery runs off ingest and the decision path, on the archive's feed
+    with positions of its own (migration `0015`: `audit_feed_positions` gains
+    `skipped_records`, `skipped_behind` and `failing_since`; a sink's rows are
+    keyed `sink:<provider>`). Each stream is delivered by one node at a time,
+    by the lease 0025 added, so it is correct on several nodes. One sink,
+    tenant or stream that fails, hangs or lags slows no other.
+  - A sink that starts failing for a stream is logged once at `WARN`
+    (`audit_sink_failing`, with `provider`, `tenant`, `stream` and `kind`)
+    and once when it recovers (`audit_sink_recovered`). A sink a retention
+    pass overtakes is logged once at `WARN`
+    (`audit_sink_skipped_by_retention`, with `from_seq`, `through_seq` and
+    `records`). The start-up line `audit_sink_delivery_configured` names
+    every sink.
+  - New configuration, applied to every sink alike, each with a default and
+    bounded at start-up: `audit.sinks.batch_records` (500, at most
+    `audit.max_batch_records`), `attempt_timeout` (30s), `idle_interval`
+    (5s), `backoff_cap` (5m, at least 1s), `max_in_flight` (4, at least 1).
+  - `GET …/extensions`: each registration at the audit sink point gains `lag`
+    for the caller's tenant — `streams_behind`, `oldest_unconfirmed_at`,
+    `failing`, and `skipped_by_retention` (records a pass removed before the
+    sink confirmed them, since it last caught up). The archive's `lag` gains
+    `failing`. With no sink registered, the sink point's row is unchanged.
+  - Recording a failure of the archive's feed now also marks its position
+    row failing, which is what the archive's `failing` reads. The archive's
+    feed is otherwise unchanged.
+
 ## v0.12.0
 
 An archive fed before retention deletes. With an `ext.ArchiveStore`

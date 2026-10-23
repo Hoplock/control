@@ -35,10 +35,16 @@ type AuditRecord struct {
 	Stream string
 	// Sequence is the record's position in its stream's hash chain, from 1.
 	// Consecutive sequences with no gap within one stream is the sink-side
-	// proof that nothing was dropped; the first sequence an archive receives
-	// in a stream is one after the stream's retention marker when Control had
-	// retained a prefix before the archive was registered, and the
-	// `operator.audit.retained` record on the control stream says so.
+	// proof that nothing was dropped — except across a retained prefix,
+	// which the control stream records. The first sequence an archive or a
+	// sink receives in a stream is one after the stream's retention marker
+	// when Control had retained a prefix before it was registered; and a
+	// sink, which retention does not wait on, receives the next sequence
+	// after a marker a later pass moved past its position (AuditSink). In
+	// both cases the pass's `operator.audit.retained` record on the control
+	// stream names the stream, the last sequence it deleted and that
+	// record's hash — which is this record's PrevHash — and a gap no such
+	// record explains is a drop.
 	Sequence uint64
 	// PrevHash is the ChainHash of the record before this one in the stream,
 	// and empty at Sequence 1.
@@ -139,15 +145,60 @@ type Capture struct {
 // them. A sink adds a destination; it never becomes the only copy, and Control
 // does not delete a record because a sink accepted it.
 //
-// Export must be idempotent on RecordID. Control retries a batch it could not
-// confirm, and a sink that duplicates on retry produces an audit trail that
-// double-counts. Returning an error means the batch was not delivered and
-// Control will offer it again; returning nil means the sink has taken
-// responsibility for it.
+// What Control does with one or more registered (0026):
+//
+//   - It hands every sink every record it commits, of every tenant, per tenant
+//     and per stream in ascending Sequence, at least once: each batch holds one
+//     tenant's and one stream's records, contiguous from the last batch the
+//     sink confirmed in that stream. Which tenants a sink forwards, and where,
+//     is its own.
+//   - A nil return confirms the batch: the sink has taken responsibility for
+//     it, and Control durably moves the sink's position to the batch's last
+//     record. An error confirms nothing, and the same records are offered
+//     again after a backoff that grows to a cap. A batch can also arrive twice
+//     after a restart, or from two nodes whose turns overlapped, so Export
+//     must be idempotent on RecordID: a sink that duplicates on retry
+//     produces an audit trail that double-counts.
+//   - The position is Control's, kept in its store per sink, tenant and
+//     stream, so delivery resumes after a restart on any node with no gap. A
+//     sink keeps no cursor of its own.
+//   - A sink is named by its Registration.Provider, which is unique within
+//     this point. A provider that stops registering keeps its positions and
+//     resumes from them when it registers again; a provider registering under
+//     a new name is a new sink. A new sink starts each stream at the stream's
+//     chain start: its first record, or the one after its retention marker.
+//   - Control never has two batches of one stream in flight to one sink, and
+//     offers a stream's next batch only after the previous one returned. It
+//     may have batches of different streams or tenants in flight to one sink
+//     at once, up to a bound in its configuration, so Export must be safe for
+//     concurrent use. The context carries Control's deadline for the attempt.
+//     A call past it confirms nothing, and its stream is not offered again
+//     until it returns; until then it also keeps one of the sink's places in
+//     flight, so a sink that ignores its deadline stalls only itself. (On
+//     several nodes, a call held past the stream's lease — its backoff and
+//     three deadlines more — may see another node offer the stream's batch
+//     again, which is a duplicate, never a skip.)
+//   - Retention does not wait on a sink, which is a downstream consumer and
+//     never the record (M8). When a retention pass removes records a sink has
+//     not confirmed, the sink resumes after the pass's marker, and the gap is
+//     counted on its lag. The pass's `operator.audit.retained` record on the
+//     control stream, which the sink is handed like every other record, names
+//     the stream, the last sequence deleted and its hash, which is the
+//     PrevHash of the first record after the gap; a later pass over the
+//     control stream may in turn remove that record, and its own record says
+//     so. Keeping records past retention is ArchiveStore's job.
+//   - Delivery runs off ingest and the decision path: no proxy's request waits
+//     on a sink, one sink that fails, hangs or lags slows no other sink, and a
+//     tenant or stream that fails slows no other tenant's or stream's delivery
+//     to the same sink. Delivery writes no audit record of its own; a failure
+//     shows on the sink's lag on the extension listing and in the log.
+//   - Captures' bytes never cross to a sink; a record carries its capture's
+//     digest inside Body.
 type AuditSink interface {
-	// Export delivers a batch in ascending Sequence order. The context
-	// carries Control's deadline for the attempt; a sink that ignores it
-	// delays every later batch behind it.
+	// Export delivers one tenant's and one stream's batch, in ascending
+	// Sequence order. It may be called concurrently for different streams,
+	// never for one stream at once. The context carries Control's deadline
+	// for the attempt.
 	Export(ctx context.Context, batch []AuditRecord) error
 }
 

@@ -45,6 +45,9 @@ type northDeps struct {
 	// archive is the feed to a registered archive (0025), nil when none is
 	// registered — a nil interface, never a typed nil.
 	archive north.ArchiveFeed
+	// sinks is delivery to the registered sinks (0026), nil when none is
+	// registered, likewise.
+	sinks north.SinkDelivery
 }
 
 // buildNorth assembles the federation service, the policy lifecycle and the
@@ -82,6 +85,7 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 		Audit:           d.emitter,
 		Extensions:      d.extensions,
 		Archive:         d.archive,
+		Sinks:           d.sinks,
 		MaxPushBytes:    cfg.AccessContext.MaxPushBytes,
 		Logger:          log,
 		MaxBodyBytes:    cfg.North.MaxBodyBytes,

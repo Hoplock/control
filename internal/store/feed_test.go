@@ -215,3 +215,154 @@ func TestACapturePassForAnArchiveEmptiesOnlyConfirmedCaptures(t *testing.T) {
 		t.Errorf("the capture the archive has not confirmed was emptied: %v", err)
 	}
 }
+
+// A sink's position begins at a stream's chain start, after its marker. When a
+// later retention pass removes records the sink has not confirmed, Skip moves
+// it to the new marker once, counts the run in the row and on the lag, and a
+// confirmation through the head clears the count the lag shows; the archive is
+// never begun or skipped this way (0026).
+func TestASinkBeginsAtTheChainStartAndSkipsWhatRetentionRemovedBehindIt(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	sinkA, sinkB := store.SinkConsumer("example.com/a"), store.SinkConsumer("example.com/b")
+	appendRecords(t, st, tenantA, "proxy:p1", 1, 6)
+	first, _, err := st.Audit().RetainPrefix(ctx, tenantA, "proxy:p1", 2, testSeal)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, sink := range []string{sinkA, sinkB} {
+		if err := st.Feed().Begin(ctx, tenantA, sink, "proxy:p1"); err != nil {
+			t.Fatal(err)
+		}
+		pos, err := st.Feed().Position(ctx, tenantA, sink, "proxy:p1")
+		if err != nil || pos.ConfirmedSeq != 2 || pos.ConfirmedHash != first.ThroughHash || pos.SkippedRecords != 0 {
+			t.Fatalf("%s began at %+v, %v; want the marker, uncounted", sink, pos, err)
+		}
+		if _, moved, err := st.Feed().Skip(ctx, tenantA, sink, "proxy:p1"); err != nil || moved {
+			t.Errorf("%s skipped from the chain start: %v %v", sink, moved, err)
+		}
+	}
+	if _, err := st.Feed().Confirm(ctx, tenantA, sinkA, "proxy:p1", 4, "h4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Feed().Begin(ctx, tenantA, sinkA, "proxy:p1"); err != nil {
+		t.Fatal(err)
+	}
+	if pos, _ := st.Feed().Position(ctx, tenantA, sinkA, "proxy:p1"); pos.ConfirmedSeq != 4 {
+		t.Errorf("Begin moved a position it already had, to %d", pos.ConfirmedSeq)
+	}
+
+	second, _, err := st.Audit().RetainPrefix(ctx, tenantA, "proxy:p1", 4, testSeal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, moved, err := st.Feed().Skip(ctx, tenantA, sinkA, "proxy:p1"); err != nil || moved {
+		t.Errorf("a sink that had confirmed through the marker skipped: %v %v", moved, err)
+	}
+	skip, moved, err := st.Feed().Skip(ctx, tenantA, sinkB, "proxy:p1")
+	if err != nil || !moved || skip != (store.FeedSkip{From: 2, Through: 4, Hash: second.ThroughHash}) || skip.Records() != 2 {
+		t.Fatalf("skip = %+v %v %v; want 2 through 4", skip, moved, err)
+	}
+	if _, moved, _ := st.Feed().Skip(ctx, tenantA, sinkB, "proxy:p1"); moved {
+		t.Error("one run was skipped twice")
+	}
+	pos, err := st.Feed().Position(ctx, tenantA, sinkB, "proxy:p1")
+	if err != nil || pos.ConfirmedSeq != 4 || pos.ConfirmedHash != second.ThroughHash || pos.SkippedRecords != 2 || pos.SkippedBehind != 2 {
+		t.Errorf("after the skip %+v, %v", pos, err)
+	}
+	if lag, err := st.Feed().Lag(ctx, tenantA, sinkB); err != nil || lag.SkippedByRetention != 2 || lag.StreamsBehind != 1 {
+		t.Errorf("lag = %+v, %v; want 2 skipped and the stream behind", lag, err)
+	}
+	if lag, _ := st.Feed().Lag(ctx, tenantA, sinkA); lag.SkippedByRetention != 0 {
+		t.Errorf("sink A's lag counts sink B's skip: %+v", lag)
+	}
+
+	if _, err := st.Feed().Confirm(ctx, tenantA, sinkB, "proxy:p1", 5, "h5"); err != nil {
+		t.Fatal(err)
+	}
+	if pos, _ := st.Feed().Position(ctx, tenantA, sinkB, "proxy:p1"); pos.SkippedBehind != 2 {
+		t.Errorf("a confirmation short of the head cleared the count: %+v", pos)
+	}
+	if _, err := st.Feed().Confirm(ctx, tenantA, sinkB, "proxy:p1", 6, "h6"); err != nil {
+		t.Fatal(err)
+	}
+	if pos, _ := st.Feed().Position(ctx, tenantA, sinkB, "proxy:p1"); pos.SkippedBehind != 0 || pos.SkippedRecords != 2 {
+		t.Errorf("caught up: %+v; want the lag's count cleared and the row's kept", pos)
+	}
+	if lag, _ := st.Feed().Lag(ctx, tenantA, sinkB); lag.SkippedByRetention != 0 || lag.StreamsBehind != 0 {
+		t.Errorf("caught up, the lag is %+v", lag)
+	}
+
+	if _, moved, err := st.Feed().Skip(ctx, tenantA, sinkB, "control"); err != nil || moved {
+		t.Errorf("a stream with no position skipped: %v %v", moved, err)
+	}
+	if err := st.Feed().Begin(ctx, tenantA, store.ArchiveConsumer, "proxy:p1"); !store.IsInvalid(err) {
+		t.Errorf("the archive began at a marker: %v", err)
+	}
+	if _, _, err := st.Feed().Skip(ctx, tenantA, store.ArchiveConsumer, "proxy:p1"); !store.IsInvalid(err) {
+		t.Errorf("the archive skipped: %v", err)
+	}
+	if _, err := st.Feed().Position(ctx, tenantB, sinkB, "proxy:p1"); !store.IsNotFound(err) {
+		t.Errorf("tenant B holds tenant A's sink position: %v", err)
+	}
+}
+
+// A failed attempt holds the lease over its backoff and marks the stream
+// failing, from the first failure of a run; another node's failure while the
+// lease is held changes nothing; a confirmation, or Recovered, ends the run.
+func TestAFailingStreamIsMarkedUntilDeliverySucceeds(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	sink := store.SinkConsumer("example.com/a")
+	appendRecords(t, st, tenantA, "control", 1, 2)
+	if err := st.Feed().Begin(ctx, tenantA, sink, "control"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := st.Feed().Claim(ctx, tenantA, sink, "control", "n1", time.Hour); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if err := st.Feed().Fail(ctx, tenantA, sink, "control", "n1", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	pos, _ := st.Feed().Position(ctx, tenantA, sink, "control")
+	if pos.FailingSince.IsZero() || pos.LeaseHolder != "n1" {
+		t.Fatalf("after a failure %+v", pos)
+	}
+	since := pos.FailingSince
+	time.Sleep(5 * time.Millisecond)
+	if err := st.Feed().Fail(ctx, tenantA, sink, "control", "n1", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Feed().Fail(ctx, tenantA, sink, "control", "n2", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	pos, _ = st.Feed().Position(ctx, tenantA, sink, "control")
+	if !pos.FailingSince.Equal(since) || pos.LeaseHolder != "n1" {
+		t.Errorf("a later failure moved the run's start, or another node took the lease: %+v", pos)
+	}
+	if lag, err := st.Feed().Lag(ctx, tenantA, sink); err != nil || !lag.Failing {
+		t.Errorf("lag = %+v, %v; want failing", lag, err)
+	}
+	if lag, _ := st.Feed().Lag(ctx, tenantA, store.SinkConsumer("example.com/b")); lag.Failing {
+		t.Error("another sink reads as failing")
+	}
+
+	if _, err := st.Feed().Confirm(ctx, tenantA, sink, "control", 1, "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if lag, _ := st.Feed().Lag(ctx, tenantA, sink); lag.Failing {
+		t.Error("a confirmation did not end the run")
+	}
+	if err := st.Feed().Fail(ctx, tenantA, sink, "control", "n1", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Feed().Recovered(ctx, tenantA, sink, "control"); err != nil {
+		t.Fatal(err)
+	}
+	if pos, _ := st.Feed().Position(ctx, tenantA, sink, "control"); !pos.FailingSince.IsZero() {
+		t.Errorf("Recovered left %+v", pos)
+	}
+}

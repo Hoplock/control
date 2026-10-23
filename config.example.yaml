@@ -293,6 +293,32 @@ audit:
     idle_interval: 5s
     backoff_cap: 5m
 
+  # Delivery to every registered audit sink (`ext.AuditSink`, phase 0026): a
+  # SIEM, a queue, a file drop. Read only when a host registers one; with none,
+  # nothing here runs. Each sink is handed every committed record of every
+  # tenant, one stream's records per batch in ascending sequence, at least once,
+  # from a position Control keeps per sink, tenant and stream. Delivery runs off
+  # ingest and the decision path, and one sink, tenant or stream that fails or
+  # hangs holds back no other. Retention does not wait on a sink: one a pass
+  # overtakes resumes after the pass's marker, and the gap is counted on its
+  # lag and explained by the pass's `operator.audit.retained` record. These
+  # apply to every sink alike, and apart from the archive's keys above.
+  #
+  # `batch_records` may not exceed `max_batch_records`, and the zero default is
+  # the smaller of 500 and it. `attempt_timeout` is the deadline on each Export;
+  # one that runs past it confirms nothing and is offered again. `idle_interval`
+  # is how long delivery waits with nothing to deliver. A stream whose Export
+  # fails is retried after a second, doubling up to `backoff_cap` (at least 1s).
+  # `max_in_flight` is the most batches in flight to one sink at once, never two
+  # of one stream; an Export past its deadline counts until it returns. A zero
+  # takes the default.
+  sinks:
+    batch_records: 500
+    attempt_timeout: 30s
+    idle_interval: 5s
+    backoff_cap: 5m
+    max_in_flight: 4
+
   # Records are read back over the north-bound audit query
   # (`GET /api/v1/tenants/{tenant}/audit/records/{record_id}` and its
   # siblings), under a scoped credential holding `audit:read`.

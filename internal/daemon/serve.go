@@ -123,10 +123,27 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	if err != nil {
 		return err
 	}
-	var trackArchive func(store.Tenant)
+	// Delivery to every registered sink (0026), nil with none, built and
+	// told of tenants the way the archive's feed is.
+	sinks, err := buildSinkDelivery(cfg, st, extensions, log)
+	if err != nil {
+		return err
+	}
+	var trackers []func(store.Tenant)
 	if feed != nil {
-		trackArchive = feed.Track
-		feed.Track(store.Tenant(cfg.Tenant))
+		trackers = append(trackers, feed.Track)
+	}
+	if sinks != nil {
+		trackers = append(trackers, sinks.Track)
+	}
+	var trackFeeds func(store.Tenant)
+	if len(trackers) > 0 {
+		trackFeeds = func(t store.Tenant) {
+			for _, track := range trackers {
+				track(t)
+			}
+		}
+		trackFeeds(store.Tenant(cfg.Tenant))
 	}
 
 	// The audit ingester. It is built with the store directly and holds no
@@ -140,7 +157,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 			MaxRecordBytes:  cfg.Audit.MaxRecordBytes,
 			MaxCaptureBytes: cfg.Audit.MaxCaptureBytes,
 		},
-		Track: trackArchive,
+		Track: trackFeeds,
 	})
 	if err != nil {
 		return err
@@ -208,7 +225,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		Identity:        auth,
 		Fleet:           registry,
 		Decision:        decisions,
-		Events:          trackSubscriptions(bus, grants, registry, trackArchive),
+		Events:          trackSubscriptions(bus, grants, registry, trackFeeds),
 		Logs:            ingest,
 		Logger:          log,
 		MaxBodyBytes:    cfg.South.MaxBodyBytes,
@@ -261,14 +278,18 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	if feed != nil {
 		deps.archive = feed
 	}
+	if sinks != nil {
+		deps.sinks = sinks
+	}
 	northSrv, northHandler, err := buildNorth(ctx, cfg, deps, h, log)
 	if err != nil {
 		return err
 	}
 
-	// The archive feed starts after the registry was sealed and before the
-	// listeners open, for the server's lifetime, and stops before the store
-	// closes on every way out of here, bounded by the shutdown grace.
+	// The archive feed and sink delivery start after the registry was sealed
+	// and before the listeners open, for the server's lifetime, and stop
+	// before the store closes on every way out of here, bounded by the
+	// shutdown grace.
 	if feed != nil {
 		feed.Start(ctx)
 		defer func() {
@@ -276,6 +297,16 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 			defer cancel()
 			if err := feed.Stop(stopCtx); err != nil {
 				log.Warn("the archive feed did not stop inside the shutdown grace", "error", err)
+			}
+		}()
+	}
+	if sinks != nil {
+		sinks.Start(ctx)
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
+			defer cancel()
+			if err := sinks.Stop(stopCtx); err != nil {
+				log.Warn("sink delivery did not stop inside the shutdown grace", "error", err)
 			}
 		}()
 	}
@@ -333,11 +364,16 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		log.Warn("the north-bound listener did not shut down cleanly", "error", err)
 	}
 	stopPolling()
-	// A batch the archive has not confirmed by now is offered again at the
-	// next start; the feed abandons a call that has not returned.
+	// A batch the archive or a sink has not confirmed by now is offered
+	// again at the next start; a call that has not returned is abandoned.
 	if feed != nil {
 		if err := feed.Stop(shutdownCtx); err != nil {
 			log.Warn("the archive feed did not stop inside the shutdown grace", "error", err)
+		}
+	}
+	if sinks != nil {
+		if err := sinks.Stop(shutdownCtx); err != nil {
+			log.Warn("sink delivery did not stop inside the shutdown grace", "error", err)
 		}
 	}
 	if err := notifier.Close(shutdownCtx); err != nil {
