@@ -56,6 +56,7 @@ type Server struct {
 	emitter     *audit.Emitter
 	reader      *audit.Reader
 	extensions  *ext.Extensions
+	archive     ArchiveFeed
 	mapping     decision.ActiveMapping
 
 	maxBodyBytes   int64
@@ -70,6 +71,15 @@ type Server struct {
 
 	router  *Router
 	handler http.Handler
+}
+
+// ArchiveFeed is what this surface knows of the feed to a registered archive
+// (0025): how far behind it is in a tenant, and that a tenant was acted in, so
+// a feed that had not seen the tenant since this process started begins
+// delivering it. It is an interface so this package names no feed.
+type ArchiveFeed interface {
+	Lag(ctx context.Context, tenant store.Tenant) (store.FeedLag, error)
+	Track(tenant store.Tenant)
 }
 
 // Options configures a Server.
@@ -115,6 +125,10 @@ type Options struct {
 	// Extensions is the sealed registry, listed read-only (M15). Nil lists
 	// what Control does at every point with nothing registered.
 	Extensions *ext.Extensions
+	// Archive is the feed to the registered ext.ArchiveStore (0025), whose
+	// lag the extension listing shows for the caller's tenant. Nil when no
+	// archive is registered.
+	Archive ArchiveFeed
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -197,6 +211,7 @@ func New(o Options) (*Server, error) {
 		emitter:        o.Audit,
 		reader:         o.AuditReader,
 		extensions:     o.Extensions,
+		archive:        o.Archive,
 		mapping:        decision.StoredActiveMapping(o.Store),
 	}
 	if s.reader == nil {

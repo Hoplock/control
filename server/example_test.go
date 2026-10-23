@@ -23,6 +23,8 @@ type archive struct{ retention string }
 
 func (a *archive) Archive(context.Context, []ext.AuditRecord) error { return nil }
 
+func (a *archive) ArchiveCaptures(context.Context, []ext.Capture) error { return nil }
+
 func (a *archive) Search(context.Context, ext.ArchiveQuery) (ext.ArchivePage, error) {
 	return ext.ArchivePage{}, nil
 }

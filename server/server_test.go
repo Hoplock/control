@@ -129,7 +129,8 @@ func (s *sectionRecorder) got() map[string][]byte {
 // fakeArchive is the extension the test host registers.
 type fakeArchive struct{}
 
-func (fakeArchive) Archive(context.Context, []ext.AuditRecord) error { return nil }
+func (fakeArchive) Archive(context.Context, []ext.AuditRecord) error     { return nil }
+func (fakeArchive) ArchiveCaptures(context.Context, []ext.Capture) error { return nil }
 func (fakeArchive) Search(context.Context, ext.ArchiveQuery) (ext.ArchivePage, error) {
 	return ext.ArchivePage{}, nil
 }

@@ -12,6 +12,10 @@
   enforce all of it. It
   is binding under M20, and it is not a style suggestion you may improve on
   mid-implementation — if it is wrong, change it in this PR and say so.
+- `docs/learnings/0025-archive-before-retention-learnings.md` — the summary
+  block, and `docs/PLAN.md` **M8** with §7 at "Retention has to remove a
+  chain's TAIL", for the archive's lag on `GET …/extensions` and the retention
+  answers the audit view shows (below).
 - `docs/learnings/` — read summaries; open `0019` (**the API this consumes** —
   every route and its required role), `0011` (RBAC), `0010` (audit query),
   `0006` (proxy health), and `0028` with the chunks it queued: every list this
@@ -119,6 +123,20 @@ is written so that half can fail a review rather than merely disappoint one.
      whose chain verifies is never rendered as "nothing missing" (PLAN §7).
      Gaps that belong to no session appear in a per-proxy view of the stream,
      placed by span.
+
+     **What the archive holds, and what retention waited for** (0025). With
+     an archive registered, the audit view shows its lag for the tenant from
+     the archive row of `GET …/extensions` (`lag`: `streams_behind`,
+     `oldest_unconfirmed_at`, `captures_waiting`), and says plainly when the
+     archive is caught up. It is a delivery fact, never an outage and never
+     tampering (M11, PLAN §7). A retention pass the archive held back says so:
+     the answer's `held_by_archive` and `archived_through_seq` after a pass the
+     operator ran here, and the `operator.audit.retained` record's
+     `operator.held_by_archive` in the trail. A pass by sequence refused with
+     `409 retention_not_archived` is shown as a refusal that deleted nothing,
+     naming the stream and `archived_through_seq`, and offers the pass by
+     instant, which deletes as far as the archive holds. With no archive
+     registered, none of this appears.
   4. **Policy** — bundle versions, diff, validation errors inline against the
      source, **simulate** a candidate against recorded traffic, activate,
      roll back. **Before a route's `algorithm_floor` is raised, preview the
@@ -326,6 +344,10 @@ becomes a test that runs today.
 - The emergency runbook drives 0019's three calls in order, shows the kill
   `reason` before sending it, and cannot finish without the `cache_invalidate`
   step. An end-to-end test walks it.
+- With a fake archive registered and behind, the audit view shows its lag;
+  a retention pass by sequence beyond it renders `retention_not_archived` as
+  a refusal that deleted nothing; and a pass by instant renders as held back
+  by the archive. With none registered, no lag is shown. Assert each.
 - Against a seeded fixture, the audit view shows an `evicted` gap and a
   `refused` gap in one session's timeline at their spans, as different states,
   and neither of them as denied. It shows two reports of one cause summed. It

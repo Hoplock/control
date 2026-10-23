@@ -233,6 +233,39 @@ type AuditRepository interface {
 	CaptureRetention(ctx context.Context, tenant Tenant) (CaptureRetention, error)
 }
 
+// FeedRepository keeps how far each consumer of the audit store has confirmed
+// each stream, and the lease that keeps one node feeding a stream at a time
+// (0025). Positions only move forward, and a retention pass with an archive
+// registered deletes no further than ArchivedThrough.
+type FeedRepository interface {
+	// Streams lists a tenant's streams with their heads, retention markers
+	// and the consumer's positions, by stream.
+	Streams(ctx context.Context, tenant Tenant, consumer string) ([]FeedStream, error)
+	// Position returns one stream's position. A stream the consumer was
+	// never fed is ErrNotFound.
+	Position(ctx context.Context, tenant Tenant, consumer, stream string) (FeedPosition, error)
+	// Claim takes or renews the lease to feed a stream, answering whether
+	// holder now holds it.
+	Claim(ctx context.Context, tenant Tenant, consumer, stream, holder string, ttl time.Duration) (FeedPosition, bool, error)
+	// Release gives up a lease holder holds.
+	Release(ctx context.Context, tenant Tenant, consumer, stream, holder string) error
+	// Confirm moves a position forward to a confirmed record, never back.
+	Confirm(ctx context.Context, tenant Tenant, consumer, stream string, seq int64, hash string) (FeedPosition, error)
+	// PendingCaptures returns a stream's captures waiting for the archive
+	// whose records it confirmed, bounded by a count and by bytes.
+	PendingCaptures(ctx context.Context, tenant Tenant, stream string, throughSeq int64, limit int, maxBytes int64) ([]FeedCapture, error)
+	// ConfirmCaptures marks captures as confirmed by the archive.
+	ConfirmCaptures(ctx context.Context, tenant Tenant, recordIDs []string) (int64, error)
+	// ArchivedThrough is the last sequence of a stream the archive holds
+	// whole, records and captures; zero when it holds none.
+	ArchivedThrough(ctx context.Context, tenant Tenant, stream string) (int64, error)
+	// EarliestUnarchivedCapture is the earliest recorded_at of a record
+	// whose capture the archive has not confirmed.
+	EarliestUnarchivedCapture(ctx context.Context, tenant Tenant) (time.Time, bool, error)
+	// Lag is how far behind a consumer is in a tenant, as scalars.
+	Lag(ctx context.Context, tenant Tenant, consumer string) (FeedLag, error)
+}
+
 // GrantRepository stores JIT access grants (M10).
 type GrantRepository interface {
 	// Insert stores a grant. A duplicate id is ErrConflict.

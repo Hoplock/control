@@ -68,6 +68,9 @@ var repositoryInterfaces = map[string]reflect.Type{
 	"TargetHostKeyRepository":   reflect.TypeOf((*TargetHostKeyRepository)(nil)).Elem(),
 	"UIDLeaseRepository":        reflect.TypeOf((*UIDLeaseRepository)(nil)).Elem(),
 	"ProxyTokenRepository":      reflect.TypeOf((*ProxyTokenRepository)(nil)).Elem(),
+
+	// The audit feed's positions (0025).
+	"FeedRepository": reflect.TypeOf((*FeedRepository)(nil)).Elem(),
 }
 
 // Tenancy is unforgeable at the repository boundary (M18).
@@ -160,6 +163,8 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"TargetHostKeyRepository":   s.TargetHostKeys(),
 		"UIDLeaseRepository":        s.UIDLeases(),
 		"ProxyTokenRepository":      s.ProxyTokens(),
+
+		"FeedRepository": s.Feed(),
 	}
 
 	if len(got) != len(repositoryInterfaces) {
@@ -610,6 +615,29 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"SoftwareKeys.Insert": func() error { return s.SoftwareKeys().Insert(ctx, "", SoftwareKey{}) },
 		"SoftwareKeys.List":   func() error { _, err := s.SoftwareKeys().List(ctx, ""); return err },
 		"SoftwareKeys.Delete": func() error { return s.SoftwareKeys().Delete(ctx, "", "k") },
+
+		"Feed.Streams":  func() error { _, err := s.Feed().Streams(ctx, "", ArchiveConsumer); return err },
+		"Feed.Position": func() error { _, err := s.Feed().Position(ctx, "", ArchiveConsumer, "s"); return err },
+		"Feed.Claim": func() error {
+			_, _, err := s.Feed().Claim(ctx, "", ArchiveConsumer, "s", "n", time.Second)
+			return err
+		},
+		"Feed.Release": func() error { return s.Feed().Release(ctx, "", ArchiveConsumer, "s", "n") },
+		"Feed.Confirm": func() error {
+			_, err := s.Feed().Confirm(ctx, "", ArchiveConsumer, "s", 1, "h")
+			return err
+		},
+		"Feed.PendingCaptures": func() error {
+			_, err := s.Feed().PendingCaptures(ctx, "", "s", 1, 1, 1)
+			return err
+		},
+		"Feed.ConfirmCaptures": func() error { _, err := s.Feed().ConfirmCaptures(ctx, "", []string{"r"}); return err },
+		"Feed.ArchivedThrough": func() error { _, err := s.Feed().ArchivedThrough(ctx, "", "s"); return err },
+		"Feed.EarliestUnarchivedCapture": func() error {
+			_, _, err := s.Feed().EarliestUnarchivedCapture(ctx, "")
+			return err
+		},
+		"Feed.Lag": func() error { _, err := s.Feed().Lag(ctx, "", ArchiveConsumer); return err },
 	}
 
 	if got, want := len(calls), totalRepositoryMethods(); got != want {

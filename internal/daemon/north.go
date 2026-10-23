@@ -42,6 +42,9 @@ type northDeps struct {
 	fleet       *fleet.Registry
 	revocations *revoke.Operator
 	extensions  *ext.Extensions
+	// archive is the feed to a registered archive (0025), nil when none is
+	// registered — a nil interface, never a typed nil.
+	archive north.ArchiveFeed
 }
 
 // buildNorth assembles the federation service, the policy lifecycle and the
@@ -78,6 +81,7 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 		Revocations:     d.revocations,
 		Audit:           d.emitter,
 		Extensions:      d.extensions,
+		Archive:         d.archive,
 		MaxPushBytes:    cfg.AccessContext.MaxPushBytes,
 		Logger:          log,
 		MaxBodyBytes:    cfg.North.MaxBodyBytes,

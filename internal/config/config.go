@@ -76,6 +76,26 @@ const (
 	// be.
 	DefaultAuditMaxRecordBytes  = 64 << 10
 	DefaultAuditMaxCaptureBytes = 1 << 20
+	// DefaultAuditMaxBatchRecords is what a zero `audit.max_batch_records`
+	// takes, restated for the same reason and held by the same test: the
+	// archive feed's batch may not exceed it.
+	DefaultAuditMaxBatchRecords = 1000
+	// The archive feed's defaults (0025), each the value a zero
+	// `audit.archive.<key>` takes. A batch of 500 records is about one
+	// ingest batch's worth; 16 MiB of captures is sixteen of the largest
+	// capture the shipped bounds store; an attempt has as long as a
+	// north-bound request does; an idle feed looks again every five seconds,
+	// so a record reaches the archive within about that of its commit; and a
+	// failing archive is retried at least every five minutes.
+	DefaultArchiveBatchRecords            = 500
+	DefaultArchiveCaptureBatchBytes int64 = 16 << 20
+	DefaultArchiveAttemptTimeout          = 30 * time.Second
+	DefaultArchiveIdleInterval            = 5 * time.Second
+	DefaultArchiveBackoffCap              = 5 * time.Minute
+	// MinArchiveBackoffCap is the smallest backoff cap accepted: the feed's
+	// first retry waits a second, and a cap below it would retry a failing
+	// archive in a loop.
+	MinArchiveBackoffCap = time.Second
 	// LogRecordEnvelopeBytes is the room one record needs on a log path
 	// beside its capture and its canonical body: the request's own keys, the
 	// record's field names and its payload key. Generous by design: it only
@@ -230,6 +250,33 @@ type AuditConfig struct {
 	MaxBatchRecords int `yaml:"max_batch_records"`
 	MaxRecordBytes  int `yaml:"max_record_bytes"`
 	MaxCaptureBytes int `yaml:"max_capture_bytes"`
+	// Archive bounds the feed to a registered ext.ArchiveStore (0025). It
+	// is read only when an archive is registered.
+	Archive ArchiveFeedConfig `yaml:"archive"`
+}
+
+// ArchiveFeedConfig bounds the feed that hands a registered ext.ArchiveStore
+// every committed record and capture (0025, PLAN §7). Each zero takes its
+// default, and each is bounded at start-up: the feed runs off ingest and the
+// decision path (M5), so what it costs is the database's time and the archive's,
+// never a proxy's.
+type ArchiveFeedConfig struct {
+	// BatchRecords is the most records one Archive call carries, one
+	// stream's. It is no larger than audit.max_batch_records.
+	BatchRecords int `yaml:"batch_records"`
+	// CaptureBatchBytes is the most capture bytes one ArchiveCaptures call
+	// carries. It is at least audit.max_capture_bytes, so the largest
+	// capture this server stores fits a batch of its own.
+	CaptureBatchBytes int64 `yaml:"capture_batch_bytes"`
+	// AttemptTimeout is the deadline on each call to the archive. A call
+	// that runs past it confirms nothing and is retried.
+	AttemptTimeout time.Duration `yaml:"attempt_timeout"`
+	// IdleInterval is how long the feed waits, with nothing to deliver,
+	// before it looks again.
+	IdleInterval time.Duration `yaml:"idle_interval"`
+	// BackoffCap is the longest wait between attempts on a stream whose
+	// archive call keeps failing. The wait starts at a second and doubles.
+	BackoffCap time.Duration `yaml:"backoff_cap"`
 }
 
 // EventsConfig is the revocation stream (PLAN M9, §4).
@@ -618,6 +665,7 @@ func (c *Config) applyDefaults() {
 		c.Grants.WorkflowPollInterval = DefaultGrantWorkflowPollInterval
 	}
 	c.AccessContext.applyDefaults()
+	c.Audit.Archive.applyDefaults(c.Audit)
 	if c.Notify.WebhookTimeout == 0 {
 		c.Notify.WebhookTimeout = DefaultWebhookTimeout
 	}
@@ -939,7 +987,63 @@ func (a AuditConfig) validate() error {
 		}
 	}
 
+	return a.Archive.validate(a)
+}
+
+// applyDefaults fills the archive feed's zeros. The batch's default is no
+// larger than the ingest batch bound, which an operator may have set lower.
+func (a *ArchiveFeedConfig) applyDefaults(audit AuditConfig) {
+	if a.BatchRecords == 0 {
+		a.BatchRecords = min(DefaultArchiveBatchRecords, maxBatchRecords(audit))
+	}
+	if a.CaptureBatchBytes == 0 {
+		a.CaptureBatchBytes = max(DefaultArchiveCaptureBatchBytes, int64(maxCaptureBytes(audit)))
+	}
+	if a.AttemptTimeout == 0 {
+		a.AttemptTimeout = DefaultArchiveAttemptTimeout
+	}
+	if a.IdleInterval == 0 {
+		a.IdleInterval = DefaultArchiveIdleInterval
+	}
+	if a.BackoffCap == 0 {
+		a.BackoffCap = DefaultArchiveBackoffCap
+	}
+}
+
+// validate reports the first archive feed setting that cannot be acted on,
+// after the defaults.
+func (a ArchiveFeedConfig) validate(audit AuditConfig) error {
+	switch {
+	case a.BatchRecords <= 0:
+		return &FieldError{Field: "audit.archive.batch_records", Msg: "must be a positive number of records, or absent for the default"}
+	case a.BatchRecords > maxBatchRecords(audit):
+		return &FieldError{Field: "audit.archive.batch_records", Msg: fmt.Sprintf(
+			"must be no more than audit.max_batch_records (%d)", maxBatchRecords(audit))}
+	case a.CaptureBatchBytes < int64(maxCaptureBytes(audit)):
+		return &FieldError{Field: "audit.archive.capture_batch_bytes", Msg: fmt.Sprintf(
+			"must be at least audit.max_capture_bytes (%d), so the largest capture fits a batch", maxCaptureBytes(audit))}
+	case a.AttemptTimeout <= 0:
+		return &FieldError{Field: "audit.archive.attempt_timeout", Msg: "must be a positive duration, or absent for the default"}
+	case a.IdleInterval <= 0:
+		return &FieldError{Field: "audit.archive.idle_interval", Msg: "must be a positive duration, or absent for the default"}
+	case a.BackoffCap < MinArchiveBackoffCap:
+		return &FieldError{Field: "audit.archive.backoff_cap", Msg: "must be at least 1s, or absent for the default"}
+	}
 	return nil
+}
+
+func maxBatchRecords(a AuditConfig) int {
+	if a.MaxBatchRecords <= 0 {
+		return DefaultAuditMaxBatchRecords
+	}
+	return a.MaxBatchRecords
+}
+
+func maxCaptureBytes(a AuditConfig) int {
+	if a.MaxCaptureBytes <= 0 {
+		return DefaultAuditMaxCaptureBytes
+	}
+	return a.MaxCaptureBytes
 }
 
 // MinLogBodyBytes is the smallest `south.max_log_body_bytes` that holds one

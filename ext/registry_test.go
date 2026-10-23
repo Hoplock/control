@@ -20,7 +20,8 @@ func (fakeSink) Export(context.Context, []ext.AuditRecord) error { return nil }
 // fakeArchive is a minimal ArchiveStore.
 type fakeArchive struct{ name string }
 
-func (fakeArchive) Archive(context.Context, []ext.AuditRecord) error { return nil }
+func (fakeArchive) Archive(context.Context, []ext.AuditRecord) error     { return nil }
+func (fakeArchive) ArchiveCaptures(context.Context, []ext.Capture) error { return nil }
 func (fakeArchive) Search(context.Context, ext.ArchiveQuery) (ext.ArchivePage, error) {
 	return ext.ArchivePage{}, nil
 }

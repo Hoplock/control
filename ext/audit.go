@@ -5,7 +5,10 @@ package ext
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
+	"strconv"
 	"time"
 )
 
@@ -13,26 +16,50 @@ import (
 // crosses this seam. It carries the chain position as well as the content,
 // because a sink that wants to prove it received everything needs to be able
 // to see a gap, and a sink that re-receives a record needs to recognise it.
+//
+// It carries everything the record's link covers — Tenant, Stream, Sequence,
+// PrevHash and Body — so whoever holds it can recompute ChainHash with
+// ChainLink and walk the chain without asking Control to vouch for it.
 type AuditRecord struct {
 	// Tenant owns the record.
 	Tenant Tenant
 	// RecordID is the store's identifier for the record. It is stable and
 	// unique per tenant, and it is what makes export idempotent.
 	RecordID string
-	// Sequence is the record's position in the tenant's hash chain.
-	// Consecutive sequences with no gap is the sink-side proof that nothing
-	// was dropped.
+	// Stream names the chain the record belongs to. A tenant's records form
+	// one hash chain per stream (M8): `control` for Control's own records,
+	// `proxy:<id>` for a proxy's, and `unattributed` for records ingested by
+	// a credential bound to no proxy. Sequence is a position in this chain,
+	// so two streams' sequences are unrelated and only (Tenant, Stream,
+	// Sequence) names a position.
+	Stream string
+	// Sequence is the record's position in its stream's hash chain, from 1.
+	// Consecutive sequences with no gap within one stream is the sink-side
+	// proof that nothing was dropped; the first sequence an archive receives
+	// in a stream is one after the stream's retention marker when Control had
+	// retained a prefix before the archive was registered, and the
+	// `operator.audit.retained` record on the control stream says so.
 	Sequence uint64
-	// ChainHash is the chain hash at this record, so a sink can verify the
-	// chain it was handed without asking Control to vouch for it.
+	// PrevHash is the ChainHash of the record before this one in the stream,
+	// and empty at Sequence 1.
+	PrevHash string
+	// ChainHash is the chain hash at this record: ChainLink over Tenant,
+	// Stream, Sequence, PrevHash and Body. A holder of a run of records
+	// verifies it by recomputing each ChainHash and checking that each
+	// PrevHash is the ChainHash before it.
 	ChainHash string
+	// Body is the canonical JSON Control hashed, verbatim, as the chain
+	// covers it. Every other field here except the chain's own is derived
+	// from it. A session capture's digest is inside it; the bytes are not
+	// (Capture).
+	Body string
 	// OccurredAt is when the recorded thing happened, not when it was
 	// exported.
 	OccurredAt time.Time
 	// Kind is a stable event code — never a rendered sentence (M21).
 	Kind string
-	// SubjectID, TargetID, SessionID and DecisionID tie the record to the
-	// rest of the story; any of them may be empty.
+	// SubjectID, TargetID and SessionID tie the record to the rest of the
+	// story; any of them may be empty.
 	SubjectID string
 	TargetID  string
 	SessionID string
@@ -41,6 +68,64 @@ type AuditRecord struct {
 	DecisionID string
 	// Attributes are the record's structured fields, codes rather than prose.
 	Attributes map[string]string
+}
+
+// ChainVersion is the encoding ChainLink computes, and it is inside every link.
+// A later encoding is a new version, computed by a new function beside this
+// one, and never a change to this one: an archive verifies records written
+// years earlier, and a link that changed meaning under it would make a record
+// it holds verify under two readings, or under none.
+const ChainVersion = "hoplock.chain/1"
+
+// ChainLink computes the hash of a record at a position in a chain, exactly as
+// Control's own chain does: Control computes every link it stores by calling
+// this function, so the two cannot differ.
+//
+// The encoding, which is a promise: SHA-256 over six parts, each written as its
+// length in bytes in decimal ASCII, a colon, and the part itself — ChainVersion,
+// the tenant, the stream, the sequence in decimal ASCII, prevHash, and body —
+// rendered as `sha256:` followed by the lower-case hex digest. The length
+// prefixes are what keep two different tuples from producing one byte stream.
+// The tenant and the stream are inside the hash, so a record moved to another
+// tenant's chain, or another stream, at the same position does not verify
+// (M18).
+//
+// What a verified run proves is what Control's verifier proves: no record in
+// it was altered, reordered or removed from between two others. It does not
+// prove that nothing was removed from either end, and it is no defence against
+// whoever can rewrite a whole stream (PLAN §7).
+func ChainLink(tenant Tenant, stream string, sequence uint64, prevHash, body string) string {
+	h := sha256.New()
+	for _, part := range []string{ChainVersion, string(tenant), stream, strconv.FormatUint(sequence, 10), prevHash, body} {
+		_, _ = io.WriteString(h, strconv.Itoa(len(part)))
+		_, _ = io.WriteString(h, ":")
+		_, _ = io.WriteString(h, part)
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil))
+}
+
+// Capture is one session capture's bytes as they cross the seam to an archive
+// (ArchiveStore.ArchiveCaptures). The record it belongs to carries its digest
+// inside the hashed Body, so the chain covers the bytes without carrying them;
+// Control offers a capture only after the archive has confirmed that record.
+type Capture struct {
+	// Tenant owns the capture.
+	Tenant Tenant
+	// RecordID is the record whose digest covers these bytes, and what makes
+	// archiving a capture idempotent.
+	RecordID string
+	// SessionID is the session the capture is of.
+	SessionID string
+	// Digest is the record's `capture_sha256`, verbatim as the chain covers
+	// it: `sha256:` followed by the lower-case hex SHA-256 of Body's bytes.
+	// An archive that recomputes it from what it read can tell a capture it
+	// stored intact from one that was changed.
+	Digest string
+	// Size is the record's `capture_bytes`: how many bytes Body yields, so an
+	// archive can bound a read before it starts.
+	Size int64
+	// Body is the bytes. It is valid only until ArchiveCaptures returns.
+	Body io.Reader
 }
 
 // AuditSink exports audit records to a system outside Hoplock. What varies is
@@ -113,12 +198,47 @@ type ArchivePage struct {
 // extends it. This is a capability Control never claimed rather than one moved
 // out of it.
 //
-// Control will not delete a local record that an archive was asked for and has
-// not confirmed. Archive must therefore be idempotent on RecordID and must not
-// report success for a record it has not durably stored.
+// What Control does with one registered (0025):
+//
+//   - It hands the archive every record it commits, per tenant and per stream,
+//     in ascending Sequence, at least once: each batch holds one stream's
+//     records, contiguous from the last batch the archive confirmed in that
+//     stream. A stream Control had retained a prefix of before the archive was
+//     registered starts after its retention marker. A batch can arrive twice —
+//     after an error, after a restart, or from two nodes whose turns
+//     overlapped — so Archive and ArchiveCaptures must be idempotent on
+//     RecordID.
+//   - A nil return confirms the batch, and Control durably records how far the
+//     archive has confirmed each stream. An error confirms nothing, and the
+//     same records are offered again after a backoff. A stream that fails
+//     holds back no other stream and no other tenant.
+//   - It hands over each session capture's bytes through ArchiveCaptures once
+//     the record whose digest covers them is confirmed, so the archive always
+//     holds the record before its capture.
+//   - It never deletes a record, or empties a capture, that the archive has not
+//     confirmed, whether or not it was offered yet. A retention pass by
+//     sequence beyond the confirmation is refused (`409
+//     retention_not_archived`), a pass by instant stops at it, and a capture
+//     pass stops before the earliest capture not yet confirmed; each answer
+//     says the archive held it back.
+//   - Delivery runs off ingest and the decision path: no proxy's request waits
+//     on the archive, and an archive that never returns slows nothing but the
+//     delivery to it.
+//   - Control calls Search nowhere. It is the host's, for its own routes.
+//
+// So Archive and ArchiveCaptures must not report success for anything they have
+// not durably stored: a nil return is what lets Control delete its own copy.
 type ArchiveStore interface {
-	// Archive stores a batch durably, in ascending Sequence order.
+	// Archive stores a batch of one stream's records durably, in ascending
+	// Sequence order. The context carries Control's deadline for the
+	// attempt.
 	Archive(ctx context.Context, batch []AuditRecord) error
+	// ArchiveCaptures stores a batch of session captures durably. Each
+	// capture's record was confirmed by Archive before it is offered. The
+	// batch is bounded by count and by total Size, and each Body is valid
+	// only until the call returns. The context carries Control's deadline
+	// for the attempt.
+	ArchiveCaptures(ctx context.Context, batch []Capture) error
 	// Search returns one page of archived records.
 	Search(ctx context.Context, q ArchiveQuery) (ArchivePage, error)
 }

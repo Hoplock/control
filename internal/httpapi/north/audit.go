@@ -5,6 +5,7 @@ package north
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -452,6 +453,16 @@ func (s *Server) auditFailure(w http.ResponseWriter, r *http.Request, op string,
 				"set credential.key_encryption_key_env and restart, or register an ext.KeyStore",
 			Parameters: map[string]any{"config_key": "credential.key_encryption_key_env"},
 		})
+	case audit.IsNotArchived(err):
+		var e *audit.NotArchivedError
+		errors.As(err, &e)
+		writeError(w, http.StatusConflict, Error{
+			Code: CodeRetentionNotArchived, CorrelationID: CorrelationIDFrom(r.Context()),
+			Parameters: map[string]any{"stream": e.Stream, "archived_through_seq": e.ArchivedThroughSeq},
+			Message: fmt.Sprintf("stream %s is archived through %d, so nothing was deleted: "+
+				"a pass by sequence deletes only what the archive has confirmed; pass an instant to delete as far as it has",
+				e.Stream, e.ArchivedThroughSeq),
+		})
 	case audit.IsRetentionUnverified(err):
 		var e *audit.RetentionUnverifiedError
 		errors.As(err, &e)
@@ -524,6 +535,7 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request) {
 		s.invalid(w, r, "through_seq", "exactly_one_of_through_seq_or_before", "")
 		return
 	}
+	s.trackArchive(tenant)
 	// The pass and its record are one transaction (internal/audit/retention.go).
 	out, err := s.emitter.RetainPrefix(r.Context(), tenant, audit.PrefixPass{
 		Stream: body.Stream, ThroughSeq: body.ThroughSeq, Before: body.Before,
@@ -532,10 +544,14 @@ func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request) {
 		s.auditFailure(w, r, "retain", err)
 		return
 	}
-	answer(w, http.StatusOK, map[string]any{
+	view := map[string]any{
 		"stream": out.Stream, "deleted": out.Deleted, "through_seq": out.ThroughSeq, "through_hash": out.ThroughHash,
-		"key": out.KeyName,
-	})
+		"key": out.KeyName, "held_by_archive": out.HeldByArchive,
+	}
+	if out.Archived {
+		view["archived_through_seq"] = out.ArchivedThroughSeq
+	}
+	answer(w, http.StatusOK, view)
 }
 
 type captureRetentionBody struct {
@@ -564,10 +580,23 @@ func (s *Server) handleCaptureRetention(w http.ResponseWriter, r *http.Request) 
 		s.invalid(w, r, "before", access.ProblemRequired, "")
 		return
 	}
+	s.trackArchive(tenant)
 	out, err := s.emitter.RetainCaptures(r.Context(), tenant, body.Before, actor)
 	if err != nil {
 		s.auditFailure(w, r, "retain captures", err)
 		return
 	}
-	answer(w, http.StatusOK, map[string]any{"captures": out.Emptied, "before": out.Before, "key": out.KeyName})
+	answer(w, http.StatusOK, map[string]any{
+		"captures": out.Emptied, "before": out.Before, "key": out.KeyName, "held_by_archive": out.HeldByArchive,
+	})
+}
+
+// trackArchive tells the archive feed, when there is one, that a retention pass
+// ran in a tenant. A pass the archive held back is one whose tenant the feed
+// must deliver, and this process may not have seen the tenant since it started:
+// the store cannot list tenants (M18).
+func (s *Server) trackArchive(tenant store.Tenant) {
+	if s.archive != nil {
+		s.archive.Track(tenant)
+	}
 }

@@ -19,6 +19,7 @@ type Ingester struct {
 	store  *store.Store
 	limits Limits
 	log    *slog.Logger
+	track  func(store.Tenant)
 }
 
 // Options configures an Ingester.
@@ -26,6 +27,12 @@ type Options struct {
 	Store  *store.Store
 	Limits Limits
 	Logger *slog.Logger
+	// Track, when set, is told the tenant of every submission this ingester
+	// writes, once the write returns. It is how the archive feed learns the
+	// tenants this process has seen, because the store cannot list them
+	// (M18, 0025). It must return at once: ingest never waits on anything
+	// downstream of the store (M5).
+	Track func(store.Tenant)
 }
 
 // New builds an Ingester.
@@ -41,7 +48,7 @@ func New(o Options) (*Ingester, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Ingester{store: o.Store, limits: o.Limits.orDefaults(), log: log}, nil
+	return &Ingester{store: o.Store, limits: o.Limits.orDefaults(), log: log, track: o.Track}, nil
 }
 
 // within returns this ingester writing inside an open transaction.
@@ -189,6 +196,9 @@ func (in *Ingester) Ingest(ctx context.Context, sub Submission) (Receipt, error)
 		})
 	if err != nil {
 		return Receipt{}, err
+	}
+	if in.track != nil {
+		in.track(sub.Tenant)
 	}
 
 	return Receipt{

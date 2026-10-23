@@ -18,9 +18,11 @@ import (
 // limit below it. This holds the two to each other.
 func TestTheConfigurationKnowsTheShippedBounds(t *testing.T) {
 	if DefaultLimits.MaxRecordBytes != config.DefaultAuditMaxRecordBytes ||
-		DefaultLimits.MaxCaptureBytes != config.DefaultAuditMaxCaptureBytes {
-		t.Fatalf("audit.DefaultLimits = %+v, and the configuration takes record %d, capture %d",
-			DefaultLimits, config.DefaultAuditMaxRecordBytes, config.DefaultAuditMaxCaptureBytes)
+		DefaultLimits.MaxCaptureBytes != config.DefaultAuditMaxCaptureBytes ||
+		DefaultLimits.MaxBatchRecords != config.DefaultAuditMaxBatchRecords {
+		t.Fatalf("audit.DefaultLimits = %+v, and the configuration takes record %d, capture %d, batch %d",
+			DefaultLimits, config.DefaultAuditMaxRecordBytes, config.DefaultAuditMaxCaptureBytes,
+			config.DefaultAuditMaxBatchRecords)
 	}
 }
 
