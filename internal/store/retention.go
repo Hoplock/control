@@ -236,6 +236,15 @@ type RetainCapturesOptions struct {
 	// Seal signs the watermark when the pass moves it forward. It is
 	// required.
 	Seal func(ctx context.Context, before time.Time) (RetentionSeal, error)
+	// Bound, when set, runs under the same lock before Check and answers the
+	// instant the pass runs to, given the one asked for. It may only bring
+	// the instant earlier, and the watermark is signed over what it answers.
+	// It is how an archive holds a capture pass back (0025).
+	Bound func(ctx context.Context, asked time.Time) (time.Time, error)
+	// ArchivedOnly empties only captures the archive has confirmed
+	// (audit_captures.archived_at), whatever the instant: a capture that
+	// arrived after Bound looked, recorded before the instant, is kept.
+	ArchivedOnly bool
 }
 
 // captureRetentionLockPrefix keys the advisory lock capture passes take, so a
@@ -310,6 +319,16 @@ func (r auditRepo) RetainCaptures(ctx context.Context, tenant Tenant, recordedBe
 		if err := lockCaptureRetention(ctx, op, q, tenant); err != nil {
 			return err
 		}
+		if o.Bound != nil {
+			bounded, err := o.Bound(ctx, recordedBefore)
+			if err != nil {
+				return err
+			}
+			if bounded.IsZero() || bounded.After(recordedBefore) {
+				return invalid(op, "a bound may only bring a capture pass earlier")
+			}
+			recordedBefore = bounded
+		}
 		var prior *CaptureRetention
 		switch got, err := r.captureRetention(ctx, op, q, tenant); {
 		case err == nil:
@@ -349,7 +368,8 @@ func (r auditRepo) RetainCaptures(ctx context.Context, tenant Tenant, recordedBe
 			SET bytes = ''::bytea, retained_at = now()
 			FROM audit_records a
 			WHERE c.tenant = $1 AND a.tenant = $1 AND a.record_id = c.record_id
-			  AND a.recorded_at < $2 AND c.retained_at IS NULL`, tenant, recordedBefore)
+			  AND a.recorded_at < $2 AND c.retained_at IS NULL
+			  AND (NOT $3 OR c.archived_at IS NOT NULL)`, tenant, recordedBefore, o.ArchivedOnly)
 		if err != nil {
 			return wrap(op, err)
 		}

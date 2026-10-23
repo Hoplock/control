@@ -269,6 +269,30 @@ audit:
   max_record_bytes: 65536
   max_capture_bytes: 1048576
 
+  # The feed to a registered archive (`ext.ArchiveStore`, phase 0025). Read only
+  # when a host registers one; with none, nothing here runs. The feed hands the
+  # archive every committed record, one stream's records per batch in ascending
+  # sequence, and each session capture once its record is confirmed, and it
+  # runs off ingest and the decision path: a slow or failing archive slows
+  # nothing but the feed. While an archive is registered, retention never
+  # deletes a record, or empties a capture, the archive has not confirmed.
+  #
+  # `batch_records` may not exceed `max_batch_records`, and the zero default is
+  # the smaller of 500 and it. `capture_batch_bytes` must be at least
+  # `max_capture_bytes`, so the largest capture fits a batch of its own.
+  # `attempt_timeout` is the deadline on each call to the archive; one that runs
+  # past it confirms nothing and is offered again. `idle_interval` is how long
+  # the feed waits with nothing to deliver, so a record reaches the archive
+  # within about that of its commit. A stream whose archive call fails is
+  # retried after a second, doubling up to `backoff_cap` (at least 1s), and a
+  # failing stream holds back no other. A zero takes the default.
+  archive:
+    batch_records: 500
+    capture_batch_bytes: 16777216
+    attempt_timeout: 30s
+    idle_interval: 5s
+    backoff_cap: 5m
+
   # Records are read back over the north-bound audit query
   # (`GET /api/v1/tenants/{tenant}/audit/records/{record_id}` and its
   # siblings), under a scoped credential holding `audit:read`.

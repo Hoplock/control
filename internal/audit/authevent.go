@@ -76,6 +76,9 @@ type Emitter struct {
 	// keys signs retention (0024). Nil is a deployment with no key store,
 	// whose retention passes are refused.
 	keys *RetentionKeys
+	// archived is set when an ext.ArchiveStore is registered (0025): a
+	// retention pass then deletes nothing the archive has not confirmed.
+	archived bool
 }
 
 // EmitterOption configures an Emitter.
@@ -85,6 +88,14 @@ type EmitterOption func(*Emitter)
 // it, retention is refused (ErrRetentionKeyNotConfigured).
 func WithRetentionSigner(keys *RetentionKeys) EmitterOption {
 	return func(e *Emitter) { e.keys = keys }
+}
+
+// WithArchive tells the emitter whether an archive is registered (0025). With
+// one, retention never removes a record, or empties a capture, the archive has
+// not confirmed; with none, both passes are exactly what they were, whatever
+// positions an earlier archive left in the store.
+func WithArchive(registered bool) EmitterOption {
+	return func(e *Emitter) { e.archived = registered }
 }
 
 // NewEmitter builds an emitter over an ingester.

@@ -103,7 +103,7 @@ decision.
 | **M5** | the decision path is stateless, bounded, cheap | live | §3, §10, §11 |
 | **M6** | the fleet is a graph, not a list | amended by M17 | §3, §5, §10 |
 | **M7** | identity is federated and short-lived | live | §6, §10 |
-| **M8** | audit is append-only and tamper-evident | live | §3, §7, §10 |
+| **M8** | audit is append-only and tamper-evident, and retention never outruns a registered archive | live | §3, §7, §10 |
 | **M9** | revocation is fan-out with replay, and the kill switch | live | §3, §5, §10, §11 |
 | **M10** | JIT grants are policy inputs, not a bolt-on | live | §3, §5, §6, §10 |
 | **M11** | `401` means deny; everything else means outage | live | §3, §4, §8 |
@@ -294,6 +294,20 @@ decision.
   marker or a retained capture a writer of the database wrote is a break of its
   own kind. Without a key store, retention is refused. What this claims, and
   what it does not, is §7's.
+
+  **With an archive registered, retention never removes what the archive has
+  not confirmed** (0025). Control feeds a registered `ext.ArchiveStore` every
+  committed record, per tenant and stream in ascending sequence, at least
+  once, and each session capture once its record is confirmed, and it keeps
+  how far the archive has confirmed each stream in the store, because that
+  changes an answer and so may not live on one node (M5). A pass deletes no
+  record, and empties no capture, beyond that confirmation, which it reads in
+  its own transaction under the lock it already takes; a pass by sequence
+  beyond it is refused, and a pass by instant stops at it. The feed runs off
+  ingest and the decision path: an archive that is down holds retention back
+  and never holds ingest (M5). With no archive registered, retention is what
+  the paragraphs above say and nothing more — the point stays disabled (M15),
+  and Control has no archive of its own (§11).
 - **M9 — Revocation is fan-out with replay, and it is the kill switch.** The
   proxy holds one long-lived outbound NDJSON subscription (proxy §6.4). This
   server fans an operator action out to every proxy that needs it, survives a
@@ -1119,6 +1133,7 @@ control/
 │   ├── authoring/          # the policy lifecycle: validate, upload, diff, activate, simulate (M4, M17)
 │   ├── revoke/             # event bus, subscriptions, replay buffer (M9)
 │   ├── audit/              # ingest, hash chain, query, retention (M8)
+│   ├── archive/            # the feed to a registered ext.ArchiveStore (M8, M5)
 │   ├── export/             # SIEM sinks (Splunk/Sentinel/Elastic)
 │   ├── access/             # time-boxed grants, workflow requests, revocation (M10)
 │   ├── accessctx/          # external access context: bindings, push, probe; declarative/ (M16)
@@ -1308,7 +1323,8 @@ for nothing.
   withdrawal, fleet configuration with its rollouts and rollback, the
   algorithm declarations and the target observations; the audit query
   (`…/audit/…`, §7) and its retention; the operator actions (`…/revocations`);
-  and the extension listing (`…/extensions`). Reads take the `…:read`
+  and the extension listing (`…/extensions`, whose archive row carries a
+  registered archive's lag for the caller's tenant as scalars). Reads take the `…:read`
   permission every reading role holds; each write takes the narrowest
   permission that names it (`policy:write` to upload, `policy:publish` to
   activate, `target:write`, `identity:write`, `fleet:write`,
@@ -1346,7 +1362,27 @@ for nothing.
   here, and every pass signs what it leaves behind with the tenant's retention
   key through `ext.KeyStore` (`audit.RetentionKeys`); the verifier checks those
   seals against the same key store, which the daemon and `audit-verify` both
-  build from the configuration and the host's registry (§7).
+  build from the configuration and the host's registry (§7). With an archive
+  registered, a pass also reads how far the archive holds the stream — the
+  feed's confirmation, and the captures it confirmed — in its own transaction,
+  and deletes or empties nothing beyond it (M8). The chain's link itself is
+  computed by `ext.ChainLink`, so an archive verifies what it was handed with
+  the code Control's chain uses.
+- **`internal/archive`** — the feed to a registered `ext.ArchiveStore` (0025):
+  every committed record, one stream's records per batch in ascending
+  sequence, and each capture once its record is confirmed, read from the store
+  after a position the store keeps per tenant, consumer and stream
+  (`audit_feed_positions`, with `audit_captures.archived_at` for captures). A
+  nil return moves the position, durably and only forward; an error moves
+  nothing and backs that stream off alone. A stream is fed by one node at a
+  time by a lease in its position row, by the database's clock, so it is
+  correct on several nodes without the shared event plane, and two nodes whose
+  turns overlap cost a duplicate batch and never a skipped record. It is off
+  ingest and the decision path (M5): the ingester only reports the tenants it
+  writes in, which is how the feed learns the tenants this process has seen,
+  since the store cannot list them (M18). `internal/daemon` builds it only
+  when an archive is registered, starts it after the registry is sealed and
+  before the listeners open, and stops it before the store closes.
 - **`cmd/policyctl`** — the policy lifecycle from a terminal and from CI, over
   the north-bound API and nothing else: `validate`, `diff`, `apply`,
   `activate`, `versions`, `simulate`, `explain`. It holds an API token, never a
@@ -2969,8 +3005,37 @@ not say why, and a grant the explanation names that the inputs do not hold.
   (`audit_capture_retention`), that a pass removed it. A capture pass ahead of
   the clock runs to now, because a watermark in the future would vouch for
   captures not yet recorded.
+
+  **With an archive registered, retention waits on it** (M8, 0025). The
+  archive holds a stream through the last sequence such that it confirmed
+  every record through it and every capture of those records still here
+  (`store.FeedRepository.ArchivedThrough`), and a pass reads that in its own
+  transaction and again under the stream's append lock. Both halves only
+  move forward, so the read can only under-delete. A pass by `through_seq`
+  beyond it is refused whole — `409 retention_not_archived`, with `stream` and
+  `archived_through_seq`, nothing deleted, sealed or recorded — because a pass
+  by sequence names exactly what to delete, and deleting less while calling it
+  done would be another act. A pass by `before` already means "as far as is
+  lawful", so it deletes through the lesser of what the instant reaches and
+  what the archive holds, is sealed and recorded as any pass is, and deletes
+  nothing when the archive is at or behind the marker. A capture pass runs no
+  further than the `recorded_at` of the earliest capture the archive has not
+  confirmed, read under the tenant's capture-retention lock, signs its
+  watermark over the instant it ran to, and empties only confirmed captures,
+  so a capture recorded earlier that arrives meanwhile is kept. Both answers
+  carry `held_by_archive` (`false` with no archive), the prefix pass's also
+  `archived_through_seq`, and `operator.audit.retained` the same facts.
 - **Export** — Splunk / Sentinel / Elastic sinks behind one interface, with
-  backpressure and retry. Downstream consumer only (M8).
+  backpressure and retry. Downstream consumer only (M8). A registered archive
+  is the first consumer of the store's feed (`internal/archive`, 0025): every
+  record, per tenant and stream in ascending sequence, at least once, from a
+  durable position per tenant, consumer and stream, off ingest and the
+  decision path. What crosses the seam is what the record's link covers —
+  `ext.AuditRecord`'s `Stream`, `Sequence`, `PrevHash`, `ChainHash` and the
+  hashed `Body` — so an archive recomputes each link with `ext.ChainLink` and
+  verifies a run without Control, and a capture's bytes cross after their
+  record (`ext.ArchiveStore.ArchiveCaptures`), with the digest the chain
+  covers. Sink delivery reuses the same feed with a position per sink (0026).
 - **Redaction** — the initial-auth password never reaches this server and must
   never be written even if a malformed record contains one. Assert it in tests,
   because "the proxy promises not to send it" is not a control on this side.
@@ -3088,7 +3153,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0022 | Audit of 0019, part 3: the policy lifecycle | the same for the publish-time report and its severity model, finding ids, upload, activation and rollback, validators and `ext.FindingWarning`'s new meaning, diff, replay's purity, dry-run, explain and `policyctl` (M3, M4, M17, M21, M15) |
 | 0023 | Audit of 0019, part 4: north-bound surface & the record | the same for the route table, RBAC, error codes, the operator audit of every write, each handler and a security review; then the record as a whole — the register, §3, §5.6, §10, `CHANGELOG.md` `v0.6.0` and what control#69 told `hoplock/enterprise` — reconciled after parts 1–3 (M2, M11, M18, M21, M24) |
 | 0024 | Signed retention markers | retention a writer of the database alone cannot forge, chosen over a control-chain cross-check, an in-stream checkpoint, keyed links and an external anchor: `audit_retention` and a per-tenant capture watermark signed over versioned, length-prefixed bytes by a per-tenant Ed25519 key behind `ext.KeyStore`, checked against the key store's signer and never a stored public half, a seal that does not hold a `retention-marker` break, retention refused without a key store or over a start that does not verify, and `hoplock-control audit-retention` to show and rotate the key; what `v0.6.0`–`v0.10.0` wrote unsigned stays a break, with no installed base to migrate (M8, M7, M15, M23) |
-| 0025 | An archive fed before retention deletes | Control feeds a registered `ext.ArchiveStore`: every committed record, per tenant and stream in ascending sequence, at least once, from durable per-stream positions in the store, off ingest and the decision path (M5), and correct on several nodes without the event plane; `ext.AuditRecord` made orderable and verifiable outside Control (`Stream`, `PrevHash`, the hashed `Body`, and the chain link computed in `ext`, the one implementation `audit.Link` calls); capture bytes handed across before a capture pass empties them (`ArchiveStore.ArchiveCaptures`, a `### Breaking` MINOR); a prefix pass never deletes, and a capture pass never empties, what the archive has not confirmed: by sequence refused (`409 retention_not_archived`), by instant held back, with the answer saying so; the archive's lag shown; with no archive registered, nothing changes (M8, M15, M5, M18, M11, M23). Raised by `Hoplock/enterprise#26`; depends only on merged phases (0010, 0019, 0024) |
+| 0025 | An archive fed before retention deletes | `internal/archive`, the feed to a registered `ext.ArchiveStore`: every committed record, one stream's records per batch in ascending sequence, at least once, from a durable position per tenant, consumer and stream (migration `0014`, `audit_feed_positions`), each capture after its record (`audit_captures.archived_at`), one node per stream by a lease in the position row, off ingest and the decision path (M5), correct on several nodes without the event plane, bounded by `audit.archive.*`; `ext.AuditRecord` gains `Stream`, `PrevHash` and the hashed `Body`, and `ext.ChainLink` (with `ext.ChainVersion`) is the one link implementation `audit.Link` calls; `ext.Capture` and `ArchiveStore.ArchiveCaptures`, `v0.12.0`'s `### Breaking`; a prefix pass never deletes, and a capture pass never empties, what the archive has not confirmed — by sequence `409 retention_not_archived`, by instant held back, a capture pass run to the earliest unconfirmed capture and signed there, every answer saying `held_by_archive`; the archive's lag on `GET …/extensions` for the caller's tenant; with no archive registered, nothing changes (M8, M15, M5, M18, M11, M23). Raised by `Hoplock/enterprise#26`; depends only on merged phases (0010, 0019, 0024) |
 | 0026 | Audit sink delivery | Control delivers to every registered `ext.AuditSink`: every committed record, per tenant and stream in ascending sequence, at least once, through 0025's feed generalised so the archive and each sink are consumers of one implementation, from a durable position per sink, tenant and stream in the store, the sink named by its `Registration.Provider`; off ingest and the decision path (M5), one sink, tenant or stream that fails stalling no other, never two batches of one stream in flight to one sink, and correct on several nodes without the event plane; retention never waits on a sink, and a sink behind a retained prefix resumes after the marker, with the gap counted and explained by `operator.audit.retained`; delivery writes no audit record of its own; each sink's lag shown on `GET …/extensions` for the caller's tenant; no `ext` signature changes, `AuditSink`'s doc comment saying what is now true; with no sink registered, nothing changes (M8, M15, M5, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0025 and on merged phases (0010, 0019) |
 | 0027 | Shared event plane | the event stream correct on several nodes: a revocation and a `config_changed` reach a proxy whichever node holds its stream, event ids and replay that survive a node and a restart, the subscription set the cache-hint gate reads shared rather than per node — Control's half, through `ext.ClusterCoordinator` and the store; the election and the cross-node transport stay Enterprise's (its E9) (M9, M5, M15, M18) |
 | 0028 | Bounded lists: audit and plan | every list this server answers, found by enumerating the router and the store's readers rather than from memory — the eight 0023 found answering a whole tenant (`targets`, `subjects`, `role-bindings`, `policy/bundles`, `proxies`, `fleet/config/rollouts`, `fleet/algorithms`, `fleet/target-observations`), the audit reads and per-session reads capped silently, and earlier phases' lists — each classified with its reader, its bound and its verdict; one bounded-list shape (a limit, a keyset cursor, an answer that says where it stopped) recorded as a decision; and the implementing prompts queued right after it in chunks each sized to keep its session under 60% context, the first building the mechanism and an enumerating test whose pending list each later chunk empties. It changes no behaviour (M19, M21, M5, M18, M15, M23) |

@@ -568,7 +568,7 @@ func TestTheCodeRegistryIsHeldWhole(t *testing.T) {
 		"invalid_request", "login_refused", "method_not_allowed", "not_found", "outside_scope",
 		"payload_too_large", "policy_blocked", "policy_invalid", "provider_not_found", "push_not_accepted",
 		"push_not_permitted", "push_not_supported", "rate_limited", "retention_key_not_configured",
-		"retention_unverified", "subject_required", "tenant_ambiguous",
+		"retention_not_archived", "retention_unverified", "subject_required", "tenant_ambiguous",
 		"tenant_out_of_scope", "unauthenticated", "unavailable", "window_closed",
 	}
 	got := slices.Sorted(slices.Values(north.AllCodes))

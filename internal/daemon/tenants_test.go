@@ -157,7 +157,7 @@ func TestADecisionIsAppliedInATenantWhoseProxySubscribesAfterARestart(t *testing
 		Identity: identity.NewService(identity.NewStoreDirectory(st)),
 		Fleet:    registry,
 		Decision: decisions,
-		Events:   trackSubscriptions(bus, grants, registry),
+		Events:   trackSubscriptions(bus, grants, registry, nil),
 		Logs:     ingest,
 		Logger:   log,
 	})

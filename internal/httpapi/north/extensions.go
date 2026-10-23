@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/accessctx"
 	"github.com/hoplock/control/internal/store"
@@ -42,11 +43,41 @@ type extensionPointView struct {
 	WhenAbsent    string                      `json:"when_absent"`
 	Absent        string                      `json:"absent"`
 	ControlShips  string                      `json:"control_ships,omitempty"`
+	// Lag is how far the feed to the registered archive is behind in the
+	// caller's tenant (0025), on the archive's row and only while one is
+	// registered.
+	Lag *archiveLagView `json:"lag,omitempty"`
+}
+
+// archiveLagView is the archive's lag in one tenant, as scalars: a list of
+// streams here would be a list nobody bounds.
+type archiveLagView struct {
+	// StreamsBehind counts the streams with records the archive has not
+	// confirmed.
+	StreamsBehind int `json:"streams_behind"`
+	// OldestUnconfirmedAt is the recorded_at of the earliest first record
+	// not yet confirmed across those streams; absent when none is.
+	OldestUnconfirmedAt time.Time `json:"oldest_unconfirmed_at,omitzero"`
+	// CapturesWaiting counts the session captures not yet confirmed.
+	CapturesWaiting int64 `json:"captures_waiting"`
 }
 
 func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireTenant(w, r); !ok {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
 		return
+	}
+	var lag *archiveLagView
+	if s.archive != nil {
+		got, err := s.archive.Lag(r.Context(), tenant)
+		if err != nil {
+			s.fail(w, r, "archive lag", err)
+			return
+		}
+		lag = &archiveLagView{
+			StreamsBehind: got.StreamsBehind, OldestUnconfirmedAt: got.OldestUnconfirmed,
+			CapturesWaiting: got.CapturesWaiting,
+		}
 	}
 	rows := s.extensions.Status()
 	out := make([]extensionPointView, 0, len(rows))
@@ -60,6 +91,9 @@ func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
 			v.Registrations = append(v.Registrations, extensionRegistrationView{
 				Provider: reg.Provider, Version: reg.Version, Default: reg.Default,
 			})
+		}
+		if st.Info.Point == ext.PointArchiveStore && st.Registered() {
+			v.Lag = lag
 		}
 		out = append(out, v)
 	}

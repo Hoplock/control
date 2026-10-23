@@ -115,6 +115,20 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
+	// The feed to a registered archive (0025), nil with none. It is built
+	// before the ingester, which tells it each tenant a record is written in
+	// — a map insert, never a wait (M5) — and it starts once everything is
+	// built, just before the listeners open.
+	feed, err := buildArchiveFeed(cfg, st, extensions, log)
+	if err != nil {
+		return err
+	}
+	var trackArchive func(store.Tenant)
+	if feed != nil {
+		trackArchive = feed.Track
+		feed.Track(store.Tenant(cfg.Tenant))
+	}
+
 	// The audit ingester. It is built with the store directly and holds no
 	// buffer: the priority ack means DURABLE (PLAN §4), so there is nothing
 	// between the request and the commit on either log path (M8).
@@ -126,6 +140,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 			MaxRecordBytes:  cfg.Audit.MaxRecordBytes,
 			MaxCaptureBytes: cfg.Audit.MaxCaptureBytes,
 		},
+		Track: trackArchive,
 	})
 	if err != nil {
 		return err
@@ -151,7 +166,10 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 			"note", "set credential.key_encryption_key_env to a variable holding 32 base64 bytes, or register an ext.KeyStore",
 		)
 	}
-	emitter, err := audit.NewEmitter(ingest, audit.WithRetentionSigner(audit.NewRetentionKeys(keys)))
+	// With an archive registered, retention never deletes what it has not
+	// confirmed (0025); with none, retention is what it always was.
+	emitter, err := audit.NewEmitter(ingest,
+		audit.WithRetentionSigner(audit.NewRetentionKeys(keys)), audit.WithArchive(feed != nil))
 	if err != nil {
 		return err
 	}
@@ -190,7 +208,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		Identity:        auth,
 		Fleet:           registry,
 		Decision:        decisions,
-		Events:          trackSubscriptions(bus, grants, registry),
+		Events:          trackSubscriptions(bus, grants, registry, trackArchive),
 		Logs:            ingest,
 		Logger:          log,
 		MaxBodyBytes:    cfg.South.MaxBodyBytes,
@@ -236,12 +254,30 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
-	northSrv, northHandler, err := buildNorth(ctx, cfg, northDeps{
+	deps := northDeps{
 		st: st, ca: ca, emitter: emitter, grants: grants, pushes: pushes,
 		fleet: registry, revocations: revoke.NewOperator(bus, registry), extensions: extensions,
-	}, h, log)
+	}
+	if feed != nil {
+		deps.archive = feed
+	}
+	northSrv, northHandler, err := buildNorth(ctx, cfg, deps, h, log)
 	if err != nil {
 		return err
+	}
+
+	// The archive feed starts after the registry was sealed and before the
+	// listeners open, for the server's lifetime, and stops before the store
+	// closes on every way out of here, bounded by the shutdown grace.
+	if feed != nil {
+		feed.Start(ctx)
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
+			defer cancel()
+			if err := feed.Stop(stopCtx); err != nil {
+				log.Warn("the archive feed did not stop inside the shutdown grace", "error", err)
+			}
+		}()
 	}
 
 	errs := make(chan error, 2)
@@ -297,6 +333,13 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		log.Warn("the north-bound listener did not shut down cleanly", "error", err)
 	}
 	stopPolling()
+	// A batch the archive has not confirmed by now is offered again at the
+	// next start; the feed abandons a call that has not returned.
+	if feed != nil {
+		if err := feed.Stop(shutdownCtx); err != nil {
+			log.Warn("the archive feed did not stop inside the shutdown grace", "error", err)
+		}
+	}
 	if err := notifier.Close(shutdownCtx); err != nil {
 		log.Warn("operator notifications were still queued at shutdown", "error", err)
 	}

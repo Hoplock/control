@@ -679,3 +679,72 @@ func TestALogBodyLimitBelowOneStorableRecordIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// The archive feed's bounds (0025) are refused at start-up when they cannot be
+// acted on: a batch larger than an ingest batch, a capture batch too small for
+// the largest capture, a duration that is not positive, a backoff under a
+// second.
+func TestTheArchiveFeedIsBoundedAtStartUp(t *testing.T) {
+	base := `listeners: {south: "0.0.0.0:8443", north: "127.0.0.1:9443"}
+database: {dsn: "postgres://x"}
+`
+	cases := map[string]struct{ doc, field string }{
+		"a batch over the ingest bound": {
+			doc:   base + "audit: {max_batch_records: 100, archive: {batch_records: 101}}\n",
+			field: "audit.archive.batch_records",
+		},
+		"a batch over the default ingest bound": {
+			doc:   base + "audit: {archive: {batch_records: 1001}}\n",
+			field: "audit.archive.batch_records",
+		},
+		"a negative batch": {
+			doc:   base + "audit: {archive: {batch_records: -1}}\n",
+			field: "audit.archive.batch_records",
+		},
+		"a capture batch under the largest capture": {
+			doc:   base + "audit: {max_capture_bytes: 2097152, archive: {capture_batch_bytes: 2097151}}\n",
+			field: "audit.archive.capture_batch_bytes",
+		},
+		"a negative attempt timeout": {
+			doc:   base + "audit: {archive: {attempt_timeout: -1s}}\n",
+			field: "audit.archive.attempt_timeout",
+		},
+		"a negative idle interval": {
+			doc:   base + "audit: {archive: {idle_interval: -1s}}\n",
+			field: "audit.archive.idle_interval",
+		},
+		"a backoff cap under a second": {
+			doc:   base + "audit: {archive: {backoff_cap: 500ms}}\n",
+			field: "audit.archive.backoff_cap",
+		},
+	}
+	for name, tc := range cases {
+		_, err := config.Parse(strings.NewReader(tc.doc))
+		var fe *config.FieldError
+		if !errors.As(err, &fe) || fe.Field != tc.field {
+			t.Errorf("%s: err = %v, want a refusal of %s", name, err, tc.field)
+		}
+	}
+
+	cfg, err := config.Parse(strings.NewReader(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := config.ArchiveFeedConfig{
+		BatchRecords: config.DefaultArchiveBatchRecords, CaptureBatchBytes: config.DefaultArchiveCaptureBatchBytes,
+		AttemptTimeout: config.DefaultArchiveAttemptTimeout, IdleInterval: config.DefaultArchiveIdleInterval,
+		BackoffCap: config.DefaultArchiveBackoffCap,
+	}
+	if cfg.Audit.Archive != want {
+		t.Errorf("defaults = %+v, want %+v", cfg.Audit.Archive, want)
+	}
+	// The defaults follow the ingest bounds an operator lowered or raised.
+	cfg, err = config.Parse(strings.NewReader(base +
+		"audit: {max_batch_records: 100, max_capture_bytes: 33554432}\nsouth: {max_log_body_bytes: 67108864}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Audit.Archive.BatchRecords != 100 || cfg.Audit.Archive.CaptureBatchBytes != 33554432 {
+		t.Errorf("defaults under other ingest bounds = %+v", cfg.Audit.Archive)
+	}
+}

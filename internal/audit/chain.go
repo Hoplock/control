@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -75,18 +76,22 @@ func StreamFor(proxyID string) string {
 // The tenant and the stream are inside the hash, not merely beside it: without
 // them a record could be moved from one tenant's chain to another's at the same
 // position and still verify, which is exactly the isolation M18 is for.
+//
+// THE COMPUTATION IS ext.ChainLink, AND ONLY THERE (0025). An archive verifies
+// the records it was handed without Control (ext.AuditRecord), so the encoding
+// is a public promise, and one implementation of it is what keeps the promise
+// and this chain from drifting apart. A sequence is never negative.
 func Link(tenant, stream string, seq int64, prevHash, body string) string {
-	h := sha256.New()
-	writeParts(h, chainVersion, tenant, stream, strconv.FormatInt(seq, 10), prevHash, body)
-	return "sha256:" + hex.EncodeToString(h.Sum(nil))
+	return ext.ChainLink(ext.Tenant(tenant), stream, uint64(seq), prevHash, body)
 }
 
 // writeParts writes each part length-prefixed, `<len>:<part>`, so that no two
 // different tuples can produce the same byte stream. Without it a stream named
 // `a` with a body starting `b` hashes the same as a stream `ab` with a shorter
-// body, and a collision an attacker can construct is not a chain. The chain's
-// links and the retention seals (seal.go) are both written by it, so the two
-// encodings cannot drift apart.
+// body, and a collision an attacker can construct is not a chain. It is the
+// retention seals' encoder (seal.go), and it is the encoding ext.ChainLink
+// documents for a link: a test holds the two to one another, so the seals and
+// the chain cannot drift apart.
 func writeParts(w io.Writer, parts ...string) {
 	for _, part := range parts {
 		_, _ = io.WriteString(w, strconv.Itoa(len(part)))
@@ -97,7 +102,7 @@ func writeParts(w io.Writer, parts ...string) {
 
 // chainVersion is inside every link, so a future change to the construction
 // cannot silently produce a chain that verifies under both readings.
-const chainVersion = "hoplock.chain/1"
+const chainVersion = ext.ChainVersion
 
 func digest(b []byte) string {
 	sum := sha256.Sum256(b)

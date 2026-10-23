@@ -91,6 +91,13 @@ const (
 	// no longer starts where its marker says. A new seal over that start
 	// would launder it, so the operator verifies the stream first.
 	CodeRetentionUnverified = "retention_unverified"
+	// CodeRetentionNotArchived is a retention pass by sequence beyond what
+	// the registered archive has confirmed (0025): Control never deletes a
+	// record, or a capture of one, the archive does not hold. It is a
+	// refusal on purpose, answered 409 with the stream and how far it is
+	// archived, never a 5xx and never a 401 (M11); nothing was deleted,
+	// sealed or recorded. A pass by instant is held back instead.
+	CodeRetentionNotArchived = "retention_not_archived"
 
 	// CodeGrantRequestDenied is a grant a registered approval workflow
 	// refused (ext.GrantWorkflow, 0012). It is a DECISION, answered 403 like
@@ -174,7 +181,7 @@ var AllCodes = []string{
 	CodeUnauthenticated, CodeForbidden, CodeTenantOutOfScope, CodeTenantAmbiguous,
 	CodeSubjectRequired,
 	CodeNotFound, CodeInvalidRequest, CodeLoginRefused, CodeInternal, CodeMethodNotAllowed,
-	CodeCANotConfigured, CodeRetentionKeyNotConfigured, CodeRetentionUnverified,
+	CodeCANotConfigured, CodeRetentionKeyNotConfigured, CodeRetentionUnverified, CodeRetentionNotArchived,
 	CodeGrantRequestDenied, CodeGrantWorkflowFailed, CodeGrantRequestNotPending,
 	CodeGrantRevocationUndelivered, CodeGrantWorkflowNotRegistered,
 	CodeProviderNotFound, CodePushNotSupported, CodeBindingNotFound, CodeBindingDisabled,

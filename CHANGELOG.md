@@ -26,6 +26,82 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.12.0
+
+An archive fed before retention deletes. With an `ext.ArchiveStore`
+registered, Control hands it every record it commits and every session
+capture, keeps how far the archive has confirmed each stream, and never
+deletes a record, or empties a capture, that the archive has not confirmed.
+With no archive registered, nothing changes.
+
+### Breaking
+
+- **`ext.ArchiveStore` gains `ArchiveCaptures(ctx context.Context, batch
+  []ext.Capture) error`.** An implementation must add it, or it does not
+  compile against this release. It must store each capture's bytes durably
+  before it returns nil, and be idempotent on `Capture.RecordID`: Control
+  offers a capture only after `Archive` confirmed its record, offers it again
+  after an error, and empties the local bytes only once it has been
+  confirmed. Each `Body` is valid only until the call returns.
+- **`ext.ArchiveStore` is now called.** A registered archive was handed
+  nothing before; now `Archive` receives every committed record, one stream's
+  records per batch in ascending `Sequence`, at least once, and a nil return
+  confirms the batch. An implementation that answered nil without storing
+  lets Control delete what it never kept.
+- **With an archive registered, retention waits on it.**
+  `POST …/audit/retention` by `through_seq` beyond what the archive holds —
+  every record through it, and every capture of those records — is
+  `409 retention_not_archived` with `stream` and `archived_through_seq`, and
+  deletes, seals and records nothing. By `before`, the pass deletes no
+  further than the archive holds. `POST …/audit/captures/retention` runs no
+  further than the earliest capture the archive has not confirmed, signs its
+  watermark over the instant it ran to, and empties only confirmed captures.
+
+- **Phase:** 0025, an archive fed before retention deletes.
+- **Public packages:**
+  - `ext.AuditRecord` gains `Stream` (the chain the record belongs to:
+    `control`, `proxy:<id>`, `unattributed`), `PrevHash` and `Body` (the
+    canonical JSON the chain hashed). `Sequence` is a position in that
+    stream, not in the tenant's chain as its doc comment said, and
+    `ChainHash` is now verifiable from the record alone.
+  - `ext.ChainLink(tenant, stream, sequence, prevHash, body) string` computes
+    a record's link exactly as Control's chain does, and is the code Control
+    computes it with; `ext.ChainVersion` (`hoplock.chain/1`) is inside every
+    link. The encoding is in `ChainLink`'s doc comment, and a later one is a
+    new version, never a change to this one.
+  - `ext.Capture`: `Tenant`, `RecordID`, `SessionID`, `Digest` (the record's
+    `capture_sha256`, `sha256:<hex>`), `Size` (its `capture_bytes`) and
+    `Body`.
+  - `ext.ArchiveStore`'s doc comment says what Control does with one.
+    `Search` is still called nowhere.
+- **Behaviour no API diff shows:**
+  - Delivery runs off ingest and the decision path. Each stream is fed by
+    one node at a time, by a lease in its position row (migration `0014`:
+    `audit_feed_positions`), so every node may run the feed, and positions
+    and leases are correct on several nodes without the shared event plane.
+    A call to the archive that outlives `audit.archive.attempt_timeout` is
+    abandoned and retried, a failing stream backs off from a second to
+    `audit.archive.backoff_cap` and holds back no other, and a stream that
+    starts failing is logged once at `WARN` (`archive_feed_failing`) and once
+    when it recovers (`archive_feed_recovered`).
+  - A stream retained before an archive was registered is fed from after its
+    marker; the `operator.audit.retained` record on the control stream says
+    where the gap is.
+  - Captures carry a confirmation of their own (`audit_captures.archived_at`).
+  - New configuration, each with a default and bounded at start-up:
+    `audit.archive.batch_records` (500, at most `audit.max_batch_records`),
+    `capture_batch_bytes` (16 MiB, at least `audit.max_capture_bytes`),
+    `attempt_timeout` (30s), `idle_interval` (5s), `backoff_cap` (5m, at
+    least 1s).
+  - Both retention answers gain `held_by_archive` (`false` with no archive
+    registered); the prefix pass's gains `archived_through_seq` while one is.
+    `operator.audit.retained` carries `operator.held_by_archive` and, for a
+    prefix pass, `operator.archived_through_seq`, while one is.
+  - `GET …/extensions`: the archive's row gains `lag` for the caller's
+    tenant while one is registered — `streams_behind`,
+    `oldest_unconfirmed_at` and `captures_waiting`.
+  - New code: `retention_not_archived` (409).
+
 ## v0.11.0
 
 Signed retention. A retention pass signs what it leaves behind with a
