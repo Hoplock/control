@@ -392,7 +392,15 @@ func TestASinkFailingOneTenantDelaysNoOtherTenant(t *testing.T) {
 		ingest(t, in, tenantB, "p1", "", many(4, "s")...)
 	}
 	caughtUp(t, st, store.SinkConsumer("example.com/siem"), 10*time.Second, tenantB)
-	if lag, _, err := d.Lag(context.Background(), tenantA, "example.com/siem"); err != nil || lag.StreamsBehind != 1 || !lag.Failing {
+	// Tenant A's failure is recorded when its attempt returns, which tenant
+	// B catching up does not wait for.
+	var lag store.FeedLag
+	var err error
+	for deadline := time.Now().Add(10 * time.Second); !lag.Failing && err == nil && time.Now().Before(deadline); {
+		lag, _, err = d.Lag(context.Background(), tenantA, "example.com/siem")
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil || lag.StreamsBehind != 1 || !lag.Failing {
 		t.Errorf("tenant A's lag = %+v, %v; want it behind and failing", lag, err)
 	}
 	if lag, _, _ := d.Lag(context.Background(), tenantB, "example.com/siem"); lag.StreamsBehind != 0 || lag.Failing {
@@ -571,8 +579,14 @@ func TestPositionsArePerSinkAndNamedByTheProvider(t *testing.T) {
 	if fastPos.ConfirmedSeq != 6 || slowPos.ConfirmedSeq != 0 {
 		t.Errorf("fast at %d, slow at %d; want 6 and 0", fastPos.ConfirmedSeq, slowPos.ConfirmedSeq)
 	}
+	// Slow's first failure is recorded when its first attempt returns, which
+	// fast catching up does not wait for.
+	var slowLag store.FeedLag
+	for deadline := time.Now().Add(10 * time.Second); !slowLag.Failing && time.Now().Before(deadline); {
+		slowLag, _, _ = d.Lag(context.Background(), tenantA, "example.com/slow")
+		time.Sleep(10 * time.Millisecond)
+	}
 	fastLag, _, _ := d.Lag(context.Background(), tenantA, "example.com/fast")
-	slowLag, _, _ := d.Lag(context.Background(), tenantA, "example.com/slow")
 	if fastLag.StreamsBehind != 0 || fastLag.Failing || slowLag.StreamsBehind != 1 || !slowLag.Failing {
 		t.Errorf("fast's lag %+v, slow's %+v; want each its own", fastLag, slowLag)
 	}
@@ -580,6 +594,10 @@ func TestPositionsArePerSinkAndNamedByTheProvider(t *testing.T) {
 	defer cancel()
 	if err := d.Stop(ctx); err != nil {
 		t.Fatal(err)
+	}
+	// A call to slow the stop abandoned ends with its process.
+	for slow.inFlight() {
+		time.Sleep(time.Millisecond)
 	}
 
 	// The next start registers fast alone; then fast and slow again, and
