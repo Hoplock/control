@@ -232,6 +232,18 @@ id — and answers a failure with `server.WriteError`, in the envelope every
 north-bound error carries (M21). Everything a host can get wrong is refused
 before the configuration is read, a database is opened or a port is bound.
 
+A route that answers a list reads its page with `server.ReadList` and answers
+it with `List.Write`, so it is bounded and says where it stopped exactly as
+Control's lists do (M26): `?limit=` from 1 to `server.MaxListLimit` (absent,
+`server.DefaultListLimit`), `?after=` a cursor Control mints, and
+`{<list>: [...], "truncated": bool, "next": "<cursor>"}`. The cursor binds the
+list's name, the host's provider and the filters the host passes, and never the
+tenant or the set, so read those from `server.CallerFrom` on every page. Control
+cannot see which route is a list and does not check; a host's own tests should.
+Misusing either call — outside a host route, a member named `truncated`, a
+`last` that does not match the key — answers `500 internal`, logged, like
+`server.WriteError`. The example's `listArchive` is one.
+
 On a cross-tenant read, `Caller.Tenant` is empty and `Caller.Tenants` is the
 set: every tenant in the caller's scope where it holds the route's permission,
 or, when the request names tenants (`?tenant=a&tenant=b`, or the
@@ -254,6 +266,37 @@ func (a *archive) ArchiveCaptures(context.Context, []ext.Capture) error { return
 
 func (a *archive) Search(context.Context, ext.ArchiveQuery) (ext.ArchivePage, error) {
 	return ext.ArchivePage{}, nil
+}
+
+// archived is what the example's list pages: each tenant's record ids, in
+// order.
+var archived = map[ext.Tenant][]string{"default": {"r-001", "r-002", "r-003", "r-004", "r-005"}}
+
+// listArchive is a host's list in Control's bounded shape (M26): at most
+// ?limit= record ids after the caller's position, in id order, saying where it
+// stopped. It reads the tenant from the caller on every page, because the
+// cursor carries a position and never a tenant.
+func listArchive(w http.ResponseWriter, r *http.Request) {
+	list, ok := server.ReadList(w, r, "archive", 1)
+	if !ok {
+		return // ReadList has answered
+	}
+	caller, _ := server.CallerFrom(r.Context())
+	ids := archived[caller.Tenant]
+	start := 0
+	if list.After != nil {
+		var found bool
+		if start, found = slices.BinarySearch(ids, list.After[0]); found {
+			start++
+		}
+	}
+	page := ids[start:min(start+list.Limit, len(ids))]
+	more := start+len(page) < len(ids)
+	var last []string
+	if more {
+		last = []string{page[len(page)-1]}
+	}
+	list.Write(w, r, "records", page, more, last, nil)
 }
 
 // A host binary's main: register an extension, declare a configuration section
@@ -296,6 +339,15 @@ func Example() {
 		},
 
 		Routes: []server.Route{
+			// GET /api/v1/tenants/{tenant}/archive?limit=&after=, a list:
+			// {"records": [...], "truncated": true, "next": "<cursor>"}.
+			{
+				Method:     http.MethodGet,
+				Pattern:    "archive",
+				Permission: "audit:read",
+				Summary:    "archived records, a page at a time",
+				Handler:    http.HandlerFunc(listArchive),
+			},
 			// GET /api/v1/tenants/{tenant}/archive/{record}, for a caller
 			// holding audit:read in the tenant Control resolved.
 			{

@@ -138,30 +138,39 @@ func HostCallerFrom(ctx context.Context) (HostCaller, bool) {
 //     outage, never a refusal (M11);
 //   - an empty message: every error carries an English one (M21).
 func WriteHostError(w http.ResponseWriter, r *http.Request, status int, code string, params map[string]any, message string) {
-	ctx := r.Context()
-	id := CorrelationIDFrom(ctx)
-	hr, _ := ctx.Value(ctxKeyHost).(*hostRequest)
+	hr := hostRequestFrom(r)
 	if problem := hr.refusal(status, code, message); problem != "" {
-		log, provider := slog.Default(), ""
-		if hr != nil {
-			log, provider = hr.log, hr.provider
-		}
-		log.ErrorContext(ctx, "a host route answered an error Control does not allow",
-			"event", "northbound_host_error_refused",
-			"provider", provider,
-			"problem", problem,
-			"status", status,
-			"code", code,
-			"path", r.URL.Path,
-			"correlation_id", id,
-		)
-		writeError(w, http.StatusInternalServerError, Error{
-			Code: CodeInternal, CorrelationID: id,
-			Message: "this server could not complete the request; quote the correlation id",
-		})
+		hr.refuse(w, r, "a host route answered an error Control does not allow", "northbound_host_error_refused", problem,
+			"status", status, "code", code)
 		return
 	}
-	writeError(w, status, Error{Code: code, Message: message, Parameters: params, CorrelationID: id})
+	writeError(w, status, Error{Code: code, Message: message, Parameters: params, CorrelationID: CorrelationIDFrom(r.Context())})
+}
+
+// hostRequestFrom returns the host route serving r's request, or nil outside
+// one.
+func hostRequestFrom(r *http.Request) *hostRequest {
+	hr, _ := r.Context().Value(ctxKeyHost).(*hostRequest)
+	return hr
+}
+
+// refuse answers a host programming error as `500 internal` with the
+// correlation id, and logs it under event with the problem and attrs. hr may
+// be nil: a call outside a host route is logged to the default logger.
+func (hr *hostRequest) refuse(w http.ResponseWriter, r *http.Request, msg, event, problem string, attrs ...any) {
+	ctx := r.Context()
+	id := CorrelationIDFrom(ctx)
+	log, provider := slog.Default(), ""
+	if hr != nil {
+		log, provider = hr.log, hr.provider
+	}
+	args := append([]any{"event", event, "provider", provider, "problem", problem}, attrs...)
+	args = append(args, "path", r.URL.Path, "correlation_id", id)
+	log.ErrorContext(ctx, msg, args...)
+	writeError(w, http.StatusInternalServerError, Error{
+		Code: CodeInternal, CorrelationID: id,
+		Message: "this server could not complete the request; quote the correlation id",
+	})
 }
 
 // refusal says why an error may not be written, or "" when it may.

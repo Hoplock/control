@@ -99,7 +99,7 @@ func (s *Server) handleTargetList(w http.ResponseWriter, r *http.Request) {
 	for k, v := range filter {
 		filters = append(filters, "label="+k+"="+v)
 	}
-	p, ok := s.readPage(w, r, targetList, filters...)
+	p, ok := readPage(w, r, targetList, filters...)
 	if !ok {
 		return
 	}
@@ -440,7 +440,7 @@ func (s *Server) handleSubjectList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, ok := s.readPage(w, r, subjectList)
+	p, ok := readPage(w, r, subjectList)
 	if !ok {
 		return
 	}

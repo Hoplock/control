@@ -39,6 +39,12 @@ const (
 // changes in several tenants' independent audit chains, with nothing to make
 // them atomic and no answer for a partial outcome (M24).
 //
+// A route that answers a list is expected to read the page with [ReadList] and
+// answer it with [List.Write], so that it is bounded by its caller and says
+// where it stopped exactly as Control's lists do, and one client reads both
+// (M26). Control cannot see which route is a list, so nothing enforces this:
+// a host's own tests must.
+//
 // Start-up fails, naming the route, on: an Access that is neither of the two;
 // an empty method or one other than GET, POST, PUT, PATCH or DELETE; a Pattern
 // that starts with "/", names "{tenant}", climbs with "..", or carries a method
