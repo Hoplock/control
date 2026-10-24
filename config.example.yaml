@@ -231,10 +231,13 @@ events:
   # proxy's 20s reconnect timeout. Defaults to 5s.
   heartbeat_interval: 5s
 
-  # How many published events are kept for a reconnecting subscriber. Past it
-  # the answer is `resync` — correct, but it costs that proxy its entire
-  # decision cache — so size this to cover a reconnect with backoff rather than
-  # an outage. Defaults to 1024.
+  # How many published events of each tenant are kept for a reconnecting
+  # subscriber, in the log every node shares — so a proxy is replayed what it
+  # missed whichever node it reconnects to, and across a restart. Past it the
+  # answer is `resync` — correct, but it costs that proxy its entire decision
+  # cache — so size this to cover a reconnect with backoff rather than an
+  # outage. A `config_changed` to every proxy of a large zone is one event per
+  # proxy. Defaults to 1024.
   replay_buffer: 1024
 
   # How far one subscriber may fall behind before it is dropped and left to
@@ -243,6 +246,15 @@ events:
   # make it an out-of-memory. A dropped subscriber reconnects into replay or
   # `resync`, so nothing is silently skipped. Defaults to 256.
   subscriber_queue: 256
+
+  # How often a node reads the shared event log for events no other node's
+  # wake-up told it of, and writes the streams it holds and reads every other
+  # node's. A wake-up the cluster coordinator loses — or a node that dies
+  # between logging an event and waking the others — makes a delivery late by
+  # at most this; another node's stream is seen by the cache-hint gate within
+  # twice this. Refused above heartbeat_interval. Defaults to 1s, or to
+  # heartbeat_interval when that is shorter.
+  sync_interval: 1s
 
   # Operator actions — ending sessions, invalidating cached decisions, a
   # resync — are published over the north-bound API

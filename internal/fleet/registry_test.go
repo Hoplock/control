@@ -32,33 +32,30 @@ func (s subs) LiveSubscriptions(context.Context, store.Tenant) (map[string]time.
 	return s, nil
 }
 
-// recordingPublisher stands in for the event stream, and records what it was
-// asked to announce. fail makes that many announcements fail first. elsewhere
-// is a node holding none of the proxies' streams: it takes every event and
-// delivers none, recording it under missed.
-type recordingPublisher struct {
-	mu        sync.Mutex
-	calls     []string
-	events    []contract.ConfigChangedEvent
-	missed    []string
-	fail      int
-	elsewhere bool
+func (s subs) LiveSubscription(_ context.Context, _ store.Tenant, proxyID string) (time.Time, bool, error) {
+	seen, ok := s[proxyID]
+	return seen, ok, nil
 }
 
-func (p *recordingPublisher) PublishConfigChange(_ context.Context, _ store.Tenant, proxyID string, ev contract.ConfigChangedEvent) (bool, error) {
+// recordingPublisher stands in for the event stream, and records what it was
+// asked to announce. fail makes that many announcements fail first.
+type recordingPublisher struct {
+	mu     sync.Mutex
+	calls  []string
+	events []contract.ConfigChangedEvent
+	fail   int
+}
+
+func (p *recordingPublisher) PublishConfigChange(_ context.Context, _ store.Tenant, proxyID string, ev contract.ConfigChangedEvent) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.fail > 0 {
 		p.fail--
-		return false, errors.New("the stream is down")
-	}
-	if p.elsewhere {
-		p.missed = append(p.missed, proxyID)
-		return false, nil
+		return errors.New("the stream is down")
 	}
 	p.calls = append(p.calls, proxyID)
 	p.events = append(p.events, ev)
-	return true, nil
+	return nil
 }
 
 func (p *recordingPublisher) announced() []string {

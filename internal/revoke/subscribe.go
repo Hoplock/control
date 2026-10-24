@@ -18,7 +18,8 @@ import (
 // to lose is the FIRST line. A reconnecting subscriber is owed either every
 // event after its `last_event_id` or a `resync` before anything else; resuming
 // live delivery over a gap looks identical to a healthy stream from the proxy's
-// side and is the one behaviour worse than both.
+// side and is the one behaviour worse than both. With the log shared (0027), the
+// node answering need not be the node that minted the id.
 
 // Subscribe serves one long-lived subscription and blocks until it ends.
 //
@@ -27,12 +28,12 @@ import (
 // a failure — the subscriber went away, or the bus was drained for a deploy —
 // and an error otherwise.
 //
-// The registration and the replay decision are taken under ONE lock
-// acquisition, which is what makes "nothing is skipped" true rather than
-// likely: an event published after registration is queued for this subscriber,
-// and the replay covers exactly up to the point registration happened. Doing
-// the two in either order without the lock leaves a window that drops an event
-// or delivers it twice, and the proxy cannot tell which happened.
+// The registration happens holding the tenant's cursor, after catching it up
+// with the log, which is what makes "nothing is skipped" true rather than
+// likely: every event after the cursor's head at that instant is queued to this
+// subscriber by a later fan-out, and the replay covers exactly up to that head.
+// Doing the two in either order without the cursor leaves a window that drops
+// an event or delivers it twice, and the proxy cannot tell which happened.
 func (b *Bus) Subscribe(ctx context.Context, tenant store.Tenant, proxyID, lastEventID string, emit func(*contract.RevocationEvent) error) error {
 	if tenant == "" {
 		return fmt.Errorf("revoke: a tenant is required")
@@ -40,7 +41,17 @@ func (b *Bus) Subscribe(ctx context.Context, tenant store.Tenant, proxyID, lastE
 	if proxyID == "" {
 		return fmt.Errorf("revoke: a proxy id is required")
 	}
+	b.mu.Lock()
+	closed := b.closed
+	b.mu.Unlock()
+	if closed {
+		return ErrClosed
+	}
 
+	c, err := b.cursorFor(ctx, tenant)
+	if err != nil {
+		return err
+	}
 	sub := &subscription{
 		tenant:  tenant,
 		proxyID: proxyID,
@@ -49,23 +60,48 @@ func (b *Bus) Subscribe(ctx context.Context, tenant store.Tenant, proxyID, lastE
 		drained: make(chan struct{}),
 	}
 
+	c.mu.Lock()
+	// Catch up first. An id another node minted may be past what this node
+	// has delivered — its wake-up still in flight — and it is not unknown
+	// for that: it is in the log.
+	if _, err := b.advanceLocked(ctx, tenant, c, 0); err != nil {
+		c.mu.Unlock()
+		return err
+	}
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
+		c.mu.Unlock()
 		return ErrClosed
 	}
-	replay, resync := b.planLocked(tenant, proxyID, lastEventID)
+	through := c.head
+	from, replay, resync := b.planLocked(c, lastEventID)
 	sub.touch(b.now())
-	b.subs[sub] = struct{}{}
+	b.addLocked(sub)
 	b.live.Add(1)
 	b.mu.Unlock()
+	c.mu.Unlock()
 
 	defer func() {
-		b.mu.Lock()
-		delete(b.subs, sub)
-		b.mu.Unlock()
+		b.remove(sub)
 		b.live.Done()
 	}()
+
+	var missed []*contract.RevocationEvent
+	if replay {
+		var held bool
+		if missed, held, err = b.replay(ctx, tenant, proxyID, c.epoch, from, through); err != nil {
+			return err
+		}
+		if !held {
+			// Too old: an event after the id has been pruned, so the
+			// replay would have a hole in it.
+			missed = nil
+			b.mu.Lock()
+			resync = b.resyncLineLocked(c, through)
+			b.mu.Unlock()
+		}
+	}
 
 	send := func(ev *contract.RevocationEvent) error {
 		if err := emit(ev); err != nil {
@@ -83,7 +119,7 @@ func (b *Bus) Subscribe(ctx context.Context, tenant store.Tenant, proxyID, lastE
 			return err
 		}
 	}
-	for _, ev := range replay {
+	for _, ev := range missed {
 		if err := send(ev); err != nil {
 			return err
 		}
@@ -130,58 +166,84 @@ func (b *Bus) Subscribe(ctx context.Context, tenant store.Tenant, proxyID, lastE
 	}
 }
 
-// planLocked decides what a reconnecting subscriber is owed.
+// planLocked decides what a reconnecting subscriber is owed, as far as it can
+// be decided without reading the log.
 //
 // Three answers, and the contract names all three: replay everything after the
-// id, in order; answer `resync` when the id is too old, unknown, or no history
-// is kept; or — for an absent id — start from now and replay nothing.
-// The resync line, when there is one, is minted HERE rather than by the caller
-// afterwards: its id comes from the same sequence as every other event, and an
-// id minted after the lock was released could be lower than one already queued
-// to this subscriber — which would hand the proxy a resume point it had not
-// reached.
-func (b *Bus) planLocked(tenant store.Tenant, proxyID, lastEventID string) (replay []*contract.RevocationEvent, resync *contract.RevocationEvent) {
+// id, in order; answer `resync` when the id is unknown or names a position this
+// log has not reached; or — for an absent id — start from now and replay
+// nothing. Whether the id is too old is the replay's to say, because it is a
+// fact about what the log still holds. The resync line, when there is one, is
+// minted here, at the head the subscription registers at, so every event queued
+// to it afterwards has an id past the line's.
+func (b *Bus) planLocked(c *cursor, lastEventID string) (from int64, replay bool, resync *contract.RevocationEvent) {
 	if lastEventID == "" {
 		// A fresh subscription. Starting from now is what the contract
 		// says, and it is also the only safe reading: this server does
 		// not know what the proxy already holds.
-		return nil, nil
+		return 0, false, nil
 	}
-
-	runID, seq, ok := parseEventID(lastEventID)
+	epoch, pos, ok := parseEventID(lastEventID)
 	switch {
-	case !ok, runID != b.runID:
-		// Unknown: a malformed id, or one minted before a restart. The
-		// ring is in memory, so there is no history to replay from and
-		// no way to know what was missed.
-		return nil, b.mintResyncLocked()
-	case seq > b.seq:
-		// An id from an order this run never reached. Believing it
-		// would resume live delivery past events that do exist.
-		return nil, b.mintResyncLocked()
-	case seq < b.evicted:
-		// Too old: a retained event after this id has already fallen
-		// out of the ring, so the replay would have a hole in it.
-		return nil, b.mintResyncLocked()
+	case !ok, epoch != c.epoch:
+		// Unknown: a malformed id, or one another log minted — the
+		// in-process broker before a restart, or before 0027. There is
+		// no history to replay from and no way to know what was missed.
+		return 0, false, b.resyncLineLocked(c, c.head)
+	case pos > c.head:
+		// A position this log has never reached, after catching up
+		// with it. Believing it would resume live delivery past events
+		// that do exist.
+		return 0, false, b.resyncLineLocked(c, c.head)
 	}
-
-	for _, s := range b.ring {
-		if s.seq <= seq || s.tenant != tenant || !s.aud.reaches(proxyID) {
-			continue
-		}
-		ev := s.ev
-		replay = append(replay, &ev)
-	}
-	return replay, nil
+	return pos, true, nil
 }
 
-// mintResyncLocked builds the resync line. It takes an id from the same
-// sequence as every other event, so a proxy that processes it and then
-// reconnects resumes from a point this server understands.
-func (b *Bus) mintResyncLocked() *contract.RevocationEvent {
-	_, id := b.mintLocked()
+// replayPage is how many logged events one read of a replay takes.
+const replayPage = 256
+
+// replay reads what a subscriber resuming after from missed, up to through, and
+// reports whether the log still held all of it.
+//
+// The floor is read AFTER the events. A prune deletes its events and raises the
+// floor in one transaction, so a floor still at or below from when it is read
+// means no prune reached past from before the events were read either: what was
+// read is everything.
+func (b *Bus) replay(ctx context.Context, tenant store.Tenant, proxyID, epoch string, from, through int64) ([]*contract.RevocationEvent, bool, error) {
+	var out []*contract.RevocationEvent
+	after := from
+	for after < through {
+		page, err := b.events.after(ctx, tenant, after, through, replayPage)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, l := range page {
+			after = l.seq
+			if l.aud.reaches(proxyID) {
+				out = append(out, l.render(epoch, b.advertised))
+			}
+		}
+		if len(page) < replayPage {
+			break
+		}
+	}
+	pos, err := b.events.open(ctx, tenant)
+	if err != nil {
+		return nil, false, err
+	}
+	if from < pos.floor {
+		return nil, false, nil
+	}
+	return out, true, nil
+}
+
+// resyncLineLocked builds the resync line answering one reconnect. It names the
+// position the subscription registered at, so a proxy that processes it and
+// reconnects resumes from a point every node understands.
+func (b *Bus) resyncLineLocked(c *cursor, at int64) *contract.RevocationEvent {
+	b.lines++
 	return &contract.RevocationEvent{
-		EventID:                  id,
+		EventID:                  positionID(c.epoch, at, b.lines),
 		Type:                     contract.EventTypeResync,
 		Timestamp:                b.now().UTC().Format(time.RFC3339),
 		HeartbeatIntervalSeconds: b.advertised,
@@ -196,15 +258,19 @@ func (b *Bus) mintResyncLocked() *contract.RevocationEvent {
 // this server to is a claim read off the wire rather than a number in its
 // configuration. The claim and the timer are the same value: see
 // [Bus.HeartbeatInterval].
+//
+// Its id names the cursor's head: everything at or before it that was
+// addressed to this subscriber is already ahead of it in the queue.
 func (b *Bus) heartbeat(sub *subscription) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.closed {
-		b.mu.Unlock()
 		return
 	}
-	_, id := b.mintLocked()
+	c := b.cursors[sub.tenant]
+	b.lines++
 	ev := &contract.RevocationEvent{
-		EventID:                  id,
+		EventID:                  positionID(c.epoch, c.head, b.lines),
 		Type:                     contract.EventTypeHeartbeat,
 		Timestamp:                b.now().UTC().Format(time.RFC3339),
 		HeartbeatIntervalSeconds: b.advertised,
@@ -216,5 +282,4 @@ func (b *Bus) heartbeat(sub *subscription) {
 		// behind by every measure this server has.
 		sub.evict()
 	}
-	b.mu.Unlock()
 }

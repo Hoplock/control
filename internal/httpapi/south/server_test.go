@@ -859,6 +859,9 @@ func newHarnessWith(t *testing.T, tweak func(*south.Options)) *harness {
 		// written to at" and "is it stale" are measured against the
 		// same instant the rest of the harness is frozen at.
 		Now: h.now,
+		// Over the store, as the daemon builds it (0027), so the stream
+		// this listener serves is replayed from the shared log.
+		Store: st,
 	})
 	if err != nil {
 		t.Fatalf("revoke.New: %v", err)

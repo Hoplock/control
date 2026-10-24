@@ -134,10 +134,12 @@ func (s *SingleNode) releaseLease(singleton string, l *singleNodeLeadership) {
 }
 
 // Publish delivers an event to every subscriber of its topic in this process.
-// A subscriber that has fallen behind by more than singleNodeBusDepth loses the
-// event rather than blocking the publisher; losing events is what a subscriber
-// asks for by not reading, and the control plane's durable record is the
-// database rather than the bus.
+// A subscriber that has fallen behind by more than singleNodeBusDepth is
+// DROPPED — its channel closed once it has read what it already holds — rather
+// than blocking the publisher or losing this event silently: a subscriber that
+// sees its channel close knows it may have missed something and reads the
+// control plane's durable record, which is the database rather than the bus
+// (ext.ClusterCoordinator says so for every implementation).
 func (s *SingleNode) Publish(ctx context.Context, ev ext.ClusterEvent) error {
 	if ev.Topic == "" {
 		return ext.Errorf(ext.PointClusterCoordinator, ext.ProviderControl, "ClusterCoordinator.Publish",
@@ -160,11 +162,16 @@ func (s *SingleNode) Publish(ctx context.Context, ev ext.ClusterEvent) error {
 		return ext.Errorf(ext.PointClusterCoordinator, ext.ProviderControl, "ClusterCoordinator.Publish",
 			ext.KindUnavailable, "the coordinator is closed")
 	}
-	for _, sub := range s.subs[ev.Topic] {
+	for id, sub := range s.subs[ev.Topic] {
 		select {
 		case sub.ch <- ev:
 		default:
+			delete(s.subs[ev.Topic], id)
+			sub.close()
 		}
+	}
+	if len(s.subs[ev.Topic]) == 0 {
+		delete(s.subs, ev.Topic)
 	}
 	return nil
 }

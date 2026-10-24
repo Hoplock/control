@@ -110,28 +110,36 @@ func (l Liveness) RelayIsLive(reg store.RelayRegistration, now time.Time) bool {
 }
 
 // SubscriptionState reports which proxies currently hold the long-lived outbound
-// event subscription (M9, `GET /v1/proxies/{id}/events`).
+// event subscription (M9, `GET /v1/proxies/{id}/events`), on any node of the
+// deployment.
 //
 // It is the SECOND liveness signal, and it is the stronger one: the subscription
-// is a connection this server is holding open, so it cannot be believed on the
-// strength of something a proxy said. A proxy with a live subscription is
+// is a connection this deployment is holding open, so it cannot be believed on
+// the strength of something a proxy said. A proxy with a live subscription is
 // demonstrably reachable; an explicit heartbeat is what carries the health and
 // capability detail the connection itself cannot.
 //
-// **0006 defines this interface and 0009 implements it.** The subscription lives
-// in the event broker, which is 0009's, and a fleet package that reached into it
-// would be the wrong package owning the one piece of genuinely shared state this
-// system has. A nil SubscriptionState means "no second signal available", which
-// leaves the heartbeat in charge — never "nothing is live".
+// **0006 defines this interface and `internal/revoke` implements it.** The
+// subscriptions live in the event broker, and a fleet package that reached into
+// it would be the wrong package owning the one piece of genuinely shared state
+// this system has. Since 0027 the answer covers every node: this node's own
+// subscriptions, and a copy of every other node's that is at most two
+// `events.sync_interval`s late, read from memory either way (M5). A nil
+// SubscriptionState means "no second signal available", which leaves the
+// heartbeat in charge — never "nothing is live".
 type SubscriptionState interface {
 	// LiveSubscriptions returns, for every proxy in the tenant holding a live
 	// subscription, when it was last seen. A proxy absent from the map holds
 	// none.
 	//
-	// It is a whole-tenant read rather than a per-proxy one because the graph
-	// load needs all of it at once and the fleet is small; asking per proxy
-	// would put N calls on the decision path (M5).
+	// It is a whole-tenant read for the graph load and the operator views,
+	// which need all of it at once.
 	LiveSubscriptions(ctx context.Context, tenant store.Tenant) (map[string]time.Time, error)
+	// LiveSubscription is the same answer for one proxy: when it was last
+	// seen, and whether it holds a subscription at all. It is the decision
+	// path's read — the cache-hint gate asks it on every hinted answer — so
+	// its cost does not grow with the deployment's subscription set (M5).
+	LiveSubscription(ctx context.Context, tenant store.Tenant, proxyID string) (time.Time, bool, error)
 }
 
 // ConfigPublisher hands a configuration change to the event stream (0009).
@@ -146,13 +154,13 @@ type SubscriptionState interface {
 // current. The daemon wires it to the revocation bus.
 type ConfigPublisher interface {
 	// PublishConfigChange tells one proxy that its desired configuration
-	// moved. A nil error means the stream accepted the event and retained it
-	// for replay; delivered reports whether a live subscription held ON THIS
-	// NODE took it now. Only a delivery settles an announcement: a bus
-	// reaches the subscriptions of its own node and no other, so an event
-	// accepted with no local subscriber reaches a proxy only by replay, if
-	// it reconnects here, or not at all, if its stream is held elsewhere.
-	PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) (delivered bool, err error)
+	// moved. A nil error means the stream took it: the event is logged, so
+	// the node holding the proxy's stream delivers it, whichever node that
+	// is, and a proxy that reconnects anywhere is replayed it — or answered
+	// `resync`, and fetches, as it does on every reconnect. That settles an
+	// announcement (0027): before the log was shared, a node's bus reached
+	// only its own subscriptions, and only a delivery there could.
+	PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) error
 }
 
 // noopConfigPublisher is what a Registry uses when none is supplied: a
@@ -163,8 +171,8 @@ type ConfigPublisher interface {
 // which is the honest state for a registry with no stream to announce on.
 type noopConfigPublisher struct{}
 
-func (noopConfigPublisher) PublishConfigChange(context.Context, store.Tenant, string, contract.ConfigChangedEvent) (bool, error) {
-	return false, errNoConfigPublisher
+func (noopConfigPublisher) PublishConfigChange(context.Context, store.Tenant, string, contract.ConfigChangedEvent) error {
+	return errNoConfigPublisher
 }
 
 var errNoConfigPublisher = errors.New("fleet: no event stream is wired to announce configuration on")
