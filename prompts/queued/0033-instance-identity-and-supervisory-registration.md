@@ -5,7 +5,7 @@
 - `docs/CROSS-REPO-PROTOCOL.md` — **§4.1** and **§4.3**: the downstream sync
   this phase owes `hoplock/enterprise`, and where it is queued (see
   **Cross-repo impact**, at the end).
-- `docs/PLAN.md` — especially **§2 (M19, M18, M2, M11, M15, M23)**, §3
+- `docs/PLAN.md` — especially **§2 (M19, M18, M2, M11, M15, M23, M25)**, §3
   (`internal/instance`), and §4's `policy_version` obligation, which is the
   pattern the north-bound version promise copies.
 - `docs/learnings/` — read summaries; open `0004` (the `ext` package and
@@ -71,7 +71,10 @@ needs. So report health at three levels, beneath one identity:
   is degraded, never just that it is.
 - **Node** — membership, each node's software version, uptime, last-seen, which
   node holds each leader-elected job and which holds the supervisory
-  registration, event-bus health (M9) and any replication or subscription lag. A
+  registration, event-bus health (M9, M25) and any replication or subscription
+  lag — since 0027 the signals exist and nothing reports them: how far each
+  tenant's cursor on a node trails its log's head, and the `revoke_wake_*` and
+  `revoke_presence_*` failures (0027's learnings, "Follow-ups"). A
   node's version differing from its peers during a **rolling upgrade is expected
   and must read as in-progress, not as a fault** — a monitoring surface that
   cries wolf on every deploy is one an operator learns to ignore, which is worse

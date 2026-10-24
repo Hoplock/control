@@ -33,8 +33,9 @@
       pull". Today three of the five levers have no operator handle at all
       (below). This phase makes that sentence true.
     - **M9** covers `session_kill`, whose reason is shown to the user and is
-      never empty, and `cache_invalidate`. Until 0027 a publish reaches only
-      its own node.
+      never empty, and `cache_invalidate`. Since 0027 a publish reaches a
+      proxy whichever node holds its stream, and is acknowledged once it is
+      logged (**M25**).
     - **M10**: revocation is the one grant state stored, and revoking a grant
       ends the sessions it backed, audited with its actor.
     - **M16**, property 2 (an id is the idempotency key, and a different thing
