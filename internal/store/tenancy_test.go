@@ -71,6 +71,10 @@ var repositoryInterfaces = map[string]reflect.Type{
 
 	// The audit feed's positions (0025).
 	"FeedRepository": reflect.TypeOf((*FeedRepository)(nil)).Elem(),
+
+	// The shared event plane (0027).
+	"EventLogRepository":          reflect.TypeOf((*EventLogRepository)(nil)).Elem(),
+	"EventSubscriptionRepository": reflect.TypeOf((*EventSubscriptionRepository)(nil)).Elem(),
 }
 
 // Tenancy is unforgeable at the repository boundary (M18).
@@ -165,6 +169,9 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"ProxyTokenRepository":      s.ProxyTokens(),
 
 		"FeedRepository": s.Feed(),
+
+		"EventLogRepository":          s.EventLog(),
+		"EventSubscriptionRepository": s.EventSubscriptions(),
 	}
 
 	if len(got) != len(repositoryInterfaces) {
@@ -647,6 +654,22 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return err
 		},
 		"Feed.Lag": func() error { _, err := s.Feed().Lag(ctx, "", ArchiveConsumer); return err },
+
+		"EventLog.Open": func() error { _, err := s.EventLog().Open(ctx, ""); return err },
+		"EventLog.Append": func() error {
+			_, _, err := s.EventLog().Append(ctx, "", EventLogEntry{AudienceAll: true, Body: []byte("{}"), PublishedAt: nowForTest()}, 1)
+			return err
+		},
+		"EventLog.After": func() error { _, err := s.EventLog().After(ctx, "", 0, 0, 1); return err },
+		"EventSubscriptions.Put": func() error {
+			return s.EventSubscriptions().Put(ctx, "", "n", []EventSubscription{{ProxyID: "p", SeenAt: nowForTest()}})
+		},
+		"EventSubscriptions.Remove": func() error { return s.EventSubscriptions().Remove(ctx, "", "n", []string{"p"}) },
+		"EventSubscriptions.List":   func() error { _, err := s.EventSubscriptions().List(ctx, ""); return err },
+		"EventSubscriptions.Expire": func() error {
+			_, err := s.EventSubscriptions().Expire(ctx, "", nowForTest())
+			return err
+		},
 	}
 
 	if got, want := len(calls), totalRepositoryMethods(); got != want {

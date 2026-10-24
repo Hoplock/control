@@ -279,6 +279,37 @@ type FeedRepository interface {
 	Lag(ctx context.Context, tenant Tenant, consumer string) (FeedLag, error)
 }
 
+// EventLogRepository is the event stream's log, shared by every node (0027,
+// M9): every event a proxy may be replayed, in the deployment's one order.
+type EventLogRepository interface {
+	// Open returns a tenant's stream, creating it — with a fresh epoch and
+	// nothing logged — the first time anything asks.
+	Open(ctx context.Context, tenant Tenant) (EventStream, error)
+	// Append logs one event under the tenant's publish lock, assigning its
+	// position, and prunes the tenant's log to its newest retain events in
+	// the same transaction. It returns the entry with its position and the
+	// stream as the commit left it.
+	Append(ctx context.Context, tenant Tenant, e EventLogEntry, retain int) (EventLogEntry, EventStream, error)
+	// After returns the tenant's events after a position, in order, at
+	// most limit of them, and none past through unless through is zero.
+	After(ctx context.Context, tenant Tenant, after, through int64, limit int) ([]EventLogEntry, error)
+}
+
+// EventSubscriptionRepository records which proxies hold a live stream on which
+// node, so every node can read the deployment's subscriptions (0027, M5).
+type EventSubscriptionRepository interface {
+	// Put records a node's subscriptions, one row per proxy, never moving a
+	// row's last write backwards. A proxy may appear once per call.
+	Put(ctx context.Context, tenant Tenant, node string, subs []EventSubscription) error
+	// Remove drops a node's rows for the proxies named.
+	Remove(ctx context.Context, tenant Tenant, node string, proxyIDs []string) error
+	// List returns every node's rows in the tenant, by proxy and node.
+	List(ctx context.Context, tenant Tenant) ([]EventSubscription, error)
+	// Expire drops every row last written before an instant, whichever
+	// node wrote it, and reports how many.
+	Expire(ctx context.Context, tenant Tenant, before time.Time) (int64, error)
+}
+
 // GrantRepository stores JIT access grants (M10).
 type GrantRepository interface {
 	// Insert stores a grant. A duplicate id is ErrConflict.

@@ -29,6 +29,7 @@ func TestConfigDefaultsMatchTheBrokersOwn(t *testing.T) {
 		{"heartbeat_interval", config.DefaultHeartbeatInterval, revoke.DefaultHeartbeatInterval},
 		{"replay_buffer", config.DefaultReplayBuffer, revoke.DefaultReplayBuffer},
 		{"subscriber_queue", config.DefaultSubscriberQueue, revoke.DefaultSubscriberQueue},
+		{"sync_interval", config.DefaultEventSyncInterval, revoke.DefaultSyncInterval},
 	} {
 		if tc.fromConfig != tc.fromHere {
 			t.Errorf("%s: config says %v, internal/revoke says %v", tc.name, tc.fromConfig, tc.fromHere)

@@ -577,41 +577,40 @@ func TestAReportNamingTheDesiredDocumentSettlesItsAnnouncement(t *testing.T) {
 	}
 }
 
-// SEVERAL NODES (0021). A node's event bus reaches only the subscriptions held
-// on that node, so a `config_changed` the publishing node's bus takes reaches
-// nobody when the proxy's stream is held by another node. The announcement is
-// owed until a live subscription takes it, and the node holding the stream —
-// whose announcer walks the same durable markers — delivers it.
-func TestAnAnnouncementReachesAProxySubscribedOnAnotherNode(t *testing.T) {
+// SEVERAL NODES (0021, 0027). The stream's log is shared, so an announcement
+// the stream took on one node is delivered by whichever node holds the proxy's
+// stream (the event stream's own multi-node test proves that half): the
+// announcer settles it where it was made, and no node owes it again, however
+// many nodes run an announcer and wherever the proxy subscribed.
+func TestAnAnnouncementIsSettledWhereverTheStreamIsHeld(t *testing.T) {
 	t.Parallel()
-	nodeA := &recordingPublisher{elsewhere: true}
+	nodeA := &recordingPublisher{}
 	st, a, _ := newRegistry(t, fleet.WithConfigPublisher(nodeA), fleet.WithSubscriptionState(subs{}))
 	ctx := t.Context()
 	enrolled(t, a, testTenant, "p-a", "region", nil, fleet.Capabilities{})
 
 	p := publish(t, a, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(64)})
-	if len(p.Changed) != 1 || p.Changed[0].Announced || p.Changed[0].Error == "" {
-		t.Fatalf("publication on a node without the stream = %+v, want it not announced, saying why", p)
+	if len(p.Changed) != 1 || !p.Changed[0].Announced {
+		t.Fatalf("publication on a node holding no stream = %+v, want it announced: the log carries it", p)
 	}
-	if tried, _ := a.Announce(ctx, testTenant); len(tried) != 0 || len(nodeA.missed) != 1 {
-		t.Errorf("node A re-announced %+v to a proxy it holds no stream for (missed %v)", tried, nodeA.missed)
-	}
-
-	// Node B holds p-a's stream: its announcer delivers what A could not.
 	nodeB := &recordingPublisher{}
 	b := fleet.New(st, fleet.WithConfigPublisher(nodeB),
 		fleet.WithSubscriptionState(subs{"p-a": time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)}))
+	for name, r := range map[string]*fleet.Registry{"A": a, "B": b} {
+		if again, err := r.Announce(ctx, testTenant); err != nil || len(again) != 0 {
+			t.Errorf("node %s announced %+v (%v) after the stream took it", name, again, err)
+		}
+	}
+	if got := nodeB.announced(); len(got) != 0 {
+		t.Errorf("node B announced to %v, a duplicate of what the log already carries", got)
+	}
+
+	// A lost announcement is retried by any node's announcer, not only by
+	// the node holding the stream.
+	nodeA.fail = 1
+	publish(t, a, fleet.ZoneScope("region"), fleet.ConfigDocument{"logging.batch_size": float64(128)})
 	tried, err := b.Announce(ctx, testTenant)
 	if err != nil || len(tried) != 1 || !tried[0].Announced {
-		t.Fatalf("node B's announcer = %+v, %v; want p-a announced", tried, err)
-	}
-	if got := nodeB.announced(); len(got) != 1 || got[0] != "p-a" {
-		t.Errorf("node B announced to %v, want p-a", got)
-	}
-	// Delivered once, it is owed by no node.
-	for name, r := range map[string]*fleet.Registry{"A": a, "B": b} {
-		if again, _ := r.Announce(ctx, testTenant); len(again) != 0 {
-			t.Errorf("node %s announced %+v after the stream took it", name, again)
-		}
+		t.Fatalf("node B's announcer = %+v, %v; want the lost announcement retried", tried, err)
 	}
 }

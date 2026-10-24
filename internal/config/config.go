@@ -199,6 +199,10 @@ const (
 	// DefaultSubscriberQueue is how far one subscriber may fall behind
 	// before it is dropped and left to reconnect.
 	DefaultSubscriberQueue = 256
+	// DefaultEventSyncInterval is how often a node reads the shared event
+	// log for what no wake-up told it of, and writes and reads the
+	// deployment's subscriptions (0027).
+	DefaultEventSyncInterval = time.Second
 )
 
 // Access grants and notifications (0012).
@@ -340,16 +344,24 @@ type EventsConfig struct {
 	// HeartbeatInterval is kept and advertised. Zero takes the default;
 	// anything past MaxHeartbeatIntervalSeconds is refused.
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
-	// ReplayBuffer is how many events are retained for a reconnecting
-	// subscriber. Past it the answer is `resync`, which is correct but
-	// costs that proxy its entire decision cache — so the buffer is sized
-	// to cover a reconnect with backoff, not an outage.
+	// ReplayBuffer is how many events of each tenant are retained for a
+	// reconnecting subscriber, in the log every node shares. Past it the
+	// answer is `resync`, which is correct but costs that proxy its entire
+	// decision cache — so the buffer is sized to cover a reconnect with
+	// backoff, not an outage.
 	ReplayBuffer int `yaml:"replay_buffer"`
 	// SubscriberQueue is how far one subscriber may fall behind before it
 	// is dropped and left to reconnect. Dropping is the policy: blocking
 	// the publisher would make one stalled proxy an outage for the fleet,
 	// and growing the queue would make it an out-of-memory.
 	SubscriberQueue int `yaml:"subscriber_queue"`
+	// SyncInterval is how often a node reads the shared log for events no
+	// wake-up told it of, and writes its own subscriptions and reads every
+	// other node's (0027). It bounds how late a lost wake-up makes a
+	// delivery, and how late another node's subscription is seen (twice
+	// it). It may not exceed HeartbeatInterval; unset, it is the default or
+	// the heartbeat interval, whichever is shorter.
+	SyncInterval time.Duration `yaml:"sync_interval"`
 }
 
 // DecisionConfig bounds the decision path (PLAN M5, §5.4).
@@ -685,6 +697,11 @@ func (c *Config) applyDefaults() {
 	if c.Events.SubscriberQueue == 0 {
 		c.Events.SubscriberQueue = DefaultSubscriberQueue
 	}
+	if c.Events.SyncInterval == 0 {
+		// Never past the heartbeat, so a file that set a short heartbeat
+		// before this key existed still loads.
+		c.Events.SyncInterval = min(DefaultEventSyncInterval, c.Events.HeartbeatInterval)
+	}
 	if c.North.MaxBodyBytes == 0 {
 		c.North.MaxBodyBytes = DefaultNorthMaxBodyBytes
 	}
@@ -1016,6 +1033,12 @@ func (e EventsConfig) validate() error {
 	}
 	if e.SubscriberQueue <= 0 {
 		return &FieldError{Field: "events.subscriber_queue", Msg: "must be a positive number of events"}
+	}
+	// A lost wake-up is late by up to one sync, and a revocation later than
+	// the stream's own heartbeat is one a proxy could outlive the stream
+	// for.
+	if e.SyncInterval <= 0 || e.SyncInterval > e.HeartbeatInterval {
+		return &FieldError{Field: "events.sync_interval", Msg: "must be positive and at most events.heartbeat_interval"}
 	}
 	return nil
 }

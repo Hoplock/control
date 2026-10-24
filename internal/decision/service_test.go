@@ -253,6 +253,14 @@ func (f *fakeSubscriptions) LiveSubscriptions(context.Context, store.Tenant) (ma
 	return f.seen, nil
 }
 
+func (f *fakeSubscriptions) LiveSubscription(_ context.Context, _ store.Tenant, proxyID string) (time.Time, bool, error) {
+	if f.err != nil {
+		return time.Time{}, false, f.err
+	}
+	seen, ok := f.seen[proxyID]
+	return seen, ok, nil
+}
+
 func newHarness(t testing.TB, opts ...func(*harness)) *harness {
 	t.Helper()
 	st := storetest.New(t)

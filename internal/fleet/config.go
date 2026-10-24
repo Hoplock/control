@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -437,10 +436,8 @@ func desiredDocument(ctx context.Context, tx *store.Store, tenant store.Tenant, 
 }
 
 // announce emits one `config_changed` per proxy whose composed document moved,
-// and moves each one's announced marker when a live subscription took it. One
-// that failed, or that no subscription on this node took, is reported on the
-// answer and left for [Registry.Announce] to retry — on whichever node holds
-// the proxy's stream.
+// and moves each one's announced marker when the stream took it. One that
+// failed is reported on the answer and left for [Registry.Announce] to retry.
 func (r *Registry) announce(ctx context.Context, tenant store.Tenant, changed []store.ProxyConfigState) []ConfigAnnouncement {
 	out := make([]ConfigAnnouncement, 0, len(changed))
 	for _, s := range changed {
@@ -455,19 +452,11 @@ func (r *Registry) announceOne(ctx context.Context, tenant store.Tenant, s store
 		Hash:    WireConfigHash(s.DesiredHash),
 	}
 	a := ConfigAnnouncement{ProxyID: s.ProxyID, Version: ev.Version, Hash: ev.Hash}
-	delivered, err := r.pub.PublishConfigChange(ctx, tenant, s.ProxyID, ev)
-	if err != nil {
+	if err := r.pub.PublishConfigChange(ctx, tenant, s.ProxyID, ev); err != nil {
 		a.Error = err.Error()
 		r.log.WarnContext(ctx, "a config_changed was not taken by the event stream; it will be retried",
 			"event", "config_announce_failed", "tenant", tenant.String(), "proxy_id", s.ProxyID,
 			"version", ev.Version, "error", err.Error())
-		return a
-	}
-	if !delivered {
-		// Retained for replay here, and owed until a live stream takes it:
-		// the node holding this proxy's stream announces it, and a proxy
-		// connected nowhere fetches on reconnect and reports.
-		a.Error = errNotSubscribedHere.Error()
 		return a
 	}
 	if err := r.st.ProxyConfigs().MarkAnnounced(ctx, tenant, s.ProxyID, s.DesiredHash, r.now()); err != nil {
@@ -486,40 +475,27 @@ func (r *Registry) announceOne(ctx context.Context, tenant store.Tenant, s store
 // without reconnect. It is run on a timer and once at start; it returns what it
 // tried, and an error only when it could not read the states.
 //
-// It announces only to proxies holding a live subscription ON THIS NODE. The
-// markers are in the store, so every node's announcer sees what is owed, and
-// the one holding a proxy's stream is the one that can deliver it: that is how
-// an announcement made on one node reaches a proxy subscribed on another. A
-// proxy subscribed nowhere is not re-announced into the replay buffer every
-// interval; it fetches when it reconnects, and its report settles the marker.
-// A registry with no subscription state announces to every proxy owed.
+// What it retries is an announcement the stream never took — a publish whose
+// announcement failed, or a crash between the desired document's commit and its
+// announcement, which are two transactions. Once the stream takes one it is
+// logged, and the event stream delivers it on whichever node holds the proxy's
+// stream (0027), so every node's announcer may announce any owed proxy: two
+// nodes announcing one together cost the proxy a duplicate it drops without a
+// fetch.
 func (r *Registry) Announce(ctx context.Context, tenant store.Tenant) ([]ConfigAnnouncement, error) {
 	states, err := r.st.ProxyConfigs().ListStates(ctx, tenant)
 	if err != nil {
 		return nil, err
-	}
-	var local map[string]time.Time
-	if r.subs != nil {
-		if local, err = r.subs.LiveSubscriptions(ctx, tenant); err != nil {
-			return nil, err
-		}
 	}
 	var owed []store.ProxyConfigState
 	for _, s := range states {
 		if s.DesiredVersion == 0 || s.DesiredHash == "" || s.AnnouncedHash == s.DesiredHash {
 			continue
 		}
-		if _, here := local[s.ProxyID]; r.subs != nil && !here {
-			continue
-		}
 		owed = append(owed, s)
 	}
 	return r.announce(ctx, tenant, owed), nil
 }
-
-// errNotSubscribedHere is an announcement this node's bus accepted and no live
-// subscription here took.
-var errNotSubscribedHere = errors.New("fleet: the proxy holds no event subscription on this node; the node holding its stream announces it, and a proxy connected nowhere fetches on reconnect")
 
 // TrackConfigTenant adds a tenant to the set the announcer walks. There is no
 // store read that lists tenants (M18), so the set is learned: the configured

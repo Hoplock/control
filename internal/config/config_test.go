@@ -436,6 +436,15 @@ database: {dsn: "postgres://x"}
 			doc:   base + "events: {subscriber_queue: -1}\n",
 			field: "events.subscriber_queue",
 		},
+		"a negative sync interval": {
+			doc:   base + "events: {sync_interval: -1s}\n",
+			field: "events.sync_interval",
+		},
+		"a sync slower than the heartbeat": {
+			// A lost wake-up is late by up to one sync.
+			doc:   base + "events: {heartbeat_interval: 2s, sync_interval: 3s}\n",
+			field: "events.sync_interval",
+		},
 	}
 	for name, tc := range cases {
 		_, err := config.Parse(strings.NewReader(tc.doc))
@@ -484,8 +493,26 @@ events: {heartbeat_interval: 0s}
 	if cfg.Events.ReplayBuffer != config.DefaultReplayBuffer {
 		t.Errorf("replay_buffer = %v, want the default %v", cfg.Events.ReplayBuffer, config.DefaultReplayBuffer)
 	}
+	if cfg.Events.SyncInterval != config.DefaultEventSyncInterval {
+		t.Errorf("sync_interval = %v, want the default %v", cfg.Events.SyncInterval, config.DefaultEventSyncInterval)
+	}
 	if cfg.Events.SubscriberQueue != config.DefaultSubscriberQueue {
 		t.Errorf("subscriber_queue = %v, want the default %v", cfg.Events.SubscriberQueue, config.DefaultSubscriberQueue)
+	}
+}
+
+// A file written before events.sync_interval existed, with a heartbeat shorter
+// than the sync's default, still loads: the sync takes the heartbeat.
+func TestAnUnsetSyncIntervalNeverOutrunsAShortHeartbeat(t *testing.T) {
+	cfg, err := config.Parse(strings.NewReader(`listeners: {south: "0.0.0.0:8443", north: "127.0.0.1:9443"}
+database: {dsn: "postgres://x"}
+events: {heartbeat_interval: 400ms}
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Events.SyncInterval != 400*time.Millisecond {
+		t.Errorf("sync_interval = %v, want the 400ms heartbeat", cfg.Events.SyncInterval)
 	}
 }
 

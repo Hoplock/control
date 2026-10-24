@@ -5,6 +5,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -14,45 +15,34 @@ import (
 	"github.com/hoplock/control/internal/store"
 )
 
-// The configuration publisher says a `config_changed` was delivered only when a
-// subscription on this node took it (0021): an event the bus merely retained,
-// with no subscriber here, is owed until the node holding the proxy's stream
-// announces it.
-func TestTheConfigPublisherReportsDeliveryNotAcceptance(t *testing.T) {
+// The configuration publisher says the stream took a `config_changed` once it is
+// logged (0027), whether or not a subscription on this node holds the proxy's
+// stream: the node that does delivers it from the log, and a proxy that
+// reconnects anywhere is replayed it. Before the log was shared only a delivery
+// on this node could say that (0021). A refusal is still an error, so the
+// announcer owes it.
+func TestTheConfigPublisherReportsWhatTheStreamTook(t *testing.T) {
 	bus, err := revoke.New(revoke.Options{HeartbeatInterval: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = bus.Close(ctx)
-	})
 	const tenant = store.Tenant("acme")
 	pub := busConfigPublisher{bus}
 	ev := contract.ConfigChangedEvent{Version: "v1", Hash: "sha256:" + strings.Repeat("a", 64)}
 
-	if delivered, err := pub.PublishConfigChange(t.Context(), tenant, "p-a", ev); err != nil || delivered {
-		t.Fatalf("with no subscriber here: delivered=%v err=%v, want false and no error", delivered, err)
+	if err := pub.PublishConfigChange(t.Context(), tenant, "p-a", ev); err != nil {
+		t.Fatalf("with no subscriber here: %v, want the stream to take it", err)
+	}
+	if err := pub.PublishConfigChange(t.Context(), tenant, "p-a", contract.ConfigChangedEvent{}); err == nil {
+		t.Error("a config_changed naming nothing was taken")
 	}
 
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go func() {
-		_ = bus.Subscribe(ctx, tenant, "p-a", "", func(*contract.RevocationEvent) error { return nil })
-	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		live, _ := bus.LiveSubscriptions(t.Context(), tenant)
-		if _, ok := live["p-a"]; ok {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the subscription never registered")
-		}
-		time.Sleep(5 * time.Millisecond)
+	if err := bus.Close(ctx); err != nil {
+		t.Fatal(err)
 	}
-	if delivered, err := pub.PublishConfigChange(t.Context(), tenant, "p-a", ev); err != nil || !delivered {
-		t.Errorf("with p-a subscribed here: delivered=%v err=%v, want true", delivered, err)
+	if err := pub.PublishConfigChange(t.Context(), tenant, "p-a", ev); !errors.Is(err, revoke.ErrClosed) {
+		t.Errorf("on a closed stream: %v, want ErrClosed so the announcement stays owed", err)
 	}
 }

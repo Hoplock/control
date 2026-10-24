@@ -24,13 +24,29 @@
 //     grow memory without bound; it reconnects into replay or resync. See
 //     [Options.SubscriberQueue].
 //
-// # What it deliberately is not
+// # Whichever node a proxy reaches (0027)
 //
-// The broker is IN-PROCESS (M9). A single node is the whole prototype, and
-// every guarantee above is true of one node only: the event ids are a counter
-// in memory, the replay buffer is a ring in memory, and both are lost on a
-// restart — which is why an id minted by an earlier run is answered with
-// `resync` rather than believed. What a multi-node implementation would have to
-// provide is written down in this phase's learnings file, because the shape of
-// this package is the shape of that requirement.
+// Every guarantee above holds across the nodes of a deployment, because what
+// they rest on is shared rather than per process:
+//
+//   - THE LOG is in the store (event_log). A publish commits the event before it
+//     answers, under its tenant's lock, so a tenant's positions commit in order
+//     and every node fans out by reading "after the last position I
+//     delivered". Its ids are `evt-<epoch>-<position>`, one order per tenant
+//     that every node reads alike; a heartbeat or a reconnect's `resync` names
+//     a position without taking one (`evt-<epoch>-<position>.<line>`).
+//   - THE FLOOR is in the store (event_streams): each tenant keeps its newest
+//     `events.replay_buffer` events, and a reconnect from before what was
+//     pruned is answered `resync`. A restart replays; it does not resync.
+//   - THE FAN-OUT is the log plus a wake-up on ext.ClusterCoordinator's bus,
+//     which carries no event and none of the order; a lost wake-up is found by
+//     the node's own read of the log every `events.sync_interval`.
+//   - THE SUBSCRIPTIONS every node holds are in the store (event_subscriptions)
+//     and copied into each node's memory, which is what the cache-hint gate
+//     reads: never the store, on the decision path (M5).
+//
+// A bus built without a store keeps its log in this process instead, with a
+// per-process epoch, and knows only its own subscriptions: exactly the broker
+// every release before 0027 ran, kept for tests and a database-less embedding.
+// The code above the log does not branch on which it has.
 package revoke

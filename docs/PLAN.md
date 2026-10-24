@@ -104,7 +104,7 @@ decision.
 | **M6** | the fleet is a graph, not a list | amended by M17 | §3, §5, §10 |
 | **M7** | identity is federated and short-lived | live | §6, §10 |
 | **M8** | audit is append-only and tamper-evident; retention never outruns a registered archive, and never waits on a sink | live | §3, §7, §10 |
-| **M9** | revocation is fan-out with replay, and the kill switch | live | §3, §5, §10, §11 |
+| **M9** | revocation is fan-out with replay, and the kill switch | amended by M25 | §3, §5, §10, §11 |
 | **M10** | JIT grants are policy inputs, not a bolt-on | live | §3, §5, §6, §10 |
 | **M11** | `401` means deny; everything else means outage | live | §3, §4, §8 |
 | **M12** | tenancy is in the schema from day one | amended by M18 | §10 |
@@ -120,6 +120,7 @@ decision.
 | **M22** | a south-bound credential carries its tenant and names its proxy | live | §3, §10 |
 | **M23** | Control is released as immutable tags of one module, and every phase is a release | live | §8, §10 |
 | **M24** | a cross-tenant read is a route class the middleware resolves, and only a host serves one | live | §3, §6, §10, §11 |
+| **M25** | the event stream's state is in the store, and the cluster bus only wakes nodes | live | §3, §4, §5, §10, §11 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -217,15 +218,17 @@ decision.
   nothing on the decision path may be node-local state.
 
   **A node may remember shared state; it may not be the only place a fact
-  lives.** Three memories sit on the decision path, and each is a copy whose
+  lives.** Four memories sit on the decision path, and each is a copy whose
   authority is the store: the compiled program and the fleet graph, served for
-  at most `decision.DefaultRefreshInterval` (5 s) before they are re-read, and
+  at most `decision.DefaultRefreshInterval` (5 s) before they are re-read;
   which proxy algorithm declaration the node last wrote, which saves the write
-  for at most `fleet.DeclarationRecheck` (a minute). Each can make a node late,
-  never wrong for longer than its bound, whichever node a proxy reaches. The
-  last bound is the one easily left out: a node that remembered a write forever
-  would leave a proxy's row wrong after a rollback to a build it recorded
-  itself, while another node held the newer one. What may not exist is state
+  for at most `fleet.DeclarationRecheck` (a minute); and which proxies hold an
+  event subscription on another node, which the cache-hint gate reads and which
+  is at most two `events.sync_interval`s (2 s) late (M25). Each can make a node
+  late, never wrong for longer than its bound, whichever node a proxy reaches.
+  The declaration's bound is the one easily left out: a node that remembered a
+  write forever would leave a proxy's row wrong after a rollback to a build it
+  recorded itself, while another node held the newer one. What may not exist is state
   that changes an answer and is kept nowhere else — a counter, a lease, a set
   of what has been seen — because the next call may land on another node.
 
@@ -326,17 +329,15 @@ decision.
   the sink is handed like any other — is what explains the gap to it. With no
   sink registered, records stay in the local store and go nowhere else: the
   point is core (M15), and Control ships no sink (§11).
-- **M9 — Revocation is fan-out with replay, and it is the kill switch.** The
+- **M9 — Revocation is fan-out with replay, and it is the kill switch
+  (amended by M25, where its state lives).** The
   proxy holds one long-lived outbound NDJSON subscription (proxy §6.4). This
   server fans an operator action out to every proxy that needs it, survives a
   subscriber reconnecting with a `last_event_id`, and answers `resync` when it
-  cannot replay. In-process broker for the prototype (`internal/revoke`),
-  because multi-node deployment turns this into the one component that
-  genuinely needs shared state: the event ids are a counter in memory and the
-  replay buffer is a ring in memory, so an id minted by an earlier process is
-  answered with `resync` rather than believed. Until that state is shared
-  (0027), a revocation reaches only the subscriptions of the node that
-  published it, which is why Control runs as one node (§11).
+  cannot replay. **Where that state lives is M25 (amends M9):** the log, its
+  order and its floor, and which proxy holds a stream on which node, are in the
+  store, so the stream is the same whichever node a proxy reaches and a restart
+  replays rather than resyncs (`internal/revoke`).
 
   **A slow subscriber is dropped, not waited for.** Blocking the publisher
   would make one stalled proxy an outage for the fleet and growing its queue
@@ -1125,6 +1126,85 @@ decision.
      enumerate the router, and a source test fails the build if anything but
      the middleware asks a principal for its set.
 
+- **M25 — The event stream's state is in the store, and the cluster bus only
+  wakes nodes (amends M9, new).** M9's broker kept its ids as a counter, its
+  replay as a ring and its subscriptions as a map, all in one process, so a
+  `session_kill` published on one node reached only the proxies whose streams
+  that node held — and reported success. That failed unsafely, and it is why
+  Control ran as one node. Everything the stream's guarantees rest on is now
+  shared, and the only part that travels between nodes is a doorbell.
+
+  1. **The log is in the store.** `event_log` holds every event a proxy may be
+     replayed — `session_kill`, `cache_invalidate`, `resync`, `config_changed`
+     — with its audience, per tenant. Positions come from one deployment-wide
+     sequence (`event_log_seq`), and a publish takes its tenant's
+     `event_streams` row `FOR UPDATE` before it takes one, so a tenant's
+     positions commit in order: a reader that sees N sees every earlier one
+     that will ever exist. A publish answers only once the event is committed,
+     so **an acknowledged event is never lost** with the node that took it.
+  2. **Ids name a position in that log.** `evt-<epoch>-<position>` for a
+     logged event, the epoch being the tenant stream's, so an id another log
+     minted — a restarted in-process broker, a release before this one,
+     another deployment — is unknown and answered `resync`. A heartbeat, and
+     the `resync` that answers one reconnect, name a position without taking
+     one: `evt-<epoch>-<position>.<line>`, which sorts after the position and
+     before the next, so a subscriber's ids only move forward.
+  3. **The floor is in the store.** Each tenant keeps its newest
+     `events.replay_buffer` events; the publish that prunes past them raises
+     `event_streams.floor_seq` in the same transaction. A reconnect from below
+     the floor is answered `resync` first and nothing older; from at or above
+     it, on any node, it is replayed what it missed. A restart is a reconnect
+     that replays, not a fleet-wide cache flush.
+  4. **Fan-out is the log plus a wake-up.** The publishing node fans out to
+     its own subscriptions before it answers, then publishes a wake-up on
+     `ext.ClusterCoordinator`'s bus naming the tenant and position. A node
+     holding subscriptions in that tenant reads the tenant's log after the
+     last position it delivered and fans out what it finds — so the wake-up
+     carries no event and none of the order. Every node also reads that log
+     every `events.sync_interval` (1 s), which bounds a lost wake-up, and a
+     publisher that died between its commit and its wake-up, to one interval.
+  5. **Who holds a stream is in the store, and read from memory.** Each node
+     writes the streams it holds to `event_subscriptions` and reads every
+     other node's into a copy, so the cache-hint gate and the fleet's liveness
+     read "subscribed anywhere" (§5.4). The decision path reads only this
+     node's subscriptions and the copy, never the store (M5): another node's
+     stream is in the copy within two sync intervals, its last-seen trails the
+     holder's by at most one refresh (twice the heartbeat interval) more, and a
+     dead node's rows age out where every stale subscription does. A failed
+     read drops the tenant's copy, which withholds hints — M9's safe side.
+
+  **Why the store and the coordinator, and not the alternatives.** Postgres
+  `LISTEN`/`NOTIFY` would be a cross-node transport of Control's own, beside
+  the seam that exists for one, and clustering is Enterprise's (§11, M15):
+  two transports is two code paths, one of them untested by every deployment
+  that registers a coordinator. The coordinator alone would need ordering,
+  durable replay and a known floor that its bus does not promise; adding them
+  to `ext.ClusterCoordinator` is a break Enterprise implements (M23), for
+  state Control must read anyway. The store is where every other fact every
+  node must agree on already lives. The periodic read is the bound on a lost
+  wake-up, as 0021's announcer timer is for configuration — not membership,
+  not an election: a deployment of several nodes still needs a clustered
+  coordinator for its singletons (M19) and for delivery inside a heartbeat
+  rather than inside a sync.
+
+  **What the seam must deliver** is stated on `ext.ClusterCoordinator`, and
+  Enterprise's implementation (its E9) is written against that text: at
+  least once to every node, in any order; a subscription it cannot keep up
+  with closed, never left open with events skipped; closed when its context
+  ends; payloads opaque; and a node id unique and stable for the process.
+
+  **Configuration rides the same log.** A `config_changed` is logged like any
+  other event, so the node holding a proxy's stream delivers it and a
+  reconnect replays it. 0021's `announced_hash` marker stays, because the
+  desired document and its announcement are two transactions: the marker
+  settles when the stream logs the announcement, and the announcer, on any
+  node, retries one the stream never took.
+
+  One path, and a single node takes it too: Control's single-node coordinator
+  delivers the wake-ups in process. A bus built without a store keeps its log
+  in its own process with a per-process epoch — exactly M9's broker — and the
+  daemon never builds one; tests and a database-less embedding do.
+
 ---
 
 ## 3. Architecture & repository layout
@@ -1424,7 +1504,14 @@ for nothing.
   invalid, unaccepted warnings, a flip under `-fail-on-flip` — and `2` for a
   usage or transport error or an outage (`5xx`), so a pipeline can tell "the
   policy is wrong" from "the server is unreachable".
-- **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay.
+- **`internal/revoke`** — subscriptions and fan-out. Owns event ids and replay,
+  and the shared state that makes them the same on every node (M25): the log
+  in the store, a per-tenant cursor of how far this node has fanned it out,
+  the wake-ups it publishes and reads on `ext.ClusterCoordinator`'s bus, the
+  sync that reads the log for a lost wake-up, and the copy of which proxies
+  hold a stream on another node, which is what it answers
+  `fleet.SubscriptionState` from. Built without a store it keeps its log in its
+  own process, which only tests and a database-less embedding do.
 - **`internal/access`** — grants: create, read and revoke them, and the requests
   a registered approval workflow decides (M10) — an administrator's, and a
   requester's own (0016), which it refuses while no workflow is registered and
@@ -1990,14 +2077,13 @@ the server half of each:
   healthy would leave it on the old document until something made it
   reconnect. It walks every tenant this process has seen — the configured
   one, each a proxy subscribes in, and each a publish or a rollback is made in
-  — because the store cannot list tenants (M18). "The stream took it" means a
-  live subscription did: a node's bus reaches only the subscriptions held on
-  that node, so an event it merely retained settles nothing. Every node's
-  announcer walks the same markers and announces only to the proxies whose
-  stream it holds, so an announcement made on one node reaches a proxy
-  subscribed on another within one interval, with no cross-node bus. A proxy
-  subscribed nowhere is not re-announced into the replay buffer; it fetches
-  when it reconnects, and its report settles the marker.
+  — because the store cannot list tenants (M18). "The stream took it" means
+  the stream logged it (M25): the node holding the proxy's stream delivers it,
+  whichever node that is, and a proxy that reconnects anywhere is replayed it
+  or answered `resync`, and fetches as it does on every reconnect. So the
+  marker settles where the announcement was made, and every node's announcer
+  may retry any owed proxy; two retrying one together cost the proxy a
+  duplicate it drops without a fetch.
 
   **Nothing published is version 0, everywhere.** A proxy whose zone and own
   scope have never had a document desires no version: the fetch answers `204`,
@@ -2357,7 +2443,10 @@ fail together.
 rule.** Liveness is a live event subscription (`internal/revoke` serves it and
 implements `fleet.SubscriptionState`), so a proxy that holds one is hinted and a
 proxy that does not is answered without a hint — on both responses, through the
-one function. Absent means what every server did before the field existed: the
+one function. The subscription may be held on any node: the gate reads this
+node's own and its copy of every other node's, which is at most two
+`events.sync_interval`s late, one map lookup per hinted answer and never a
+store read (M25, M5). Absent means what every server did before the field existed: the
 proxy re-asks. Before 0009 wired the stream the answer was *no* on both, which
 was the behaviour rather than a placeholder; 0009 turned hints on by supplying
 the subscription source, not by changing the rule in front of them.
@@ -3203,7 +3292,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0024 | Signed retention markers | retention a writer of the database alone cannot forge, chosen over a control-chain cross-check, an in-stream checkpoint, keyed links and an external anchor: `audit_retention` and a per-tenant capture watermark signed over versioned, length-prefixed bytes by a per-tenant Ed25519 key behind `ext.KeyStore`, checked against the key store's signer and never a stored public half, a seal that does not hold a `retention-marker` break, retention refused without a key store or over a start that does not verify, and `hoplock-control audit-retention` to show and rotate the key; what `v0.6.0`–`v0.10.0` wrote unsigned stays a break, with no installed base to migrate (M8, M7, M15, M23) |
 | 0025 | An archive fed before retention deletes | `internal/archive`, the feed to a registered `ext.ArchiveStore`: every committed record, one stream's records per batch in ascending sequence, at least once, from a durable position per tenant, consumer and stream (migration `0014`, `audit_feed_positions`), each capture after its record (`audit_captures.archived_at`), one node per stream by a lease in the position row, off ingest and the decision path (M5), correct on several nodes without the event plane, bounded by `audit.archive.*`; `ext.AuditRecord` gains `Stream`, `PrevHash` and the hashed `Body`, and `ext.ChainLink` (with `ext.ChainVersion`) is the one link implementation `audit.Link` calls; `ext.Capture` and `ArchiveStore.ArchiveCaptures`, `v0.12.0`'s `### Breaking`; a prefix pass never deletes, and a capture pass never empties, what the archive has not confirmed — by sequence `409 retention_not_archived`, by instant held back, a capture pass run to the earliest unconfirmed capture and signed there, every answer saying `held_by_archive`; the archive's lag on `GET …/extensions` for the caller's tenant; with no archive registered, nothing changes (M8, M15, M5, M18, M11, M23). Raised by `Hoplock/enterprise#26`; depends only on merged phases (0010, 0019, 0024) |
 | 0026 | Audit sink delivery | Control delivers to every registered `ext.AuditSink` (`internal/export`): every committed record of every tenant, per tenant and stream in ascending sequence, at least once, through 0025's feed generalised in `internal/archive` so the archive and each sink are consumers of one implementation, from a durable position per sink, tenant and stream (`audit_feed_positions`, key `sink:<provider>`, migration `0015`), the sink named by its `Registration.Provider` and begun at each stream's chain start; off ingest and the decision path (M5), one sink, tenant or stream that fails stalling no other, never two batches of one stream in flight to one sink and up to `audit.sinks.max_in_flight` of different streams, a call past its deadline holding its place until it returns — the archive's feed too, its four workers become `audit.archive.max_in_flight` and `ext.ArchiveStore` states its concurrency — and correct on several nodes without the event plane; retention never waits on a sink, and a sink a pass overtakes is moved past the marker once, the run counted in its row (`skipped_records`, `skipped_behind`) and logged once at `WARN`, explained by `operator.audit.retained`; delivery writes no audit record; each sink's lag (`streams_behind`, `oldest_unconfirmed_at`, `failing`, `skipped_by_retention`) on its registration in `GET …/extensions` for the caller's tenant, and the archive's lag gains `failing`; bounded by `audit.sinks.*`; no `ext` signature changes, `AuditSink`'s doc comment saying what is now true, its concurrency contract included; with no sink registered, nothing changes; `v0.13.0` (M8, M15, M5, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0025 and on merged phases (0010, 0019) |
-| 0027 | Shared event plane | the event stream correct on several nodes: a revocation and a `config_changed` reach a proxy whichever node holds its stream, event ids and replay that survive a node and a restart, the subscription set the cache-hint gate reads shared rather than per node — Control's half, through `ext.ClusterCoordinator` and the store; the election and the cross-node transport stay Enterprise's (its E9) (M9, M5, M15, M18) |
+| 0027 | Shared event plane | the event stream correct on several nodes (M25, new, amending M9): the log, its one order per tenant from a deployment-wide sequence and its floor in the store (`event_log`, `event_streams`, migration `0016`), so a revocation and a `config_changed` reach a proxy whichever node holds its stream and a reconnect to any node, or across a restart, replays rather than resyncs; ids `evt-<epoch>-<position>`; fan-out by a wake-up on `ext.ClusterCoordinator`'s bus and a read of the log every `events.sync_interval`; the subscription set every node holds (`event_subscriptions`) copied into each node's memory for the cache-hint gate, at most two sync intervals late, and read per proxy; the delivery semantics the seam must provide stated on it, and Control's single-node coordinator closing a subscriber it drops; the announcer settled by the log; `v0.14.0` (M9, M5, M15, M18, M11, M23) |
 | 0028 | Bounded lists: audit and plan | every list this server answers, found by enumerating the router and the store's readers rather than from memory — the eight 0023 found answering a whole tenant (`targets`, `subjects`, `role-bindings`, `policy/bundles`, `proxies`, `fleet/config/rollouts`, `fleet/algorithms`, `fleet/target-observations`), the audit reads and per-session reads capped silently, and earlier phases' lists — each classified with its reader, its bound and its verdict; one bounded-list shape (a limit, a keyset cursor, an answer that says where it stopped) recorded as a decision; and the implementing prompts queued right after it in chunks each sized to keep its session under 60% context, the first building the mechanism and an enumerating test whose pending list each later chunk empties. It changes no behaviour (M19, M21, M5, M18, M15, M23) |
 | 0029 | Host routes and the console in namespaces of their own | every way a host route can overlap a path Control serves, verified against the real route table and at the request level, with each guard proven by a mutation; then four namespaces on the north-bound listener, each under a prefix of its own — Control's API, a host's API of both classes, Control's console and a host's console screens — with no path in two, held pairwise by tests in both directions, both consoles reserved before either is built, no catch-all outside its own prefix, and start-up's refusal kept as defence in depth; a decision, a `### Breaking` release, and the sync `hoplock/enterprise` is owed (M15, M24, M18, M19, M20, M21, M23). Queued at the user's direction |
 | 0030 | Inbound actions: the executor, a subject lock & a target quarantine | Control's `ext.ActionExecutor` (`internal/action`), executing every `ActionKind` through the service an operator's route calls: `kill_session` by session or by subject through the event stream (M9), `revoke_grant` through 0012's revocation (M10), and `lock_subject`, `unlock_subject` and `quarantine_target` through a subject lock and a target quarantine this phase adds. A lock and a quarantine are standing denials applied above the engine, so no policy rule can write around one; each is recorded with the decision it denied and explained (M3, M4, M17, M5), and an operator places and lifts each on north-bound routes of its own. The executor is idempotent per tenant on `ActionID`, with a different action under one id a conflict (M16's precedent). It refuses to lock a break-glass subject (M7) and shows the holder `ReasonText` once validated, or Control's own text. Every execution is recorded on the control stream with the handler as actor and the external reference. The registered `ext.ActionHandler` is started after the registry is sealed and before the listeners open, and stopped on shutdown, and a failed `Start` never stops Control. No `ext` signature changes. A new decision, and a MINOR release (M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; on one node it depends only on merged phases (0009, 0012, 0019) |
@@ -3820,14 +3909,16 @@ Genuinely out of scope for now:
   This repository makes a deployment identifiable and supervisable (M19) and
   ships the registration client as its real default; aggregating a fleet of
   deployments is Enterprise's (its E14).
-- HA/multi-region deployment. The decision path is designed to scale out (M5),
-  and `ext.ClusterCoordinator` (0004) is the seam a clustered deployment's bus
-  and elections come through; clustering itself is Enterprise's (its E9). But
-  nothing on the event stream goes through that seam yet: a revocation reaches
-  only the subscriptions of the node that published it, and the subscription
-  set the cache-hint gate reads is that node's own. So Control runs as **one
-  node** until phase 0027 (the shared event plane) makes the stream correct on
-  several. Fleet configuration delivery already is (§4, D18).
+- HA/multi-region deployment. The decision path scales out (M5), and the event
+  stream is correct on several nodes (M25): its log, floor and subscription set
+  are in the store, so a revocation or a `config_changed` reaches a proxy
+  whichever node holds its stream, and a reconnect to any node replays. What a
+  clustered deployment still needs is `ext.ClusterCoordinator` (0004): its
+  elections for singletons (M19), and its bus for delivery inside a heartbeat
+  rather than inside `events.sync_interval`. That is clustering, and it is
+  Enterprise's (its E9); Control registers its single-node coordinator, so on
+  its own it is a complete one-node product. HA of Postgres and multi-region
+  are out of scope.
 - Endpoint agents and device posture collection. The policy model has a slot for
   posture attributes; nothing here collects them.
 - Long-term storage tiering of session recordings.

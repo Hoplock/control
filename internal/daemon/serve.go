@@ -6,6 +6,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -45,15 +46,17 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	// on both responses that carry a hint — correctly, since there was no
 	// stream a withdrawal could travel over. Wiring it here is what turns
 	// hints on, through the gate they already went through.
-	bus, err := revoke.New(revoke.Options{
-		HeartbeatInterval: cfg.Events.HeartbeatInterval,
-		ReplayBuffer:      cfg.Events.ReplayBuffer,
-		SubscriberQueue:   cfg.Events.SubscriberQueue,
-		Logger:            log,
-	})
+	//
+	// The stream is the same whichever node a proxy reaches (0027): its log
+	// and the deployment's subscriptions are in the store, and the cluster
+	// coordinator — Control's single node, or a host's clustered one — wakes
+	// the other nodes when this one logs an event. There is one path, and a
+	// single node takes it too.
+	bus, err := buildBus(ctx, cfg, st, extensions, log)
 	if err != nil {
 		return err
 	}
+	bus.Start(ctx)
 
 	registry := fleet.New(st,
 		fleet.WithSubscriptionState(bus),
@@ -388,11 +391,36 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	return <-errs
 }
 
+// buildBus builds the event stream over the store and the registered cluster
+// coordinator, which the sealed registry always holds: Control registers its
+// single-node one when no host registers another (M15).
+func buildBus(ctx context.Context, cfg *config.Config, st *store.Store, extensions *ext.Extensions, log *slog.Logger) (*revoke.Bus, error) {
+	coord, ok := extensions.ClusterCoordinator()
+	if !ok {
+		return nil, errors.New("daemon: no cluster coordinator is registered, and Control registers one by default")
+	}
+	node, err := coord.Node(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: the cluster coordinator could not name this node: %w", err)
+	}
+	return revoke.New(revoke.Options{
+		HeartbeatInterval: cfg.Events.HeartbeatInterval,
+		ReplayBuffer:      cfg.Events.ReplayBuffer,
+		SubscriberQueue:   cfg.Events.SubscriberQueue,
+		SyncInterval:      cfg.Events.SyncInterval,
+		Store:             st,
+		Coordinator:       coord,
+		Node:              string(node.ID),
+		Logger:            log,
+	})
+}
+
 // busConfigPublisher is the fleet registry's configuration publisher over the
-// revocation bus: one `config_changed` to one proxy (proxy D18).
+// revocation bus: one `config_changed` to one proxy (proxy D18). The stream took
+// it once it is logged, which is what the error says.
 type busConfigPublisher struct{ bus *revoke.Bus }
 
-func (p busConfigPublisher) PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) (bool, error) {
-	receipt, err := p.bus.ConfigChanged(ctx, tenant, proxyID, ev)
-	return receipt.Delivered > 0, err
+func (p busConfigPublisher) PublishConfigChange(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) error {
+	_, err := p.bus.ConfigChanged(ctx, tenant, proxyID, ev)
+	return err
 }

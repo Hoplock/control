@@ -9,12 +9,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/store"
 )
@@ -26,15 +25,19 @@ const (
 	// stream is alive. It is well inside the contract's ceiling, which is
 	// what leaves room for one lost heartbeat.
 	DefaultHeartbeatInterval = 5 * time.Second
-	// DefaultReplayBuffer is how many published events are kept for a
-	// reconnecting subscriber. Past it the answer is `resync`, which is
-	// correct but expensive — the proxy drops its entire decision cache —
-	// so the buffer is sized to cover a reconnect with backoff rather than
-	// an outage.
+	// DefaultReplayBuffer is how many published events of each tenant are
+	// kept for a reconnecting subscriber. Past it the answer is `resync`,
+	// which is correct but expensive — the proxy drops its entire decision
+	// cache — so the buffer is sized to cover a reconnect with backoff
+	// rather than an outage.
 	DefaultReplayBuffer = 1024
 	// DefaultSubscriberQueue is how far one subscriber may fall behind
 	// before it is dropped. See [Options.SubscriberQueue].
 	DefaultSubscriberQueue = 256
+	// DefaultSyncInterval is how often a node reads the log for events no
+	// wake-up told it of, and writes and reads the deployment's
+	// subscriptions. See [Options.SyncInterval].
+	DefaultSyncInterval = time.Second
 )
 
 // Options configures a [Bus].
@@ -42,7 +45,8 @@ type Options struct {
 	// HeartbeatInterval is the interval this server keeps AND advertises.
 	// The two are one number here on purpose — see [Bus.HeartbeatInterval].
 	HeartbeatInterval time.Duration
-	// ReplayBuffer is how many published events are retained.
+	// ReplayBuffer is how many published events of each tenant are
+	// retained.
 	ReplayBuffer int
 	// SubscriberQueue is how many events may be outstanding to one
 	// subscriber before it is dropped.
@@ -55,54 +59,90 @@ type Options struct {
 	// nothing is silently skipped — it costs that proxy its cache, which is
 	// the cheapest of the three.
 	SubscriberQueue int
+	// Store is the deployment's shared log and subscription set (0027).
+	// With one, every node built over the same store serves the same stream
+	// and a restart replays rather than resyncs. Without one the log is
+	// kept in this process and this node's subscriptions are the only ones
+	// it knows: the broker every release before 0027 ran, which tests and a
+	// database-less embedding still build.
+	Store *store.Store
+	// Coordinator carries the wake-up that tells the other nodes an event
+	// was logged (ext.ClusterCoordinator's bus). Nil means there are no
+	// other nodes. It is a wake-up and never the authority: a lost one
+	// costs a node at most one SyncInterval, because the log is read on
+	// that clock too.
+	Coordinator ext.ClusterCoordinator
+	// Node is this process's id in the deployment, as the coordinator names
+	// it. Empty is "local".
+	Node string
+	// SyncInterval is how often [Bus.Start]'s loop reads the log for events
+	// it was not woken for, and writes this node's subscriptions and reads
+	// the others'. It bounds how late a lost wake-up makes delivery, and
+	// how late another node's subscription is seen (twice it).
+	SyncInterval time.Duration
 	// Logger is where the broker's own events go. Nil takes slog's default.
 	Logger *slog.Logger
 	// Now overrides the clock. Tests use it; nothing in production should.
 	Now func() time.Time
 }
 
-// Bus is the in-process event broker (M9).
+// Bus is the event broker (M9): the log, the subscriptions this node holds,
+// and the copy of the ones every other node holds.
 type Bus struct {
 	mu sync.Mutex
-	// seq is the monotonic source of every event id this run mints. It
-	// counts heartbeats and resyncs too, so that an id a proxy sends back
-	// always names a point in one order.
-	seq uint64
-	// evicted is the highest retained seq that has been dropped from the
-	// ring. A subscriber resuming from before it cannot be replayed, and
-	// that is the whole of the resync decision — see [Bus.planLocked].
-	evicted uint64
-	ring    []stored
-	subs    map[*subscription]struct{}
-	closed  bool
+	// local is every subscription this node holds, by tenant and proxy.
+	local map[store.Tenant]map[string]map[*subscription]struct{}
+	// cursors are how far this node has fanned each tenant's log out. A
+	// tenant has one from the first subscription in it, for the life of
+	// the process.
+	cursors map[store.Tenant]*cursor
+	// lines numbers the lines that name a position rather than take one,
+	// so two of them at one position are still two ids, in order.
+	lines  uint64
+	closed bool
 
-	// runID distinguishes this process from every earlier one. It is in
-	// every event id, so an id minted before a restart is UNKNOWN rather
-	// than believed: the ring is in memory and a restart empties it, and
-	// answering `resync` to an id this run never minted is the contract's
-	// own answer for a server that keeps no history.
-	runID string
+	// remote is the copy of every other node's subscriptions, by tenant
+	// and proxy, as of the last sync (see presence.go). tracked is the
+	// tenants it covers: every tenant this node was asked about.
+	remote  map[store.Tenant]map[string]time.Time
+	tracked map[store.Tenant]struct{}
+
+	events   eventLog
+	presence *store.Store
+	coord    ext.ClusterCoordinator
+	node     string
 
 	interval   time.Duration
 	advertised int32
-	ringSize   int
 	queueSize  int
-	log        *slog.Logger
-	now        func() time.Time
+	sync       time.Duration
+	// refresh is how far a subscription's last write may advance before
+	// its row is rewritten.
+	refresh time.Duration
+	log     *slog.Logger
+	now     func() time.Time
 
 	// live is held open for as long as any subscription is registered, so
 	// that Close can drain rather than drop.
 	live sync.WaitGroup
+
+	// The loop Start runs, and what only it touches.
+	stop    context.CancelFunc
+	loops   sync.WaitGroup
+	written map[store.Tenant]map[string]time.Time
+	ticks   int
 }
 
-// stored is one retained event, with what it takes to replay it to the right
-// subscriber: the audience decided delivery once and must decide it the same
-// way on a replay.
-type stored struct {
-	seq    uint64
-	tenant store.Tenant
-	aud    Audience
-	ev     contract.RevocationEvent
+// cursor is one tenant's log as this node has fanned it out.
+type cursor struct {
+	// mu serialises reading the tenant's log and fanning it out on this
+	// node, so events are queued in log order and none twice.
+	mu sync.Mutex
+	// epoch is the tenant's stream's, fixed when the cursor is made.
+	epoch string
+	// head is the last position fanned out. It is written holding both mu
+	// and Bus.mu, so either is enough to read it.
+	head int64
 }
 
 // Receipt is what an operator action produced.
@@ -110,10 +150,11 @@ type Receipt struct {
 	// EventID is the id this server minted. An operator surface hands it
 	// back so that an action can be found in the audit record (0010).
 	EventID string
-	// Delivered is how many subscriptions the event was queued to NOW. It
-	// is not a delivery guarantee and not a count of the fleet: a proxy
-	// that is reconnecting receives the event by replay and is not counted
-	// here.
+	// Delivered is how many subscriptions ON THIS NODE the event was
+	// queued to now. It is not a delivery guarantee and not a count of the
+	// fleet: a proxy that is reconnecting receives the event by replay, and
+	// a proxy whose stream another node holds receives it from the log
+	// through that node; neither is counted here.
 	Delivered int
 	// CoversHostKeyDecisions reports whether this event can withdraw a
 	// host-key decision. It is on the receipt rather than left implicit
@@ -143,20 +184,39 @@ func New(o Options) (*Bus, error) {
 	}
 
 	b := &Bus{
-		subs:       make(map[*subscription]struct{}),
-		runID:      newRunID(),
+		local:      make(map[store.Tenant]map[string]map[*subscription]struct{}),
+		cursors:    make(map[store.Tenant]*cursor),
+		remote:     make(map[store.Tenant]map[string]time.Time),
+		tracked:    make(map[store.Tenant]struct{}),
+		written:    make(map[store.Tenant]map[string]time.Time),
+		coord:      o.Coordinator,
+		node:       o.Node,
 		interval:   interval,
 		advertised: advertised,
-		ringSize:   o.ReplayBuffer,
 		queueSize:  o.SubscriberQueue,
+		sync:       o.SyncInterval,
+		refresh:    2 * interval,
 		log:        o.Logger,
 		now:        o.Now,
 	}
-	if b.ringSize <= 0 {
-		b.ringSize = DefaultReplayBuffer
+	retain := o.ReplayBuffer
+	if retain <= 0 {
+		retain = DefaultReplayBuffer
+	}
+	if o.Store != nil {
+		b.events = storeLog{st: o.Store, retain: retain}
+		b.presence = o.Store
+	} else {
+		b.events = newMemoryLog(newRunID(), retain)
+	}
+	if b.node == "" {
+		b.node = "local"
 	}
 	if b.queueSize <= 0 {
 		b.queueSize = DefaultSubscriberQueue
+	}
+	if b.sync <= 0 {
+		b.sync = DefaultSyncInterval
 	}
 	if b.log == nil {
 		b.log = slog.Default()
@@ -192,10 +252,9 @@ func advertise(interval time.Duration) int32 {
 // carries `heartbeat_interval_seconds`, so "within the interval the server
 // advertises" is a claim read off the wire rather than a number typed into a
 // harness — and the two halves are separately graded: this server keeps the
-// interval it names, AND that interval is inside the contract's ceiling. A
-// configuration that separated the timer from the claim would let them drift,
-// so [New] derives the claim from the timer and refuses a timer past the
-// ceiling.
+// interval it names, AND that interval is inside the ceiling. A configuration
+// that separated the timer from the claim would let them drift, so [New]
+// derives the claim from the timer and refuses a timer past the ceiling.
 func (b *Bus) HeartbeatInterval() time.Duration { return b.interval }
 
 // AdvertisedHeartbeatSeconds is what this server puts on the wire.
@@ -247,8 +306,8 @@ func (b *Bus) Resync(ctx context.Context, tenant store.Tenant, aud Audience) (Re
 // replayable, and a replayed document would be a stale one applied as if
 // current — the proxy answers by fetching the current one, so a replayed
 // notification for an older version cannot bring that version back. That is
-// also why it is retained for replay like any other event. It touches no
-// session and no cached decision.
+// also why it is logged for replay like any other event. It touches no session
+// and no cached decision.
 func (b *Bus) ConfigChanged(ctx context.Context, tenant store.Tenant, proxyID string, ev contract.ConfigChangedEvent) (Receipt, error) {
 	aud := ToProxy(proxyID)
 	if err := aud.validate(); err != nil {
@@ -263,13 +322,19 @@ func (b *Bus) ConfigChanged(ctx context.Context, tenant store.Tenant, proxyID st
 	}, false)
 }
 
-// publish mints an id, retains the event when it is replayable, and queues it
-// to every subscription the audience reaches.
+// publish logs an event, fans it out to this node's subscriptions, and wakes
+// the other nodes to fan it out to theirs.
 //
-// A `heartbeat` is not retained: replaying liveness tells a reconnecting proxy
-// only that the stream was alive at a moment that has passed. A `resync` is
-// retained, because a subscriber that missed one has missed the instruction to
-// drop its cache.
+// THE LOG IS THE ACKNOWLEDGEMENT. A receipt is returned only once the event is
+// committed to it, and from then on every node holding a subscription it is
+// addressed to delivers it — woken now, or at its next sync if the wake-up is
+// lost — and a proxy reconnecting anywhere is replayed it. A node that dies
+// after the commit loses nothing a caller was told was published; one that
+// dies before it told the caller nothing.
+//
+// The fan-out here holds the tenant's cursor across the append, so nothing else
+// on this node can deliver the event first: the receipt's count is exact for
+// this node.
 func (b *Bus) publish(ctx context.Context, tenant store.Tenant, aud Audience, ev contract.RevocationEvent, coversHostKeys bool) (Receipt, error) {
 	if err := ctx.Err(); err != nil {
 		return Receipt{}, err
@@ -283,21 +348,144 @@ func (b *Bus) publish(ctx context.Context, tenant store.Tenant, aud Audience, ev
 		b.mu.Unlock()
 		return Receipt{}, ErrClosed
 	}
-	seq, id := b.mintLocked()
-	ev.EventID = id
-	ev.Timestamp = b.now().UTC().Format(time.RFC3339)
-	// The interval may be set on ANY event, not only a heartbeat, and a
-	// reader takes it wherever it appears. Putting it on everything means a
-	// proxy that reconnects into a burst of replay learns the interval on
-	// its first line rather than on its first heartbeat.
-	ev.HeartbeatIntervalSeconds = b.advertised
-
-	if ev.Type != contract.EventTypeHeartbeat {
-		b.retainLocked(stored{seq: seq, tenant: tenant, aud: aud, ev: ev})
-	}
-	delivered, dropped := b.fanOutLocked(tenant, aud, ev)
+	c := b.cursors[tenant]
 	b.mu.Unlock()
 
+	at := b.now().UTC()
+	ev.Timestamp = at.Format(time.RFC3339)
+	if c != nil {
+		c.mu.Lock()
+	}
+	seq, pos, err := b.events.append(ctx, tenant, logged{aud: aud, ev: ev, at: at}, b.node)
+	delivered := 0
+	if err == nil && c != nil {
+		var fanErr error
+		if delivered, fanErr = b.advanceLocked(ctx, tenant, c, seq); fanErr != nil {
+			// Logged, so acknowledged: the event is not lost, only late
+			// here, and this node's next sync delivers it.
+			b.log.Warn("a logged event could not be read back for delivery on this node; the next sync delivers it",
+				"event", "revoke_fanout_deferred", "tenant", tenant.String(), "error", fanErr.Error())
+		}
+	}
+	if c != nil {
+		c.mu.Unlock()
+	}
+	if err != nil {
+		return Receipt{}, err
+	}
+	b.wake(ctx, tenant, seq)
+	return Receipt{EventID: eventID(pos.epoch, seq), Delivered: delivered, CoversHostKeyDecisions: coversHostKeys}, nil
+}
+
+// advanceBatch is how many logged events one read of the log takes.
+const advanceBatch = 256
+
+// advanceLocked fans out every event of the tenant's log after the cursor, in
+// order, and reports how many subscriptions the event at want was queued to.
+// The caller holds c.mu.
+func (b *Bus) advanceLocked(ctx context.Context, tenant store.Tenant, c *cursor, want int64) (int, error) {
+	delivered := 0
+	for {
+		batch, err := b.events.after(ctx, tenant, c.head, 0, advanceBatch)
+		if err != nil {
+			return delivered, err
+		}
+		if len(batch) == 0 {
+			return delivered, nil
+		}
+		var dropped []*subscription
+		b.mu.Lock()
+		for _, l := range batch {
+			n, d := b.fanOutLocked(tenant, l.aud, l.render(c.epoch, b.advertised))
+			dropped = append(dropped, d...)
+			if l.seq == want {
+				delivered = n
+			}
+			c.head = l.seq
+		}
+		b.mu.Unlock()
+		b.logDropped(tenant, dropped)
+		if len(batch) < advanceBatch {
+			return delivered, nil
+		}
+	}
+}
+
+// cursorFor returns the tenant's cursor, making it — at the head of the
+// tenant's log — the first time.
+func (b *Bus) cursorFor(ctx context.Context, tenant store.Tenant) (*cursor, error) {
+	b.mu.Lock()
+	c := b.cursors[tenant]
+	b.mu.Unlock()
+	if c != nil {
+		return c, nil
+	}
+	pos, err := b.events.open(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if existing := b.cursors[tenant]; existing != nil {
+		return existing, nil
+	}
+	// Anything logged after the head was read is fanned out by the first
+	// advance, which every subscription takes before it registers.
+	c = &cursor{epoch: pos.epoch, head: pos.head}
+	b.cursors[tenant] = c
+	return c, nil
+}
+
+// fanOutLocked queues one event to every subscription on this node the audience
+// reaches, and names the ones that were dropped for not keeping up.
+func (b *Bus) fanOutLocked(tenant store.Tenant, aud Audience, ev *contract.RevocationEvent) (int, []*subscription) {
+	if b.closed {
+		// Draining: each subscription hands over what it already holds,
+		// and a deploy's reconnect replays the rest.
+		return 0, nil
+	}
+	byProxy := b.local[tenant]
+	if len(byProxy) == 0 {
+		return 0, nil
+	}
+	var (
+		delivered int
+		dropped   []*subscription
+	)
+	deliver := func(subs map[*subscription]struct{}) {
+		for sub := range subs {
+			line := *ev
+			select {
+			case sub.ch <- &line:
+				delivered++
+			default:
+				// The queue is full: this subscriber is not reading. Drop
+				// it rather than block the bus or grow without bound; it
+				// reconnects into replay or resync.
+				if sub.evict() {
+					dropped = append(dropped, sub)
+				}
+			}
+		}
+	}
+	if aud.All {
+		for _, subs := range byProxy {
+			deliver(subs)
+		}
+		return delivered, dropped
+	}
+	reached := make(map[string]struct{}, len(aud.ProxyIDs))
+	for _, id := range aud.ProxyIDs {
+		if _, twice := reached[id]; twice {
+			continue
+		}
+		reached[id] = struct{}{}
+		deliver(byProxy[id])
+	}
+	return delivered, dropped
+}
+
+func (b *Bus) logDropped(tenant store.Tenant, dropped []*subscription) {
 	for _, sub := range dropped {
 		b.log.Warn("revocation subscriber dropped for falling behind",
 			"event", "revoke_subscriber_dropped",
@@ -306,87 +494,106 @@ func (b *Bus) publish(ctx context.Context, tenant store.Tenant, aud Audience, ev
 			"queue", b.queueSize,
 		)
 	}
-	return Receipt{EventID: id, Delivered: delivered, CoversHostKeyDecisions: coversHostKeys}, nil
 }
 
-// mintLocked assigns the next sequence number and renders its id.
-func (b *Bus) mintLocked() (uint64, string) {
-	b.seq++
-	return b.seq, eventID(b.runID, b.seq)
+// addLocked registers a subscription on this node.
+func (b *Bus) addLocked(sub *subscription) {
+	byProxy := b.local[sub.tenant]
+	if byProxy == nil {
+		byProxy = make(map[string]map[*subscription]struct{})
+		b.local[sub.tenant] = byProxy
+	}
+	subs := byProxy[sub.proxyID]
+	if subs == nil {
+		subs = make(map[*subscription]struct{})
+		byProxy[sub.proxyID] = subs
+	}
+	subs[sub] = struct{}{}
 }
 
-// retainLocked appends to the replay ring, remembering what fell out of it.
-//
-// What fell out is the whole of the resync decision: a subscriber resuming
-// from before [Bus.evicted] cannot be given everything it missed, and the
-// contract's answer to that is `resync` as the first line and nothing older —
-// never live delivery over a gap.
-func (b *Bus) retainLocked(s stored) {
-	b.ring = append(b.ring, s)
-	for len(b.ring) > b.ringSize {
-		b.evicted = b.ring[0].seq
-		b.ring = b.ring[1:]
+// remove forgets a subscription that ended.
+func (b *Bus) remove(sub *subscription) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	byProxy := b.local[sub.tenant]
+	delete(byProxy[sub.proxyID], sub)
+	if len(byProxy[sub.proxyID]) == 0 {
+		delete(byProxy, sub.proxyID)
 	}
-	// The slice is re-cut rather than copied down, so reclaim the backing
-	// array when it has grown well past what is retained.
-	if cap(b.ring) > 4*b.ringSize && len(b.ring) == b.ringSize {
-		fresh := make([]stored, b.ringSize, 2*b.ringSize)
-		copy(fresh, b.ring)
-		b.ring = fresh
+	if len(byProxy) == 0 {
+		delete(b.local, sub.tenant)
 	}
-}
-
-// fanOutLocked queues one event to every subscription the audience reaches,
-// and names the ones that were dropped for not keeping up.
-func (b *Bus) fanOutLocked(tenant store.Tenant, aud Audience, ev contract.RevocationEvent) (int, []*subscription) {
-	var (
-		delivered int
-		dropped   []*subscription
-	)
-	for sub := range b.subs {
-		if sub.tenant != tenant || !aud.reaches(sub.proxyID) {
-			continue
-		}
-		line := ev
-		select {
-		case sub.ch <- &line:
-			delivered++
-		default:
-			// The queue is full: this subscriber is not reading. Drop
-			// it rather than block the bus or grow without bound; it
-			// reconnects into replay or resync.
-			if sub.evict() {
-				dropped = append(dropped, sub)
-			}
-		}
-	}
-	return delivered, dropped
 }
 
 // LiveSubscriptions implements fleet.SubscriptionState: which proxies hold a
-// live subscription, and when each was last written to.
+// live subscription on ANY node, and when each was last written to.
 //
-// It is the signal the cache-hint gate reads before issuing a hint (PLAN §5.4,
-// M9): a hint is only as withdrawable as the stream that reaches its holder, so
-// a proxy that is not here gets none. "Last seen" is the last SUCCESSFUL write
-// rather than the moment it connected, because a subscription whose writes are
-// failing is not a path a withdrawal could travel.
+// It is the signal the cache-hint gate and the fleet's liveness read (PLAN
+// §5.4, M9): a hint is only as withdrawable as the stream that reaches its
+// holder, so a proxy that is not here gets none. "Last seen" is the last
+// SUCCESSFUL write rather than the moment it connected, because a subscription
+// whose writes are failing is not a path a withdrawal could travel.
+//
+// It is read from memory and never from the store (M5): this node's own
+// subscriptions as they stand, and the copy of every other node's, which is at
+// most two sync intervals late (see presence.go). A tenant this node was never
+// asked about is in the copy from the next sync on.
 func (b *Bus) LiveSubscriptions(_ context.Context, tenant store.Tenant) (map[string]time.Time, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.trackLocked(tenant)
 
-	out := make(map[string]time.Time, len(b.subs))
-	for sub := range b.subs {
-		if sub.tenant != tenant {
-			continue
+	out := make(map[string]time.Time, len(b.local[tenant])+len(b.remote[tenant]))
+	for proxyID, subs := range b.local[tenant] {
+		for sub := range subs {
+			if seen := sub.seen(); seen.After(out[proxyID]) {
+				out[proxyID] = seen
+			}
 		}
-		seen := sub.seen()
-		if prev, ok := out[sub.proxyID]; ok && prev.After(seen) {
-			continue
+	}
+	for proxyID, seen := range b.remote[tenant] {
+		if seen.After(out[proxyID]) {
+			out[proxyID] = seen
 		}
-		out[sub.proxyID] = seen
 	}
 	return out, nil
+}
+
+// LiveSubscription is [Bus.LiveSubscriptions] for one proxy: whether it holds a
+// live subscription on any node, and when it was last written to. It is the
+// decision path's form (the cache-hint gate asks it on every hinted answer), so
+// it is two map lookups however large the deployment's subscription set is.
+func (b *Bus) LiveSubscription(_ context.Context, tenant store.Tenant, proxyID string) (time.Time, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.trackLocked(tenant)
+
+	var (
+		latest time.Time
+		ok     bool
+	)
+	for sub := range b.local[tenant][proxyID] {
+		ok = true
+		if seen := sub.seen(); seen.After(latest) {
+			latest = seen
+		}
+	}
+	if seen, held := b.remote[tenant][proxyID]; held {
+		ok = true
+		if seen.After(latest) {
+			latest = seen
+		}
+	}
+	return latest, ok, nil
+}
+
+// trackLocked adds a tenant to the set the copy of other nodes' subscriptions
+// covers. There is no store read that lists tenants (M18), so the set is
+// learned from what this node is asked.
+func (b *Bus) trackLocked(tenant store.Tenant) {
+	if _, ok := b.tracked[tenant]; !ok && tenant != "" {
+		b.tracked[tenant] = struct{}{}
+	}
 }
 
 // Close drains every subscription and stops accepting publications.
@@ -394,9 +601,13 @@ func (b *Bus) LiveSubscriptions(_ context.Context, tenant store.Tenant) (map[str
 // DRAINING RATHER THAN DROPPING IS THE POINT: a subscription that is cut
 // mid-line hands the proxy a truncated event, and one that is cut with queued
 // events behind it hands it a gap it will only discover on reconnect. So the
-// bus stops minting, each subscription finishes what it already holds, and the
-// response ends normally — a deploy is a reconnect rather than a fleet-wide
-// cache flush.
+// bus stops publishing, each subscription finishes what it already holds, and
+// the response ends normally — a deploy is a reconnect rather than a
+// fleet-wide cache flush, and with a store the reconnect replays.
+//
+// Then it stops the loop [Bus.Start] runs and removes this node's rows from the
+// deployment's subscription set, so no other node keeps counting a stream that
+// ended with the process.
 //
 // It returns ctx's error if the drain outlives the deadline, having asked every
 // subscription to finish either way.
@@ -407,58 +618,37 @@ func (b *Bus) Close(ctx context.Context) error {
 		return nil
 	}
 	b.closed = true
-	for sub := range b.subs {
-		sub.finish()
+	for _, byProxy := range b.local {
+		for _, subs := range byProxy {
+			for sub := range subs {
+				sub.finish()
+			}
+		}
 	}
 	b.mu.Unlock()
 
-	done := make(chan struct{})
+	drained := make(chan struct{})
 	go func() {
 		b.live.Wait()
-		close(done)
+		close(drained)
 	}()
 	select {
-	case <-done:
-		return nil
+	case <-drained:
 	case <-ctx.Done():
+		b.stopLoop(ctx)
 		return ctx.Err()
 	}
+	if b.stopLoop(ctx) {
+		b.withdrawPresence(ctx)
+	}
+	return nil
 }
 
-// eventID renders a sequence number as the opaque id the proxy echoes back.
-//
-// The run id is in it because the ring is in memory: an id minted by an earlier
-// process names a position in an order this one does not have, and reading it
-// as a position in THIS order would replay from the wrong place — or, worse,
-// resume live delivery over a gap nobody could see.
-func eventID(runID string, seq uint64) string {
-	return fmt.Sprintf("evt-%s-%012d", runID, seq)
-}
-
-// parseEventID reads an id this server minted. Anything else is unknown, which
-// is a resync rather than an error: the proxy echoes an opaque string back and
-// is not at fault for having one this run does not recognise.
-func parseEventID(id string) (runID string, seq uint64, ok bool) {
-	const prefix = "evt-"
-	if !strings.HasPrefix(id, prefix) {
-		return "", 0, false
-	}
-	rest := id[len(prefix):]
-	dash := strings.IndexByte(rest, '-')
-	if dash <= 0 {
-		return "", 0, false
-	}
-	seq, err := strconv.ParseUint(rest[dash+1:], 10, 64)
-	if err != nil || seq == 0 {
-		return "", 0, false
-	}
-	return rest[:dash], seq, true
-}
-
+// newRunID draws the epoch of a log kept in this process.
 func newRunID() string {
 	buf := make([]byte, 4)
 	if _, err := rand.Read(buf); err != nil {
-		// A run id that is not unique costs a resync on reconnect, which
+		// An epoch that is not unique costs a resync on reconnect, which
 		// is the safe direction, so this never fails a start-up.
 		return "00000000"
 	}

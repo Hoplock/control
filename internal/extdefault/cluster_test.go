@@ -197,6 +197,63 @@ func TestASlowSubscriberIsDroppedRatherThanBlockingThePublisher(t *testing.T) {
 	}
 }
 
+// Dropped means CLOSED, never silently short (ext.ClusterCoordinator): a
+// subscriber that fell behind reads what it was already handed, then sees its
+// channel close, and knows to read the durable record for what it missed. A
+// subscriber that kept up is untouched.
+func TestADroppedSubscriberSeesItsChannelClose(t *testing.T) {
+	ctx := t.Context()
+	c := extdefault.NewSingleNode(ext.Node{ID: "node-a"})
+	defer c.Close()
+
+	slow, cancelSlow, err := c.Subscribe(ctx, "noisy")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancelSlow()
+	fast, cancelFast, err := c.Subscribe(ctx, "noisy")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancelFast()
+
+	const sent = 200
+	got := make(chan int, 1)
+	go func() {
+		n := 0
+		for range fast {
+			n++
+			if n == sent {
+				break
+			}
+		}
+		got <- n
+	}()
+	for i := 0; i < sent; i++ {
+		if err := c.Publish(ctx, ext.ClusterEvent{Topic: "noisy", Kind: "tick"}); err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+		// Let the reader keep up: it is the slow one this test drops.
+		time.Sleep(time.Millisecond / 10)
+	}
+
+	read := 0
+	for range slow {
+		read++
+	}
+	if read == 0 || read >= sent {
+		t.Fatalf("the slow subscriber read %d of %d before its channel closed, want what it held and then a close", read, sent)
+	}
+	select {
+	case n := <-got:
+		if n != sent {
+			t.Fatalf("the subscriber that kept up read %d of %d", n, sent)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the subscriber that kept up was dropped with the slow one")
+	}
+}
+
 func TestCoordinatorRejectsUnnamedTopicsAndSingletons(t *testing.T) {
 	ctx := t.Context()
 	c := extdefault.NewSingleNode(ext.Node{ID: "node-a"})

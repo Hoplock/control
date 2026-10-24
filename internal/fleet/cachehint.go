@@ -107,7 +107,7 @@ func (r *Registry) EventStreamHealthy(ctx context.Context, tenant store.Tenant, 
 	if r.subs == nil || proxyID == "" {
 		return false, nil
 	}
-	subs, err := r.subs.LiveSubscriptions(ctx, tenant)
+	seen, ok, err := r.subs.LiveSubscription(ctx, tenant, proxyID)
 	if err != nil {
 		// Not "unhealthy": this server does not know. The caller withholds
 		// the hint either way, and the distinction is kept because one of
@@ -115,7 +115,6 @@ func (r *Registry) EventStreamHealthy(ctx context.Context, tenant store.Tenant, 
 		// fleet member that is not subscribed.
 		return false, err
 	}
-	seen, ok := subs[proxyID]
 	if !ok || seen.IsZero() {
 		return false, nil
 	}

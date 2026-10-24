@@ -51,6 +51,15 @@ type Leadership interface {
 // control-plane facts between nodes — a policy bundle was activated, a
 // revocation was published, the fleet's health changed — so that a node which
 // did not handle the request still learns what happened.
+//
+// It is a notification, never the record. Control keeps what happened in its
+// own store and uses the bus to tell the other nodes to read it, so an event
+// the bus delivers twice, late or out of order costs Control nothing, and one
+// it loses costs a node at most the interval on which it reads the store
+// anyway. The event stream (`GET /v1/proxies/{proxy_id}/events`) is the first
+// user (0027): its topic is `hoplock.events.logged`, its Kind `logged`, its
+// Tenant the tenant whose log moved, and its Payload a small JSON object naming
+// the position logged.
 type ClusterEvent struct {
 	// Tenant owns the event, empty for a deployment-wide one.
 	Tenant Tenant
@@ -88,6 +97,39 @@ type ClusterEvent struct {
 // Everything here is control plane. The decision path does not take a lock, and
 // a coordinator that is slow or unreachable must never turn into a denied
 // login (M5, M11).
+//
+// # What the bus must deliver
+//
+// Control's event stream wakes the other nodes through Publish and Subscribe
+// every time it logs a revocation or a configuration change, so a clustered
+// implementation is written against these rules, and Control relies on nothing
+// stronger:
+//
+//   - AT LEAST ONCE, TO EVERY NODE. An event Publish accepted (returned nil
+//     for) reaches every subscription of its topic that was open when Publish
+//     was called, on every node including the publisher's — or that
+//     subscription is dropped, below. Duplicates are allowed.
+//   - NO ORDER IS REQUIRED. Events may arrive in any order, within a topic and
+//     across topics. Sequence may be left zero.
+//   - DROPPED MEANS CLOSED. A subscription the bus cannot keep up with — its
+//     reader is behind, or its node lost contact with the other nodes — is
+//     ended by closing its channel, after the events already in it. It is
+//     never kept open while events are skipped: a closed channel is how
+//     Control knows to subscribe again and read its store for what it missed,
+//     and a channel that silently skipped is a revocation a proxy never
+//     receives until Control's next scheduled read.
+//   - ENDS WITH ITS CONTEXT. The channel is closed when the subscriber's
+//     cancel function is called or the context passed to Subscribe ends.
+//   - BYTES ARE OPAQUE. Tenant, Topic, Kind, Origin and Payload arrive as
+//     published. Origin, when the publisher sets it, is the node Node
+//     returned to it, and is how Control skips its own events.
+//   - A FAILED PUBLISH IS AN ERROR, NOT A HANG. Publish returns promptly; an
+//     error tells Control the other nodes may not have been told, and it
+//     costs them at most one scheduled read of the store.
+//
+// Node must return an ID that is unique among the deployment's live members
+// and stable for the life of the process: Control keys the event streams this
+// node holds by it in the store.
 type ClusterCoordinator interface {
 	// Node returns this process's own membership record.
 	Node(ctx context.Context) (Node, error)
@@ -102,10 +144,13 @@ type ClusterCoordinator interface {
 	// cancelled.
 	Lead(ctx context.Context, singleton string) (Leadership, error)
 	// Publish sends an event to every subscriber of its topic, on every
-	// node, including this one.
+	// node, including this one, at least once (see "What the bus must
+	// deliver").
 	Publish(ctx context.Context, ev ClusterEvent) error
 	// Subscribe returns a channel of events on a topic and a function that
 	// cancels the subscription and closes the channel. A subscriber that
-	// stops reading must be dropped rather than allowed to block the bus.
+	// stops reading must be dropped rather than allowed to block the bus,
+	// and dropping it closes its channel: it is never left open with events
+	// skipped.
 	Subscribe(ctx context.Context, topic string) (<-chan ClusterEvent, func(), error)
 }

@@ -26,6 +26,85 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.14.0
+
+The shared event plane. The event stream (`GET /v1/proxies/{proxy_id}/events`)
+is the same whichever node a proxy reaches: a revocation or a `config_changed`
+published on one node reaches a proxy whose stream another node holds, a proxy
+reconnecting to any node — or after a restart — is replayed what it missed, and
+the cache-hint gate sees a stream held on any node. Control on one node takes
+the same path, through its single-node coordinator.
+
+### Breaking
+
+No signature changes; `make release-check` finds none. These change what an
+implementation of `ext.ClusterCoordinator` is relied on for:
+
+- **`ext.ClusterCoordinator`'s bus is now called.** Every node publishes a
+  wake-up on topic `hoplock.events.logged` (kind `logged`, the tenant set, a
+  small JSON payload naming the position) each time it logs an event, and
+  every node subscribes to that topic for its lifetime. Nothing called
+  `Publish` or `Subscribe` before.
+- **Its doc comment now states what the bus must deliver**, under "What the
+  bus must deliver": at least once to every subscription open when `Publish`
+  was called, on every node including the publisher's; in any order, with
+  duplicates allowed; a subscription the bus cannot keep up with ended by
+  closing its channel after what it already holds, never left open with
+  events skipped; closed when its context ends or it is cancelled; payloads
+  delivered as published, `Origin` included; `Publish` failing promptly
+  rather than hanging. `Node` must return an id unique among live members and
+  stable for the process, because Control keys the streams a node holds by
+  it. An implementation that silently drops events to a slow subscriber
+  delays revocations reaching that node by up to `events.sync_interval`.
+- **Control's single-node coordinator closes a subscriber it drops.** It used
+  to discard the event and keep the subscriber; a subscriber now sees its
+  channel close once it falls 64 events behind.
+- **Event ids changed shape**, from `evt-<run>-<sequence>` to
+  `evt-<epoch>-<position>` (and `evt-<epoch>-<position>.<line>` on a heartbeat
+  and on the `resync` answering a reconnect). Ids are opaque to a proxy, which
+  only echoes one back, so nothing breaks; every proxy reconnecting for the
+  first time after the upgrade presents an id the new log did not mint and is
+  answered `resync` once, as it was after every restart before this release.
+
+- **Phase:** 0027, the shared event plane.
+- **Public packages:** `ext.ClusterCoordinator` and `ext.ClusterEvent` doc
+  comments, above. `server` is unchanged.
+- **Behaviour no API diff shows:**
+  - Migration `0016`: `event_log` (every event a proxy may be replayed, with
+    its audience), `event_streams` (each tenant's epoch, head and floor; its
+    row is the tenant's publish lock), `event_subscriptions` (which proxy
+    holds a stream on which node), and the sequence `event_log_seq`. Run
+    `hoplock-control migrate` before starting this release.
+  - A publication answers once the event is committed to the log. A node that
+    dies after answering loses nothing; one whose wake-up is lost delays the
+    other nodes by at most `events.sync_interval`.
+  - A restart replays rather than resyncs: a proxy reconnecting with an id
+    still in the log is replayed what it missed, on any node.
+  - `events.replay_buffer` (default 1024) is now per tenant and kept in the
+    store rather than one ring per process. A `config_changed` to every proxy
+    of a large zone is one event per proxy, so size it to cover that.
+  - New configuration: `events.sync_interval` (default 1s, or
+    `events.heartbeat_interval` when that is shorter; refused above
+    `events.heartbeat_interval`): how often a node reads the log for events no
+    wake-up told it of, and writes and reads the deployment's subscriptions.
+  - The cache-hint gate and the fleet's liveness read whether a proxy holds a
+    stream on any node: this node's own and a copy of every other node's, at
+    most two sync intervals late, from memory and never the store. The gate's
+    read is now one lookup per hinted answer; it used to copy the tenant's
+    whole subscription map per call.
+  - `POST …/revocations` answers `delivered` as the subscriptions on the node
+    that took the request; proxies whose streams other nodes hold receive the
+    event from the log and are not counted.
+  - A `config_changed` is settled (`announced_hash`) once the stream logs it,
+    wherever the proxy's stream is held, and any node's announcer retries one
+    the stream never took. Before, only a delivery to a stream on the
+    announcing node settled it.
+  - A clean shutdown removes the node's rows from `event_subscriptions`. New
+    `WARN` lines: `revoke_wake_failed`, `revoke_wake_dropped`,
+    `revoke_wake_subscribe_failed`, `revoke_fanout_deferred`,
+    `revoke_catch_up_failed`, `revoke_presence_read_failed`,
+    `revoke_presence_write_failed`, `revoke_presence_remove_failed`.
+
 ## v0.13.0
 
 Audit sink delivery. With one or more `ext.AuditSink`s registered, Control
