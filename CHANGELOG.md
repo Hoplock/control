@@ -32,7 +32,8 @@ Audit sink delivery. With one or more `ext.AuditSink`s registered, Control
 hands each of them every record it commits, keeps a durable position per sink,
 and offers again what a sink did not confirm. A sink that is down or slow
 slows nothing but its own delivery. Retention does not wait on a sink. With no
-sink registered, nothing changes.
+sink registered, nothing changes. The archive's feed now bounds the calls in
+flight to the archive the same way.
 
 - **Phase:** 0026, audit sink delivery.
 - **Public packages:** no signature changes. `ext.AuditSink`'s doc comment now
@@ -63,6 +64,11 @@ sink registered, nothing changes.
     record on the control stream, which the sink is handed too.
   - Delivery writes no audit record, and captures' bytes never cross to a
     sink.
+  - **`ext.ArchiveStore`'s doc comment now states its concurrency**, which it
+    left out: `Archive` and `ArchiveCaptures` may be called concurrently for
+    different streams, never two calls for one stream at once, so both must
+    be safe for concurrent use. Control has called them from up to four
+    workers at once since `v0.12.0`; this says so, and adds no requirement.
 - **Behaviour no API diff shows:**
   - Delivery runs off ingest and the decision path, on the archive's feed
     with positions of its own (migration `0015`: `audit_feed_positions` gains
@@ -86,9 +92,15 @@ sink registered, nothing changes.
     `failing`, and `skipped_by_retention` (records a pass removed before the
     sink confirmed them, since it last caught up). The archive's `lag` gains
     `failing`. With no sink registered, the sink point's row is unchanged.
+  - **The archive's feed is bounded the way a sink's is.** Its four workers
+    are now a bound on calls in flight to the archive,
+    `audit.archive.max_in_flight` (4, at least 1), and a call past
+    `audit.archive.attempt_timeout` keeps its place until it returns. Before,
+    an abandoned call freed its worker, so an archive that hung could gather
+    one stuck call per stream. Now an archive that hangs on every place
+    stalls its own feed, and retention waits on it as it always did.
   - Recording a failure of the archive's feed now also marks its position
-    row failing, which is what the archive's `failing` reads. The archive's
-    feed is otherwise unchanged.
+    row failing, which is what the archive's `failing` reads.
 
 ## v0.12.0
 

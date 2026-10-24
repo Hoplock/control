@@ -54,13 +54,15 @@ import (
 // NO STREAM HOLDS BACK ANOTHER. Each stream is delivered by a worker of its own,
 // and never two at once for one stream; a failing stream backs off alone, and a
 // call that outlives its deadline is abandoned rather than waited on, its
-// stream not tried again until it returns. The archive's feed runs at most
-// maxConcurrentStreams workers, and an abandoned call frees its worker, so an
-// archive that never returns holds no worker. A sink's feed is bounded by the
-// batches in flight to the sink (Options.InFlight), and an abandoned call
-// keeps its place until it returns: a sink is promised never more than that
-// many at once, so a sink that ignores its deadline holds one place each time,
-// and with every place held it stalls only itself.
+// stream not tried again until it returns.
+//
+// THE CONSUMER IS PROMISED A BOUND ON CALLS, NOT ON WORKERS. A feed has at most
+// Options.InFlight batches in flight to its consumer, and a call abandoned at
+// its deadline keeps its place until it returns. So a consumer that ignores
+// its deadline holds one place each time, and with every place held it stalls
+// only itself — the archive then holds retention back, which deletes nothing it
+// should not. Freeing the place instead would leave one stuck call per stream,
+// unbounded across a fleet, against a consumer already failing.
 //
 // A SINK STARTS AT THE CHAIN START, AND RETENTION DOES NOT WAIT ON IT. A sink's
 // position in a stream begins at the stream's chain start — after its
@@ -81,11 +83,11 @@ import (
 // as it sees it. Nothing is lost meanwhile: retention reads the confirmed
 // position, not this set, and holds back whatever is not confirmed.
 
-// maxConcurrentStreams bounds how many streams one node delivers to the
-// archive at once. A worker holds a database connection only between its calls
-// to the archive, but a fleet's worth of streams catching up after an archive
-// outage must not take every connection ingest needs.
-const maxConcurrentStreams = 4
+// defaultInFlight is the bound a zero Options.InFlight takes. A worker holds a
+// database connection only between its calls to the consumer, but a fleet's
+// worth of streams catching up after an outage must not take every connection
+// ingest needs.
+const defaultInFlight = 4
 
 // initialBackoff is the first wait after a failed attempt; it doubles up to the
 // configured cap.
@@ -137,10 +139,9 @@ type Options struct {
 	IdleInterval time.Duration
 	// BackoffCap is the longest wait between attempts on a failing stream.
 	BackoffCap time.Duration
-	// InFlight bounds the batches in flight to a Consumer at once, a call
-	// abandoned at its deadline counted until it returns. It is required
-	// with a Consumer and refused with an Archive, whose bound is
-	// maxConcurrentStreams workers.
+	// InFlight bounds the batches in flight to the consumer at once, of
+	// different streams, a call abandoned at its deadline counted until it
+	// returns. Zero takes defaultInFlight.
 	InFlight int
 	// Node names this process as a lease holder. Empty takes a random name,
 	// unique per process.
@@ -167,10 +168,9 @@ type Feed struct {
 	lease    time.Duration
 	node     string
 	log      *slog.Logger
-	// slots bounds the workers, and with a sink the calls not yet returned;
-	// held reports which.
+	// slots bounds the calls to the consumer not yet returned, abandoned
+	// ones included.
 	slots int
-	held  bool
 
 	mu       sync.Mutex
 	tenants  map[store.Tenant]struct{}
@@ -231,8 +231,8 @@ func New(o Options) (*Feed, error) {
 		return nil, fmt.Errorf("archive: a feed delivers to an archive or to one other consumer")
 	case o.Archive != nil && (o.BatchRecords <= 0 || o.CaptureBatchBytes <= 0):
 		return nil, fmt.Errorf("archive: a batch is bounded by a count and by bytes")
-	case o.Archive != nil && o.InFlight != 0:
-		return nil, fmt.Errorf("archive: the archive's feed is bounded by its workers, not by InFlight")
+	case o.InFlight < 0:
+		return nil, fmt.Errorf("archive: the batches in flight are bounded by a positive number, or zero for the default")
 	case o.AttemptTimeout <= 0 || o.IdleInterval <= 0 || o.BackoffCap < initialBackoff:
 		return nil, fmt.Errorf("archive: an attempt timeout, an idle interval and a backoff cap of at least %s are required", initialBackoff)
 	}
@@ -240,8 +240,8 @@ func New(o Options) (*Feed, error) {
 		switch {
 		case c.Key == "" || c.Key == store.ArchiveConsumer || c.Provider == "" || c.Deliver == nil:
 			return nil, fmt.Errorf("archive: a consumer has a key of its own, a provider and a delivery")
-		case o.BatchRecords <= 0 || o.InFlight <= 0:
-			return nil, fmt.Errorf("archive: a consumer's batch and its batches in flight are bounded")
+		case o.BatchRecords <= 0:
+			return nil, fmt.Errorf("archive: a consumer's batch is bounded")
 		}
 	}
 	node := o.Node
@@ -262,7 +262,7 @@ func New(o Options) (*Feed, error) {
 		batch: o.BatchRecords, capBytes: o.CaptureBatchBytes,
 		attempt: o.AttemptTimeout, idle: o.IdleInterval, capWait: o.BackoffCap, base: initialBackoff,
 		lease: leaseAttempts * o.AttemptTimeout, node: node, log: log,
-		slots:    maxConcurrentStreams,
+		slots:    defaultInFlight,
 		tenants:  map[store.Tenant]struct{}{},
 		streams:  map[streamKey]*streamState{},
 		scanning: map[store.Tenant]bool{},
@@ -271,7 +271,9 @@ func New(o Options) (*Feed, error) {
 	}
 	if c := o.Consumer; c != nil {
 		f.sink, f.key, f.point, f.provider, f.voice = c, c.Key, c.Point, c.Provider, sinkVoice
-		f.slots, f.held = o.InFlight, true
+	}
+	if o.InFlight > 0 {
+		f.slots = o.InFlight
 	}
 	if f.provider == "" {
 		f.provider = "unnamed-archive"
@@ -409,9 +411,9 @@ func (f *Feed) dispatch(ctx context.Context, key streamKey) {
 		f.work(ctx, key)
 		f.mu.Lock()
 		st.busy = false
-		if f.held && st.outstanding != nil {
-			// A sink's call abandoned at its deadline keeps its place
-			// until it returns: the sink is promised no more than
+		if st.outstanding != nil {
+			// A call abandoned at its deadline keeps its place until
+			// it returns: the consumer is promised no more than
 			// f.slots batches at once.
 			returned := st.outstanding
 			f.mu.Unlock()
@@ -426,8 +428,8 @@ func (f *Feed) dispatch(ctx context.Context, key streamKey) {
 	}()
 }
 
-// freeSlot gives a worker's place back, and starts a pass if a stream waited
-// for one.
+// freeSlot gives a place back once its call has returned, and starts a pass if
+// a stream waited for one.
 func (f *Feed) freeSlot() {
 	f.mu.Lock()
 	f.busy--

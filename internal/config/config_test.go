@@ -717,6 +717,10 @@ database: {dsn: "postgres://x"}
 			doc:   base + "audit: {archive: {backoff_cap: 500ms}}\n",
 			field: "audit.archive.backoff_cap",
 		},
+		"no batch in flight": {
+			doc:   base + "audit: {archive: {max_in_flight: -1}}\n",
+			field: "audit.archive.max_in_flight",
+		},
 	}
 	for name, tc := range cases {
 		_, err := config.Parse(strings.NewReader(tc.doc))
@@ -733,7 +737,7 @@ database: {dsn: "postgres://x"}
 	want := config.ArchiveFeedConfig{
 		BatchRecords: config.DefaultArchiveBatchRecords, CaptureBatchBytes: config.DefaultArchiveCaptureBatchBytes,
 		AttemptTimeout: config.DefaultArchiveAttemptTimeout, IdleInterval: config.DefaultArchiveIdleInterval,
-		BackoffCap: config.DefaultArchiveBackoffCap,
+		BackoffCap: config.DefaultArchiveBackoffCap, MaxInFlight: config.DefaultArchiveMaxInFlight,
 	}
 	if cfg.Audit.Archive != want {
 		t.Errorf("defaults = %+v, want %+v", cfg.Audit.Archive, want)

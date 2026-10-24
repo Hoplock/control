@@ -92,6 +92,10 @@ const (
 	DefaultArchiveAttemptTimeout          = 30 * time.Second
 	DefaultArchiveIdleInterval            = 5 * time.Second
 	DefaultArchiveBackoffCap              = 5 * time.Minute
+	// DefaultArchiveMaxInFlight is the archive's bound on batches in flight
+	// at once (0026): the four workers 0025 fixed in code, now a bound on
+	// calls the archive is serving, configurable as a sink's is.
+	DefaultArchiveMaxInFlight = 4
 	// MinArchiveBackoffCap is the smallest backoff cap accepted: the feed's
 	// first retry waits a second, and a cap below it would retry a failing
 	// archive in a loop. A sink's backoff cap has the same floor.
@@ -317,6 +321,10 @@ type ArchiveFeedConfig struct {
 	// BackoffCap is the longest wait between attempts on a stream whose
 	// archive call keeps failing. The wait starts at a second and doubles.
 	BackoffCap time.Duration `yaml:"backoff_cap"`
+	// MaxInFlight is the most batches in flight to the archive at once,
+	// each of a different stream; a call past its deadline counts until it
+	// returns.
+	MaxInFlight int `yaml:"max_in_flight"`
 }
 
 // EventsConfig is the revocation stream (PLAN M9, §4).
@@ -1052,6 +1060,9 @@ func (a *ArchiveFeedConfig) applyDefaults(audit AuditConfig) {
 	if a.BackoffCap == 0 {
 		a.BackoffCap = DefaultArchiveBackoffCap
 	}
+	if a.MaxInFlight == 0 {
+		a.MaxInFlight = DefaultArchiveMaxInFlight
+	}
 }
 
 // validate reports the first archive feed setting that cannot be acted on,
@@ -1072,6 +1083,8 @@ func (a ArchiveFeedConfig) validate(audit AuditConfig) error {
 		return &FieldError{Field: "audit.archive.idle_interval", Msg: "must be a positive duration, or absent for the default"}
 	case a.BackoffCap < MinArchiveBackoffCap:
 		return &FieldError{Field: "audit.archive.backoff_cap", Msg: "must be at least 1s, or absent for the default"}
+	case a.MaxInFlight <= 0:
+		return &FieldError{Field: "audit.archive.max_in_flight", Msg: "must be a positive number of batches, or absent for the default"}
 	}
 	return nil
 }

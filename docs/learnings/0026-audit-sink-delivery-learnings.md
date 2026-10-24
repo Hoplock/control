@@ -4,10 +4,10 @@
 - **Delivery:** with sinks registered, each gets every committed record of every tenant through `Export`, one tenant's stream per batch, ascending `Sequence`, at least once. nil confirms and moves the sink's durable position; an error confirms nothing, and that stream alone backs off from 1 s, doubling to the cap. Off ingest and the decision path. Delivery writes no audit record. Captures never cross. With no sink: no delivery, no rows.
 - **Where the feed lives:** generalised **in `internal/archive`**: one `Feed` per consumer. `Options.Consumer` (`Key`, `Point`, `Provider`, `Deliver`) makes a sink's feed; `Options.Archive` still makes the archive's. `internal/export.Delivery` builds one feed per sink (`export.New`, `Track`, `Lag(tenant, provider)`, `Start`, `Stop`); `internal/daemon/export.go` wires it.
 - **Position:** in `audit_feed_positions` under `store.SinkConsumer(provider)` = `sink:<provider>`, per tenant and stream; the sink keeps no cursor. Named by `Registration.Provider`: re-registering resumes, a new name is a new sink. A sink's row is begun at the stream's chain start (after the marker) the first time it is delivered (`FeedRepository.Begin`).
-- **Concurrency:** per sink, never two batches of one stream in flight, and the next only after the previous returned; different streams/tenants in flight together up to `audit.sinks.max_in_flight`, so `Export` must be safe for concurrent use. A call past its deadline holds its place until it returns. Across nodes, a call held past the lease can see a duplicate, never a skip.
+- **Concurrency:** per consumer, never two calls of one stream in flight, and the next only after the previous returned; different streams/tenants in flight together up to `audit.sinks.max_in_flight` (or `audit.archive.max_in_flight`), so `Export` — and `Archive`/`ArchiveCaptures`, whose doc now says so — must be safe for concurrent use. A call past its deadline holds its place until it returns, for the archive too (changed in review). Across nodes, a call held past the lease can see a duplicate, never a skip.
 - **Retention:** never consults a sink. When a batch read after a sink's position starts past the next sequence, `Skip` moves the position to the marker once (row lock), adds the run to `skipped_records` and `skipped_behind`, and logs `audit_sink_skipped_by_retention` once at WARN (`provider`, `tenant`, `stream`, `from_seq`, `through_seq`, `records`). `operator.audit.retained`, delivered like any record, explains the gap. A confirm that reaches the head zeroes `skipped_behind`.
 - **Lag** (`GET …/extensions`, on each sink's registration, caller's tenant): `streams_behind`, `oldest_unconfirmed_at`, `failing`, `skipped_by_retention`. The archive's row-level `lag` gains `failing`; `captures_waiting` stays archive-only.
-- **Config** `audit.sinks.*`: `batch_records` 500 (≤ `max_batch_records`), `attempt_timeout` 30s, `idle_interval` 5s, `backoff_cap` 5m (≥ 1s), `max_in_flight` 4 (≥ 1).
+- **Config** `audit.sinks.*`: `batch_records` 500 (≤ `max_batch_records`), `attempt_timeout` 30s, `idle_interval` 5s, `backoff_cap` 5m (≥ 1s), `max_in_flight` 4 (≥ 1). New for the archive: `audit.archive.max_in_flight` 4 (≥ 1).
 - **Migration `0015`:** `audit_feed_positions` gains `skipped_records`, `skipped_behind`, `failing_since`. No row rewritten.
 - **Release `v0.13.0`**, MINOR, no `### Breaking` (no signature changed). **M8 revised in place** (register row reworded, still `live`); no decision added. Owes `hoplock/enterprise` a sync; `hoplock/proxy` none.
 - **NEXT:** a new feed consumer is an `archive.Consumer` and a key; failures are durable (`failing_since`), so a lag read on any node agrees.
@@ -44,20 +44,32 @@ consumer:
 | | archive | sink |
 | --- | --- | --- |
 | step | records, then captures | records, after any skip |
-| bound | `maxConcurrentStreams` (4) workers; an abandoned call frees its worker | `InFlight` places; an abandoned call keeps its place until it returns |
 | first position | 0, created by `Claim` | the chain start, created by `Begin` |
 | retention | gates it | moved past it (`Skip`) |
 | log events | `archive_feed_*` | `audit_sink_*` |
 
-**Why the bound differs.** The prompt asks that "a sink that ignores its
-deadline holds one slot until it returns", and that a fake sink never sees
-more than the configured bound. If an abandoned call freed its slot, the bound
-would be a promise about workers, not about calls the sink is serving. The
-archive keeps 0025's semantics, because the prompt says its behaviour does not
-change. Its fixed bound promises the archive nothing, and with retention
-waiting on it, stalling every stream behind four hung calls would hold
-retention back for longer than it needs to. `Feed.held` selects which; the
-waiting goroutine frees the place (`freeSlot`).
+**One bound for every consumer, changed in review.** The prompt asks that "a
+sink that ignores its deadline holds one slot until it returns", and that a
+fake sink never sees more than the configured bound. If an abandoned call
+freed its slot, the bound would be a promise about workers, not about calls
+the consumer is serving.
+
+The first version kept 0025's archive semantics, where an abandoned call freed
+its worker, only because the prompt froze the archive's behaviour. The user
+was asked whether that difference made sense on its merits, and had the
+archive unified in this PR. On the merits:
+- the old semantics let an archive that hangs gather one stuck call per
+  stream, unbounded across a fleet;
+- holding the place fails safe, because a stalled archive feed only holds
+  retention back;
+- freeing the place helps only an archive that hangs for ever on a few
+  streams while serving the rest.
+
+So `Options.InFlight` bounds every feed (zero takes 4, 0025's worker count).
+`audit.archive.max_in_flight` configures the archive's. When a call is
+abandoned, a goroutine waiting on it frees the place (`freeSlot`) once it
+returns. `ext.ArchiveStore`'s doc comment now states the concurrency it always
+had: four workers called it at once from `v0.12.0`, and it never said so.
 
 ### How a skip is detected: the gap, not every step
 
@@ -143,7 +155,7 @@ mutation below was applied, its test run, then reverted; all 12 were caught.
 | --- | --- |
 | no `Begin` for a sink | `TestASinkRegisteredAfterAPassBeginsAtTheMarkerAndSkipsNothing` |
 | no skip on a gap | `TestARetentionPassOvertakingASinkIsSkippedCountedAndExplained` |
-| an abandoned call frees its place | `TestAHungSinkCallHoldsItsPlaceUntilItReturns` |
+| an abandoned call frees its place | `TestAHungSinkCallHoldsItsPlaceUntilItReturns`, `TestAHungArchiveCallHoldsItsPlaceUntilItReturns` |
 | bound ignored | `TestASinkSeesStreamsInFlightTogetherUpToItsBoundAndNeverOneStreamTwice` |
 | confirm on an error | `TestAFailedSinkBatchIsOfferedAgainAndOnlyASuccessMovesThePosition` |
 | `skipped_behind` never reset | `TestASinkBeginsAtTheChainStartAndSkipsWhatRetentionRemovedBehindIt` |

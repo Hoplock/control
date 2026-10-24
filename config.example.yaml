@@ -285,13 +285,17 @@ audit:
   # the feed waits with nothing to deliver, so a record reaches the archive
   # within about that of its commit. A stream whose archive call fails is
   # retried after a second, doubling up to `backoff_cap` (at least 1s), and a
-  # failing stream holds back no other. A zero takes the default.
+  # failing stream holds back no other. `max_in_flight` is the most batches in
+  # flight to the archive at once, never two of one stream; a call past its
+  # deadline counts until it returns, so an archive that hangs stalls only its
+  # own feed — and holds retention back. A zero takes the default.
   archive:
     batch_records: 500
     capture_batch_bytes: 16777216
     attempt_timeout: 30s
     idle_interval: 5s
     backoff_cap: 5m
+    max_in_flight: 4
 
   # Delivery to every registered audit sink (`ext.AuditSink`, phase 0026): a
   # SIEM, a queue, a file drop. Read only when a host registers one; with none,

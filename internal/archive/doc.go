@@ -10,10 +10,11 @@
 //
 // The feed is also the one implementation every other consumer of the audit
 // store runs on: internal/export builds one per registered ext.AuditSink
-// (0026), with positions of its own, delivery bounded by the batches in flight
-// to the sink, and no captures. Retention waits on the archive and on no sink,
-// so a sink a pass overtakes is moved past what the pass removed, and the run
-// is counted.
+// (0026), with positions of its own and no captures. Every feed is bounded by
+// the batches in flight to its consumer, a call abandoned at its deadline
+// counted until it returns. Retention waits on the archive and on no sink, so
+// a sink a pass overtakes is moved past what the pass removed, and the run is
+// counted.
 //
 // It runs off ingest and the decision path. Nothing a proxy waits on calls
 // into it; the ingester only tells it which tenants it has seen, which never

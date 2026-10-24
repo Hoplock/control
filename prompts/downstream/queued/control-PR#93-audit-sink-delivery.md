@@ -3,8 +3,10 @@
 Queued by [control#93](https://github.com/Hoplock/control/pull/93), Control's
 phase 0026, which answers `Hoplock/enterprise#26` item 2: Control delivers
 every committed record to every registered `ext.AuditSink`, and retention never
-waits on a sink. It cuts `v0.13.0`, a MINOR with no `### Breaking`: no
-signature changed, and `AuditSink`'s doc comment now says what is true. The
+waits on a sink; and the archive's feed bounds the calls in flight to the
+archive the same way. It cuts `v0.13.0`, a MINOR with no `### Breaking`: no
+signature changed, and `AuditSink`'s and `ArchiveStore`'s doc comments now say
+what is true. The
 obligations are its `## Cross-repo impact` section's, for `hoplock/enterprise`,
 the repository that asked.
 
@@ -54,7 +56,15 @@ real ones.
 says what reaches a SIEM and how — every record of every tenant, no capture
 bytes, retention never waiting on a SIEM, the archive being where records are
 kept past retention.
-(3) Its pin: nothing fails to compile against v0.13.0, but Export is now
+(3) Its 0005 (the archive): ext.ArchiveStore's doc comment now states its
+concurrency — Archive and ArchiveCaptures may be called concurrently for
+different streams, never two calls for one stream at once, so both must be
+safe for concurrent use (Control has called them from up to four workers since
+v0.12.0) — and the archive's feed is bounded by audit.archive.max_in_flight
+(default 4), a call past its deadline keeping its place until it returns, so
+an archive that hangs stalls its own feed and holds retention back. The
+archive's lag on GET …/extensions gains failing.
+(4) Its pin: nothing fails to compile against v0.13.0, but Export is now
 called, and called concurrently.
 
 Work on the branch this session was given, whatever it is named — if the name

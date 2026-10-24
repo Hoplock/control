@@ -503,7 +503,8 @@ func TestASinkRegisteredAfterAPassBeginsAtTheMarkerAndSkipsNothing(t *testing.T)
 }
 
 // New refuses a feed that names both an archive and a consumer, or neither, a
-// consumer under the archive's key, and a consumer with no bound in flight.
+// consumer under the archive's key, and a negative bound in flight; a zero
+// bound takes the default, for a consumer and for the archive alike.
 func TestNewRefusesAConsumerItCannotDeliverTo(t *testing.T) {
 	t.Parallel()
 	st := storetest.New(t)
@@ -522,8 +523,8 @@ func TestNewRefusesAConsumerItCannotDeliverTo(t *testing.T) {
 		"the archive key": func(o *Options) { c := *o.Consumer; c.Key = store.ArchiveConsumer; o.Consumer = &c },
 		"no provider":     func(o *Options) { c := *o.Consumer; c.Provider = ""; o.Consumer = &c },
 		"no delivery":     func(o *Options) { c := *o.Consumer; c.Deliver = nil; o.Consumer = &c },
-		"nothing in flight": func(o *Options) {
-			o.InFlight = 0
+		"a negative bound in flight": func(o *Options) {
+			o.InFlight = -1
 		},
 	} {
 		o := ok
@@ -532,10 +533,18 @@ func TestNewRefusesAConsumerItCannotDeliverTo(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if _, err := New(Options{
-		Store: st, Archive: newFakeArchive(), BatchRecords: 1, CaptureBatchBytes: 1,
-		AttemptTimeout: time.Second, IdleInterval: time.Second, BackoffCap: time.Second, InFlight: 2,
-	}); err == nil {
-		t.Error("the archive's feed accepted a bound in flight")
+	for inFlight, want := range map[int]int{0: defaultInFlight, 2: 2} {
+		f, err := New(Options{
+			Store: st, Archive: newFakeArchive(), BatchRecords: 1, CaptureBatchBytes: 1,
+			AttemptTimeout: time.Second, IdleInterval: time.Second, BackoffCap: time.Second, InFlight: inFlight,
+		})
+		if err != nil || f.slots != want {
+			t.Errorf("the archive's feed with InFlight %d: %v, bound %d; want %d", inFlight, err, f.slots, want)
+		}
+	}
+	o := ok
+	o.InFlight = 0
+	if f, err := New(o); err != nil || f.slots != defaultInFlight {
+		t.Errorf("a consumer with InFlight 0: %v; want the default bound", err)
 	}
 }

@@ -249,7 +249,7 @@ type ArchivePage struct {
 // extends it. This is a capability Control never claimed rather than one moved
 // out of it.
 //
-// What Control does with one registered (0025):
+// What Control does with one registered (0025, 0026):
 //
 //   - It hands the archive every record it commits, per tenant and per stream,
 //     in ascending Sequence, at least once: each batch holds one stream's
@@ -272,6 +272,18 @@ type ArchivePage struct {
 //     retention_not_archived`), a pass by instant stops at it, and a capture
 //     pass stops before the earliest capture not yet confirmed; each answer
 //     says the archive held it back.
+//   - Control never has two calls of one stream in flight to the archive — a
+//     stream's ArchiveCaptures follows its Archive, never beside it — and
+//     offers a stream's next batch only after the previous call returned. It
+//     may have calls for different streams or tenants in flight at once, up
+//     to a bound in its configuration, so Archive and ArchiveCaptures must be
+//     safe for concurrent use. A call past its deadline confirms nothing, and
+//     its stream is not offered again until it returns; until then it also
+//     keeps one of the archive's places in flight, so an archive that ignores
+//     its deadline stalls only its own delivery, and holds retention back.
+//     (On several nodes, a call held past the stream's lease — its backoff
+//     and three deadlines more — may see another node offer the stream's
+//     batch again, which is a duplicate, never a skip.)
 //   - Delivery runs off ingest and the decision path: no proxy's request waits
 //     on the archive, and an archive that never returns slows nothing but the
 //     delivery to it.
@@ -281,8 +293,9 @@ type ArchivePage struct {
 // not durably stored: a nil return is what lets Control delete its own copy.
 type ArchiveStore interface {
 	// Archive stores a batch of one stream's records durably, in ascending
-	// Sequence order. The context carries Control's deadline for the
-	// attempt.
+	// Sequence order. It may be called concurrently for different streams,
+	// never for one stream at once. The context carries Control's deadline
+	// for the attempt.
 	Archive(ctx context.Context, batch []AuditRecord) error
 	// ArchiveCaptures stores a batch of session captures durably. Each
 	// capture's record was confirmed by Archive before it is offered. The

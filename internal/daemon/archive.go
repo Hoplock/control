@@ -31,6 +31,7 @@ func buildArchiveFeed(cfg *config.Config, st *store.Store, extensions *ext.Exten
 		AttemptTimeout:    a.AttemptTimeout,
 		IdleInterval:      a.IdleInterval,
 		BackoffCap:        a.BackoffCap,
+		InFlight:          a.MaxInFlight,
 		Logger:            log,
 	})
 	if err != nil {
@@ -45,6 +46,7 @@ func buildArchiveFeed(cfg *config.Config, st *store.Store, extensions *ext.Exten
 		"attempt_timeout", a.AttemptTimeout.String(),
 		"idle_interval", a.IdleInterval.String(),
 		"backoff_cap", a.BackoffCap.String(),
+		"max_in_flight", a.MaxInFlight,
 	)
 	return feed, nil
 }
