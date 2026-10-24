@@ -1689,12 +1689,19 @@ for nothing.
 - **`server`** — how a host binary starts Control (M15), and the second of the
   module's two public packages: a compatibility promise exactly as `ext` is. It
   is a façade — `Main`, `Run`, `Options`, `Route`, `Access`, `Caller`,
-  `CallerFrom` and `WriteError`, forwarding into `internal/daemon`, where every check a host can
-  fail lives. A host gets Control's whole command line, top-level configuration
-  sections of its own, north-bound routes of its own behind Control's
-  middleware — tenant routes and cross-tenant reads (M24) — and Control's
-  error envelope, and its lists answer in Control's bounded shape through the
-  same reading of `limit` and `after` (M26). It does not get a cross-tenant write, a permission or role of
+  `CallerFrom`, `WriteError`, `ReadList`, `List` (with `List.Write`),
+  `DefaultListLimit` and `MaxListLimit`, forwarding into `internal/daemon` and
+  `internal/httpapi/north`, where every check a host can fail lives. A host
+  gets Control's whole command line, top-level configuration sections of its
+  own, north-bound routes of its own behind Control's middleware — tenant
+  routes and cross-tenant reads (M24) — and Control's error envelope. Its lists
+  answer in Control's bounded shape (M26.7): `ReadList` and `List.Write` go
+  through north's `ReadHostPage` and `WriteHostPage` into the same `readPage`
+  and page body Control's lists use, so one codec, one limit rule and one set
+  of refusals serve both, and a host list's cursor names `<provider>:<name>`,
+  which no Control list name (they have no `:`) can equal. Both fail closed as
+  `WriteError` does. Control cannot see which host route is a list, so
+  `Route`'s doc comment states the expectation and nothing enforces it. It does not get a cross-tenant write, a permission or role of
   its own, a `401`, a south-bound route, or a write into Control's audit
   chain. Nothing in this module but
   `cmd/hoplock-control` imports it, that command imports nothing else of the

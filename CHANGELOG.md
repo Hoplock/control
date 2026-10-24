@@ -26,6 +26,41 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.17.0
+
+Phase 0030, bounded lists 2: the shape for a host's lists. A host's list
+can now answer in decision M26's shape (`docs/PLAN.md` §2) through the same
+code Control's lists use, so one client reads both. Additive only; nothing
+Control serves changes.
+
+- **Phase:** 0030, bounded lists 2: the shape for a host's lists.
+- **Public packages:** `server` gains, compatibly:
+  - `server.DefaultListLimit` (500) and `server.MaxListLimit` (10 000), the
+    bounds of every north-bound list;
+  - `server.List`, one page a caller asked of a host's list (`Limit`,
+    `After`);
+  - `server.ReadList(w, r, name, keyLen, filters...)`, which reads `?limit=`
+    and `?after=` and answers Control's `400 invalid_request` refusals;
+  - `(server.List).Write(w, r, member, items, more, last, extra)`, which
+    answers `{<member>: [...], "truncated": bool, "next": "<cursor>"}`.
+  - `server.Route`'s doc comment now says a list is expected to answer
+    through them. Nothing enforces it: Control cannot see which route is a
+    list.
+- **Behaviour no API diff shows:**
+  - A host list's cursor names `<provider>:<name>`, and binds the filters the
+    host passes. A cursor from one of Control's lists, from another of the
+    host's, or under other filters is refused on a host list as
+    `400 invalid_request` `{field: after, problem: invalid}`, and a host
+    list's cursor is refused the same way on Control's lists. It never carries
+    the tenant, nor on a cross-tenant read the set.
+  - `ReadList` and `List.Write` fail closed as `server.WriteError` does: a
+    call outside a host route, an empty list name, an order key of no
+    components, a `List` that `ReadList` did not return, a member that is
+    empty, `truncated` or `next`, an extra member colliding with any of the
+    three, items that are not a JSON array, or `more` with no `last` or a
+    `last` of the wrong length answers `500 internal` with its correlation id
+    and logs `northbound_host_list_refused` at error, naming the problem.
+
 ## v0.16.0
 
 Phase 0029, bounded lists 1: the mechanism, proven on targets and subjects.
