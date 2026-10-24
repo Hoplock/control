@@ -1,4 +1,4 @@
-# 0030 — Inbound actions: Control's action executor, the handler started, and the subject lock and target quarantine it pulls
+# 0039 — Inbound actions: Control's action executor, the handler started, and the subject lock and target quarantine it pulls
 
 > Raised upstream by `hoplock/enterprise` in
 > https://github.com/Hoplock/enterprise/pull/26, under `## Upstream request`,
@@ -7,14 +7,14 @@
 > here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 >
 > **Where it sits.** After the shared event plane (0027), bounded lists (0028)
-> with every chunk it queues, and host namespaces (0029). Before identity sync
-> (0031), which runs next and builds its deactivation beside this phase's lock,
-> and before instance identity (0033), the console (0034) and the E2E topology
-> (0035). The action-executor and identity-sync renumbering notes in
+> with every chunk it queues, and host namespaces (0038). Before identity sync
+> (0040), which runs next and builds its deactivation beside this phase's lock,
+> and before instance identity (0042), the console (0043) and the E2E topology
+> (0044). The action-executor and identity-sync renumbering notes in
 > `docs/PLAN.md` §10 give one line of reasons for each. On one node it depends only on merged phases: 0009 (the
 > event stream), 0012 (grant revocation) and 0019 (the north-bound surface and
 > its operator records). It needs 0027 for a kill to reach a proxy whichever
-> node holds its stream. If 0028's chunks have renumbered it, the order still
+> node holds its stream. 0028's chunks (0029–0037) renumbered it, and the order
 > holds, because it runs after all of them.
 
 ## Read first
@@ -74,7 +74,7 @@
   - **`0019`**: the route table, the operator records, `POST …/revocations`
     and the emergency runbook. Read **`0023`** for its verdicts on that
     surface.
-  - **`0027`**, **`0028`** with the chunks it queued, and **`0029`**: what
+  - **`0027`**, **`0028`** with the chunks it queued, and **`0038`**: what
     each changed under the stream, the lists and the namespaces.
 - Code. Read it before designing anything:
   - `ext/notify.go`: `ActionKind`, `Action`, `ActionResult`,
@@ -323,8 +323,9 @@ things around the shape. Each item below says why, then what to build.
   `KindUnavailable`.
 - A `Start` error is handled as item 6 above says. The point's row in
   `GET …/extensions`, and the start-up log, say the handler is registered and
-  **not started**, with the error's kind. Add that to the listing in whatever
-  shape 0028 settled for it, and say so in the release's changelog.
+  **not started**, with the error's kind. Add that to the listing's row for the
+  point. M26 rules `GET …/extensions` exempt (one row per extension point),
+  so it stays one object per row, and say so in the release's changelog.
 - With nothing registered, nothing changes. No executor is built, and the
   tests prove it.
 - Revise these `ext` doc comments, and change no signature:
@@ -410,11 +411,11 @@ things around the shape. Each item below says why, then what to build.
   - §10's row, revised to what was built.
 
   §11 is unchanged: SOAR itself stays Enterprise's.
-- The console prompt (0034). It shows a lock and a quarantine wherever it
+- The console prompt (0043). It shows a lock and a quarantine wherever it
   shows a subject or a target. It offers lock, unlock, quarantine and release
   under the same permission, because Enterprise's 0007 relies on an operator
   releasing a lockout there.
-- The E2E prompt (0035). Add one scenario in which an action handler kills a
+- The E2E prompt (0044). Add one scenario in which an action handler kills a
   session and locks its subject.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR (M23).
 
@@ -430,15 +431,15 @@ things around the shape. Each item below says why, then what to build.
 - **A kind to lift a quarantine**, or any other new `ActionKind` or `ext`
   signature.
 - **Identity sync's deactivation.** Enterprise queued it separately, as
-  `enterprise-PR#26-identity-sync-sink.md`, and it is answered by 0031, which
+  `enterprise-PR#26-identity-sync-sink.md`, and it is answered by 0040, which
   runs next. A deactivated subject is not a locked one: the directory places
   and lifts a deactivation, and an operator or a handler places and lifts a
-  lock, so neither may lift the other. 0031 reads both on the round trip this
+  lock, so neither may lift the other. 0040 reads both on the round trip this
   phase builds and extends this phase's decision to cover both. So build that
   read and the decision's text so a second standing denial on a subject joins
   them without a second query. Do not build the deactivation here.
 - **Delivery on several nodes**, beyond what 0027 built.
-- **The console screens** (0034).
+- **The console screens** (0043).
 - **`contract/` (M1).** Nothing on the wire changes: `session_kill`,
   `cache_invalidate` and a deny all exist.
 - **Bounding the idempotency table's growth.** Note it in the learnings.
@@ -559,7 +560,7 @@ Not you. This PR merges first, and the sync runs afterwards in its own session
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0030-action-executor-lock-and-quarantine-learnings.md`.
+`docs/learnings/0039-action-executor-lock-and-quarantine-learnings.md`.
 Enterprise's sync is written from its summary block, which MUST give:
 
 - the kinds, the selectors each takes, and what `Affected` counts for each;

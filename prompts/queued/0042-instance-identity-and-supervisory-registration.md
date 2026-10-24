@@ -1,4 +1,4 @@
-# 0033 — Instance identity, north-bound compatibility & supervisory registration
+# 0042 — Instance identity, north-bound compatibility & supervisory registration
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -15,15 +15,15 @@
   registration that moves with leadership resumes from), `0011` (tokens,
   scopes, RBAC), `0019` (the north-bound API this phase versions), and `0028`
   with the chunks it queued (the bounded-list shape every north-bound list
-  answers in, which this phase's promise covers), `0029` (the namespace a
-  host's routes live in, which this phase's promise covers too), `0030`
+  answers in, which this phase's promise covers), `0038` (the namespace a
+  host's routes live in, which this phase's promise covers too), `0039`
   (the lock and quarantine routes and fields, which the promise covers as
   well), `0025` (the fields both retention answers gained and the
   `retention_not_archived` refusal, which the promise covers too),
   `0026` (each audit sink's lag on `GET …/extensions`, which the promise
-  covers as well), `0031` (the directory-managed and deactivated fields
+  covers as well), `0040` (the directory-managed and deactivated fields
   on the subject reads, the `subject_directory_managed` refusal and the
-  identity sync's started state, which the promise covers too), and `0032`
+  identity sync's started state, which the promise covers too), and `0041`
   (the two report routes, the generate body, the listing's entries and the
   three `report_*` codes, which the promise covers as well).
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` **D11** and §6.1 —
@@ -113,11 +113,11 @@ A supervisor consuming many deployments meets version skew, so:
   it does to the JSON;
 - a deprecation window is stated in the documentation, not discovered by a
   client that broke;
-- the bounded-list shape 0028 decided — the limit, the cursor and how an
+- the bounded-list shape 0028 decided (M26) — the limit, the cursor and how an
   answer says it stopped short — is part of what is promised, list by list,
   so a client paging a list at one version pages it the same way at the next.
 
-**This retires an assumption phase 0038 rests on.** Its premise — "this product
+**This retires an assumption phase 0047 rests on.** Its premise — "this product
 ships its proxy and its server together and has no installed base" — is true
 only while nobody operates a fleet of deployments. Update that phase's prompt in
 this PR to say the north-bound surface is exempt from its single-version rule
@@ -168,7 +168,7 @@ An opt-in outbound registration to a supervisor, off by default:
   attributed to the supervisor rather than folded into an anonymous "API"
   actor. The operator being supervised must be able to read what was done to
   them, in their own audit store, without asking the supervisor.
-- Its scope is visible in the north-bound API and in the console (0034), and it
+- Its scope is visible in the north-bound API and in the console (0043), and it
   is revocable there.
 
 ## Out of scope
@@ -219,7 +219,7 @@ An opt-in outbound registration to a supervisor, off by default:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0033-instance-identity-and-supervision-learnings.md`. Summary
+`docs/learnings/0042-instance-identity-and-supervision-learnings.md`. Summary
 block MUST give: the identity shape and where it is persisted; the health model
 at all three levels, its states, its freshness bounds, and how "absent" is
 distinguished from "healthy"; the north-bound

@@ -1,4 +1,4 @@
-# 0032 — Registered reports served: Control lists and generates every registered report pack
+# 0041 — Registered reports served: Control lists and generates every registered report pack
 
 > Raised upstream by `hoplock/enterprise` in
 > https://github.com/Hoplock/enterprise/pull/26, under `## Upstream request`,
@@ -6,16 +6,15 @@
 > `prompts/upstream/queued/enterprise-PR#26-report-provider-routes.md`, and
 > answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 >
-> **Where it sits.** After identity sync (0031) and the action executor
-> (0030), and after everything they run after: the shared event plane (0027),
-> bounded lists (0028) with every chunk it queues, and host namespaces (0029).
-> Before instance identity (0033), the console (0034) and the E2E topology
-> (0035). The report-provider renumbering note in `docs/PLAN.md` §10 gives one
-> line of reasons for each. It needs 0028's list shape and 0029's namespaces.
-> It needs nothing of 0030's or 0031's, which run first because each closes a
-> gap Enterprise cannot route around and this one does not. If 0028's chunks
-> have renumbered it, the order still holds, because it runs after all of
-> them.
+> **Where it sits.** After identity sync (0040) and the action executor
+> (0039), and after everything they run after: the shared event plane (0027),
+> bounded lists (0028) with every chunk it queues, and host namespaces (0038).
+> Before instance identity (0042), the console (0043) and the E2E topology
+> (0044). The report-provider renumbering note in `docs/PLAN.md` §10 gives one
+> line of reasons for each. It needs M26's list shape and 0038's namespaces.
+> It needs nothing of 0039's or 0040's, which run first because each closes a
+> gap Enterprise cannot route around and this one does not. 0028's chunks (0029–0037) renumbered
+> it, and the order holds, because it runs after all of them.
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow. Read §3 for `ext/` and `server/` as a
@@ -39,10 +38,10 @@
       and the catalogue that turns a `ReportID` into a name), **M20** (the
       console lists a pack), **M5** (a provider runs in the process that
       serves the decision path), **M24** (why this is a tenant route and
-      never a cross-tenant one), **M19** (0033 promises the surface this
+      never a cross-tenant one), **M19** (0042 promises the surface this
       phase adds to), and **M23** (the release).
-    - The bounded-list decision 0028 recorded, and the namespace decision
-      0029 recorded. Find both in the register.
+    - **M26**, the bounded-list decision 0028 recorded and 0029–0037 built,
+      and the namespace decision 0038 recorded. Find both in the register.
   - **§3**, "Component responsibilities": `internal/httpapi/north` (the
     route table, the error envelope, `writeJSON` as the one writer, and the
     chain: `withLimits`, `withRecovery`), `server`, `internal/daemon` and
@@ -59,7 +58,7 @@
     schedules/campaigns change `report:write`").
   - **`0019`** and **`0023`**: the route table, the codes, and how a handler
     refuses a field.
-  - **`0028`** with the chunks it queued, and **`0029`**: the list shape and
+  - **`0028`** with the chunks it queued, and **`0038`**: the list shape and
     its enumerating test, and the four namespaces.
 - Code. Read it before designing anything:
   - `ext/audit.go`, from `ReportFormat` to `ReportProvider`, and their doc
@@ -129,7 +128,7 @@ tenant it resolved, and generates one on request, under `audit:read`.
   `Extensions.ReportProviders()`, which lists, checks a request against the
   descriptor the provider listed, and calls `Generate` under its own bound.
   Two tenant routes in `auditRoutes`, under `identity.PermAuditRead`, in
-  Control's API namespace (0029). The `reports` family is Control's.
+  Control's API namespace (0038). The `reports` family is Control's.
 - *Until it exists:* a registered pack is listed nowhere by Control, its
   console included. Enterprise's 0009 builds its packs behind
   `ext.ReportProvider`, tests them against the seam directly, serves them
@@ -150,11 +149,11 @@ The request is **met as asked**, not answered "like this":
   routes;
 - `ErrNotFound` is `404`, `ErrInvalid` is `400`, and every other failure is
   an outage, never a `401` (M11);
-- the console lists and generates a pack (0034);
+- the console lists and generates a pack (0043);
 - the `reports` family is Control's. A host's own reporting surfaces —
   schedules, campaigns and the history of what was generated, under
   `report:write` and `audit:read` — stay the host's, in the host's namespace
-  (0029).
+  (0038).
 
 Answering it the other way would leave a core point no Control code calls,
 and the seam's own doc comments describing a surface that does not exist.
@@ -308,10 +307,10 @@ then what to build.
      descriptors item 2 refuses, carries `error` with
      `report_provider_unavailable` or `report_provider_failed` and an empty
      `reports`. With nothing registered it is `{"providers": []}`. It answers
-     in 0028's shape, or is listed exempt in 0028's enumerating test with
-     this reason: its size is set by the binary's registrations and each
-     provider's catalogue, never by the estate. Decide which from what 0028
-     recorded, and say which in the learnings.
+     in M26's shape, or is listed exempt in
+     `TestEveryListIsBoundedOrSaysWhyNot` (M26) with this reason: its size is set by the binary's registrations and each
+     provider's catalogue, never by the estate. Decide which from M26 and
+     0028's inventory, and say which in the learnings.
 
 The error answers, together:
 
@@ -361,8 +360,8 @@ the three new codes in `north.AllCodes`.
 - `withRecovery`, per item 5.
 - Item 6: the caller made visible to `server.CallerFrom` for the two calls.
 - The three codes, in `errors.go` and `AllCodes`.
-- 0029's disjointness tests hold with both routes in Control's API
-  namespace, and 0028's enumerating test holds as item 8 says.
+- 0038's disjointness tests hold with both routes in Control's API
+  namespace, and `TestEveryListIsBoundedOrSaysWhyNot` holds as item 8 says.
 
 ### 3. Configuration (`internal/config`)
 - `north.report_timeout` and `north.max_concurrent_reports` in
@@ -396,7 +395,7 @@ the three new codes in `north.AllCodes`.
 
   §6 is unchanged: `audit:read` and `report:write` already say what they
   cover.
-- The console prompt (0034) already lists a Reports screen. Correct it if
+- The console prompt (0043) already lists a Reports screen. Correct it if
   what was built differs from what it expects.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR with no
   `### Breaking` (M23). Its entry names the two routes, the two configuration
@@ -417,7 +416,7 @@ the three new codes in `north.AllCodes`.
   may serve one as a cross-tenant read.
 - **A record of a generation on the control stream** (item 7).
 - **Any new `ext` method, field or signature.**
-- **The console screens** (0034).
+- **The console screens** (0043).
 - **`contract/` (M1).** Nothing on the wire to a proxy changes.
 
 ## Acceptance criteria
@@ -436,7 +435,7 @@ and in `internal/report`'s own tests otherwise.
 - A descriptor with a format outside the enum, a repeated `ReportID` or no
   formats: that provider is listed `report_provider_failed`.
 - Nothing registered: `{"providers": []}`.
-- 0028's enumerating test passes, by the shape or by the exemption item 8
+- `TestEveryListIsBoundedOrSaysWhyNot` passes, by the shape or by the exemption item 8
   names.
 
 **Access**
@@ -494,7 +493,7 @@ and in `internal/report`'s own tests otherwise.
   outside a host route still renders `500 internal`.
 
 **Throughout**
-- 0029's namespace tests pass with both routes in Control's API namespace.
+- 0038's namespace tests pass with both routes in Control's API namespace.
 - `go build ./...`, `go vet ./...` and `go test ./...` pass. So do
   golangci-lint at CI's pin, `make contract-check`, `make license-check` and
   `make conform`. `make release-check` reports no break.
@@ -527,7 +526,7 @@ State at least these obligations:
    Turn its skipped end-to-end criterion into a real one.
 2. **Its own report routes.** Listing and on-demand generation are Control's.
    What stays its own is the history of generated reports (`audit:read`),
-   schedules and campaigns (`report:write`), in the host's namespace 0029
+   schedules and campaigns (`report:write`), in the host's namespace 0038
    settled. Its 0009's route list, and its plan's §3 route table row for
    "report reads", say which is which.
 3. **Its plan.** §4's `ReportProvider` row and the bullet saying neither
@@ -552,11 +551,11 @@ Not you. This PR merges first, and the sync runs afterwards in its own session
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0032-registered-reports-served-learnings.md`.
+`docs/learnings/0041-registered-reports-served-learnings.md`.
 Enterprise's sync is written from its summary block, which MUST give:
 
 - the two routes, the body, the listing's entry shape, and whether the
-  listing answers in 0028's shape or is exempt;
+  listing answers in M26's shape or is exempt;
 - the checks against the descriptor, and what makes a descriptor servable;
 - the media types, and the headers Control sets;
 - `north.report_timeout` and `north.max_concurrent_reports`, with their

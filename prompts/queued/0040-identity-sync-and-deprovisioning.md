@@ -1,4 +1,4 @@
-# 0031 — Identity sync: Control's sync sink, the sync started, and de-provisioning that takes effect
+# 0040 — Identity sync: Control's sync sink, the sync started, and de-provisioning that takes effect
 
 > Raised upstream by `hoplock/enterprise` in
 > https://github.com/Hoplock/enterprise/pull/26, under `## Upstream request`,
@@ -6,14 +6,14 @@
 > `prompts/upstream/queued/enterprise-PR#26-identity-sync-sink.md`, and
 > answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 >
-> **Where it sits.** Right after the action executor (0030), and after
-> everything 0030 runs after: the shared event plane (0027), bounded lists
-> (0028) with every chunk it queues, and host namespaces (0029). Before
-> instance identity (0033), the console (0034) and the E2E topology (0035).
+> **Where it sits.** Right after the action executor (0039), and after
+> everything 0039 runs after: the shared event plane (0027), bounded lists
+> (0028) with every chunk it queues, and host namespaces (0038). Before
+> instance identity (0042), the console (0043) and the E2E topology (0044).
 > The identity-sync renumbering note in `docs/PLAN.md` §10 gives one line of
-> reasons for each. It needs 0030's subject read and standing-denial decision,
+> reasons for each. It needs 0039's subject read and standing-denial decision,
 > and 0027 for a deactivation's kill to reach a proxy whichever node holds its
-> stream. If 0028's chunks have renumbered it, the order still holds, because
+> stream. 0028's chunks (0029–0037) renumbered it, and the order holds, because
 > it runs after all of them.
 
 ## Read first
@@ -33,7 +33,7 @@
     - **M7**: identity is federated, and IdP claims and groups reach policy
       only through the explicit, versioned claim mapping. A directory is a
       second door, and this decision governs it as well.
-    - **The decision 0030 added** for standing denials applied above the
+    - **The decision 0039 added** for standing denials applied above the
       engine (find it in the register). A deactivation is a second such
       denial, and this phase extends that decision rather than writing a
       parallel one.
@@ -71,8 +71,8 @@
     before the identity it ends is the same problem.
   - **`0019`** and **`0023`**: the subject routes, the operator records and
     the route table.
-  - **`0027`**, **`0028`** with the chunks it queued, **`0029`** and
-    **`0030`**: the stream on several nodes, the list shapes, the namespaces,
+  - **`0027`**, **`0028`** with the chunks it queued, **`0038`** and
+    **`0039`**: the stream on several nodes, the list shapes, the namespaces,
     and the lock, the executor and how a started handler is shown.
 - Code. Read it before designing anything:
   - `ext/identity.go`: `SyncedSubject`, `SyncedGroup`, `SyncSink`,
@@ -80,7 +80,7 @@
     (`PointIdentitySync`'s entry), `ext/registry.go`
     (`Extensions.IdentitySync`), `ext/errors.go` and `ext/seam_test.go`.
   - `internal/daemon/main.go` and `internal/daemon/serve.go`: where the
-    registry is sealed and the listeners open, and how 0030 starts the action
+    registry is sealed and the listeners open, and how 0039 starts the action
     handler.
   - `internal/identity/federation.go` (`Complete`, `provision`,
     `principalsFor`, `LocalLogin`, `Authenticate`) and
@@ -90,7 +90,7 @@
     migrations `0001`, `0007` and the latest.
   - `internal/access/revoke.go` and `internal/access/workflow.go`
     (`Service.Revoke`, `Service.Cancel`), and `internal/revoke/operator.go`.
-  - `internal/decision/inputs.go`, and the subject-and-lock read 0030 added.
+  - `internal/decision/inputs.go`, and the subject-and-lock read 0039 added.
   - `internal/httpapi/north/inventory.go` (the subject routes) and
     `internal/audit/operatorevent.go`.
 - The request itself, for the requester's own words. The Enterprise decisions
@@ -149,7 +149,7 @@ directory reaches the subject the directory provisioned.
   `ext.IdentitySync`. A provisioned subject is an ordinary row in `subjects`,
   joined to the directory's `ExternalID` by a link row the way
   `federated_identities` joins an IdP's subject. A deactivation is a standing
-  denial read on the decision path beside 0030's lock. Every applied call is
+  denial read on the decision path beside 0039's lock. Every applied call is
   recorded on the control stream (§7) with the sync as the actor.
 - *Until it exists:* SCIM provisions nobody. Enterprise's 0004 builds its SCIM
   server, multi-IdP trust model, claim rules and reconciliation against a fake
@@ -202,7 +202,7 @@ build.
      provisioned subject and rewrites none of its groups, attributes or
      principals. `PUT …/subjects/{subject}` and `DELETE …/subjects/{subject}`
      on a directory-managed subject answer `409 subject_directory_managed`.
-     An operator's levers are still there: the lock (0030), role bindings and
+     An operator's levers are still there: the lock (0039), role bindings and
      local group membership. Local membership merges into `subjects.groups`
      as it does for a federated subject.
 3. **The claim mapping governs the directory door too (M7).**
@@ -224,7 +224,7 @@ build.
      spellings onto one group. A new mapping version reaches a provisioned
      subject at its next applied write, as it reaches a federated subject at
      its next login.
-4. **A deactivation is a standing denial of its own, not 0030's lock.**
+4. **A deactivation is a standing denial of its own, not 0039's lock.**
    - *Why.* The directory places and lifts a deactivation. An operator or an
      action handler places and lifts a lock. If they were one state, an
      operator's unlock would re-admit a person the directory had
@@ -233,12 +233,12 @@ build.
    - *What to build.* Store the deactivation on the subject's link row, never
      on the `subjects` row, so a login's upsert never clears it. It records
      when it was applied and its reason code. The decision path reads it in
-     the round trip 0030 built for the subject and its lock, so M5's budget
+     the round trip 0039 built for the subject and its lock, so M5's budget
      holds. A deactivated subject's authorize is a deny with the reason code
      `subject_deactivated` (`EffectDeny`, never an outage, M11), whatever
      policy, grants or windows say. The record names it (M4), `explain` says
      so, and replay reproduces it. A subject both locked and deactivated is
-     recorded with both. Extend 0030's decision to cover it, and update its
+     recorded with both. Extend 0039's decision to cover it, and update its
      register row.
 5. **Order is decided without trusting either clock to widen access.**
    - *Why.* `DeactivateSubject` carries no `UpdatedAt`, so Control's own
@@ -286,7 +286,7 @@ build.
      `KindInternal`, and the deactivation stands. A `DeactivateSubject` for a
      subject already deactivated writes no second deactivation record, and it
      still revokes whatever the subject still holds and re-publishes the kill.
-     So a retry under the same `ExternalID` completes it, as 0030's executor
+     So a retry under the same `ExternalID` completes it, as 0039's executor
      re-sends a kill. A re-activation restores nothing that was revoked
      (M10).
 7. **Logins are unique to one subject.**
@@ -303,7 +303,7 @@ build.
      subject presents is refused with `federation.login_refused`. Uniqueness
      between subjects the directory does not manage is earlier behaviour this
      phase does not change. Note it in the learnings.
-8. **A failed `Start` does not stop Control.** 0030's item 6, for the same
+8. **A failed `Start` does not stop Control.** 0039's item 6, for the same
    reason: provisioning is somebody else's software, and making access depend
    on it is the outage M11 exists to prevent.
 
@@ -366,7 +366,7 @@ build.
   error over something that was not done.
 - **The actor.** The sync is the actor on every record it writes and on every
   grant, request and credential it revokes: principal
-  `identity-sync:<provider>`, with no subject, in the way 0030 names
+  `identity-sync:<provider>`, with no subject, in the way 0039 names
   `action-handler:<provider>`.
 - **Records**, on the tenant's control stream, each in the transaction that
   makes the change. They carry the `ExternalID`, the subject id and the
@@ -392,7 +392,7 @@ build.
   listeners drain, bounded by the shutdown deadline.
 - A `Start` error is logged at `ERROR` with the provider and its kind, and
   Control serves. The point's row in `GET …/extensions`, and the start-up log,
-  say the sync is registered and **not started**, in the shape 0030 settled
+  say the sync is registered and **not started**, in the shape 0039 settled
   for the action handler.
 - With nothing registered, nothing changes. No sink is built, no connector may
   name a `directory_claim` it could never match (writing one is refused with
@@ -436,11 +436,12 @@ build.
 - `GET …/subjects` and `GET …/subjects/{subject}` show whether the directory
   manages the subject (its provider and `ExternalID`) and any standing
   deactivation (when, and the reason code). They do so under their existing
-  permission, in the shape 0028's chunks settled.
+  permission, in M26's shape, which 0029 gave `GET …/subjects`: the new members
+  ride on each item, and nothing about paging changes.
 - `PUT` and `DELETE` on a directory-managed subject answer
   `409 subject_directory_managed`. Declare the code in Control's table.
 - The connector routes accept and show `directory_claim`.
-- This phase adds no route, so 0029's namespaces move nothing of it.
+- This phase adds no route, so 0038's namespaces move nothing of it.
 
 ### 5. The documents
 - `docs/PLAN.md`, revised in place:
@@ -455,10 +456,10 @@ build.
   - §10's row, revised to what was built.
 
   §11 is unchanged: SCIM itself stays Enterprise's.
-- The console prompt (0034). It shows a directory-managed subject and a
+- The console prompt (0043). It shows a directory-managed subject and a
   deactivation wherever it shows a subject. It offers no edit or delete of a
   directory-managed subject, and it shows a connector's `directory_claim`.
-- The E2E prompt (0035). Add one scenario in which a fake sync deactivates a
+- The E2E prompt (0044). Add one scenario in which a fake sync deactivates a
   subject with a live session: the session is killed, the next authorize is
   denied, and the console login is refused.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR with no
@@ -480,7 +481,7 @@ build.
 - **An operator lever that lifts a deactivation.** Only the directory does.
 - **Any new `ext` method or signature.**
 - **Delivery on several nodes**, beyond what 0027 built.
-- **The console screens** (0034).
+- **The console screens** (0043).
 - **`contract/` (M1).** Nothing on the wire changes: `session_kill`,
   `cache_invalidate` and a deny all exist.
 
@@ -599,7 +600,7 @@ Not you. This PR merges first, and the sync runs afterwards in its own session
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0031-identity-sync-and-deprovisioning-learnings.md`.
+`docs/learnings/0040-identity-sync-and-deprovisioning-learnings.md`.
 Enterprise's sync is written from its summary block, which MUST give:
 
 - the methods, their ordering rules, and the error kinds, with which are safe
