@@ -4,8 +4,12 @@
 package north
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"go/ast"
+	"go/token"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -170,10 +174,9 @@ func TestTheFilterDigestIsCanonical(t *testing.T) {
 
 func readPageFor(t *testing.T, query string) (pageRequest, bool, *httptest.ResponseRecorder) {
 	t.Helper()
-	s := &Server{log: slog.New(slog.DiscardHandler)}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/list?"+query, nil)
-	p, ok := s.readPage(w, r, everyKind)
+	p, ok := readPage(w, r, everyKind)
 	return p, ok, w
 }
 
@@ -298,5 +301,227 @@ func TestAPageSaysWhereItStopped(t *testing.T) {
 	body, code = answerFor(t, []string{"a"}, true, []any{"a"}, nil)
 	if code != http.StatusInternalServerError || body["code"] != CodeInternal {
 		t.Errorf("a page whose cursor cannot be minted answered %d %v, want 500 %s", code, body, CodeInternal)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// a host's lists (M26.7)
+// ---------------------------------------------------------------------------
+
+// hostPageRequest is a request on a host route of provider, logging to logs.
+func hostPageRequest(provider, target string, logs *bytes.Buffer) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	hr := &hostRequest{provider: provider, log: slog.New(slog.NewJSONHandler(logs, nil))}
+	return r.WithContext(context.WithValue(r.Context(), ctxKeyHost, hr))
+}
+
+func readHostPageFor(t *testing.T, query string, filters ...string) (HostPage, bool, *httptest.ResponseRecorder) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	p, ok := ReadHostPage(w, hostPageRequest("test/host", "/list?"+query, &bytes.Buffer{}), "archive", 2, filters...)
+	return p, ok, w
+}
+
+func TestAHostPageIsReadThroughControlsPath(t *testing.T) {
+	// Every refusal is Control's own, byte for byte but the correlation id.
+	for _, query := range []string{"limit=0", "limit=x", "limit=10001", "after=not-a-cursor"} {
+		_, ok, host := readHostPageFor(t, query)
+		_, _, control := readPageFor(t, query)
+		if ok || host.Code != control.Code || host.Body.String() != control.Body.String() {
+			t.Errorf("?%s: a host list answered %d %s, Control's %d %s", query, host.Code, host.Body, control.Code, control.Body)
+		}
+	}
+
+	p, ok, w := readHostPageFor(t, "")
+	if !ok || p.Limit != store.DefaultPageLimit || p.After != nil {
+		t.Fatalf("the first page read %+v ok=%t (%s)", p, ok, w.Body)
+	}
+	if p.req.list.name != "test/host:archive" || len(p.req.list.key) != 2 {
+		t.Errorf("a host's list is %+v, want test/host:archive with two string components", p.req.list)
+	}
+
+	raw, err := encodeCursor(hostList("test/host", "archive", 2), filterDigest([]string{"state=open"}), []any{"2026", "r-9"})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	p, ok, w = readHostPageFor(t, "limit=3&after="+raw, "state=open")
+	if !ok || p.Limit != 3 || len(p.After) != 2 || p.After[0] != "2026" || p.After[1] != "r-9" {
+		t.Fatalf("a cursor this list minted read %+v ok=%t (%s)", p, ok, w.Body)
+	}
+
+	// A cursor binds the list, its provider and its filters, both ways.
+	foreign := map[string]string{
+		"under other filters":    raw,
+		"from Control's targets": mustCursor(t, targetList, filterDigest(nil), []any{"t-1"}),
+		"from another host":      mustCursor(t, hostList("other/host", "archive", 2), filterDigest(nil), []any{"2026", "r-9"}),
+		"from another list":      mustCursor(t, hostList("test/host", "inbox", 2), filterDigest(nil), []any{"2026", "r-9"}),
+	}
+	for name, raw := range foreign {
+		if _, ok, w := readHostPageFor(t, "after="+raw); ok || w.Code != http.StatusBadRequest {
+			t.Errorf("a cursor %s was continued by a host list: %d %s", name, w.Code, w.Body)
+		}
+	}
+	hostCursor := mustCursor(t, hostList("test/host", "targets", 1), filterDigest(nil), []any{"t-1"})
+	if _, err := decodeCursor(hostCursor, targetList, filterDigest(nil)); err == nil {
+		t.Error("Control's targets continued a host list's cursor of the same name and shape")
+	}
+}
+
+func mustCursor(t *testing.T, l list, filters string, last []any) string {
+	t.Helper()
+	raw, err := encodeCursor(l, filters, last)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	return raw
+}
+
+func TestAHostPageIsAnsweredInControlsShape(t *testing.T) {
+	p, _, _ := readHostPageFor(t, "limit=1", "state=open")
+	w := httptest.NewRecorder()
+	WriteHostPage(w, hostPageRequest("test/host", "/list", &bytes.Buffer{}), p, "requests", []string{"r-1"}, true,
+		[]string{"2026", "r-1"}, map[string]any{"tenant": "a"})
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("answered %d %s", w.Code, w.Body)
+	}
+	if body["truncated"] != true || body["tenant"] != "a" {
+		t.Errorf("body %v", body)
+	}
+	key, err := decodeCursor(body["next"].(string), p.req.list, filterDigest([]string{"state=open"}))
+	if err != nil || key[0] != "2026" || key[1] != "r-1" {
+		t.Errorf("next decodes as %v, %v", key, err)
+	}
+
+	w = httptest.NewRecorder()
+	WriteHostPage(w, hostPageRequest("test/host", "/list", &bytes.Buffer{}), p, "requests", nil, false, nil, nil)
+	if got := w.Body.String(); w.Code != http.StatusOK || !strings.Contains(got, `"requests":[]`) || strings.Contains(got, "next") {
+		t.Errorf("an empty last page answered %d %s", w.Code, got)
+	}
+}
+
+func TestAHostListThatCannotBeAnsweredIsAnOutage(t *testing.T) {
+	outage := func(t *testing.T, w *httptest.ResponseRecorder, logs *bytes.Buffer, problem string) {
+		t.Helper()
+		var e Error
+		if err := json.Unmarshal(w.Body.Bytes(), &e); err != nil || w.Code != http.StatusInternalServerError || e.Code != CodeInternal {
+			t.Errorf("answered %d %s, want 500 internal", w.Code, w.Body)
+		}
+		if !strings.Contains(logs.String(), `"event":"`+hostListEvent+`"`) || !strings.Contains(logs.String(), problem) {
+			t.Errorf("logged %q, want %s naming %q", logs, hostListEvent, problem)
+		}
+	}
+
+	for name, read := range map[string]struct {
+		list   string
+		keyLen int
+		hosted bool
+		want   string
+	}{
+		"outside a host route": {list: "archive", keyLen: 1, want: "outside a host route"},
+		"no name":              {keyLen: 1, hosted: true, want: "no name"},
+		"no key":               {list: "archive", hosted: true, want: "no components"},
+	} {
+		t.Run("read "+name, func(t *testing.T) {
+			var logs bytes.Buffer
+			r := httptest.NewRequest(http.MethodGet, "/list", nil)
+			if read.hosted {
+				r = hostPageRequest("test/host", "/list", &logs)
+			} else {
+				prev := slog.Default()
+				slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+				t.Cleanup(func() { slog.SetDefault(prev) })
+			}
+			w := httptest.NewRecorder()
+			if _, ok := ReadHostPage(w, r, read.list, read.keyLen); ok {
+				t.Fatal("accepted")
+			}
+			outage(t, w, &logs, read.want)
+		})
+	}
+
+	p, _, _ := readHostPageFor(t, "")
+	for name, write := range map[string]struct {
+		page   HostPage
+		member string
+		items  any
+		more   bool
+		last   []string
+		extra  map[string]any
+		want   string
+	}{
+		"a List not read":       {page: HostPage{Limit: 1}, member: "items", items: []string{}, want: "not read by ReadList"},
+		"no member":             {page: p, items: []string{}, want: "member is empty"},
+		"member truncated":      {page: p, member: "truncated", items: []string{}, want: "member is empty"},
+		"member next":           {page: p, member: "next", items: []string{}, want: "member is empty"},
+		"extra truncated":       {page: p, member: "items", items: []string{}, extra: map[string]any{"truncated": 1}, want: "collides with truncated"},
+		"extra next":            {page: p, member: "items", items: []string{}, extra: map[string]any{"next": 1}, want: "collides with next"},
+		"extra the member":      {page: p, member: "items", items: []string{}, extra: map[string]any{"items": 1}, want: "collides with items"},
+		"items not a list":      {page: p, member: "items", items: map[string]int{}, want: "not a list"},
+		"items bytes":           {page: p, member: "items", items: []byte("[]"), want: "bytes"},
+		"more and no last":      {page: p, member: "items", items: []string{"a"}, more: true, want: "names no last item"},
+		"a last too short":      {page: p, member: "items", items: []string{"a"}, more: true, last: []string{"a"}, want: "wrong number"},
+		"a last too long":       {page: p, member: "items", items: []string{"a"}, more: true, last: []string{"a", "b", "c"}, want: "wrong number"},
+		"outside a host route":  {page: p, member: "items", items: []string{}, want: "outside a host route"},
+		"an empty last, more":   {page: p, member: "items", items: []string{"a"}, more: true, last: []string{}, want: "wrong number"},
+		"a nil pointer to list": {page: p, member: "items", items: (*[]string)(nil), want: "not a list"},
+	} {
+		t.Run("write "+name, func(t *testing.T) {
+			var logs bytes.Buffer
+			r := hostPageRequest("test/host", "/list", &logs)
+			if name == "outside a host route" {
+				r = httptest.NewRequest(http.MethodGet, "/list", nil)
+				prev := slog.Default()
+				slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+				t.Cleanup(func() { slog.SetDefault(prev) })
+			}
+			w := httptest.NewRecorder()
+			WriteHostPage(w, r, write.page, write.member, write.items, write.more, write.last, write.extra)
+			outage(t, w, &logs, write.want)
+		})
+	}
+}
+
+// A host's list is "<provider>:<name>" in its cursor, so no list of Control's
+// may name itself with a ":" — or a host's cursor could be one of Control's.
+func TestNoControlListNameHasAColon(t *testing.T) {
+	fset := token.NewFileSet()
+	found := 0
+	forEachSourceDeclIn(t, fset, ".", func(decl ast.Decl) {
+		// hostList names a host's lists, which is what the colon is for.
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "hostList" {
+			return
+		}
+		ast.Inspect(decl, func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			if ident, ok := lit.Type.(*ast.Ident); !ok || ident.Name != "list" {
+				return true
+			}
+			for _, elt := range lit.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				if key, ok := kv.Key.(*ast.Ident); !ok || key.Name != "name" {
+					continue
+				}
+				name, ok := kv.Value.(*ast.BasicLit)
+				if !ok || name.Kind != token.STRING {
+					t.Errorf("%s: a list of Control's is named by %T, not a literal this test can read", fset.Position(kv.Pos()), kv.Value)
+					continue
+				}
+				found++
+				if strings.Contains(name.Value, ":") {
+					t.Errorf("%s: list %s names itself with a colon", fset.Position(kv.Pos()), name.Value)
+				}
+			}
+			return true
+		})
+	})
+	if found < 2 {
+		t.Errorf("found %d of Control's lists; this test no longer sees them", found)
 	}
 }

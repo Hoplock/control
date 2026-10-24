@@ -618,6 +618,12 @@ func (s *Server) grantFailure(w http.ResponseWriter, r *http.Request, op string,
 // invalid renders a request this server will not act on, naming the field and
 // the problem as codes so a console builds the sentence (M21).
 func (s *Server) invalid(w http.ResponseWriter, r *http.Request, field, problem, limit string) {
+	invalid(w, r, field, problem, limit)
+}
+
+// invalid is [Server.invalid] for a caller with no Server: a host's list
+// refuses its parameters in exactly the envelope Control's lists do.
+func invalid(w http.ResponseWriter, r *http.Request, field, problem, limit string) {
 	params := map[string]any{"field": field, "problem": problem}
 	if limit != "" {
 		params["limit"] = limit

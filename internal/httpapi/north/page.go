@@ -181,7 +181,7 @@ func decodeComponent(kind keyKind, s string) (any, bool) {
 // readPage reads ?limit= and ?after= for one list under its canonical
 // filters ("name=value", sorted here). On a refusal it has written the 400
 // and answers false.
-func (s *Server) readPage(w http.ResponseWriter, r *http.Request, l list, filters ...string) (pageRequest, bool) {
+func readPage(w http.ResponseWriter, r *http.Request, l list, filters ...string) (pageRequest, bool) {
 	q := r.URL.Query()
 	p := pageRequest{list: l, filters: filterDigest(filters)}
 
@@ -192,10 +192,10 @@ func (s *Server) readPage(w http.ResponseWriter, r *http.Request, l list, filter
 		n, err := strconv.Atoi(raw)
 		switch {
 		case (err == nil && n > store.MaxPageLimit) || (errors.Is(err, strconv.ErrRange) && n > 0):
-			s.invalid(w, r, "limit", access.ProblemExceedsMaximum, strconv.Itoa(store.MaxPageLimit))
+			invalid(w, r, "limit", access.ProblemExceedsMaximum, strconv.Itoa(store.MaxPageLimit))
 			return pageRequest{}, false
 		case err != nil || n <= 0:
-			s.invalid(w, r, "limit", access.ProblemInvalid, "")
+			invalid(w, r, "limit", access.ProblemInvalid, "")
 			return pageRequest{}, false
 		}
 		p.Limit = n
@@ -204,7 +204,7 @@ func (s *Server) readPage(w http.ResponseWriter, r *http.Request, l list, filter
 	if raw := q.Get("after"); raw != "" {
 		after, err := decodeCursor(raw, l, p.filters)
 		if err != nil {
-			s.invalid(w, r, "after", access.ProblemInvalid, "")
+			invalid(w, r, "after", access.ProblemInvalid, "")
 			return pageRequest{}, false
 		}
 		p.After = after
@@ -220,6 +220,17 @@ func (s *Server) readPage(w http.ResponseWriter, r *http.Request, l list, filter
 // same on every page (M26.3); the paging members are written after them and
 // cannot be overwritten by one.
 func (s *Server) answerPage(w http.ResponseWriter, r *http.Request, p pageRequest, member string, items any, more bool, last []any, extra map[string]any) {
+	body, err := pageBody(p, member, items, more, last, extra)
+	if err != nil {
+		s.fail(w, r, "mint "+p.list.name+" cursor", err)
+		return
+	}
+	answer(w, http.StatusOK, body)
+}
+
+// pageBody is one page's answer, built before anything is written, so a
+// cursor that cannot be minted is an outage and never a page without it.
+func pageBody(p pageRequest, member string, items any, more bool, last []any, extra map[string]any) (map[string]any, error) {
 	body := make(map[string]any, len(extra)+3)
 	maps.Copy(body, extra)
 	if v := reflect.ValueOf(items); !v.IsValid() || (v.Kind() == reflect.Slice && v.IsNil()) {
@@ -230,10 +241,142 @@ func (s *Server) answerPage(w http.ResponseWriter, r *http.Request, p pageReques
 	if more {
 		next, err := encodeCursor(p.list, p.filters, last)
 		if err != nil {
-			s.fail(w, r, "mint "+p.list.name+" cursor", err)
-			return
+			return nil, err
 		}
 		body["next"] = next
 	}
+	return body, nil
+}
+
+// A HOST'S LISTS TAKE THE SAME SHAPE (M26.7, M15).
+//
+// server.ReadList and server.List.Write forward to the pair below, which reads
+// and writes through readPage and pageBody: one codec, one limit rule, one set
+// of refusals, for Control's lists and a host's alike. A host's list is named
+// "<provider>:<name>" in its cursor ("l"). None of Control's list names has a
+// ":", so a cursor from one of Control's lists is never continued by a host's,
+// nor the other way round. Every component of a host's order key is a string:
+// the host parses it and owns what it means.
+//
+// Control cannot see which of a host's routes is a list, so nothing makes one
+// answer through this pair. What this pair does enforce, it enforces as
+// WriteHostError does: a host programming error is `500 internal`, logged,
+// and never a page in another shape.
+
+// HostPage is one page a caller asked of a host's list.
+type HostPage struct {
+	// Limit is 1 to store.MaxPageLimit; store.DefaultPageLimit when the
+	// caller named none.
+	Limit int
+	// After is the order key of the last item the caller was handed, one
+	// string per component, or nil on the first page.
+	After []string
+
+	req pageRequest
+}
+
+// hostListEvent is the event a host list's programming error is logged under.
+const hostListEvent = "northbound_host_list_refused"
+
+// hostList is a host's list as a cursor names it.
+func hostList(provider, name string, keyLen int) list {
+	return list{name: provider + ":" + name, key: slices.Repeat([]keyKind{keyString}, keyLen)}
+}
+
+// ReadHostPage reads ?limit= and ?after= for the host list name, whose order
+// key has keyLen components, under the request's filters ("name=value"). On a
+// bad limit or cursor it has written Control's 400 and answers false; outside
+// a host route, or for an empty name or a key of no components, it has
+// written `500 internal` and logged it.
+func ReadHostPage(w http.ResponseWriter, r *http.Request, name string, keyLen int, filters ...string) (HostPage, bool) {
+	hr := hostRequestFrom(r)
+	problem := ""
+	switch {
+	case hr == nil:
+		problem = "ReadList was called outside a host route"
+	case name == "":
+		problem = "the list has no name"
+	case keyLen < 1:
+		problem = "the list's order key has no components"
+	}
+	if problem != "" {
+		hr.refuse(w, r, "a host list was read in a way Control does not allow", hostListEvent, problem,
+			"list", name, "key_components", keyLen)
+		return HostPage{}, false
+	}
+	p, ok := readPage(w, r, hostList(hr.provider, name, keyLen), filters...)
+	if !ok {
+		return HostPage{}, false
+	}
+	page := HostPage{Limit: p.Limit, req: p}
+	if p.After != nil {
+		page.After = make([]string, len(p.After))
+		for i, v := range p.After {
+			page.After[i] = v.(string) // every component of a host's key is keyString
+		}
+	}
+	return page, true
+}
+
+// WriteHostPage answers one page of a host's list in M26's shape, or refuses
+// to. Each of these is a host programming error, answered as `500 internal`
+// and logged:
+//
+//   - a call outside a host route, or with a page ReadHostPage did not read;
+//   - a member that is empty, "truncated" or "next";
+//   - an extra member named as the list's member, "truncated" or "next";
+//   - items that do not encode as a JSON array;
+//   - more with a nil last, or a last whose length is not the key's.
+func WriteHostPage(w http.ResponseWriter, r *http.Request, p HostPage, member string, items any, more bool, last []string, extra map[string]any) {
+	hr := hostRequestFrom(r)
+	problem := hostPageRefusal(hr, p, member, items, more, last, extra)
+	var body map[string]any
+	if problem == "" {
+		key := make([]any, len(last))
+		for i, v := range last {
+			key[i] = v
+		}
+		var err error
+		if body, err = pageBody(p.req, member, items, more, key, extra); err != nil {
+			problem = err.Error()
+		}
+	}
+	if problem != "" {
+		hr.refuse(w, r, "a host list answered a page Control does not allow", hostListEvent, problem,
+			"list", p.req.list.name, "member", member)
+		return
+	}
 	answer(w, http.StatusOK, body)
+}
+
+// hostPageRefusal says why a host's page may not be written, or "" when it
+// may.
+func hostPageRefusal(hr *hostRequest, p HostPage, member string, items any, more bool, last []string, extra map[string]any) string {
+	reserved := func(name string) bool { return name == "truncated" || name == "next" }
+	switch {
+	case hr == nil:
+		return "List.Write was called outside a host route"
+	case p.req.list.name == "":
+		return "the List was not read by ReadList"
+	case member == "" || reserved(member):
+		return "the member is empty, truncated or next"
+	case more && last == nil:
+		return "the page continues and names no last item"
+	case more && len(last) != len(p.req.list.key):
+		return "the last item's key has the wrong number of components"
+	}
+	for k := range extra {
+		if k == member || reserved(k) {
+			return "an extra member collides with " + k
+		}
+	}
+	if v := reflect.ValueOf(items); v.IsValid() {
+		switch {
+		case v.Kind() != reflect.Slice && v.Kind() != reflect.Array:
+			return "the items are not a list"
+		case v.Type().Elem().Kind() == reflect.Uint8:
+			return "the items are bytes, which encode as a string"
+		}
+	}
+	return ""
 }

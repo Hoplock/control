@@ -449,10 +449,17 @@ func TestCallerFromOutsideAHostRouteSaysSo(t *testing.T) {
 // over the same database to mint credentials with.
 func startHost(t *testing.T) (string, *identity.Federation) {
 	t.Helper()
+	base, federation, _ := startHostWith(t, hostOptions(&sectionRecorder{}, nil))
+	return base, federation
+}
+
+// startHostWith is startHost for a host of the caller's options, also
+// returning what the server logged.
+func startHostWith(t *testing.T, o server.Options) (string, *identity.Federation, *lockedBuffer) {
+	t.Helper()
 	dsn := testDatabase(t)
 	south, north := freeAddr(t), freeAddr(t)
 	path := writeFile(t, configDoc(south, north, dsn)+hostSection)
-	o := hostOptions(&sectionRecorder{}, nil)
 	migrate(t, path, o)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -479,7 +486,7 @@ func startHost(t *testing.T) (string, *identity.Federation) {
 	if err != nil {
 		t.Fatalf("federation: %v", err)
 	}
-	return base, federation
+	return base, federation, logs
 }
 
 func issue(t *testing.T, federation *identity.Federation, home store.Tenant, scopes map[store.Tenant]identity.RoleSet) string {
