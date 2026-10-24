@@ -26,6 +26,49 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.16.0
+
+Phase 0029, bounded lists 1: the mechanism, proven on targets and subjects.
+`GET /api/v1/tenants/{tenant}/targets` and
+`GET /api/v1/tenants/{tenant}/subjects` are the first lists to answer in
+decision M26's shape (`docs/PLAN.md` §2), one page at a time, and every later
+list takes the same path.
+
+### Breaking
+
+No signature changes; `make release-check` finds none. Three behaviour
+changes on the two lists:
+
+- **They answer at most 500 items by default.** They answered the whole
+  tenant. `?limit=` asks for 1 to 10 000; a page holds exactly that many
+  unless it is the last.
+- **Both answers gain `truncated` and, when cut, `next`.** The answer is
+  `{"targets": [...], "truncated": bool, "next": "<cursor>"}` (and the same
+  with `subjects`). `truncated` is always present and `next` exactly when it
+  is true. Pass `next` back as `?after=` to read the following page, under the
+  same filters (`?label=` for targets). An empty page is
+  `{"targets": [], "truncated": false}`. A client that read the whole list from
+  one answer must now follow `next` until `truncated` is false.
+- **`?limit=` above 10 000 is refused**, as `400 invalid_request`
+  `{field: limit, problem: exceeds_maximum, limit: "10000"}`. Zero, a negative
+  or a non-integer is `{field: limit, problem: invalid}`.
+
+- **Phase:** 0029, bounded lists 1: the mechanism, targets and subjects.
+- **Public packages:** none changed. `server` offers the shape to a host in
+  phase 0030.
+- **Behaviour no API diff shows:**
+  - A cursor is opaque, never expires, and holds nothing the caller was not
+    handed. It continues only the list, filters and order it was minted for;
+    any other is `400 invalid_request` `{field: after, problem: invalid}`,
+    and the client starts the list again. It never carries the tenant: under
+    another tenant's path it continues that tenant's list, which the
+    caller's credential must already reach.
+  - A page is stable under writes: an item added behind the position is not
+    seen, one added ahead of it is, and the item the position names may be
+    gone.
+  - A failure while reading a page is a `500` with its correlation id, never
+    a shorter page.
+
 ## v0.15.0
 
 Phase 0028, bounded lists: audit and plan. **This release changes no
