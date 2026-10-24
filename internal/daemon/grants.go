@@ -145,15 +145,15 @@ func buildGrants(
 // announcer (proxy D18): there is no store read that lists tenants (M18), so a
 // tenant whose proxies subscribe is one whose owed announcements are retried.
 //
-// The archive feed learns it the same way (0025), when an archive is
-// registered: a tenant whose proxies subscribe is one whose records it delivers
-// after a restart, before any of them writes again.
-func trackSubscriptions(events south.EventStream, grants *access.Service, registry *fleet.Registry, archive func(store.Tenant)) south.EventStream {
+// The archive feed (0025) and sink delivery (0026) learn it the same way,
+// when either is built: a tenant whose proxies subscribe is one whose records
+// they deliver after a restart, before any of them writes again.
+func trackSubscriptions(events south.EventStream, grants *access.Service, registry *fleet.Registry, feeds func(store.Tenant)) south.EventStream {
 	return trackedEvents{EventStream: events, track: func(t store.Tenant) {
 		grants.Track(t)
 		registry.TrackConfigTenant(t)
-		if archive != nil {
-			archive(t)
+		if feeds != nil {
+			feeds(t)
 		}
 	}}
 }

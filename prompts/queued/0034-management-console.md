@@ -12,10 +12,11 @@
   enforce all of it. It
   is binding under M20, and it is not a style suggestion you may improve on
   mid-implementation — if it is wrong, change it in this PR and say so.
-- `docs/learnings/0025-archive-before-retention-learnings.md` — the summary
-  block, and `docs/PLAN.md` **M8** with §7 at "Retention has to remove a
-  chain's TAIL", for the archive's lag on `GET …/extensions` and the retention
-  answers the audit view shows (below).
+- `docs/learnings/0025-archive-before-retention-learnings.md` and
+  `docs/learnings/0026-audit-sink-delivery-learnings.md` — the summary blocks,
+  and `docs/PLAN.md` **M8** with §7 at "Retention has to remove a chain's
+  TAIL" and at "Export", for the archive's and each sink's lag on
+  `GET …/extensions` and the retention answers the audit view shows (below).
 - `docs/learnings/` — read summaries; open `0019` (**the API this consumes** —
   every route and its required role), `0011` (RBAC), `0010` (audit query),
   `0006` (proxy health), and `0028` with the chunks it queued: every list this
@@ -127,8 +128,8 @@ is written so that half can fail a review rather than merely disappoint one.
      **What the archive holds, and what retention waited for** (0025). With
      an archive registered, the audit view shows its lag for the tenant from
      the archive row of `GET …/extensions` (`lag`: `streams_behind`,
-     `oldest_unconfirmed_at`, `captures_waiting`), and says plainly when the
-     archive is caught up. It is a delivery fact, never an outage and never
+     `oldest_unconfirmed_at`, `failing`, `captures_waiting`), and says
+     plainly when the archive is caught up. It is a delivery fact, never an outage and never
      tampering (M11, PLAN §7). A retention pass the archive held back says so:
      the answer's `held_by_archive` and `archived_through_seq` after a pass the
      operator ran here, and the `operator.audit.retained` record's
@@ -159,7 +160,17 @@ is written so that half can fail a review rather than merely disappoint one.
   5. **Inventory** — targets and labels, identities, groups, roles, grants.
   6. **Extensions** — which `ext` points have an implementation registered
      (0004). An operator debugging behaviour must be able to see that Enterprise
-     is in play.
+     is in play. **Each registered sink shows its delivery lag** for the tenant
+     (0026), from its registration's `lag` on `GET …/extensions`:
+     `streams_behind`, `oldest_unconfirmed_at`, `failing` and
+     `skipped_by_retention` — the same names as the archive's lag, so one
+     component renders both. A sink that is failing says so, and a sink that
+     a retention pass overtook shows how many records it missed and that the
+     pass's `operator.audit.retained` record explains the gap. Neither is an
+     outage or tampering: a sink is a downstream consumer, and the local store
+     is still the record (M8, M11). A sink caught up says so plainly. With no
+     sink registered, the sink point shows what Control does instead and no
+     lag.
   7. **Emergency runbook** — the workflow for the day an advisory lands
      (`Hoplock/proxy#69`; upstream's `api/README.md` states the steps). It walks
      an operator through three steps, each one a call 0019 serves and audits:
@@ -344,6 +355,10 @@ becomes a test that runs today.
 - The emergency runbook drives 0019's three calls in order, shows the kill
   `reason` before sending it, and cannot finish without the `cache_invalidate`
   step. An end-to-end test walks it.
+- With two fake sinks registered, one behind and failing and one overtaken by a
+  retention pass, the extensions screen shows each one's lag on its own row:
+  the failing one as failing, the overtaken one with its skipped count. With
+  none registered, no sink lag is shown. Assert each.
 - With a fake archive registered and behind, the audit view shows its lag;
   a retention pass by sequence beyond it renders `retention_not_archived` as
   a refusal that deleted nothing; and a pass by instant renders as held back

@@ -57,6 +57,7 @@ type Server struct {
 	reader      *audit.Reader
 	extensions  *ext.Extensions
 	archive     ArchiveFeed
+	sinks       SinkDelivery
 	mapping     decision.ActiveMapping
 
 	maxBodyBytes   int64
@@ -79,6 +80,15 @@ type Server struct {
 // delivering it. It is an interface so this package names no feed.
 type ArchiveFeed interface {
 	Lag(ctx context.Context, tenant store.Tenant) (store.FeedLag, error)
+	Track(tenant store.Tenant)
+}
+
+// SinkDelivery is what this surface knows of delivery to the registered sinks
+// (0026): how far behind the sink a provider names is in a tenant — false when
+// no sink is registered under that name — and that a tenant was acted in, as
+// ArchiveFeed's Track.
+type SinkDelivery interface {
+	Lag(ctx context.Context, tenant store.Tenant, provider string) (store.FeedLag, bool, error)
 	Track(tenant store.Tenant)
 }
 
@@ -129,6 +139,10 @@ type Options struct {
 	// lag the extension listing shows for the caller's tenant. Nil when no
 	// archive is registered.
 	Archive ArchiveFeed
+	// Sinks is delivery to the registered ext.AuditSinks (0026), whose lag
+	// the extension listing shows on each sink's registration for the
+	// caller's tenant. Nil when no sink is registered.
+	Sinks SinkDelivery
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -212,6 +226,7 @@ func New(o Options) (*Server, error) {
 		reader:         o.AuditReader,
 		extensions:     o.Extensions,
 		archive:        o.Archive,
+		sinks:          o.Sinks,
 		mapping:        decision.StoredActiveMapping(o.Store),
 	}
 	if s.reader == nil {

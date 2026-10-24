@@ -627,6 +627,15 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.Feed().Confirm(ctx, "", ArchiveConsumer, "s", 1, "h")
 			return err
 		},
+		"Feed.Begin": func() error { return s.Feed().Begin(ctx, "", SinkConsumer("p"), "s") },
+		"Feed.Skip": func() error {
+			_, _, err := s.Feed().Skip(ctx, "", SinkConsumer("p"), "s")
+			return err
+		},
+		"Feed.Fail": func() error {
+			return s.Feed().Fail(ctx, "", ArchiveConsumer, "s", "n", time.Second)
+		},
+		"Feed.Recovered": func() error { return s.Feed().Recovered(ctx, "", ArchiveConsumer, "s") },
 		"Feed.PendingCaptures": func() error {
 			_, err := s.Feed().PendingCaptures(ctx, "", "s", 1, 1, 1)
 			return err

@@ -717,6 +717,10 @@ database: {dsn: "postgres://x"}
 			doc:   base + "audit: {archive: {backoff_cap: 500ms}}\n",
 			field: "audit.archive.backoff_cap",
 		},
+		"no batch in flight": {
+			doc:   base + "audit: {archive: {max_in_flight: -1}}\n",
+			field: "audit.archive.max_in_flight",
+		},
 	}
 	for name, tc := range cases {
 		_, err := config.Parse(strings.NewReader(tc.doc))
@@ -733,7 +737,7 @@ database: {dsn: "postgres://x"}
 	want := config.ArchiveFeedConfig{
 		BatchRecords: config.DefaultArchiveBatchRecords, CaptureBatchBytes: config.DefaultArchiveCaptureBatchBytes,
 		AttemptTimeout: config.DefaultArchiveAttemptTimeout, IdleInterval: config.DefaultArchiveIdleInterval,
-		BackoffCap: config.DefaultArchiveBackoffCap,
+		BackoffCap: config.DefaultArchiveBackoffCap, MaxInFlight: config.DefaultArchiveMaxInFlight,
 	}
 	if cfg.Audit.Archive != want {
 		t.Errorf("defaults = %+v, want %+v", cfg.Audit.Archive, want)
@@ -746,5 +750,75 @@ database: {dsn: "postgres://x"}
 	}
 	if cfg.Audit.Archive.BatchRecords != 100 || cfg.Audit.Archive.CaptureBatchBytes != 33554432 {
 		t.Errorf("defaults under other ingest bounds = %+v", cfg.Audit.Archive)
+	}
+}
+
+// Delivery to registered sinks (0026) is bounded at start-up beside the
+// archive's feed and apart from it: a batch larger than an ingest batch, a
+// duration that is not positive, a backoff under a second and no batch in
+// flight are refused, and each zero takes its default.
+func TestSinkDeliveryIsBoundedAtStartUp(t *testing.T) {
+	base := `listeners: {south: "0.0.0.0:8443", north: "127.0.0.1:9443"}
+database: {dsn: "postgres://x"}
+`
+	cases := map[string]struct{ doc, field string }{
+		"a batch over the ingest bound": {
+			doc:   base + "audit: {max_batch_records: 100, sinks: {batch_records: 101}}\n",
+			field: "audit.sinks.batch_records",
+		},
+		"a batch over the default ingest bound": {
+			doc:   base + "audit: {sinks: {batch_records: 1001}}\n",
+			field: "audit.sinks.batch_records",
+		},
+		"a negative batch": {
+			doc:   base + "audit: {sinks: {batch_records: -1}}\n",
+			field: "audit.sinks.batch_records",
+		},
+		"a negative attempt timeout": {
+			doc:   base + "audit: {sinks: {attempt_timeout: -1s}}\n",
+			field: "audit.sinks.attempt_timeout",
+		},
+		"a negative idle interval": {
+			doc:   base + "audit: {sinks: {idle_interval: -1s}}\n",
+			field: "audit.sinks.idle_interval",
+		},
+		"a backoff cap under a second": {
+			doc:   base + "audit: {sinks: {backoff_cap: 500ms}}\n",
+			field: "audit.sinks.backoff_cap",
+		},
+		"no batch in flight": {
+			doc:   base + "audit: {sinks: {max_in_flight: -1}}\n",
+			field: "audit.sinks.max_in_flight",
+		},
+	}
+	for name, tc := range cases {
+		_, err := config.Parse(strings.NewReader(tc.doc))
+		var fe *config.FieldError
+		if !errors.As(err, &fe) || fe.Field != tc.field {
+			t.Errorf("%s: err = %v, want a refusal of %s", name, err, tc.field)
+		}
+	}
+
+	cfg, err := config.Parse(strings.NewReader(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := config.SinkDeliveryConfig{
+		BatchRecords: config.DefaultSinkBatchRecords, AttemptTimeout: config.DefaultSinkAttemptTimeout,
+		IdleInterval: config.DefaultSinkIdleInterval, BackoffCap: config.DefaultSinkBackoffCap,
+		MaxInFlight: config.DefaultSinkMaxInFlight,
+	}
+	if cfg.Audit.Sinks != want {
+		t.Errorf("defaults = %+v, want %+v", cfg.Audit.Sinks, want)
+	}
+	// The batch's default follows an ingest bound an operator lowered, and
+	// a sink's keys never move the archive's.
+	cfg, err = config.Parse(strings.NewReader(base + "audit: {max_batch_records: 100, sinks: {idle_interval: 1s}}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Audit.Sinks.BatchRecords != 100 || cfg.Audit.Sinks.IdleInterval != time.Second ||
+		cfg.Audit.Archive.IdleInterval != config.DefaultArchiveIdleInterval {
+		t.Errorf("sinks %+v, archive %+v", cfg.Audit.Sinks, cfg.Audit.Archive)
 	}
 }

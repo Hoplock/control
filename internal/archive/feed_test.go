@@ -676,6 +676,48 @@ func TestAnArchiveRegisteredAfterAPassStartsAfterTheMarker(t *testing.T) {
 	}
 }
 
+// An archive's call abandoned at its deadline keeps its place until it
+// returns, as a sink's does (0026): an archive bounded to one batch in flight,
+// hung on one stream, is handed nothing else until that call returns — it
+// stalls only its own feed — and then everything.
+func TestAHungArchiveCallHoldsItsPlaceUntilItReturns(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	a := newFakeArchive()
+	release := make(chan struct{})
+	hung := make(chan struct{}, 1)
+	var once sync.Once
+	a.refuse = func(_ int, batch []ext.AuditRecord) error {
+		if batch[0].Stream != "proxy:p1" {
+			return nil
+		}
+		var block bool
+		once.Do(func() { block = true })
+		if !block {
+			return nil
+		}
+		hung <- struct{}{}
+		a.mu.Unlock()
+		<-release // ignores its deadline
+		a.mu.Lock()
+		return errors.New("too late")
+	}
+	f := testFeed(t, st, a, "node-1")
+	f.attempt, f.slots = 50*time.Millisecond, 1
+	in := newIngester(t, st, f.Track)
+	ingest(t, in, tenantA, "p1", "", many(2, "s")...)
+	start(t, f)
+	<-hung
+	ingest(t, in, tenantA, "p2", "", many(2, "s")...)
+	time.Sleep(300 * time.Millisecond) // six deadlines
+	if pos, err := st.Feed().Position(context.Background(), tenantA, store.ArchiveConsumer, "proxy:p2"); err == nil && pos.ConfirmedSeq > 0 {
+		t.Errorf("proxy:p2 was archived at %+v while the only place was held by a hung call", pos)
+	}
+	close(release)
+	caughtUp(t, st, 10*time.Second, tenantA)
+	holdsEverything(t, st, a, tenantA)
+}
+
 // The feed's backoff doubles from its base to its cap, and a recovery clears
 // it.
 func TestTheBackoffDoublesToItsCap(t *testing.T) {
