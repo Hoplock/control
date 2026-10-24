@@ -36,8 +36,8 @@ type SubjectRepository interface {
 	Upsert(ctx context.Context, tenant Tenant, s Subject) error
 	// Delete removes a subject. Absent is ErrNotFound.
 	Delete(ctx context.Context, tenant Tenant, subjectID string) error
-	// List returns every subject in the tenant, in id order.
-	List(ctx context.Context, tenant Tenant) ([]Subject, error)
+	// Page returns one page of the tenant's subjects, in id order (M26).
+	Page(ctx context.Context, tenant Tenant, p Page) (Paged[Subject], error)
 	// Lock takes the tenant's subject lock for the rest of the transaction,
 	// so an operator's write reads the row it replaces with no other write
 	// between, and its record names the true before. Outside a transaction
@@ -54,8 +54,12 @@ type TargetRepository interface {
 	// the labels policy matches on, with no join and no second round trip.
 	GetByHostname(ctx context.Context, tenant Tenant, hostname string) (Target, error)
 	// ListByLabels returns every target carrying all of the given labels.
-	// This is an operator and simulation query, not a decision-path one.
+	// This is an internal read of the whole estate — the publish-time
+	// checks' — and not a decision-path one; the north-bound list is Page.
 	ListByLabels(ctx context.Context, tenant Tenant, labels map[string]string) ([]Target, error)
+	// Page returns one page of the targets carrying all of the given labels,
+	// in id order (M26).
+	Page(ctx context.Context, tenant Tenant, labels map[string]string, p Page) (Paged[Target], error)
 	// Upsert writes a target, replacing any existing row with the same id.
 	Upsert(ctx context.Context, tenant Tenant, t Target) error
 	// Delete removes a target. Absent is ErrNotFound.

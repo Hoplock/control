@@ -74,8 +74,11 @@ type targetBody struct {
 	CredentialMethod string            `json:"credential_method"`
 }
 
+// targetList is the target list (M26): by target id, the primary key.
+var targetList = list{name: "targets", key: []keyKind{keyString}}
+
 // handleTargetList lists targets, filtered by `?label=key=value`, repeatable
-// and ANDed.
+// and ANDed, one page at a time (M26).
 func (s *Server) handleTargetList(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
@@ -90,16 +93,30 @@ func (s *Server) handleTargetList(w http.ResponseWriter, r *http.Request) {
 		}
 		filter[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}
-	rows, err := s.st.Targets().ListByLabels(r.Context(), tenant, filter)
+	// The cursor binds the filter the reader applies, so a repeated key
+	// binds the value that won, not each value asked.
+	filters := make([]string, 0, len(filter))
+	for k, v := range filter {
+		filters = append(filters, "label="+k+"="+v)
+	}
+	p, ok := s.readPage(w, r, targetList, filters...)
+	if !ok {
+		return
+	}
+	page, err := s.st.Targets().Page(r.Context(), tenant, filter, p.Page)
 	if err != nil {
 		s.fail(w, r, "list targets", err)
 		return
 	}
-	out := make([]targetView, 0, len(rows))
-	for _, t := range rows {
+	out := make([]targetView, 0, len(page.Rows))
+	var last []any
+	for _, t := range page.Rows {
 		out = append(out, viewTarget(t))
 	}
-	answer(w, http.StatusOK, map[string]any{"targets": out})
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].ID}
+	}
+	s.answerPage(w, r, p, "targets", out, page.More, last, nil)
 }
 
 func (s *Server) handleTargetGet(w http.ResponseWriter, r *http.Request) {
@@ -415,21 +432,32 @@ type subjectBody struct {
 	BreakGlass  bool              `json:"break_glass"`
 }
 
+// subjectList is the subject list (M26): by subject id, the primary key.
+var subjectList = list{name: "subjects", key: []keyKind{keyString}}
+
 func (s *Server) handleSubjectList(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
-	rows, err := s.st.Subjects().List(r.Context(), tenant)
+	p, ok := s.readPage(w, r, subjectList)
+	if !ok {
+		return
+	}
+	page, err := s.st.Subjects().Page(r.Context(), tenant, p.Page)
 	if err != nil {
 		s.fail(w, r, "list subjects", err)
 		return
 	}
-	out := make([]subjectView, 0, len(rows))
-	for _, sub := range rows {
+	out := make([]subjectView, 0, len(page.Rows))
+	var last []any
+	for _, sub := range page.Rows {
 		out = append(out, viewSubject(sub))
 	}
-	answer(w, http.StatusOK, map[string]any{"subjects": out})
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].ID}
+	}
+	s.answerPage(w, r, p, "subjects", out, page.More, last, nil)
 }
 
 func (s *Server) handleSubjectGet(w http.ResponseWriter, r *http.Request) {
