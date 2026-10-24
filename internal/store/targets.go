@@ -78,6 +78,30 @@ func (r targetRepo) ListByLabels(ctx context.Context, tenant Tenant, labels map[
 	return out, wrap(op, rows.Err())
 }
 
+// targetOrder is the target list's order: its primary key.
+var targetOrder = order{columns: []string{"target_id"}}
+
+func (r targetRepo) Page(ctx context.Context, tenant Tenant, labels map[string]string, p Page) (Paged[Target], error) {
+	const op = "store.Targets.Page"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[Target]{}, err
+	}
+	if err := checkPage(op, targetOrder, p); err != nil {
+		return Paged[Target]{}, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	// `@>` is the containment the GIN index serves, as in ListByLabels; the
+	// order and the position are the primary key's.
+	tail, args := targetOrder.clause(p, []any{tenant, nonNilMap(labels)})
+	return queryPage(ctx, r.s.db, op, p, `
+		SELECT `+targetColumns+`
+		FROM targets
+		WHERE tenant = $1 AND labels @> $2`+tail, args, scanTarget)
+}
+
 func (r targetRepo) Upsert(ctx context.Context, tenant Tenant, t Target) error {
 	const op = "store.Targets.Upsert"
 	if err := checkTenant(op, tenant); err != nil {

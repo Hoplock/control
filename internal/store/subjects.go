@@ -102,39 +102,32 @@ func (r subjectRepo) Delete(ctx context.Context, tenant Tenant, subjectID string
 	return nil
 }
 
-// scanSubject reads one subject row. It exists so the two lookups cannot drift
-// in what they read or in how they report absence.
-// List returns every subject in the tenant, in id order: the identities an
-// operator administers (0019).
-func (r subjectRepo) List(ctx context.Context, tenant Tenant) ([]Subject, error) {
-	const op = "store.Subjects.List"
+// subjectOrder is the subject list's order: its primary key.
+var subjectOrder = order{columns: []string{"subject_id"}}
+
+// Page returns one page of the tenant's subjects, in id order: the identities
+// an operator administers (0019).
+func (r subjectRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[Subject], error) {
+	const op = "store.Subjects.Page"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return Paged[Subject]{}, err
+	}
+	if err := checkPage(op, subjectOrder, p); err != nil {
+		return Paged[Subject]{}, err
 	}
 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	rows, err := r.s.db.Query(ctx, `
+	tail, args := subjectOrder.clause(p, []any{tenant})
+	return queryPage(ctx, r.s.db, op, p, `
 		SELECT `+subjectColumns+`
 		FROM subjects
-		WHERE tenant = $1
-		ORDER BY subject_id`, tenant)
-	if err != nil {
-		return nil, wrap(op, err)
-	}
-	defer rows.Close()
-	var out []Subject
-	for rows.Next() {
-		s, err := scanSubject(op, rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-	return out, wrap(op, rows.Err())
+		WHERE tenant = $1`+tail, args, scanSubject)
 }
 
+// scanSubject reads one subject row. It exists so the lookups and the list
+// cannot drift in what they read or in how they report absence.
 func scanSubject(op string, row rowScanner) (Subject, error) {
 	var s Subject
 	err := row.Scan(&s.ID, &s.Source, &s.DisplayName, &s.Principals, &s.Groups,

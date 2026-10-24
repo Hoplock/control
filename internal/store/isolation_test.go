@@ -111,6 +111,15 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 			got, err := st.Targets().ListByLabels(ctx, tenantA, map[string]string{"env": string(tenantB)})
 			return len(got), err
 		},
+		"Targets.Page": func() (int, error) {
+			got, err := st.Targets().Page(ctx, tenantA, map[string]string{"env": string(tenantB)},
+				store.Page{Limit: store.MaxPageLimit})
+			return len(got.Rows), err
+		},
+		"Subjects.Page": func() (int, error) {
+			got, err := st.Subjects().Page(ctx, tenantA, store.Page{Limit: store.MaxPageLimit})
+			return len(got.Rows) - 1, err // A's own subject is expected
+		},
 		"Proxies.ListByZone": func() (int, error) {
 			got, err := st.Proxies().ListByZone(ctx, tenantA, "zone-a")
 			return len(got) - 1, err // A's own proxy is expected

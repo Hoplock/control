@@ -1314,7 +1314,10 @@ decision.
   (`internal/httpapi/north/bounded_test.go`) walks every `GET` route on the
   router. It fails on a route that is not a paged list, a signal-only list or
   an exemption with a reason, so a route added later fails it until it is one
-  of the three. Two kinds of route are exempt:
+  of the three. Until phase 0037 pages the last of them, a list a later chunk
+  is to page is named instead, with that chunk's number. A host's routes are
+  not walked, because Control cannot see which of them is a list (7). Two
+  kinds of route are exempt:
   - a route that answers one object;
   - a list bounded by configuration rather than by the estate. These are the
     sign-in methods, the trust bundle (answered whole or not at all), the
@@ -1528,14 +1531,18 @@ for nothing.
   letting `http.ServeMux` answer them in prose.
 
   Every list it answers is bounded by its caller and says where it stopped
-  (M26). One helper reads `limit` and `after` against the list's name, filters
-  and key, and another writes the page with `truncated` and `next`. Beneath
-  them, `internal/store` reads `limit+1` rows after the keyset position
-  (`store.Page`, `store.Paged`), in the list's one total order, which an index
-  serves. No paging rule lives in a handler or a reader of its own.
+  (M26). `readPage` (`page.go`) reads `limit` and `after` against the list's
+  name, filters and key, and `answerPage` writes the page with `truncated` and
+  `next`; the cursor codec beside them is the only one. Beneath them,
+  `internal/store` reads `limit+1` rows after the keyset position
+  (`store.Page`, `store.Paged`, and `page.go`'s helpers that check a page,
+  render its row comparison and scan it), in the list's one total order, which
+  an index serves. No paging rule lives in a handler or a reader of its own.
   `TestEveryListIsBoundedOrSaysWhyNot` walks the router and holds every `GET`
-  route to one of three: a paged list, a signal-only list (`truncated` and no
-  cursor, for a list bounded by one object), or an exemption with its reason.
+  route of Control's to one of three: a paged list, a signal-only list
+  (`truncated` and no cursor, for a list bounded by one object), or an
+  exemption with its reason. Until 0037, a fourth map names each list a later
+  chunk is to page, by its chunk.
 
   Control's own routes: federation and the caller's own session under
   `/api/v1/session…`, which run before authentication or need only a live
