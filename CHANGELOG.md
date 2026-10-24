@@ -26,6 +26,28 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.15.0
+
+Phase 0028, bounded lists: audit and plan. **This release changes no
+behaviour.** No handler, store method, response shape or public identifier
+changed, and `make release-check` finds no API difference.
+
+What it plans, for anyone reading Control's north-bound lists or building a
+host's:
+
+- **Every north-bound list is to be bounded by its caller and say where it
+  stopped** (decision M26 in `docs/PLAN.md` §2).
+  - `?limit=` defaults to 500 and is refused above 10 000.
+  - `?after=` continues from an opaque cursor.
+  - The answer is `{<list>, truncated, next}`.
+- Phases 0029–0037 implement it, each in a release of its own. Each lists its
+  own `### Breaking`, and between them those breaks will include:
+  - lists cut at 500 by default;
+  - limits above 10 000 refused where they were clamped;
+  - `GET …/fleet/target-observations` split into `…/rungs` and
+    `…/key-exchanges`.
+- Phase 0030 adds the same shape to `server` for a host's lists.
+
 ## v0.14.0
 
 The shared event plane. The event stream (`GET /v1/proxies/{proxy_id}/events`)
