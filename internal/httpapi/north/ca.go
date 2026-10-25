@@ -199,12 +199,13 @@ func viewCertificate(c store.SSHCertificate) certificateView {
 	}
 }
 
-type certificatesResponse struct {
-	Tenant       string            `json:"tenant"`
-	Certificates []certificateView `json:"certificates"`
-}
+// certificateList is the outstanding certificates (M26): newest first, by
+// issuance and then serial.
+var certificateList = list{name: "certificates", key: []keyKind{keyTime, keyInt}}
 
-// handleCACertificates lists what is still usable.
+// handleCACertificates lists what is still usable, one page at a time (M26).
+// Whether a certificate is still usable is judged when each page is read, so
+// one that expires during a walk is not on the pages after it.
 //
 // THE CERTIFICATE ITSELF IS NOT IN THE RESPONSE. It is not a secret — a
 // certificate is a public document — but handing one back would make this
@@ -218,16 +219,24 @@ func (s *Server) handleCACertificates(w http.ResponseWriter, r *http.Request) {
 	if !s.requireCA(w, r) {
 		return
 	}
-	rows, err := s.ca.Outstanding(r.Context(), tenant)
+	p, ok := readPage(w, r, certificateList)
+	if !ok {
+		return
+	}
+	page, err := s.ca.OutstandingPage(r.Context(), tenant, p.Page)
 	if err != nil {
 		s.fail(w, r, "list certificates", err)
 		return
 	}
-	out := make([]certificateView, 0, len(rows))
-	for _, c := range rows {
+	out := make([]certificateView, 0, len(page.Rows))
+	for _, c := range page.Rows {
 		out = append(out, viewCertificate(c))
 	}
-	answer(w, http.StatusOK, certificatesResponse{Tenant: tenant.String(), Certificates: out})
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].IssuedAt, page.Rows[n-1].Serial}
+	}
+	s.answerPage(w, r, p, "certificates", out, page.More, last, map[string]any{"tenant": tenant.String()})
 }
 
 type claimMappingResponse struct {

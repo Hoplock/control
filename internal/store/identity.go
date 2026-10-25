@@ -208,8 +208,9 @@ func (r groupRepo) GroupsOf(ctx context.Context, tenant Tenant, subjectID string
 
 // RoleBindingRepository stores RBAC grants, per tenant and only per tenant.
 type RoleBindingRepository interface {
-	// List returns every binding in the tenant.
-	List(ctx context.Context, tenant Tenant) ([]RoleBinding, error)
+	// Page returns one page of the tenant's bindings (M26): per role, the
+	// bindings to a subject by subject, then those to a group by group.
+	Page(ctx context.Context, tenant Tenant, p Page) (Paged[RoleBinding], error)
 	// RolesFor returns the role codes a subject holds in the tenant,
 	// including those it holds through the given groups. The groups are
 	// passed in rather than looked up because the caller has just resolved
@@ -225,43 +226,58 @@ type RoleBindingRepository interface {
 
 type roleBindingRepo struct{ s *Store }
 
-func (r roleBindingRepo) List(ctx context.Context, tenant Tenant) ([]RoleBinding, error) {
-	const op = "store.RoleBindings.List"
+// roleBindingOrder is the tenant's list of bindings (M26.4): per role, whether
+// the holder is a group, and the holder's id. A subject's bindings come before
+// a group's because false sorts before true. A holder holds a role once, so the
+// key is unique within the tenant. identity_role_bindings_order_key holds these
+// exact expressions (migration 0018), which is what lets the planner read the
+// row comparison and the order from it.
+var roleBindingOrder = order{columns: []string{"role", "(subject_id IS NULL)", "coalesce(subject_id, group_id)"}}
+
+func (r roleBindingRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[RoleBinding], error) {
+	const op = "store.RoleBindings.Page"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return Paged[RoleBinding]{}, err
+	}
+	sql, args, err := roleBindingPageSQL(op, tenant, p)
+	if err != nil {
+		return Paged[RoleBinding]{}, err
 	}
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	rows, err := r.s.db.Query(ctx, `
+	return queryPage(ctx, r.s.db, op, p, sql, args, scanRoleBinding)
+}
+
+// roleBindingPageSQL is the statement one page of the bindings runs, and its
+// arguments.
+func roleBindingPageSQL(op string, tenant Tenant, p Page) (string, []any, error) {
+	if err := checkPage(op, roleBindingOrder, p); err != nil {
+		return "", nil, err
+	}
+	tail, args := roleBindingOrder.clause(p, []any{tenant})
+	return `
 		SELECT subject_id, group_id, role, granted_by, created_at
 		FROM identity_role_bindings
-		WHERE tenant = $1
-		ORDER BY role, subject_id NULLS LAST, group_id NULLS LAST`, tenant)
-	if err != nil {
-		return nil, wrap(op, err)
-	}
-	defer rows.Close()
+		WHERE tenant = $1` + tail, args, nil
+}
 
-	var out []RoleBinding
-	for rows.Next() {
-		var (
-			b       RoleBinding
-			subject *string
-			group   *string
-		)
-		if err := rows.Scan(&subject, &group, &b.Role, &b.GrantedBy, &b.CreatedAt); err != nil {
-			return nil, wrap(op, err)
-		}
-		if subject != nil {
-			b.SubjectID = *subject
-		}
-		if group != nil {
-			b.GroupID = *group
-		}
-		out = append(out, b)
+func scanRoleBinding(op string, row rowScanner) (RoleBinding, error) {
+	var (
+		b       RoleBinding
+		subject *string
+		group   *string
+	)
+	if err := row.Scan(&subject, &group, &b.Role, &b.GrantedBy, &b.CreatedAt); err != nil {
+		return RoleBinding{}, wrap(op, err)
 	}
-	return out, wrap(op, rows.Err())
+	if subject != nil {
+		b.SubjectID = *subject
+	}
+	if group != nil {
+		b.GroupID = *group
+	}
+	return b, nil
 }
 
 func (r roleBindingRepo) RolesFor(ctx context.Context, tenant Tenant, subjectID string, groups []string) ([]string, error) {
@@ -1132,11 +1148,14 @@ type SSHCertificateRepository interface {
 	Insert(ctx context.Context, tenant Tenant, c SSHCertificate) error
 	// Get returns one by serial. Absent is ErrNotFound.
 	Get(ctx context.Context, tenant Tenant, serial int64) (SSHCertificate, error)
-	// Outstanding returns certificates that have neither expired nor been
-	// revoked at the given instant, newest first. Rotation reads it to
-	// answer "what is still out there", which is the question a rotation
-	// story without one cannot answer.
-	Outstanding(ctx context.Context, tenant Tenant, now time.Time) ([]SSHCertificate, error)
+	// OutstandingPage returns one page of the certificates that have neither
+	// expired nor been revoked at the given instant (M26), newest first by
+	// issuance and then serial. It answers "what is still out there", which
+	// is the question a rotation story without one cannot answer. The
+	// instant is the caller's, taken per page: a certificate that expires
+	// during a walk drops out of the pages after it, and the others keep
+	// their places, because issuance never moves.
+	OutstandingPage(ctx context.Context, tenant Tenant, now time.Time, p Page) (Paged[SSHCertificate], error)
 	// ListBySubject returns a subject's certificates, newest first.
 	ListBySubject(ctx context.Context, tenant Tenant, subjectID string, limit int) ([]SSHCertificate, error)
 	// Revoke marks one revoked. Absent is ErrNotFound.
@@ -1147,6 +1166,12 @@ type SSHCertificateRepository interface {
 }
 
 type sshCertificateRepo struct{ s *Store }
+
+// outstandingOrder is the tenant's list of outstanding certificates (M26.4):
+// newest first, by issuance and then serial, which is unique within the
+// tenant. ssh_certificates_issued_order_idx serves it, partial on the same
+// `revoked_at IS NULL` the list reads (migration 0018).
+var outstandingOrder = order{columns: []string{"issued_at", "serial"}, desc: true}
 
 const sshCertificateColumns = `serial, key_id, ca_key_id, subject_id, session_id,
 	principals, target, target_port, source_address, valid_after, valid_before,
@@ -1214,24 +1239,32 @@ func (r sshCertificateRepo) Get(ctx context.Context, tenant Tenant, serial int64
 	return scanSSHCertificate(op, row)
 }
 
-func (r sshCertificateRepo) Outstanding(ctx context.Context, tenant Tenant, now time.Time) ([]SSHCertificate, error) {
-	const op = "store.SSHCertificates.Outstanding"
+func (r sshCertificateRepo) OutstandingPage(ctx context.Context, tenant Tenant, now time.Time, p Page) (Paged[SSHCertificate], error) {
+	const op = "store.SSHCertificates.OutstandingPage"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return Paged[SSHCertificate]{}, err
+	}
+	sql, args, err := outstandingPageSQL(op, tenant, now, p)
+	if err != nil {
+		return Paged[SSHCertificate]{}, err
 	}
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	rows, err := r.s.db.Query(ctx, `
-		SELECT `+sshCertificateColumns+`
-		FROM ssh_certificates
-		WHERE tenant = $1 AND revoked_at IS NULL AND valid_before > $2
-		ORDER BY issued_at DESC, serial DESC`, tenant, now)
-	if err != nil {
-		return nil, wrap(op, err)
+	return queryPage(ctx, r.s.db, op, p, sql, args, scanSSHCertificate)
+}
+
+// outstandingPageSQL is the statement one page of the outstanding
+// certificates runs, and its arguments.
+func outstandingPageSQL(op string, tenant Tenant, now time.Time, p Page) (string, []any, error) {
+	if err := checkPage(op, outstandingOrder, p); err != nil {
+		return "", nil, err
 	}
-	defer rows.Close()
-	return collectSSHCertificates(op, rows)
+	tail, args := outstandingOrder.clause(p, []any{tenant, now})
+	return `
+		SELECT ` + sshCertificateColumns + `
+		FROM ssh_certificates
+		WHERE tenant = $1 AND revoked_at IS NULL AND valid_before > $2` + tail, args, nil
 }
 
 func (r sshCertificateRepo) ListBySubject(ctx context.Context, tenant Tenant, subjectID string, limit int) ([]SSHCertificate, error) {

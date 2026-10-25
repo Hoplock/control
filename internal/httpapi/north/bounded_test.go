@@ -232,6 +232,37 @@ var pagedLists = map[string][]pagedList{
 			return token
 		},
 	}},
+	// The role bindings and the outstanding certificates (0034). The
+	// bindings' seed holds one role by a subject and by a group of the same
+	// name, so the walk continues from every component of the key. The CA
+	// route needs the fixture's CA, which the seed issues through.
+	"GET /api/v1/tenants/{tenant}/role-bindings": {{
+		member: "bindings", path: "/api/v1/tenants/tenant-a/role-bindings",
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			seedBindings(t, f, "tenant-a",
+				store.RoleBinding{SubjectID: "ops", Role: "auditor"},
+				store.RoleBinding{GroupID: "ops", Role: "auditor"},
+				store.RoleBinding{GroupID: "sre", Role: "admin"})
+			got, err := f.st.RoleBindings().Page(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
+			if err != nil || got.More {
+				t.Fatalf("count role bindings: %v (more=%t)", err, got.More)
+			}
+			return len(got.Rows)
+		},
+	}},
+	"GET /api/v1/tenants/{tenant}/ca/certificates": {{
+		member: "certificates", path: "/api/v1/tenants/tenant-a/ca/certificates",
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			issueCertificates(t, f, "tenant-a", 2)
+			got, err := f.ca.OutstandingPage(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
+			if err != nil || got.More {
+				t.Fatalf("count certificates: %v (more=%t)", err, got.More)
+			}
+			return len(got.Rows)
+		},
+	}},
 	"GET /api/v1/tenants/{tenant}/fleet/target-observations/key-exchanges": {{
 		member: "key_exchanges", path: "/api/v1/tenants/tenant-a/fleet/target-observations/key-exchanges",
 		seed: func(t *testing.T, f *serverFixture) int {
@@ -380,8 +411,6 @@ var exemptRoutes = map[string]string{
 // that takes each (0028's inventory). Each chunk deletes its rows and moves
 // them to the map above that rules them; 0037 deletes this map.
 var pendingBounded = map[string]string{
-	"GET /api/v1/tenants/{tenant}/role-bindings":                         "0034",
-	"GET /api/v1/tenants/{tenant}/ca/certificates":                       "0034",
 	"GET /api/v1/tenants/{tenant}/policy/bundles":                        "0035",
 	"GET /api/v1/tenants/{tenant}/sessions/{session}/decisions":          "0035",
 	"GET /api/v1/tenants/{tenant}/audit/records":                         "0036",

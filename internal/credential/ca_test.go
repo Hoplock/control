@@ -312,8 +312,79 @@ func TestACompromiseRotationRevokesEveryOutstandingCertificate(t *testing.T) {
 			t.Errorf("certificate %d still verifies after a compromise rotation", out.Serial)
 		}
 	}
-	if outstanding, err := f.ca.Outstanding(ctx, "tenant-a"); err != nil || len(outstanding) != 0 {
-		t.Errorf("outstanding after a compromise rotation: %d (%v)", len(outstanding), err)
+	if outstanding, err := f.ca.OutstandingPage(ctx, "tenant-a", store.Page{Limit: store.DefaultPageLimit}); err != nil ||
+		len(outstanding.Rows) != 0 || outstanding.More {
+		t.Errorf("outstanding after a compromise rotation: %d more=%t (%v)", len(outstanding.Rows), outstanding.More, err)
+	}
+}
+
+// The outstanding list is read a page at a time (M26), newest first, and
+// "still usable" is judged at the CA's own instant when each page is read: a
+// certificate that expires during a walk is not on the pages after it. Each
+// tenant's walk reads that tenant's certificates alone (M18).
+func TestOutstandingPagesAreJudgedAtTheCAsInstant(t *testing.T) {
+	f := newCA(t)
+	ctx := context.Background()
+	public, _ := proxyKey(t)
+	issue := func(tenant store.Tenant, validFor time.Duration) int64 {
+		t.Helper()
+		out, err := f.ca.Issue(ctx, tenant, credential.IssueRequest{
+			SubjectID: "alice", Principals: []string{"deploy"}, Target: "db-1.prod",
+			PublicKey: public, ValidFor: validFor,
+		})
+		if err != nil {
+			t.Fatalf("issue in %s: %v", tenant, err)
+		}
+		f.now = f.now.Add(time.Minute)
+		return out.Serial
+	}
+	serials := func(p store.Paged[store.SSHCertificate]) []int64 {
+		var out []int64
+		for _, c := range p.Rows {
+			out = append(out, c.Serial)
+		}
+		return out
+	}
+	for _, tenant := range []store.Tenant{"tenant-a", "tenant-b"} {
+		if _, err := f.ca.Ensure(ctx, tenant); err != nil {
+			t.Fatalf("ensure %s: %v", tenant, err)
+		}
+	}
+	short := issue("tenant-a", 10*time.Minute) // until five minutes after the walk starts
+	other := issue("tenant-b", 30*time.Minute)
+	second := issue("tenant-a", 30*time.Minute)
+	third := issue("tenant-a", 30*time.Minute)
+	newer := issue("tenant-b", 30*time.Minute)
+
+	first, err := f.ca.OutstandingPage(ctx, "tenant-a", store.Page{Limit: 2})
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if got := serials(first); !slices.Equal(got, []int64{third, second}) || !first.More {
+		t.Fatalf("first page: %v more=%t, want [%d %d] and more", got, first.More, third, second)
+	}
+	last := first.Rows[len(first.Rows)-1]
+	after := store.Page{Limit: 2, After: []any{last.IssuedAt, last.Serial}}
+
+	rest, err := f.ca.OutstandingPage(ctx, "tenant-a", after)
+	if err != nil || !slices.Equal(serials(rest), []int64{short}) || rest.More {
+		t.Errorf("after %d, at once: %v more=%t (%v), want [%d]", second, serials(rest), rest.More, err, short)
+	}
+	f.now = f.now.Add(5 * time.Minute) // the short certificate's window closes
+	rest, err = f.ca.OutstandingPage(ctx, "tenant-a", after)
+	if err != nil || len(rest.Rows) != 0 || rest.More {
+		t.Errorf("after %d, once %d expired: %v more=%t (%v), want an empty page that ends", second, short, serials(rest), rest.More, err)
+	}
+
+	// A position is not a scope: tenant-a's continues tenant-b's list from
+	// the same instant, with tenant-b's certificates alone.
+	b, err := f.ca.OutstandingPage(ctx, "tenant-b", after)
+	if err != nil || !slices.Equal(serials(b), []int64{other}) || b.More {
+		t.Errorf("tenant-b after tenant-a's position: %v more=%t (%v), want [%d]: the one issued before it", serials(b), b.More, err, other)
+	}
+	b, err = f.ca.OutstandingPage(ctx, "tenant-b", store.Page{Limit: 2})
+	if err != nil || !slices.Equal(serials(b), []int64{newer, other}) || b.More {
+		t.Errorf("tenant-b's own list: %v more=%t (%v), want [%d %d]", serials(b), b.More, err, newer, other)
 	}
 }
 

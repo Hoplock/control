@@ -558,19 +558,41 @@ func runCACertificates(ctx context.Context, h Host, args []string, stdout, stder
 	}
 	defer closeStore()
 
-	rows, err := ca.Outstanding(ctx, tenant)
-	if err != nil {
-		return err
+	return writeOutstanding(ctx, ca.OutstandingPage, tenant, store.DefaultPageLimit, stdout)
+}
+
+// writeOutstanding prints every outstanding certificate, newest first, one
+// line each, reading the list a page of limit at a time (M26). A command on the
+// box has no limit to give, so it reads to the end. The lines are written once
+// the last page is read: a failure on any page is the command's error, never
+// the lines before it presented as the whole list.
+func writeOutstanding(ctx context.Context,
+	read func(context.Context, store.Tenant, store.Page) (store.Paged[store.SSHCertificate], error),
+	tenant store.Tenant, limit int, stdout io.Writer,
+) error {
+	var out strings.Builder
+	p := store.Page{Limit: limit}
+	for {
+		page, err := read(ctx, tenant, p)
+		if err != nil {
+			return err
+		}
+		for _, c := range page.Rows {
+			_, _ = fmt.Fprintf(&out, "%d\t%s\t%s\t%s\texpires %s\n",
+				c.Serial, c.SubjectID, strings.Join(c.Principals, ","), c.Target,
+				c.ValidBefore.UTC().Format(time.RFC3339))
+		}
+		if !page.More {
+			break
+		}
+		last := page.Rows[len(page.Rows)-1]
+		p.After = []any{last.IssuedAt, last.Serial}
 	}
-	if len(rows) == 0 {
+	if out.Len() == 0 {
 		_, _ = fmt.Fprintf(stdout, "tenant %s has no outstanding certificates\n", tenant)
 		return nil
 	}
-	for _, c := range rows {
-		_, _ = fmt.Fprintf(stdout, "%d\t%s\t%s\t%s\texpires %s\n",
-			c.Serial, c.SubjectID, strings.Join(c.Principals, ","), c.Target,
-			c.ValidBefore.UTC().Format(time.RFC3339))
-	}
+	_, _ = io.WriteString(stdout, out.String())
 	return nil
 }
 
