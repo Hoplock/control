@@ -99,6 +99,35 @@ func AuditQuerySQL(q AuditQuery) string {
 	return sql
 }
 
+// RoleBindingPageSQL and OutstandingPageSQL are the statements
+// RoleBindings().Page and SSHCertificates().OutstandingPage run, for the test
+// that asks Postgres how it would plan them. They are compiled into the test
+// binary alone.
+func RoleBindingPageSQL(p Page) string {
+	sql, _, err := roleBindingPageSQL("test.RoleBindingPageSQL", "tenant", p)
+	if err != nil {
+		panic(err)
+	}
+	return sql
+}
+
+func OutstandingPageSQL(p Page) string {
+	sql, _, err := outstandingPageSQL("test.OutstandingPageSQL", "tenant", time.Now(), p)
+	if err != nil {
+		panic(err)
+	}
+	return sql
+}
+
+// DeleteSSHCertificate removes one issued certificate's row, which nothing in
+// the product does (the record is append-only, and a certificate leaves the
+// outstanding list by expiring or being revoked): the paged-reader tests delete
+// an item of every list they walk. It is compiled into the test binary alone.
+func DeleteSSHCertificate(ctx context.Context, s *Store, tenant Tenant, serial int64) error {
+	return deleteOne(ctx, s, "test.DeleteSSHCertificate",
+		`DELETE FROM ssh_certificates WHERE tenant = $1 AND serial = $2`, tenant, serial)
+}
+
 // DeleteAlgorithmDeclaration, DeleteTargetCapability and DeleteTargetKex
 // remove one row of the lists 0032 pages, which nothing in the product does:
 // the paged-reader tests delete an item of every list they walk. They are

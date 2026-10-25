@@ -747,9 +747,12 @@ func (c *CA) Revoke(ctx context.Context, tenant store.Tenant, serial int64, reas
 	return c.st.SSHCertificates().Revoke(ctx, tenant, serial, c.now(), reason)
 }
 
-// Outstanding returns the certificates that are still usable.
-func (c *CA) Outstanding(ctx context.Context, tenant store.Tenant) ([]store.SSHCertificate, error) {
-	return c.st.SSHCertificates().Outstanding(ctx, tenant, c.now())
+// OutstandingPage returns one page of the certificates that are still usable
+// (M26), newest first by issuance and then serial. "Still usable" is judged at
+// this CA's instant when the page is read, so a certificate that expires
+// during a walk drops out of the pages after it.
+func (c *CA) OutstandingPage(ctx context.Context, tenant store.Tenant, p store.Page) (store.Paged[store.SSHCertificate], error) {
+	return c.st.SSHCertificates().OutstandingPage(ctx, tenant, c.now(), p)
 }
 
 // generate makes a new CA key in the key store and returns its public half.

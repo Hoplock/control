@@ -554,7 +554,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Groups.AddMember":    func() error { return s.Groups().AddMember(ctx, "", "g", "s") },
 		"Groups.RemoveMember": func() error { return s.Groups().RemoveMember(ctx, "", "g", "s") },
 		"Groups.GroupsOf":     func() error { _, err := s.Groups().GroupsOf(ctx, "", "s"); return err },
-		"RoleBindings.List":   func() error { _, err := s.RoleBindings().List(ctx, ""); return err },
+		"RoleBindings.Page":   func() error { _, err := s.RoleBindings().Page(ctx, "", Page{Limit: 1}); return err },
 		"RoleBindings.RolesFor": func() error {
 			_, err := s.RoleBindings().RolesFor(ctx, "", "s", nil)
 			return err
@@ -629,8 +629,8 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.SSHCertificates().Get(ctx, "", 1)
 			return err
 		},
-		"SSHCertificates.Outstanding": func() error {
-			_, err := s.SSHCertificates().Outstanding(ctx, "", nowForTest())
+		"SSHCertificates.OutstandingPage": func() error {
+			_, err := s.SSHCertificates().OutstandingPage(ctx, "", nowForTest(), Page{Limit: 1})
 			return err
 		},
 		"SSHCertificates.ListBySubject": func() error {

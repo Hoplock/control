@@ -80,6 +80,7 @@ func newGrants(t *testing.T, st *store.Store, o access.Options) *access.Service 
 type serverFixture struct {
 	st         *store.Store
 	federation *identity.Federation
+	ca         *credential.CA
 	server     *north.Server
 	http       *httptest.Server
 	lifecycle  *lifecycle
@@ -196,7 +197,7 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 		t.Fatalf("ensure b: %v", err)
 	}
 
-	f := &serverFixture{st: st, federation: federation, server: server, lifecycle: lifecycle}
+	f := &serverFixture{st: st, federation: federation, ca: ca, server: server, lifecycle: lifecycle}
 	f.http = httptest.NewServer(server)
 	t.Cleanup(f.http.Close)
 	return f

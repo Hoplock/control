@@ -591,21 +591,43 @@ type roleBindingBody struct {
 	Role      string `json:"role"`
 }
 
+// roleBindingList is the tenant's role bindings (M26): per role, whether the
+// holder is a group, and the holder's id, so a subject's bindings to a role
+// come before a group's.
+var roleBindingList = list{name: "role_bindings", key: []keyKind{keyString, keyBool, keyString}}
+
+// handleRoleBindingList lists the role bindings, one page at a time (M26).
+// `roles`, the fixed role set a binding may name, is the same on every page.
 func (s *Server) handleRoleBindingList(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
-	rows, err := s.st.RoleBindings().List(r.Context(), tenant)
+	p, ok := readPage(w, r, roleBindingList)
+	if !ok {
+		return
+	}
+	page, err := s.st.RoleBindings().Page(r.Context(), tenant, p.Page)
 	if err != nil {
 		s.fail(w, r, "list role bindings", err)
 		return
 	}
-	out := make([]roleBindingView, 0, len(rows))
-	for _, b := range rows {
+	out := make([]roleBindingView, 0, len(page.Rows))
+	for _, b := range page.Rows {
 		out = append(out, roleBindingView{SubjectID: b.SubjectID, GroupID: b.GroupID, Role: b.Role, GrantedBy: b.GrantedBy, CreatedAt: b.CreatedAt.UTC()})
 	}
-	answer(w, http.StatusOK, map[string]any{"bindings": out, "roles": identity.AllRoles})
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		// A binding names exactly one holder (the store's CHECK), so a
+		// group id is what makes it a group's.
+		b := page.Rows[n-1]
+		if b.GroupID != "" {
+			last = []any{b.Role, true, b.GroupID}
+		} else {
+			last = []any{b.Role, false, b.SubjectID}
+		}
+	}
+	s.answerPage(w, r, p, "bindings", out, page.More, last, map[string]any{"roles": identity.AllRoles})
 }
 
 // bindingFrom validates a role binding: exactly one holder, and a role this

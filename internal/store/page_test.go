@@ -197,6 +197,43 @@ var pagedReaders = map[string]pagedReader{
 		},
 		key: func(id string) []any { return []any{newestFirst(id), id} },
 	},
+	// The role bindings and outstanding certificates (0034). Each binding is
+	// a subject's, to one role, so the holder's id leads its position;
+	// TestRoleBindingPagesFollowTheirWholeKey walks the role and the holder's
+	// kind. A certificate is read newest first, like a grant, and keyed by its
+	// serial after its issuance.
+	"RoleBindings.Page": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return st.RoleBindings().Bind(ctx, tenant, store.RoleBinding{SubjectID: id, Role: "auditor"})
+		},
+		del: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return st.RoleBindings().Unbind(ctx, tenant, store.RoleBinding{SubjectID: id, Role: "auditor"})
+		},
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.RoleBindings().Page(ctx, tenant, p)
+			ids := make([]string, 0, len(got.Rows))
+			for _, b := range got.Rows {
+				ids = append(ids, b.SubjectID)
+			}
+			return ids, got.More, err
+		},
+		key: func(id string) []any { return []any{"auditor", false, id} },
+	},
+	"SSHCertificates.OutstandingPage": {
+		put: putCertificate,
+		del: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return store.DeleteSSHCertificate(ctx, st, tenant, certificateSerial(id))
+		},
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.SSHCertificates().OutstandingPage(ctx, tenant, time.Now(), p)
+			ids := make([]string, 0, len(got.Rows))
+			for _, c := range got.Rows {
+				ids = append(ids, c.KeyID)
+			}
+			return ids, got.More, err
+		},
+		key: func(id string) []any { return []any{newestFirst(id), certificateSerial(id)} },
+	},
 }
 
 // newestFirstEpoch is the latest instant newestFirst gives.
@@ -246,6 +283,53 @@ func putGrant(ctx context.Context, st *store.Store, tenant store.Tenant, id stri
 		return nil
 	}
 	return err
+}
+
+// testCAKeyID names the CA key every certificate these tests put is signed
+// by: a row the certificate's foreign key needs, and nothing more.
+const testCAKeyID = "ca-test"
+
+// certificateSerial is the serial of the certificate put as id: distinct for
+// each id, and larger for a later one.
+func certificateSerial(id string) int64 {
+	return newestFirstEpoch.Sub(newestFirst(id)).Microseconds()
+}
+
+// putCertificate stores an outstanding certificate whose key id is id, issued
+// at newestFirst(id), with its tenant's CA key beside it. A certificate or key
+// already stored is left as it is.
+func putCertificate(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+	if err := st.CAKeys().Insert(ctx, tenant, store.CAKey{
+		KeyID: testCAKeyID, Algorithm: "ed25519", PublicKey: []byte("public"), PrivateRef: "software", Active: true,
+	}); err != nil && !store.IsConflict(err) {
+		return err
+	}
+	return insertCertificate(ctx, st, tenant, store.SSHCertificate{
+		Serial: certificateSerial(id), KeyID: id, IssuedAt: newestFirst(id),
+		ValidBefore: newestFirstEpoch.Add(24 * time.Hour),
+	})
+}
+
+// insertCertificate stores c, filling what a test leaves out: the test CA key,
+// a subject, a window opening a minute before issuance, and certificate text.
+// A serial already stored is left as it is.
+func insertCertificate(ctx context.Context, st *store.Store, tenant store.Tenant, c store.SSHCertificate) error {
+	if c.CAKeyID == "" {
+		c.CAKeyID = testCAKeyID
+	}
+	if c.SubjectID == "" {
+		c.SubjectID = "alice"
+	}
+	if c.ValidAfter.IsZero() {
+		c.ValidAfter = c.IssuedAt.Add(-time.Minute)
+	}
+	if c.Certificate == "" {
+		c.Certificate = "ssh-ed25519-cert-v01@openssh.com " + c.KeyID
+	}
+	if err := st.SSHCertificates().Insert(ctx, tenant, c); err != nil && !store.IsConflict(err) {
+		return err
+	}
+	return nil
 }
 
 func grantIDs(q store.GrantQuery) func(context.Context, *store.Store, store.Tenant, store.Page) ([]string, bool, error) {
