@@ -26,6 +26,61 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.20.0
+
+Phase 0033, bounded lists 5: grants and grant requests.
+`GET /api/v1/tenants/{tenant}/grants` and
+`GET /api/v1/tenants/{tenant}/me/grant-requests` now answer in decision M26's
+shape (`docs/PLAN.md` §2), one page at a time, newest first, and a grant's view
+says when its sample of decisions was cut.
+
+### Breaking
+
+No signature changes; `make release-check` finds none. Five behaviour
+changes:
+
+- **Both lists answer at most 500 items by default, and refuse above
+  10 000.** They answered 100 by default and clamped silently at 1 000.
+  `?limit=` asks for 1 to 10 000; a page holds exactly that many unless it
+  is the last. Above 10 000 is `400 invalid_request`
+  `{field: limit, problem: exceeds_maximum, limit: "10000"}`; zero, a
+  negative or a non-integer is `{field: limit, problem: invalid}`, as
+  before.
+- **Both answers gain `truncated` and, when cut, `next`.**
+  `grants` is `{"tenant": "...", "grants": [...], "truncated": bool, "next": "<cursor>"}`,
+  ordered by creation and then grant id, newest first;
+  `me/grant-requests` is `{"tenant": "...", "requests": [...], "truncated": bool, "next": "<cursor>"}`,
+  ordered by when each request was raised and then request id, newest
+  first. Pass `next` back as `?after=` with the same `subject` and `state`
+  to read the following page; a cursor under other filters is
+  `400 invalid_request` `{field: after, problem: invalid}`. A client that
+  read a whole list from one answer must now follow `next` until
+  `truncated` is false. A requester's cursor names neither them nor the
+  tenant: whoever presents it reads their own requests from that place.
+- **A state filter is judged on every page.** `?state=` on `grants` is
+  judged at the server's instant when each page is read, so a grant that
+  expires or starts during a walk is listed if it matches when the walk
+  reaches it, and not otherwise. It is never listed twice.
+- **`GET …/grants/{grant}` gains `decisions_truncated`.** The view still
+  samples the newest 50 decisions the grant supplied; the member is `true`
+  when the grant supplied more. It takes no `limit` and no `after`: every
+  record a grant backed is in the audit query.
+- **Migration `0017` locks `grants` and `grant_requests` while it runs.** It
+  builds three indexes in one transaction, which blocks writes to both
+  tables (creating, revoking and deciding grants and requests) until it
+  commits, and drops the three it replaces at the end, which blocks reads,
+  the decision path's included, from the drops to the commit. Run
+  `hoplock-control migrate` when that pause is acceptable; its length grows
+  with the two tables.
+
+- **Phase:** 0033, bounded lists 5: grants and grant requests.
+- **Public packages:** none changed.
+- **Migration:** `0017_grant_list_order` replaces `grants_by_created_idx`,
+  `grants_by_subject_idx` and `grant_requests_by_subject_idx` with
+  `grants_created_order_idx`, `grants_subject_order_idx` and
+  `grant_requests_subject_order_idx`, each ending in the id, descending with
+  the time before it. No row is rewritten.
+
 ## v0.19.0
 
 Phase 0032, bounded lists 4: algorithm declarations and target observations.
