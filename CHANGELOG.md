@@ -26,6 +26,59 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.21.0
+
+Phase 0034, bounded lists 6: role bindings and outstanding certificates.
+`GET /api/v1/tenants/{tenant}/role-bindings` and
+`GET /api/v1/tenants/{tenant}/ca/certificates` now answer in decision M26's
+shape (`docs/PLAN.md` §2), one page at a time, each over an index migration
+`0018` adds.
+
+### Breaking
+
+No signature changes; `make release-check` finds none. Four behaviour
+changes:
+
+- **Both lists answer at most 500 items by default, and refuse above
+  10 000.** They answered every binding and every outstanding certificate in
+  the tenant. `?limit=` asks for 1 to 10 000; a page holds exactly that many
+  unless it is the last. Above 10 000 is `400 invalid_request`
+  `{field: limit, problem: exceeds_maximum, limit: "10000"}`; zero, a
+  negative or a non-integer is `{field: limit, problem: invalid}`.
+- **Both answers gain `truncated` and, when cut, `next`.**
+  `role-bindings` is `{"bindings": [...], "roles": [...], "truncated": bool, "next": "<cursor>"}`,
+  ordered by role, then a subject's bindings before a group's, then the
+  holder's id; `roles` is the same on every page.
+  `ca/certificates` is `{"tenant": "...", "certificates": [...], "truncated": bool, "next": "<cursor>"}`,
+  ordered by issuance and then serial, newest first, and still without the
+  certificate itself. Pass `next` back as `?after=` to read the following
+  page; a cursor from another list is `400 invalid_request`
+  `{field: after, problem: invalid}`. A client that read a whole list from
+  one answer must now follow `next` until `truncated` is false.
+- **Outstanding is judged on every page.** A certificate that expires or is
+  revoked during a walk is not on the pages after it; the others keep their
+  places, because issuance never moves. `hoplock-control ca certificates`
+  reads every page and prints the same lines as before.
+- **Migration `0018` locks `identity_role_bindings` and `ssh_certificates`
+  against writes while it runs.** It builds one index on each in one
+  transaction, which blocks binding and unbinding roles, and issuing and
+  revoking certificates (the brokered-certificate path included), until it
+  commits. Reads continue, and nothing is dropped. Run
+  `hoplock-control migrate` when that pause is acceptable; its length grows
+  with the two tables.
+
+- **Phase:** 0034, bounded lists 6: role bindings and outstanding
+  certificates.
+- **Public packages:** none changed.
+- **Migration:** `0018_role_binding_and_certificate_order` adds
+  `identity_role_bindings_order_key`, unique on
+  `(tenant, role, (subject_id IS NULL), coalesce(subject_id, group_id))`, and
+  `ssh_certificates_issued_order_idx` on
+  `(tenant, issued_at DESC, serial DESC) WHERE revoked_at IS NULL`. The
+  indexes 0007 built stay: the two partial unique keys are what a bind's
+  `ON CONFLICT` names, and `ssh_certificates_outstanding_idx` serves a
+  compromise rotation's revocation. No row is rewritten.
+
 ## v0.20.0
 
 Phase 0033, bounded lists 5: grants and grant requests.
