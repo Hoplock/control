@@ -318,8 +318,10 @@ func (s *Server) inventoryRoutes() []Route {
 			"every proxy's desired and running configuration, and its reported state", s.handleConfigRollouts),
 		tenantRoute("GET", "/fleet/algorithms", identity.PermFleetRead,
 			"each proxy's latest algorithm declaration, per build", s.handleAlgorithmDeclarations),
-		tenantRoute("GET", "/fleet/target-observations", identity.PermFleetRead,
-			"what each target was seen to take: its rungs and its key exchange", s.handleTargetObservations),
+		tenantRoute("GET", "/fleet/target-observations/rungs", identity.PermFleetRead,
+			"the enforcement rungs each target was seen to take, and when", s.handleTargetRungs),
+		tenantRoute("GET", "/fleet/target-observations/key-exchanges", identity.PermFleetRead,
+			"the key exchange each target was seen to negotiate, and when", s.handleTargetKeyExchanges),
 
 		tenantRoute("POST", "/revocations", identity.PermSessionRevoke,
 			"end sessions, invalidate cached decisions, resync, or withdraw a host-key decision", s.handleRevocation),

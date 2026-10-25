@@ -1042,24 +1042,46 @@ func (s *Server) handleConfigRollouts(w http.ResponseWriter, r *http.Request) {
 // what each build offers, and what each target was seen to take
 // ---------------------------------------------------------------------------
 
-// handleAlgorithmDeclarations serves each proxy's latest recorded declaration:
-// every floor level's key exchanges and every profile's offer per axis
-// (Hoplock/proxy#72) — the impact preview's per-build evidence.
+// declarationList is the algorithm declarations (M26): by proxy id, the
+// primary key.
+var declarationList = list{name: "declarations", key: []keyKind{keyString}}
+
+// handleAlgorithmDeclarations serves each proxy's latest recorded declaration,
+// one page at a time (M26): every floor level's key exchanges and every
+// profile's offer per axis (Hoplock/proxy#72) — the impact preview's per-build
+// evidence.
 func (s *Server) handleAlgorithmDeclarations(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
-	decls, err := s.fleet.AlgorithmDeclarations(r.Context(), tenant)
+	p, ok := readPage(w, r, declarationList)
+	if !ok {
+		return
+	}
+	page, err := s.fleet.AlgorithmDeclarationPage(r.Context(), tenant, p.Page)
 	if err != nil {
 		s.fail(w, r, "algorithm declarations", err)
 		return
 	}
-	if decls == nil {
-		decls = []fleet.DeclaredAlgorithms{}
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].ProxyID}
 	}
-	answer(w, http.StatusOK, map[string]any{"declarations": decls})
+	s.answerPage(w, r, p, "declarations", page.Rows, page.More, last, nil)
 }
+
+// A target's two observations are two lists, keyed differently (M26.5): the
+// rungs by hostname, port and platform, the key exchange by hostname and port,
+// because the proxy's report of it names no platform. Each item carries its
+// own date and its own freshness, judged in the one window `ttl_seconds`
+// states on every page.
+
+// rungList is the rung observations (M26): the primary key.
+var rungList = list{name: "rungs", key: []keyKind{keyString, keyInt32, keyString}}
+
+// kexList is the key-exchange observations (M26): the primary key.
+var kexList = list{name: "key_exchanges", key: []keyKind{keyString, keyInt32}}
 
 type rungObservationView struct {
 	Hostname   string    `json:"target"`
@@ -1077,27 +1099,25 @@ type kexObservationView struct {
 	Fresh bool `json:"fresh"`
 }
 
-// handleTargetObservations serves the two target observations side by side,
-// each with its own date and freshness: the rungs a target was seen to take,
-// and the key exchange it negotiated (stored by host and port).
-func (s *Server) handleTargetObservations(w http.ResponseWriter, r *http.Request) {
+// handleTargetRungs serves the rungs each target was seen to take, one page at
+// a time (M26).
+func (s *Server) handleTargetRungs(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
+	p, ok := readPage(w, r, rungList)
+	if !ok {
+		return
+	}
 	now, ttl := s.now(), s.fleet.TargetObservationTTL()
-	caps, err := s.st.TargetCapabilities().List(r.Context(), tenant)
+	page, err := s.st.TargetCapabilities().Page(r.Context(), tenant, p.Page)
 	if err != nil {
-		s.fail(w, r, "target capabilities", err)
+		s.fail(w, r, "target rung observations", err)
 		return
 	}
-	kex, err := s.fleet.TargetKex(r.Context(), tenant)
-	if err != nil {
-		s.fail(w, r, "target key exchanges", err)
-		return
-	}
-	rungs := make([]rungObservationView, 0, len(caps))
-	for _, c := range caps {
+	rungs := make([]rungObservationView, 0, len(page.Rows))
+	for _, c := range page.Rows {
 		rungs = append(rungs, rungObservationView{
 			Hostname: c.Hostname, Port: c.Port, Platform: c.Platform,
 			Execution: nonNilStrings(c.Execution), Reach: nonNilStrings(c.Reach),
@@ -1105,12 +1125,43 @@ func (s *Server) handleTargetObservations(w http.ResponseWriter, r *http.Request
 			Fresh: !c.ObservedAt.IsZero() && now.Sub(c.ObservedAt) <= ttl,
 		})
 	}
-	kexes := make([]kexObservationView, 0, len(kex))
-	for _, o := range kex {
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		c := page.Rows[n-1]
+		last = []any{c.Hostname, int64(c.Port), c.Platform}
+	}
+	s.answerPage(w, r, p, "rungs", rungs, page.More, last, map[string]any{"ttl_seconds": int64(ttl / time.Second)})
+}
+
+// handleTargetKeyExchanges serves the key exchange each target was seen to
+// negotiate, one page at a time (M26), beside the floor levels a route may
+// name, so a reader can place each observation against a candidate floor.
+func (s *Server) handleTargetKeyExchanges(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	p, ok := readPage(w, r, kexList)
+	if !ok {
+		return
+	}
+	now, ttl := s.now(), s.fleet.TargetObservationTTL()
+	page, err := s.fleet.TargetKexPage(r.Context(), tenant, p.Page)
+	if err != nil {
+		s.fail(w, r, "target key exchanges", err)
+		return
+	}
+	kexes := make([]kexObservationView, 0, len(page.Rows))
+	for _, o := range page.Rows {
 		kexes = append(kexes, kexObservationView{KexObservation: o, Fresh: o.Fresh(now, ttl)})
 	}
-	answer(w, http.StatusOK, map[string]any{
-		"rungs": rungs, "key_exchanges": kexes, "ttl_seconds": int64(ttl / time.Second),
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		o := page.Rows[n-1]
+		last = []any{o.Hostname, int64(o.Port)}
+	}
+	s.answerPage(w, r, p, "key_exchanges", kexes, page.More, last, map[string]any{
+		"ttl_seconds":  int64(ttl / time.Second),
 		"floor_levels": []contract.AlgorithmFloor{contract.AlgorithmFloorModernKex, contract.AlgorithmFloorPQHybridKex},
 	})
 }

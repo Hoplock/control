@@ -11,8 +11,10 @@ import (
 	"go/ast"
 	"go/token"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -60,6 +62,36 @@ func TestACursorRoundTripsEveryKind(t *testing.T) {
 				t.Errorf("time decoded as %v (%T), want %v in UTC", got[2], got[2], key[2])
 			}
 		})
+	}
+}
+
+// A keyInt32 component (a target port) round-trips at either end of its
+// range. Past it, a cursor does not decode — the caller's position names no
+// row a 32-bit column can hold — and the server mints none.
+func TestAnInt32ComponentKeepsToItsRange(t *testing.T) {
+	ports := list{name: "ports", key: []keyKind{keyString, keyInt32}}
+	digest := filterDigest(nil)
+	for _, n := range []int64{0, 22, math.MaxInt32, math.MinInt32} {
+		raw, err := encodeCursor(ports, digest, []any{"h", n})
+		if err != nil {
+			t.Fatalf("encode %d: %v", n, err)
+		}
+		got, err := decodeCursor(raw, ports, digest)
+		if err != nil || got[1] != n {
+			t.Errorf("%d decoded as %v (%v), want int64 %d", n, got, err, n)
+		}
+	}
+	for _, n := range []int64{math.MaxInt32 + 1, math.MinInt32 - 1, math.MaxInt64} {
+		if raw, err := encodeCursor(ports, digest, []any{"h", n}); err == nil {
+			t.Errorf("minted %q for %d, which no 32-bit column holds", raw, n)
+		}
+		raw := encodeRaw(t, map[string]any{"v": 1, "l": ports.name, "f": digest, "k": []string{"h", strconv.FormatInt(n, 10)}})
+		if got, err := decodeCursor(raw, ports, digest); err == nil {
+			t.Errorf("decoded %d as %v, want a refusal", n, got)
+		}
+	}
+	if raw, err := encodeCursor(ports, digest, []any{"h", int32(22)}); err == nil {
+		t.Errorf("minted %q from an int32; a position is typed as the store's Page takes it, int64", raw)
 	}
 }
 

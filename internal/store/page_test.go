@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
@@ -24,6 +25,18 @@ type pagedReader struct {
 	put  func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error
 	del  func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error
 	page func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error)
+	// key is the position of the item put as id, for a list whose order key
+	// has more than one component; the id leads it, so the ids sort as the
+	// list does. Nil is a list keyed by the id alone.
+	key func(id string) []any
+}
+
+// at is the position of the item put as id.
+func (r pagedReader) at(id string) []any {
+	if r.key == nil {
+		return []any{id}
+	}
+	return r.key(id)
 }
 
 var pagedReaders = map[string]pagedReader{
@@ -91,6 +104,64 @@ var pagedReaders = map[string]pagedReader{
 			return stateIDs(st.ProxyConfigs().PageStates(ctx, tenant, true, p))
 		},
 	},
+	// What each build declares and each target was seen to take (0032).
+	// Each observation is put at port 22, and a rung at platform linux;
+	// TestObservationPagesFollowTheirWholeKey walks the other components.
+	"ProxyAlgorithmDeclarations.Page": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			_, err := st.ProxyAlgorithmDeclarations().Put(ctx, tenant, store.ProxyAlgorithmDeclaration{
+				ProxyID: id, Declaration: []byte(`{}`), Digest: "d-" + id, DeclaredAt: time.Now(),
+			})
+			return err
+		},
+		del: store.DeleteAlgorithmDeclaration,
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.ProxyAlgorithmDeclarations().Page(ctx, tenant, p)
+			ids := make([]string, 0, len(got.Rows))
+			for _, d := range got.Rows {
+				ids = append(ids, d.ProxyID)
+			}
+			return ids, got.More, err
+		},
+	},
+	"TargetCapabilities.Page": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return st.TargetCapabilities().Put(ctx, tenant, store.TargetCapabilityRecord{
+				Hostname: id, Port: 22, Platform: "linux", Execution: []string{"account-confined"}, ObservedAt: time.Now(),
+			})
+		},
+		del: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return store.DeleteTargetCapability(ctx, st, tenant, id, 22, "linux")
+		},
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.TargetCapabilities().Page(ctx, tenant, p)
+			ids := make([]string, 0, len(got.Rows))
+			for _, c := range got.Rows {
+				ids = append(ids, c.Hostname)
+			}
+			return ids, got.More, err
+		},
+		key: func(id string) []any { return []any{id, int64(22), "linux"} },
+	},
+	"TargetKexObservations.Page": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return st.TargetKexObservations().Put(ctx, tenant, store.TargetKexObservation{
+				Hostname: id, Port: 22, FloorMet: "modern-kex", ObservedAt: time.Now(),
+			})
+		},
+		del: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return store.DeleteTargetKex(ctx, st, tenant, id, 22)
+		},
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.TargetKexObservations().Page(ctx, tenant, p)
+			ids := make([]string, 0, len(got.Rows))
+			for _, o := range got.Rows {
+				ids = append(ids, o.Hostname)
+			}
+			return ids, got.More, err
+		},
+		key: func(id string) []any { return []any{id, int64(22)} },
+	},
 }
 
 func putDriftedState(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
@@ -138,7 +209,7 @@ func walk(t *testing.T, st *store.Store, r pagedReader, tenant store.Tenant, lim
 		if between != nil {
 			between(last)
 		}
-		p.After = []any{last}
+		p.After = r.at(last)
 	}
 	t.Fatal("the walk never ended")
 	return nil
@@ -155,7 +226,7 @@ func TestAPageHoldsItsLimitAndSaysWhetherTheListContinues(t *testing.T) {
 
 			cases := []struct {
 				limit int
-				after []any
+				after string // the id of the item the page follows; "" starts the list
 				want  []string
 				more  bool
 			}{
@@ -163,15 +234,19 @@ func TestAPageHoldsItsLimitAndSaysWhetherTheListContinues(t *testing.T) {
 				{limit: 4, want: []string{"i-1", "i-2", "i-3", "i-4"}, more: true},
 				{limit: 5, want: []string{"i-1", "i-2", "i-3", "i-4", "i-5"}, more: false},
 				{limit: 10, want: []string{"i-1", "i-2", "i-3", "i-4", "i-5"}, more: false},
-				{limit: 2, after: []any{"i-2"}, want: []string{"i-3", "i-4"}, more: true},
-				{limit: 2, after: []any{"i-3"}, want: []string{"i-4", "i-5"}, more: false},
+				{limit: 2, after: "i-2", want: []string{"i-3", "i-4"}, more: true},
+				{limit: 2, after: "i-3", want: []string{"i-4", "i-5"}, more: false},
 				// A position need not be an item: a deleted one continues
 				// from where it was.
-				{limit: 10, after: []any{"i-25"}, want: []string{"i-3", "i-4", "i-5"}, more: false},
-				{limit: 10, after: []any{"i-5"}, want: []string{}, more: false},
+				{limit: 10, after: "i-25", want: []string{"i-3", "i-4", "i-5"}, more: false},
+				{limit: 10, after: "i-5", want: []string{}, more: false},
 			}
 			for _, c := range cases {
-				ids, more, err := r.page(ctx, st, tenantA, store.Page{Limit: c.limit, After: c.after})
+				var after []any
+				if c.after != "" {
+					after = r.at(c.after)
+				}
+				ids, more, err := r.page(ctx, st, tenantA, store.Page{Limit: c.limit, After: after})
 				if err != nil {
 					t.Fatalf("limit %d after %v: %v", c.limit, c.after, err)
 				}
@@ -197,12 +272,16 @@ func TestAPageOutsideItsBoundsIsInvalid(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			st := storetest.New(t)
-			for _, p := range []store.Page{
+			bad := []store.Page{
 				{Limit: 0},
 				{Limit: -1},
 				{Limit: store.MaxPageLimit + 1},
-				{Limit: 1, After: []any{"a", "b"}},
-			} {
+				{Limit: 1, After: append(r.at("a"), "b")},
+			}
+			if key := r.at("a"); len(key) > 1 {
+				bad = append(bad, store.Page{Limit: 1, After: key[:len(key)-1]})
+			}
+			for _, p := range bad {
 				if _, _, err := r.page(t.Context(), st, tenantA, p); !store.IsInvalid(err) {
 					t.Errorf("page %+v answered %v, want KindInvalid", p, err)
 				}
@@ -229,7 +308,7 @@ func TestAPositionFromOneTenantReadsOnlyAnothersRows(t *testing.T) {
 			if err != nil {
 				t.Fatalf("tenant A: %v", err)
 			}
-			got, more, err := r.page(t.Context(), st, tenantB, store.Page{Limit: 10, After: []any{ids[len(ids)-1]}})
+			got, more, err := r.page(t.Context(), st, tenantB, store.Page{Limit: 10, After: r.at(ids[len(ids)-1])})
 			if err != nil {
 				t.Fatalf("tenant B after A's position: %v", err)
 			}
@@ -409,5 +488,144 @@ func TestTargetPagesAreFilteredByLabels(t *testing.T) {
 	}
 	if db.Rows[0].Hostname != "t-1.example" || db.Rows[0].Labels["role"] != "db" || db.Rows[0].CreatedAt.IsZero() {
 		t.Errorf("a paged target lost its columns: %+v", db.Rows[0])
+	}
+}
+
+// The observation lists are keyed by more than the hostname (M26.4): a rung
+// by hostname, port and platform, a key exchange by hostname and port. A walk
+// one row at a time follows every component, a port in numeric order and not
+// as text, and a position from tenant A continues tenant B's list with B's
+// rows alone (M18). Every column survives the page.
+func TestObservationPagesFollowTheirWholeKey(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	at := time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
+
+	type rung struct {
+		host     string
+		port     int32
+		platform string
+	}
+	rungs := []rung{{"h-2", 0, ""}, {"h-1", 2222, ""}, {"h-1", 22, "linux"}, {"h-1", 80, "linux"}, {"h-1", 22, ""}}
+	for _, tenant := range []store.Tenant{tenantA, tenantB} {
+		for _, r := range rungs {
+			if err := st.TargetCapabilities().Put(ctx, tenant, store.TargetCapabilityRecord{
+				Hostname: r.host, Port: r.port, Platform: r.platform, Execution: []string{string(tenant)},
+				Reach: []string{"network-policy"}, ObservedAt: at, ReportedBy: "p-1",
+			}); err != nil {
+				t.Fatalf("put rung %+v in %s: %v", r, tenant, err)
+			}
+			if r.platform != "" {
+				continue
+			}
+			if err := st.TargetKexObservations().Put(ctx, tenant, store.TargetKexObservation{
+				Hostname: r.host, Port: r.port, FloorMet: "modern-kex", Negotiated: string(tenant),
+				Offered: []string{"curve25519-sha256"}, ObservedAt: at, ReportedBy: "p-1",
+			}); err != nil {
+				t.Fatalf("put key exchange %+v in %s: %v", r, tenant, err)
+			}
+			if err := st.TargetKexObservations().Put(ctx, tenant, store.TargetKexObservation{
+				Hostname: r.host, Port: r.port + 58, FloorMet: "none", ObservedAt: at,
+			}); err != nil {
+				t.Fatalf("put key exchange %+v in %s: %v", r, tenant, err)
+			}
+		}
+	}
+
+	var gotRungs []rung
+	p := store.Page{Limit: 1}
+	for range len(rungs) + 1 {
+		page, err := st.TargetCapabilities().Page(ctx, tenantA, p)
+		if err != nil {
+			t.Fatalf("rungs after %v: %v", p.After, err)
+		}
+		if len(page.Rows) != 1 {
+			t.Fatalf("rungs after %v: %d rows, want 1", p.After, len(page.Rows))
+		}
+		c := page.Rows[0]
+		if len(c.Execution) != 1 || c.Execution[0] != string(tenantA) || c.Reach[0] != "network-policy" ||
+			!c.ObservedAt.Equal(at) || c.ReportedBy != "p-1" {
+			t.Fatalf("a paged rung lost its columns or is not tenant A's: %+v", c)
+		}
+		gotRungs = append(gotRungs, rung{c.Hostname, c.Port, c.Platform})
+		if !page.More {
+			break
+		}
+		p.After = []any{c.Hostname, int64(c.Port), c.Platform}
+	}
+	wantRungs := []rung{{"h-1", 22, ""}, {"h-1", 22, "linux"}, {"h-1", 80, "linux"}, {"h-1", 2222, ""}, {"h-2", 0, ""}}
+	if !slices.Equal(gotRungs, wantRungs) {
+		t.Errorf("the rung walk saw %v, want %v", gotRungs, wantRungs)
+	}
+
+	type kex struct {
+		host string
+		port int32
+	}
+	var gotKex []kex
+	p = store.Page{Limit: 1}
+	for range 10 {
+		page, err := st.TargetKexObservations().Page(ctx, tenantA, p)
+		if err != nil {
+			t.Fatalf("key exchanges after %v: %v", p.After, err)
+		}
+		if len(page.Rows) != 1 {
+			t.Fatalf("key exchanges after %v: %d rows, want 1", p.After, len(page.Rows))
+		}
+		o := page.Rows[0]
+		if o.FloorMet == "modern-kex" && (o.Negotiated != string(tenantA) || len(o.Offered) != 1 || !o.ObservedAt.Equal(at)) {
+			t.Fatalf("a paged key exchange lost its columns or is not tenant A's: %+v", o)
+		}
+		gotKex = append(gotKex, kex{o.Hostname, o.Port})
+		if !page.More {
+			break
+		}
+		p.After = []any{o.Hostname, int64(o.Port)}
+	}
+	wantKex := []kex{{"h-1", 22}, {"h-1", 80}, {"h-1", 2222}, {"h-1", 2280}, {"h-2", 0}, {"h-2", 58}}
+	if !slices.Equal(gotKex, wantKex) {
+		t.Errorf("the key-exchange walk saw %v, want %v", gotKex, wantKex)
+	}
+
+	// Tenant A's position in tenant B: B's rows, from that place.
+	rest, err := st.TargetCapabilities().Page(ctx, tenantB, store.Page{Limit: 10, After: []any{"h-1", int64(22), "linux"}})
+	if err != nil || len(rest.Rows) != 3 || rest.More {
+		t.Fatalf("tenant B's rungs after (h-1, 22, linux): %+v, %v; want three rows and the end", rest.Rows, err)
+	}
+	for _, c := range rest.Rows {
+		if c.Execution[0] != string(tenantB) {
+			t.Errorf("tenant B's page holds %s's row %+v", c.Execution[0], c)
+		}
+	}
+	kexRest, err := st.TargetKexObservations().Page(ctx, tenantB, store.Page{Limit: 10, After: []any{"h-1", int64(2222)}})
+	if err != nil || len(kexRest.Rows) != 3 || kexRest.More {
+		t.Fatalf("tenant B's key exchanges after (h-1, 2222): %+v, %v; want three rows and the end", kexRest.Rows, err)
+	}
+	if kexRest.Rows[1].Hostname != "h-2" || kexRest.Rows[1].Negotiated != string(tenantB) {
+		t.Errorf("tenant B's key exchange (h-2, 0) is %+v, want B's own", kexRest.Rows[1])
+	}
+}
+
+// A declaration's stored bytes and digest survive the page: the fleet decodes
+// them, and an undecodable one is the fleet's to fail on, not the store's.
+func TestADeclarationPageKeepsItsDocument(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	at := time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
+	for _, tenant := range []store.Tenant{tenantA, tenantB} {
+		if _, err := st.ProxyAlgorithmDeclarations().Put(ctx, tenant, store.ProxyAlgorithmDeclaration{
+			ProxyID: "p-1", Declaration: []byte(`{"algorithms":{"t":"` + string(tenant) + `"}}`), Digest: "d-" + string(tenant), DeclaredAt: at,
+		}); err != nil {
+			t.Fatalf("put in %s: %v", tenant, err)
+		}
+	}
+	page, err := st.ProxyAlgorithmDeclarations().Page(ctx, tenantA, store.Page{Limit: 10})
+	if err != nil || len(page.Rows) != 1 || page.More {
+		t.Fatalf("tenant A's declarations: %+v, %v; want its one", page.Rows, err)
+	}
+	if d := page.Rows[0]; string(d.Declaration) != `{"algorithms":{"t":"tenant-a"}}` || d.Digest != "d-tenant-a" || !d.DeclaredAt.Equal(at) {
+		t.Errorf("tenant A's declaration came back as %+v (%s)", d, d.Declaration)
 	}
 }

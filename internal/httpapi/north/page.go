@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"reflect"
 	"slices"
@@ -43,6 +44,11 @@ const (
 	keyInt
 	keyTime
 	keyBool
+	// keyInt32 is an integer its column holds in 32 bits (a target port). It
+	// is written and read as keyInt is, and a position outside that range
+	// does not parse as its kind: it is refused like any other cursor this
+	// list does not continue, never handed to a column that cannot hold it.
+	keyInt32
 )
 
 // list names one north-bound list and its order key (M26).
@@ -121,6 +127,9 @@ func encodeComponent(kind keyKind, v any) (string, bool) {
 	case keyBool:
 		b, ok := v.(bool)
 		return strconv.FormatBool(b), ok
+	case keyInt32:
+		n, ok := v.(int64)
+		return strconv.FormatInt(n, 10), ok && n >= math.MinInt32 && n <= math.MaxInt32
 	}
 	return "", false
 }
@@ -174,6 +183,9 @@ func decodeComponent(kind keyKind, s string) (any, bool) {
 		case "false":
 			return false, true
 		}
+	case keyInt32:
+		n, err := strconv.ParseInt(s, 10, 32)
+		return n, err == nil
 	}
 	return nil, false
 }

@@ -115,6 +115,8 @@ func (r *Registry) RecordAlgorithmDeclaration(ctx context.Context, tenant store.
 }
 
 // AlgorithmDeclarations returns every proxy's latest recorded declaration.
+// The publish-time report reads it once per validate; the north-bound list
+// reads [Registry.AlgorithmDeclarationPage].
 func (r *Registry) AlgorithmDeclarations(ctx context.Context, tenant store.Tenant) ([]DeclaredAlgorithms, error) {
 	rows, err := r.st.ProxyAlgorithmDeclarations().List(ctx, tenant)
 	if err != nil {
@@ -122,15 +124,42 @@ func (r *Registry) AlgorithmDeclarations(ctx context.Context, tenant store.Tenan
 	}
 	out := make([]DeclaredAlgorithms, 0, len(rows))
 	for _, row := range rows {
-		var d AlgorithmDeclaration
-		if err := json.Unmarshal(row.Declaration, &d); err != nil {
-			// A stored declaration that does not decode is this server's
-			// own write gone wrong: an outage, never "declared nothing".
-			return nil, fmt.Errorf("fleet: proxy %s's algorithm declaration does not decode: %w", row.ProxyID, err)
+		d, err := declaredAlgorithms(row)
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, DeclaredAlgorithms{ProxyID: row.ProxyID, Declaration: d, DeclaredAt: row.DeclaredAt})
+		out = append(out, d)
 	}
 	return out, nil
+}
+
+// AlgorithmDeclarationPage returns one page of the proxies' latest recorded
+// declarations, by proxy id (M26). A declaration on the page that does not
+// decode fails the whole page, never leaving a page short of it (M26.6).
+func (r *Registry) AlgorithmDeclarationPage(ctx context.Context, tenant store.Tenant, p store.Page) (store.Paged[DeclaredAlgorithms], error) {
+	page, err := r.st.ProxyAlgorithmDeclarations().Page(ctx, tenant, p)
+	if err != nil {
+		return store.Paged[DeclaredAlgorithms]{}, err
+	}
+	out := store.Paged[DeclaredAlgorithms]{Rows: make([]DeclaredAlgorithms, 0, len(page.Rows)), More: page.More}
+	for _, row := range page.Rows {
+		d, err := declaredAlgorithms(row)
+		if err != nil {
+			return store.Paged[DeclaredAlgorithms]{}, err
+		}
+		out.Rows = append(out.Rows, d)
+	}
+	return out, nil
+}
+
+// declaredAlgorithms decodes one stored declaration. One that does not decode
+// is this server's own write gone wrong: an outage, never "declared nothing".
+func declaredAlgorithms(row store.ProxyAlgorithmDeclaration) (DeclaredAlgorithms, error) {
+	var d AlgorithmDeclaration
+	if err := json.Unmarshal(row.Declaration, &d); err != nil {
+		return DeclaredAlgorithms{}, fmt.Errorf("fleet: proxy %s's algorithm declaration does not decode: %w", row.ProxyID, err)
+	}
+	return DeclaredAlgorithms{ProxyID: row.ProxyID, Declaration: d, DeclaredAt: row.DeclaredAt}, nil
 }
 
 // KexObservation is one target's key exchange, as a proxy saw it. It grants
@@ -169,7 +198,9 @@ func (r *Registry) ReportTargetKex(ctx context.Context, tenant store.Tenant, o K
 	return r.liveness.ReportAfter, nil
 }
 
-// TargetKex returns every stored key-exchange observation in a tenant.
+// TargetKex returns every stored key-exchange observation in a tenant. The
+// publish-time report reads it once per validate; the north-bound list reads
+// [Registry.TargetKexPage].
 func (r *Registry) TargetKex(ctx context.Context, tenant store.Tenant) ([]KexObservation, error) {
 	rows, err := r.st.TargetKexObservations().List(ctx, tenant)
 	if err != nil {
@@ -177,13 +208,31 @@ func (r *Registry) TargetKex(ctx context.Context, tenant store.Tenant) ([]KexObs
 	}
 	out := make([]KexObservation, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, KexObservation{
-			Hostname: row.Hostname, Port: row.Port, FloorMet: contract.FloorMet(row.FloorMet),
-			Negotiated: row.Negotiated, Offered: row.Offered, ObservedAt: row.ObservedAt,
-			ReportedBy: row.ReportedBy,
-		})
+		out = append(out, kexObservation(row))
 	}
 	return out, nil
+}
+
+// TargetKexPage returns one page of the key-exchange observations, by
+// hostname and port (M26).
+func (r *Registry) TargetKexPage(ctx context.Context, tenant store.Tenant, p store.Page) (store.Paged[KexObservation], error) {
+	page, err := r.st.TargetKexObservations().Page(ctx, tenant, p)
+	if err != nil {
+		return store.Paged[KexObservation]{}, err
+	}
+	out := store.Paged[KexObservation]{Rows: make([]KexObservation, 0, len(page.Rows)), More: page.More}
+	for _, row := range page.Rows {
+		out.Rows = append(out.Rows, kexObservation(row))
+	}
+	return out, nil
+}
+
+func kexObservation(row store.TargetKexObservation) KexObservation {
+	return KexObservation{
+		Hostname: row.Hostname, Port: row.Port, FloorMet: contract.FloorMet(row.FloorMet),
+		Negotiated: row.Negotiated, Offered: row.Offered, ObservedAt: row.ObservedAt,
+		ReportedBy: row.ReportedBy,
+	}
 }
 
 // TargetObservationTTL is how long a target's observation stays fresh: the one

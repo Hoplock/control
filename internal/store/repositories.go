@@ -674,4 +674,7 @@ type TargetCapabilityRepository interface {
 	// List returns every record in the tenant, in (hostname, port, platform)
 	// order. The pre-publish query (0019) walks it.
 	List(ctx context.Context, tenant Tenant) ([]TargetCapabilityRecord, error)
+	// Page returns one page of the records, in the same order (M26). A
+	// position is (string, int64, string).
+	Page(ctx context.Context, tenant Tenant, p Page) (Paged[TargetCapabilityRecord], error)
 }

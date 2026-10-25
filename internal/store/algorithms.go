@@ -28,8 +28,11 @@ type ProxyAlgorithmDeclarationRepository interface {
 	// Put writes a declaration unless the stored one has the same digest, and
 	// reports whether it wrote.
 	Put(ctx context.Context, tenant Tenant, d ProxyAlgorithmDeclaration) (bool, error)
-	// List returns every proxy's latest declaration, by proxy id.
+	// List returns every proxy's latest declaration, by proxy id. The
+	// publish-time report reads it once per validate (0028).
 	List(ctx context.Context, tenant Tenant) ([]ProxyAlgorithmDeclaration, error)
+	// Page returns one page of the declarations, by proxy id (M26).
+	Page(ctx context.Context, tenant Tenant, p Page) (Paged[ProxyAlgorithmDeclaration], error)
 }
 
 // TargetKexObservation is one target's key exchange, as a proxy saw it on a
@@ -52,8 +55,12 @@ type TargetKexObservationRepository interface {
 	Put(ctx context.Context, tenant Tenant, o TargetKexObservation) error
 	// Get returns one. Absent is ErrNotFound.
 	Get(ctx context.Context, tenant Tenant, hostname string, port int32) (TargetKexObservation, error)
-	// List returns every observation in the tenant.
+	// List returns every observation in the tenant. The publish-time report
+	// reads it once per validate (0028).
 	List(ctx context.Context, tenant Tenant) ([]TargetKexObservation, error)
+	// Page returns one page of the observations, by hostname and port (M26).
+	// A position is (string, int64).
+	Page(ctx context.Context, tenant Tenant, p Page) (Paged[TargetKexObservation], error)
 }
 
 // ProxyAlgorithmDeclarations returns the per-proxy declaration repository.
@@ -99,7 +106,7 @@ func (r algorithmDeclarationRepo) List(ctx context.Context, tenant Tenant) ([]Pr
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 	rows, err := r.s.db.Query(ctx, `
-		SELECT proxy_id, declaration, digest, declared_at
+		SELECT `+declarationColumns+`
 		FROM proxy_algorithm_declarations WHERE tenant = $1 ORDER BY proxy_id`, tenant)
 	if err != nil {
 		return nil, wrap(op, err)
@@ -107,17 +114,46 @@ func (r algorithmDeclarationRepo) List(ctx context.Context, tenant Tenant) ([]Pr
 	defer rows.Close()
 	var out []ProxyAlgorithmDeclaration
 	for rows.Next() {
-		var (
-			d    ProxyAlgorithmDeclaration
-			body string
-		)
-		if err := rows.Scan(&d.ProxyID, &body, &d.Digest, &d.DeclaredAt); err != nil {
-			return nil, wrap(op, err)
+		d, err := scanDeclaration(op, rows)
+		if err != nil {
+			return nil, err
 		}
-		d.Declaration = []byte(body)
 		out = append(out, d)
 	}
 	return out, wrap(op, rows.Err())
+}
+
+// declarationOrder is the declarations' order: the primary key.
+var declarationOrder = order{columns: []string{"proxy_id"}}
+
+func (r algorithmDeclarationRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[ProxyAlgorithmDeclaration], error) {
+	const op = "store.ProxyAlgorithmDeclarations.Page"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[ProxyAlgorithmDeclaration]{}, err
+	}
+	if err := checkPage(op, declarationOrder, p); err != nil {
+		return Paged[ProxyAlgorithmDeclaration]{}, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	tail, args := declarationOrder.clause(p, []any{tenant})
+	return queryPage(ctx, r.s.db, op, p, `
+		SELECT `+declarationColumns+`
+		FROM proxy_algorithm_declarations WHERE tenant = $1`+tail, args, scanDeclaration)
+}
+
+const declarationColumns = `proxy_id, declaration, digest, declared_at`
+
+func scanDeclaration(op string, row rowScanner) (ProxyAlgorithmDeclaration, error) {
+	var (
+		d    ProxyAlgorithmDeclaration
+		body string
+	)
+	if err := row.Scan(&d.ProxyID, &body, &d.Digest, &d.DeclaredAt); err != nil {
+		return ProxyAlgorithmDeclaration{}, wrap(op, err)
+	}
+	d.Declaration = []byte(body)
+	return d, nil
 }
 
 type kexRepo struct{ s *Store }
@@ -183,6 +219,24 @@ func (r kexRepo) List(ctx context.Context, tenant Tenant) ([]TargetKexObservatio
 		out = append(out, o)
 	}
 	return out, wrap(op, rows.Err())
+}
+
+// kexOrder is the key-exchange observations' order: the primary key.
+var kexOrder = order{columns: []string{"hostname", "target_port"}}
+
+func (r kexRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[TargetKexObservation], error) {
+	const op = "store.TargetKexObservations.Page"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[TargetKexObservation]{}, err
+	}
+	if err := checkPage(op, kexOrder, p); err != nil {
+		return Paged[TargetKexObservation]{}, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	tail, args := kexOrder.clause(p, []any{tenant})
+	return queryPage(ctx, r.s.db, op, p, `SELECT `+kexColumns+` FROM target_kex_observations
+		WHERE tenant = $1`+tail, args, scanKex)
 }
 
 func scanKex(op string, row rowScanner) (TargetKexObservation, error) {

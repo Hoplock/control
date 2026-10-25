@@ -54,3 +54,32 @@ func AuditQuerySQL(q AuditQuery) string {
 	sql, _ := auditQuerySQL("tenant", q)
 	return sql
 }
+
+// DeleteAlgorithmDeclaration, DeleteTargetCapability and DeleteTargetKex
+// remove one row of the lists 0032 pages, which nothing in the product does:
+// the paged-reader tests delete an item of every list they walk. They are
+// compiled into the test binary alone.
+func DeleteAlgorithmDeclaration(ctx context.Context, s *Store, tenant Tenant, proxyID string) error {
+	return deleteOne(ctx, s, "test.DeleteAlgorithmDeclaration",
+		`DELETE FROM proxy_algorithm_declarations WHERE tenant = $1 AND proxy_id = $2`, tenant, proxyID)
+}
+
+func DeleteTargetCapability(ctx context.Context, s *Store, tenant Tenant, hostname string, port int32, platform string) error {
+	return deleteOne(ctx, s, "test.DeleteTargetCapability",
+		`DELETE FROM target_capabilities WHERE tenant = $1 AND hostname = $2 AND target_port = $3 AND platform = $4`,
+		tenant, hostname, port, platform)
+}
+
+func DeleteTargetKex(ctx context.Context, s *Store, tenant Tenant, hostname string, port int32) error {
+	return deleteOne(ctx, s, "test.DeleteTargetKex",
+		`DELETE FROM target_kex_observations WHERE tenant = $1 AND hostname = $2 AND target_port = $3`,
+		tenant, hostname, port)
+}
+
+func deleteOne(ctx context.Context, s *Store, op, sql string, args ...any) error {
+	tag, err := s.db.Exec(ctx, sql, args...)
+	if err == nil && tag.RowsAffected() == 0 {
+		return notFound(op)
+	}
+	return err
+}

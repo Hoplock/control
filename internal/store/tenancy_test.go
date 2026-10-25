@@ -400,6 +400,10 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return err
 		},
 		"TargetCapabilities.List": func() error { _, err := s.TargetCapabilities().List(ctx, ""); return err },
+		"TargetCapabilities.Page": func() error {
+			_, err := s.TargetCapabilities().Page(ctx, "", Page{Limit: 1})
+			return err
+		},
 
 		// What each build offers and each target negotiates (0019).
 		"ProxyAlgorithmDeclarations.Put": func() error {
@@ -410,6 +414,10 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.ProxyAlgorithmDeclarations().List(ctx, "")
 			return err
 		},
+		"ProxyAlgorithmDeclarations.Page": func() error {
+			_, err := s.ProxyAlgorithmDeclarations().Page(ctx, "", Page{Limit: 1})
+			return err
+		},
 		"TargetKexObservations.Put": func() error {
 			return s.TargetKexObservations().Put(ctx, "", TargetKexObservation{Hostname: "h", FloorMet: "none", ObservedAt: nowForTest()})
 		},
@@ -418,6 +426,10 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return err
 		},
 		"TargetKexObservations.List": func() error { _, err := s.TargetKexObservations().List(ctx, ""); return err },
+		"TargetKexObservations.Page": func() error {
+			_, err := s.TargetKexObservations().Page(ctx, "", Page{Limit: 1})
+			return err
+		},
 
 		// The south-bound API (0007). These are the credential lookups, so
 		// a method here that read across tenants would authenticate one

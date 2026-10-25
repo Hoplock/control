@@ -910,6 +910,28 @@ func (r targetCapabilityRepo) List(ctx context.Context, tenant Tenant) ([]Target
 	return out, wrap(op, rows.Err())
 }
 
+// targetCapabilityOrder is the rung observations' order: the primary key.
+var targetCapabilityOrder = order{columns: []string{"hostname", "target_port", "platform"}}
+
+func (r targetCapabilityRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[TargetCapabilityRecord], error) {
+	const op = "store.TargetCapabilities.Page"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[TargetCapabilityRecord]{}, err
+	}
+	if err := checkPage(op, targetCapabilityOrder, p); err != nil {
+		return Paged[TargetCapabilityRecord]{}, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	tail, args := targetCapabilityOrder.clause(p, []any{tenant})
+	return queryPage(ctx, r.s.db, op, p, `
+		SELECT `+targetCapabilityColumns+`
+		FROM target_capabilities
+		WHERE tenant = $1`+tail, args, scanTargetCapability)
+}
+
 func scanTargetCapability(op string, row rowScanner) (TargetCapabilityRecord, error) {
 	var (
 		rec      TargetCapabilityRecord
