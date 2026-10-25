@@ -195,6 +195,9 @@ type ConfigReport struct {
 // was told to run. A proxy is caught up only when it reports `applied` and its
 // running document is the one desired: `pending_restart` holds the new document
 // and has not finished, and a version this server cannot parse is drift.
+//
+// The rollout view's drifted page reads the same rule in SQL (driftPredicate,
+// fleet.go). Change both or neither.
 func (s ProxyConfigState) Drifted() bool {
 	if s.DesiredVersion == 0 {
 		return false

@@ -36,6 +36,17 @@ func TargetIDPageFailingAt(ctx context.Context, s *Store, tenant Tenant, p Page,
 		})
 }
 
+// DeleteProxyConfigState removes one proxy's rollout state, which nothing in
+// the product does: the paged-reader tests delete an item of every list they
+// walk. It is compiled into the test binary alone.
+func DeleteProxyConfigState(ctx context.Context, s *Store, tenant Tenant, proxyID string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM proxy_config_state WHERE tenant = $1 AND proxy_id = $2`, tenant, proxyID)
+	if err == nil && tag.RowsAffected() == 0 {
+		return notFound("test.DeleteProxyConfigState")
+	}
+	return err
+}
+
 // AuditQuerySQL is the statement Query runs for a selection, for the test that
 // asks Postgres how it would plan it. It is compiled into the test binary
 // alone.

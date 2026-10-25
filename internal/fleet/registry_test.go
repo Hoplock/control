@@ -6,6 +6,8 @@ package fleet_test
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/fleet"
+	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -444,9 +447,9 @@ func TestHealthReportsWhatAnOperatorNeeds(t *testing.T) {
 		t.Fatalf("Heartbeat: %v", err)
 	}
 
-	health, err := r.Health(ctx, testTenant)
+	health, err := healthAll(ctx, r, testTenant)
 	if err != nil {
-		t.Fatalf("Health: %v", err)
+		t.Fatalf("HealthPage: %v", err)
 	}
 	if len(health) != 1 {
 		t.Fatalf("got %d row(s), want 1", len(health))
@@ -481,6 +484,142 @@ func TestHealthReportsWhatAnOperatorNeeds(t *testing.T) {
 	}
 }
 
+// The fleet view is read a page at a time (M26), and every read behind a page
+// is for that page's proxies alone. Two rows the page must not read are
+// poisoned — a relay registration and a configuration state that cannot be
+// scanned — and held by proxies past the page: the page reads cleanly, and
+// each page that holds one fails whole (M26.6), which is what proves the
+// poison would have been seen.
+//
+// The page holds a proxy with a live relay, one with no state row, and one
+// whose heartbeat has aged out but whose event stream another node holds: it
+// is live through that node's subscription, read from this node's copy (M25).
+func TestAPageOfTheFleetViewReadsItsOwnProxiesAlone(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	c := &clock{at: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)}
+	seenAt := c.at.Add(2 * time.Minute)
+
+	// Two nodes over one store. This node's registry reads node A's copy;
+	// node B holds p-3's stream.
+	bus := func(node string) *revoke.Bus {
+		b, err := revoke.New(revoke.Options{
+			Store: st, Node: node, HeartbeatInterval: time.Second, SyncInterval: 20 * time.Millisecond,
+			Now: func() time.Time { return seenAt }, Logger: slog.New(slog.DiscardHandler),
+		})
+		if err != nil {
+			t.Fatalf("revoke.New %s: %v", node, err)
+		}
+		b.Start(ctx)
+		t.Cleanup(func() {
+			closing, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = b.Close(closing)
+		})
+		return b
+	}
+	nodeA, nodeB := bus("node-a"), bus("node-b")
+	r := fleet.New(st, fleet.WithClock(c.now), fleet.WithSubscriptionState(nodeA))
+
+	for _, id := range []string{"p-1", "p-3", "p-4", "p-5"} {
+		enrolled(t, r, testTenant, id, "region", nil, fleet.Capabilities{})
+	}
+	// p-2 has a row and no state: it never enrolled through this server.
+	if err := st.Proxies().Upsert(ctx, testTenant, storetest.Proxy("p-2", "region")); err != nil {
+		t.Fatalf("Upsert p-2: %v", err)
+	}
+	if err := st.RelayRegistrations().ReplaceForUpstream(ctx, testTenant, "p-4", []string{"p-4-down"}, c.at); err != nil {
+		t.Fatalf("seed p-4's registration: %v", err)
+	}
+	for _, poison := range []string{
+		`UPDATE relay_registrations SET last_seen_at = 'infinity' WHERE tenant = $1 AND upstream_proxy_id = 'p-4'`,
+		`UPDATE proxy_config_state SET restart_required = '{NULL}' WHERE tenant = $1 AND proxy_id = 'p-5'`,
+	} {
+		if tag, err := st.Pool().Exec(ctx, poison, testTenant); err != nil || tag.RowsAffected() != 1 {
+			t.Fatalf("poison %q: %v (%d rows)", poison, err, tag.RowsAffected())
+		}
+	}
+
+	// Two minutes on: p-1 and p-2 heartbeat, p-3 does not.
+	c.advance(2 * time.Minute)
+	for _, h := range []fleet.HeartbeatReport{
+		{ProxyID: "p-1", RelayRegistrations: []string{"p-1-down"}},
+		{ProxyID: "p-2"},
+	} {
+		if err := r.Heartbeat(ctx, testTenant, h); err != nil {
+			t.Fatalf("Heartbeat %s: %v", h.ProxyID, err)
+		}
+	}
+	streamCtx, endStream := context.WithCancel(context.Background())
+	defer endStream()
+	go func() {
+		_ = nodeB.Subscribe(streamCtx, testTenant, "p-3", "", func(*contract.RevocationEvent) error { return nil })
+	}()
+	eventually(t, "node A to see node B's stream for p-3", func() bool {
+		_, ok, err := nodeA.LiveSubscription(ctx, testTenant, "p-3")
+		return err == nil && ok
+	})
+
+	page, err := r.HealthPage(ctx, testTenant, store.Page{Limit: 3})
+	if err != nil {
+		t.Fatalf("HealthPage: %v: it read a row past its page", err)
+	}
+	var ids []string
+	for _, h := range page.Rows {
+		ids = append(ids, h.ProxyID)
+	}
+	if want := []string{"p-1", "p-2", "p-3"}; !slices.Equal(ids, want) || !page.More {
+		t.Fatalf("the first page = %v (more %t), want %v and more", ids, page.More, want)
+	}
+	p1, p2, p3 := page.Rows[0], page.Rows[1], page.Rows[2]
+	if !p1.Live || !slices.Equal(p1.RelayRegistrations, []string{"p-1-down"}) || p1.Config.ProxyID != "p-1" {
+		t.Errorf("p-1 = live %t, relays %v, config %+v; want live with its one relay", p1.Live, p1.RelayRegistrations, p1.Config)
+	}
+	if !p2.Live || !reflect.DeepEqual(p2.Config, fleet.ConfigRollout{ProxyID: "p-2"}) || p2.RelayRegistrations != nil {
+		t.Errorf("p-2 = live %t, config %+v, relays %v; want live, an empty rollout row and no relay", p2.Live, p2.Config, p2.RelayRegistrations)
+	}
+	if !p3.Live || !p3.SubscriptionSeenAt.Equal(seenAt) {
+		t.Errorf("p-3 = live %t, subscription seen %v; want live through node B's stream, seen %v", p3.Live, p3.SubscriptionSeenAt, seenAt)
+	}
+	if !c.now().After(p3.LastHeartbeatAt.Add(fleet.DefaultLiveness().HeartbeatTTL)) {
+		t.Fatalf("p-3's heartbeat (%v) has not aged out, so the copy proved nothing", p3.LastHeartbeatAt)
+	}
+
+	// Each poisoned row fails the one page that holds it, and nothing of
+	// the page is answered beside the error.
+	for _, after := range []string{"p-3", "p-4"} {
+		got, err := r.HealthPage(ctx, testTenant, store.Page{Limit: 1, After: []any{after}})
+		if err == nil || got.Rows != nil || got.More {
+			t.Errorf("the page after %s = %+v, %v; want its poisoned read to fail it whole", after, got, err)
+		}
+	}
+
+	// The copy is read on every page: once node B's stream ends, p-3 is
+	// not live.
+	endStream()
+	eventually(t, "node A to stop seeing p-3's stream", func() bool {
+		_, ok, err := nodeA.LiveSubscription(ctx, testTenant, "p-3")
+		return err == nil && !ok
+	})
+	page, err = r.HealthPage(ctx, testTenant, store.Page{Limit: 1, After: []any{"p-2"}})
+	if err != nil || len(page.Rows) != 1 || page.Rows[0].Live || !page.Rows[0].SubscriptionSeenAt.IsZero() {
+		t.Errorf("p-3 after its stream ended = %+v, %v; want not live and no subscription", page.Rows, err)
+	}
+}
+
+// eventually waits for cond, for at most five seconds.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // An empty LastError leaves the recorded error's timestamp alone: a healthy
 // heartbeat must not claim that yesterday's error just happened.
 func TestAHealthyHeartbeatDoesNotRestampAnOldError(t *testing.T) {
@@ -505,9 +644,9 @@ func TestAHealthyHeartbeatDoesNotRestampAnOldError(t *testing.T) {
 
 func healthOf(t *testing.T, r *fleet.Registry, proxyID string) fleet.ProxyHealth {
 	t.Helper()
-	health, err := r.Health(t.Context(), testTenant)
+	health, err := healthAll(t.Context(), r, testTenant)
 	if err != nil {
-		t.Fatalf("Health: %v", err)
+		t.Fatalf("HealthPage: %v", err)
 	}
 	for _, h := range health {
 		if h.ProxyID == proxyID {
@@ -516,6 +655,25 @@ func healthOf(t *testing.T, r *fleet.Registry, proxyID string) fleet.ProxyHealth
 	}
 	t.Fatalf("no health row for %s", proxyID)
 	return fleet.ProxyHealth{}
+}
+
+// healthAll is the fleet view whole, read as one page: every tenant these
+// tests build holds fewer proxies than a page.
+func healthAll(ctx context.Context, r *fleet.Registry, tenant store.Tenant) ([]fleet.ProxyHealth, error) {
+	page, err := r.HealthPage(ctx, tenant, store.Page{Limit: store.MaxPageLimit})
+	if err == nil && page.More {
+		err = errors.New("the fleet view is longer than one page")
+	}
+	return page.Rows, err
+}
+
+// rolloutsOf is the rollout view whole, or its drifted view, read as one page.
+func rolloutsOf(ctx context.Context, r *fleet.Registry, tenant store.Tenant, drifted bool) ([]fleet.ConfigRollout, error) {
+	page, err := r.ConfigRolloutPage(ctx, tenant, drifted, store.Page{Limit: store.MaxPageLimit})
+	if err == nil && page.More {
+		err = errors.New("the rollout view is longer than one page")
+	}
+	return page.Rows, err
 }
 
 // A heartbeat that says nothing about capabilities has not withdrawn them; one

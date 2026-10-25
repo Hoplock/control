@@ -85,8 +85,10 @@ type ProxyRepository interface {
 	Upsert(ctx context.Context, tenant Tenant, p Proxy) error
 	// List returns every proxy in the tenant, in id order. This is the
 	// graph load (0006): pathfinding needs the whole fleet at once, and the
-	// fleet is small relative to the estate.
+	// fleet is small relative to the estate. The north-bound list is Page.
 	List(ctx context.Context, tenant Tenant) ([]Proxy, error)
+	// Page returns one page of the tenant's proxies, in id order (M26).
+	Page(ctx context.Context, tenant Tenant, p Page) (Paged[Proxy], error)
 	// GetByKeyFingerprint answers "is this key one of ours" — the chain-leg
 	// question on /v1/auth/cert (proxy D11, 0007). It reads the enrolled
 	// rows themselves, through a column generated from `public_key`, rather
@@ -584,8 +586,13 @@ type ProxyEdgeRepository interface {
 // relay connection open right now (proxy D11).
 type RelayRegistrationRepository interface {
 	// List returns every registration in the tenant, in
-	// (upstream, downstream) order.
+	// (upstream, downstream) order. It is the graph load's.
 	List(ctx context.Context, tenant Tenant) ([]RelayRegistration, error)
+	// ForUpstreams returns the registrations held by these upstream proxies
+	// and no others, in (upstream, downstream) order: the fleet view's read
+	// for one page of proxies (M26), served by the primary key. It takes at
+	// most MaxPageLimit ids; none reads nothing.
+	ForUpstreams(ctx context.Context, tenant Tenant, upstreamProxyIDs []string) ([]RelayRegistration, error)
 	// ReplaceForUpstream makes downstream the complete set of registrations
 	// this upstream is holding, as of at, in one transaction.
 	//
@@ -618,10 +625,26 @@ type ProxyConfigRepository interface {
 	PutState(ctx context.Context, tenant Tenant, s ProxyConfigState) error
 	// GetState returns one proxy's rollout state. Absent is ErrNotFound.
 	GetState(ctx context.Context, tenant Tenant, proxyID string) (ProxyConfigState, error)
-	// ListStates returns every proxy's rollout state, in id order. Drift is
-	// read off it, and silent drift across a fleet is indistinguishable from
-	// a broken rollout.
+	// ListStates returns every proxy's rollout state, in id order. It is the
+	// announcer's whole-tenant read; the north-bound list is PageStates.
 	ListStates(ctx context.Context, tenant Tenant) ([]ProxyConfigState, error)
+	// StatesFor returns the rollout states of these proxies and no others,
+	// in id order: the fleet view's read for one page of proxies (M26),
+	// served by the primary key. A proxy with no state row is absent. It
+	// takes at most MaxPageLimit ids; none reads nothing.
+	//
+	// It reads no desired document, which no fleet view shows:
+	// DesiredDocument is nil.
+	StatesFor(ctx context.Context, tenant Tenant, proxyIDs []string) ([]ProxyConfigState, error)
+	// PageStates returns one page of the rollout view, in id order (M26).
+	// With drifted, the page holds only the states ProxyConfigState.Drifted
+	// selects, read as a predicate in the statement, so a page of drift is a
+	// full page. Silent drift across a fleet is indistinguishable from a
+	// broken rollout.
+	//
+	// It reads no desired document, which no rollout row shows:
+	// DesiredDocument is nil.
+	PageStates(ctx context.Context, tenant Tenant, drifted bool, p Page) (Paged[ProxyConfigState], error)
 	// LockState takes one proxy's state row for the rest of a transaction,
 	// creating it empty when absent. Outside a transaction it is refused.
 	LockState(ctx context.Context, tenant Tenant, proxyID string) (ProxyConfigState, error)

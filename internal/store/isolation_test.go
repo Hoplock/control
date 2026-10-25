@@ -124,6 +124,10 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 			got, err := st.Proxies().ListByZone(ctx, tenantA, "zone-a")
 			return len(got) - 1, err // A's own proxy is expected
 		},
+		"Proxies.Page": func() (int, error) {
+			got, err := st.Proxies().Page(ctx, tenantA, store.Page{Limit: store.MaxPageLimit})
+			return len(got.Rows) - 1, err // A's own proxy is expected
+		},
 		"Grants.ListLive": func() (int, error) {
 			got, err := st.Grants().ListLive(ctx, tenantA, bOnly, now)
 			return len(got), err

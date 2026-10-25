@@ -102,9 +102,9 @@ func TestTwoTenantsWithIdenticalNamesResolveIndependently(t *testing.T) {
 			t.Errorf("%s: path = %v, want %v", tenant, got, want)
 		}
 
-		health, err := r.Health(ctx, tenant)
+		health, err := healthAll(ctx, r, tenant)
 		if err != nil {
-			t.Fatalf("%s: Health: %v", tenant, err)
+			t.Fatalf("%s: HealthPage: %v", tenant, err)
 		}
 		if len(health) != 2 {
 			t.Errorf("%s: fleet view has %d row(s), want 2 — it must not see the other tenant's proxies",

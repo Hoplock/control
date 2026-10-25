@@ -5,6 +5,7 @@ package store_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -488,6 +489,18 @@ func TestFleetRepositoriesDoNotReachAnotherTenant(t *testing.T) {
 	if got, err := st.ProxyConfigs().ListStates(ctx, tenantA); err != nil || len(got) != 1 {
 		t.Errorf("ProxyConfigs.ListStates = %d, %v; want exactly tenant A's one state", len(got), err)
 	}
+	if got, err := st.RelayRegistrations().ForUpstreams(ctx, tenantA, []string{bOnly}); err != nil || len(got) != 0 {
+		t.Errorf("RelayRegistrations.ForUpstreams(%s) = %d, %v; want none of tenant B's", bOnly, len(got), err)
+	}
+	if got, err := st.ProxyConfigs().StatesFor(ctx, tenantA, []string{bOnly}); err != nil || len(got) != 0 {
+		t.Errorf("ProxyConfigs.StatesFor(%s) = %d, %v; want none of tenant B's", bOnly, len(got), err)
+	}
+	for _, drifted := range []bool{false, true} {
+		got, err := st.ProxyConfigs().PageStates(ctx, tenantA, drifted, store.Page{Limit: store.MaxPageLimit})
+		if err != nil || len(got.Rows) != 1 || got.Rows[0].ProxyID != string(tenantA)+"-only" {
+			t.Errorf("ProxyConfigs.PageStates(drifted %t) = %+v, %v; want exactly tenant A's one state", drifted, got.Rows, err)
+		}
+	}
 	for _, tenant := range []store.Tenant{tenantA, tenantB} {
 		v, err := st.ProxyConfigs().GetVersion(ctx, tenant, scope, 1)
 		if err != nil {
@@ -628,5 +641,227 @@ func TestTheAnnouncedMarkerNeverNamesAStaleDocument(t *testing.T) {
 	}
 	if got, _ := st.ProxyConfigs().GetState(ctx, tenantA, "p-a"); got.AnnouncedHash != "h2" {
 		t.Errorf("announced = %q, want h2", got.AnnouncedHash)
+	}
+}
+
+// The fleet view reads relay registrations and states for one page of proxies
+// (M26): ForUpstreams and StatesFor answer for the ids named and no others,
+// and never for the same ids in another tenant (M18).
+func TestTheReadsForAPageOfProxiesReadThoseProxiesAlone(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+
+	// Both tenants hold the same four upstreams, each with two downstreams
+	// and a state; only the hash and the time say which tenant a row is.
+	for i, tenant := range []store.Tenant{tenantA, tenantB} {
+		at := fleetNow().Add(time.Duration(i) * time.Hour)
+		for _, id := range []string{"p-1", "p-2", "p-3", "p-4"} {
+			if err := st.RelayRegistrations().ReplaceForUpstream(ctx, tenant, id,
+				[]string{id + "-down-b", id + "-down-a"}, at); err != nil {
+				t.Fatalf("seed registrations for %s/%s: %v", tenant, id, err)
+			}
+			if err := st.ProxyConfigs().PutState(ctx, tenant, store.ProxyConfigState{
+				ProxyID: id, DesiredVersion: 1, DesiredHash: "h-" + string(tenant),
+				DesiredDocument: json.RawMessage(`{"t":"` + string(tenant) + `"}`), DesiredAt: at,
+			}); err != nil {
+				t.Fatalf("seed state for %s/%s: %v", tenant, id, err)
+			}
+		}
+	}
+
+	regs, err := st.RelayRegistrations().ForUpstreams(ctx, tenantA, []string{"p-4", "p-2", "p-9"})
+	if err != nil {
+		t.Fatalf("ForUpstreams: %v", err)
+	}
+	var got []string
+	for _, reg := range regs {
+		got = append(got, reg.UpstreamProxyID+">"+reg.DownstreamProxyID)
+		if !reg.LastSeenAt.Equal(fleetNow()) {
+			t.Errorf("%s>%s was last seen %v: it is tenant B's row", reg.UpstreamProxyID, reg.DownstreamProxyID, reg.LastSeenAt)
+		}
+	}
+	if want := []string{"p-2>p-2-down-a", "p-2>p-2-down-b", "p-4>p-4-down-a", "p-4>p-4-down-b"}; !slices.Equal(got, want) {
+		t.Errorf("ForUpstreams(p-4, p-2, p-9) = %v, want %v: the named upstreams' alone, in order", got, want)
+	}
+
+	states, err := st.ProxyConfigs().StatesFor(ctx, tenantA, []string{"p-4", "p-2", "p-9"})
+	if err != nil {
+		t.Fatalf("StatesFor: %v", err)
+	}
+	got = got[:0]
+	for _, s := range states {
+		got = append(got, s.ProxyID)
+		if s.DesiredHash != "h-"+string(tenantA) {
+			t.Errorf("%s's state has hash %q: it is tenant B's row", s.ProxyID, s.DesiredHash)
+		}
+		if s.DesiredDocument != nil {
+			t.Errorf("%s's state carries its desired document %s, which no fleet view shows", s.ProxyID, s.DesiredDocument)
+		}
+		if s.DesiredVersion != 1 || !s.DesiredAt.Equal(fleetNow()) {
+			t.Errorf("%s's state lost a column: %+v", s.ProxyID, s)
+		}
+	}
+	if want := []string{"p-2", "p-4"}; !slices.Equal(got, want) {
+		t.Errorf("StatesFor(p-4, p-2, p-9) = %v, want %v: a proxy with no state is absent", got, want)
+	}
+
+	// No ids is no read; more than a page is a whole-tenant read in another
+	// form, and refused (M26).
+	if regs, err := st.RelayRegistrations().ForUpstreams(ctx, tenantA, nil); err != nil || len(regs) != 0 {
+		t.Errorf("ForUpstreams() = %v, %v; want nothing", regs, err)
+	}
+	if states, err := st.ProxyConfigs().StatesFor(ctx, tenantA, nil); err != nil || len(states) != 0 {
+		t.Errorf("StatesFor() = %v, %v; want nothing", states, err)
+	}
+	tooMany := make([]string, store.MaxPageLimit+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("p-%d", i)
+	}
+	if _, err := st.RelayRegistrations().ForUpstreams(ctx, tenantA, tooMany); !store.IsInvalid(err) {
+		t.Errorf("ForUpstreams over more than a page of ids: %v, want KindInvalid", err)
+	}
+	if _, err := st.ProxyConfigs().StatesFor(ctx, tenantA, tooMany); !store.IsInvalid(err) {
+		t.Errorf("StatesFor over more than a page of ids: %v, want KindInvalid", err)
+	}
+	if _, err := st.ProxyConfigs().StatesFor(ctx, tenantA, tooMany[:store.MaxPageLimit]); err != nil {
+		t.Errorf("StatesFor over a page of ids: %v", err)
+	}
+}
+
+// DRIFT IS ONE RULE (M26, proxy D18). The drifted page reads it as a
+// predicate in its statement, and ProxyConfigState.Drifted reads it in Go; the
+// table holds every state the two could disagree on, and both must say the
+// same of each. A walk of the drifted view then visits exactly the rows Drifted
+// selects, a page at a time, and every page but the last is full.
+func TestTheDriftedPageIsExactlyWhatDriftedSelects(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+
+	type running struct {
+		state, wireVersion string
+		version            int64
+		hash               string
+	}
+	cases := []struct {
+		name    string
+		version int64
+		hash    string
+		report  *running // nil: never reported
+		drifted bool
+	}{
+		{name: "nothing published, never reported"},
+		{name: "nothing published, on its bootstrap file", report: &running{state: "applied"}},
+		{name: "nothing published, rejected", report: &running{state: "rejected"}},
+		{name: "nothing published, running a document", report: &running{state: "applied", version: 3, hash: "h3"}},
+		{name: "published, never reported", version: 1, hash: "h1", drifted: true},
+		{name: "applied on the desired document", version: 1, hash: "h1", report: &running{state: "applied", version: 1, hash: "h1"}},
+		{name: "applied on an older document", version: 2, hash: "h2", report: &running{state: "applied", version: 1, hash: "h1"}, drifted: true},
+		{name: "applied, the version but not the hash", version: 2, hash: "h2", report: &running{state: "applied", version: 2, hash: "hx"}, drifted: true},
+		{name: "applied, the hash but not the version", version: 2, hash: "h2", report: &running{state: "applied", version: 1, hash: "h2"}, drifted: true},
+		{name: "applied on its bootstrap file", version: 1, hash: "h1", report: &running{state: "applied"}, drifted: true},
+		{name: "a version this server could not parse", version: 1, hash: "h1", report: &running{state: "applied", wireVersion: "1"}, drifted: true},
+		{name: "pending_restart naming the desired document", version: 1, hash: "h1", report: &running{state: "pending_restart", version: 1, hash: "h1"}, drifted: true},
+		{name: "rejected naming the desired document", version: 1, hash: "h1", report: &running{state: "rejected", version: 1, hash: "h1"}, drifted: true},
+		{name: "fetch_failed naming the desired document", version: 1, hash: "h1", report: &running{state: "fetch_failed", version: 1, hash: "h1"}, drifted: true},
+		{name: "a state spelt otherwise", version: 1, hash: "h1", report: &running{state: "Applied", version: 1, hash: "h1"}, drifted: true},
+		{name: "a state with a trailing space", version: 1, hash: "h1", report: &running{state: "applied ", version: 1, hash: "h1"}, drifted: true},
+		{name: "an empty desired hash, matched", version: 1, report: &running{state: "applied", version: 1}},
+		{name: "an empty desired hash, not matched", version: 1, report: &running{state: "applied", version: 1, hash: "h1"}, drifted: true},
+		// Nothing writes one; it is where "published" as `> 0` and as `<> 0`
+		// would part.
+		{name: "a negative desired version", version: -1, hash: "h1", report: &running{state: "applied", version: -1, hash: "h1"}},
+		{name: "a negative desired version, not matched", version: -1, hash: "h1", report: &running{state: "applied", version: 1, hash: "h1"}, drifted: true},
+	}
+
+	// Ids interleave the two outcomes, so a page of drift can only be full
+	// if the predicate is in the statement.
+	var want []string
+	byID := map[string]string{}
+	for i, c := range cases {
+		id := fmt.Sprintf("p-%02d", i)
+		byID[id] = c.name
+		if err := st.ProxyConfigs().PutState(ctx, tenantA, store.ProxyConfigState{
+			ProxyID: id, DesiredVersion: c.version, DesiredHash: c.hash, DesiredDocument: json.RawMessage(`{}`),
+		}); err != nil {
+			t.Fatalf("%s: PutState: %v", c.name, err)
+		}
+		if c.report != nil {
+			wire := c.report.wireVersion
+			if wire == "" && c.report.version != 0 {
+				wire = fmt.Sprintf("v%d", c.report.version)
+			}
+			// What the proxy said, beside what this server parsed of it:
+			// the rule reads the parsed columns.
+			rep := store.ConfigReport{
+				RunningVersion: wire, RunningHash: c.report.hash, DesiredVersion: "v1", DesiredHash: "sha256:h1",
+				State: c.report.state, LastHeardAt: fleetNow(),
+			}
+			if err := st.ProxyConfigs().PutReport(ctx, tenantA, id, rep, c.report.version, c.report.hash); err != nil {
+				t.Fatalf("%s: PutReport: %v", c.name, err)
+			}
+		}
+		state, err := st.ProxyConfigs().GetState(ctx, tenantA, id)
+		if err != nil {
+			t.Fatalf("%s: GetState: %v", c.name, err)
+		}
+		if state.Drifted() != c.drifted {
+			t.Errorf("%s: Drifted() = %t, want %t", c.name, state.Drifted(), c.drifted)
+		}
+		if c.drifted {
+			want = append(want, id)
+		}
+	}
+	// Tenant B's identical ids are all drifted; none may reach A's view.
+	for id := range byID {
+		if err := st.ProxyConfigs().PutState(ctx, tenantB, store.ProxyConfigState{ProxyID: id, DesiredVersion: 1, DesiredHash: "h1"}); err != nil {
+			t.Fatalf("seed tenant B: %v", err)
+		}
+	}
+
+	for _, limit := range []int{1, 2, 3, store.MaxPageLimit} {
+		var seen []string
+		p := store.Page{Limit: limit}
+		for pages := 0; ; pages++ {
+			if pages > len(cases) {
+				t.Fatalf("limit %d: the walk did not end", limit)
+			}
+			page, err := st.ProxyConfigs().PageStates(ctx, tenantA, true, p)
+			if err != nil {
+				t.Fatalf("limit %d: PageStates: %v", limit, err)
+			}
+			if page.More && len(page.Rows) != limit {
+				t.Fatalf("limit %d: a drifted page that continues holds %d rows, want %d: drift was filtered after the page", limit, len(page.Rows), limit)
+			}
+			for _, s := range page.Rows {
+				if !s.Drifted() {
+					t.Errorf("limit %d: the drifted page holds %s (%s), which is caught up", limit, s.ProxyID, byID[s.ProxyID])
+				}
+				if s.DesiredDocument != nil {
+					t.Errorf("limit %d: %s carries its desired document, which no rollout row shows", limit, s.ProxyID)
+				}
+				seen = append(seen, s.ProxyID)
+			}
+			if !page.More {
+				break
+			}
+			p.After = []any{page.Rows[len(page.Rows)-1].ProxyID}
+		}
+		if !slices.Equal(seen, want) {
+			var missing []string
+			for _, id := range want {
+				if !slices.Contains(seen, id) {
+					missing = append(missing, byID[id])
+				}
+			}
+			t.Errorf("limit %d: the drifted walk saw %v, want %v (missed: %v)", limit, seen, want, missing)
+		}
+	}
+
+	// The whole view holds every state, drifted or not.
+	all, err := st.ProxyConfigs().PageStates(ctx, tenantA, false, store.Page{Limit: store.MaxPageLimit})
+	if err != nil || len(all.Rows) != len(cases) || all.More {
+		t.Errorf("the whole view = %d rows (more %t), %v; want all %d", len(all.Rows), all.More, err, len(cases))
 	}
 }

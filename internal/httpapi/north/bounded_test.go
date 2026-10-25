@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/httpapi/north"
@@ -31,17 +32,40 @@ import (
 // A host's routes are not classified. Control cannot see which of them is a
 // list, so nothing here enforces the shape on them (M26.7); `server` offers it.
 
-// pagedList is one list answering M26's shape, and how to fill it.
+// pagedList is one view of a list answering M26's shape, and how to fill it.
+// A route whose filter makes two views of one list names both, and each is
+// walked: a cursor from one is refused on the other.
 type pagedList struct {
-	member string // the list's member in the answer
-	path   string // the list in tenant-a, with no filter
-	// seed stores at least two items in tenant-a and returns how many the
-	// list then holds.
+	member string     // the list's member in the answer
+	path   string     // the list in tenant-a
+	query  url.Values // the view's filter; nil for the whole list
+	// seed stores at least two items of the view in tenant-a and returns how
+	// many the view then holds.
 	seed func(t *testing.T, f *serverFixture) int
 }
 
-var pagedLists = map[string]pagedList{
-	"GET /api/v1/tenants/{tenant}/targets": {
+// name is the view as a test names it: its route and its filter.
+func (l pagedList) name(route string) string {
+	if len(l.query) == 0 {
+		return route
+	}
+	return route + "?" + l.query.Encode()
+}
+
+// at is the view's path with these parameters beside its filter.
+func (l pagedList) at(q url.Values) string {
+	all := url.Values{}
+	for k, v := range l.query {
+		all[k] = slices.Clone(v)
+	}
+	for k, v := range q {
+		all[k] = slices.Clone(v)
+	}
+	return withQuery(l.path, all)
+}
+
+var pagedLists = map[string][]pagedList{
+	"GET /api/v1/tenants/{tenant}/targets": {{
 		member: "targets", path: "/api/v1/tenants/tenant-a/targets",
 		seed: func(t *testing.T, f *serverFixture) int {
 			t.Helper()
@@ -57,8 +81,8 @@ var pagedLists = map[string]pagedList{
 			}
 			return len(got.Rows)
 		},
-	},
-	"GET /api/v1/tenants/{tenant}/subjects": {
+	}},
+	"GET /api/v1/tenants/{tenant}/subjects": {{
 		member: "subjects", path: "/api/v1/tenants/tenant-a/subjects",
 		seed: func(t *testing.T, f *serverFixture) int {
 			t.Helper()
@@ -73,7 +97,75 @@ var pagedLists = map[string]pagedList{
 			}
 			return len(got.Rows)
 		},
+	}},
+	"GET /api/v1/tenants/{tenant}/proxies": {{
+		member: "proxies", path: "/api/v1/tenants/tenant-a/proxies",
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			for _, id := range []string{"p-3", "p-1", "p-2"} {
+				if err := f.st.Proxies().Upsert(t.Context(), "tenant-a", storetest.Proxy(id, "zone-a")); err != nil {
+					t.Fatalf("seed proxy %s: %v", id, err)
+				}
+			}
+			got, err := f.st.Proxies().Page(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
+			if err != nil || got.More {
+				t.Fatalf("count proxies: %v (more=%t)", err, got.More)
+			}
+			return len(got.Rows)
+		},
+	}},
+	// The rollout view and its drifted view: each seed puts caught-up and
+	// drifted states side by side, so a view that ignored its filter walks
+	// more items than it holds.
+	"GET /api/v1/tenants/{tenant}/fleet/config/rollouts": {
+		{
+			member: "rollouts", path: "/api/v1/tenants/tenant-a/fleet/config/rollouts",
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedRollouts(t, f, "tenant-a", map[string]bool{"r-1": true, "r-2": false, "r-3": true})
+				return countRollouts(t, f, false)
+			},
+		},
+		{
+			member: "rollouts", path: "/api/v1/tenants/tenant-a/fleet/config/rollouts",
+			query: url.Values{"drifted": {"true"}},
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedRollouts(t, f, "tenant-a", map[string]bool{"d-1": true, "d-2": false, "d-3": true, "d-4": false, "d-5": true})
+				return countRollouts(t, f, true)
+			},
+		},
 	},
+}
+
+// seedRollouts stores a published configuration state per proxy, drifted
+// (never reported) or caught up (applied on the desired document).
+func seedRollouts(t *testing.T, f *serverFixture, tenant store.Tenant, drifted map[string]bool) {
+	t.Helper()
+	for id, d := range drifted {
+		if err := f.st.ProxyConfigs().PutState(t.Context(), tenant, store.ProxyConfigState{
+			ProxyID: id, DesiredVersion: 1, DesiredHash: string(tenant) + "-h1", DesiredDocument: json.RawMessage(`{}`),
+		}); err != nil {
+			t.Fatalf("seed state %s: %v", id, err)
+		}
+		if d {
+			continue
+		}
+		if err := f.st.ProxyConfigs().PutReport(t.Context(), tenant, id, store.ConfigReport{
+			State: "applied", RunningVersion: "v1", RunningHash: "sha256:" + string(tenant) + "-h1", LastHeardAt: time.Now(),
+		}, 1, string(tenant)+"-h1"); err != nil {
+			t.Fatalf("seed report %s: %v", id, err)
+		}
+	}
+}
+
+func countRollouts(t *testing.T, f *serverFixture, drifted bool) int {
+	t.Helper()
+	got, err := f.st.ProxyConfigs().PageStates(t.Context(), "tenant-a", drifted, store.Page{Limit: store.MaxPageLimit})
+	if err != nil || got.More {
+		t.Fatalf("count rollouts (drifted %t): %v (more=%t)", drifted, err, got.More)
+	}
+	return len(got.Rows)
 }
 
 // signalLists are the lists bounded by one object (M26.3): each keeps its
@@ -110,8 +202,6 @@ var exemptRoutes = map[string]string{
 // that takes each (0028's inventory). Each chunk deletes its rows and moves
 // them to the map above that rules them; 0037 deletes this map.
 var pendingBounded = map[string]string{
-	"GET /api/v1/tenants/{tenant}/proxies":                               "0031",
-	"GET /api/v1/tenants/{tenant}/fleet/config/rollouts":                 "0031",
 	"GET /api/v1/tenants/{tenant}/fleet/algorithms":                      "0032",
 	"GET /api/v1/tenants/{tenant}/fleet/target-observations":             "0032",
 	"GET /api/v1/tenants/{tenant}/grants":                                "0033",
@@ -134,7 +224,7 @@ var pendingBounded = map[string]string{
 
 // listClasses is the four maps, so the check can be run over another set.
 type listClasses struct {
-	paged   map[string]pagedList
+	paged   map[string][]pagedList
 	signal  map[string]string
 	exempt  map[string]string
 	pending map[string]string
@@ -277,8 +367,14 @@ func TestEveryListIsBoundedOrSaysWhyNot(t *testing.T) {
 	token := adminToken(t, f, "tenant-a")
 
 	firstNext := map[string]string{}
-	for route, l := range pagedLists {
-		t.Run(route, func(t *testing.T) {
+	views := map[string]pagedList{}
+	for route, ls := range pagedLists {
+		for _, l := range ls {
+			views[l.name(route)] = l
+		}
+	}
+	for view, l := range views {
+		t.Run(view, func(t *testing.T) {
 			want := l.seed(t, f)
 			if want < 2 {
 				t.Fatalf("seed left %d items; a walk of one page proves nothing about the next", want)
@@ -286,13 +382,13 @@ func TestEveryListIsBoundedOrSaysWhyNot(t *testing.T) {
 
 			// 1–3: every refusal is the grammar every malformed parameter
 			// uses, never a clamp (M26.1, M26.2, M21).
-			expectInvalid(t, f.do(t, "GET", withQuery(l.path, url.Values{"limit": {"10001"}}), token, nil),
+			expectInvalid(t, f.do(t, "GET", l.at(url.Values{"limit": {"10001"}}), token, nil),
 				"limit", access.ProblemExceedsMaximum, "10000")
 			for _, bad := range []string{"0", "x"} {
-				expectInvalid(t, f.do(t, "GET", withQuery(l.path, url.Values{"limit": {bad}}), token, nil),
+				expectInvalid(t, f.do(t, "GET", l.at(url.Values{"limit": {bad}}), token, nil),
 					"limit", access.ProblemInvalid, "")
 			}
-			expectInvalid(t, f.do(t, "GET", withQuery(l.path, url.Values{"after": {"not-a-cursor"}}), token, nil),
+			expectInvalid(t, f.do(t, "GET", l.at(url.Values{"after": {"not-a-cursor"}}), token, nil),
 				"after", access.ProblemInvalid, "")
 
 			// 4: a walk one item at a time visits every item exactly once.
@@ -302,9 +398,9 @@ func TestEveryListIsBoundedOrSaysWhyNot(t *testing.T) {
 				if pages > want {
 					t.Fatalf("the walk ran past %d pages for %d items", pages, want)
 				}
-				p := readListPage(t, f.do(t, "GET", withQuery(l.path, q), token, nil), l.member)
+				p := readListPage(t, f.do(t, "GET", l.at(q), token, nil), l.member)
 				if pages == 0 {
-					firstNext[route] = p.next
+					firstNext[view] = p.next
 				}
 				if len(p.items) != 1 {
 					t.Fatalf("page %d holds %d items, want 1", pages, len(p.items))
@@ -328,15 +424,16 @@ func TestEveryListIsBoundedOrSaysWhyNot(t *testing.T) {
 		})
 	}
 
-	// 5: a cursor is bound to its list. One list's position, presented to
-	// another, is refused rather than misread.
+	// 5: a cursor is bound to its list and its filter. One view's position,
+	// presented to another list or to another view of its own, is refused
+	// rather than misread.
 	for from, next := range firstNext {
-		for to, l := range pagedLists {
+		for to, l := range views {
 			if to == from {
 				continue
 			}
 			t.Run(from+" → "+to, func(t *testing.T) {
-				expectInvalid(t, f.do(t, "GET", withQuery(l.path, url.Values{"after": {next}}), token, nil),
+				expectInvalid(t, f.do(t, "GET", l.at(url.Values{"after": {next}}), token, nil),
 					"after", access.ProblemInvalid, "")
 			})
 		}
@@ -398,7 +495,7 @@ func TestTheListCheckFailsOnARouteNobodyClassified(t *testing.T) {
 	if got := reasonless.problems(routes); len(got) != 1 || !strings.Contains(got[0], "exempt with no reason") {
 		t.Errorf("an exemption with no reason: %v", got)
 	}
-	chunkless := listClasses{paged: c.paged, signal: c.signal, exempt: c.exempt, pending: withEntry(c.pending, "GET /api/v1/tenants/{tenant}/proxies", "later")}
+	chunkless := listClasses{paged: c.paged, signal: c.signal, exempt: c.exempt, pending: withEntry(c.pending, "GET /api/v1/tenants/{tenant}/fleet/algorithms", "later")}
 	if got := chunkless.problems(routes); len(got) != 1 || !strings.Contains(got[0], "not a four-digit chunk") {
 		t.Errorf("a pending list with no chunk: %v", got)
 	}
@@ -490,6 +587,208 @@ func TestACursorFromOneTenantContinuesAnothersList(t *testing.T) {
 	}
 }
 
+// The fleet's two lists (0031). The fleet view's `liveness` and the rollout
+// view's `fleet_owned_keys` describe the list rather than the page, so every
+// page carries them, the last and an empty one included (M26.3).
+func TestTheFleetListsDescribeThemselvesOnEveryPage(t *testing.T) {
+	f := newServer(t)
+	token := adminToken(t, f, "tenant-a")
+	for _, id := range []string{"p-1", "p-2", "p-3"} {
+		if err := f.st.Proxies().Upsert(t.Context(), "tenant-a", storetest.Proxy(id, "zone-a")); err != nil {
+			t.Fatalf("seed proxy %s: %v", id, err)
+		}
+	}
+	seedRollouts(t, f, "tenant-a", map[string]bool{"p-1": true, "p-2": false, "p-3": true})
+
+	for path, member := range map[string]string{
+		"/api/v1/tenants/tenant-a/proxies":                            "liveness",
+		"/api/v1/tenants/tenant-a/fleet/config/rollouts":              "fleet_owned_keys",
+		"/api/v1/tenants/tenant-a/fleet/config/rollouts?drifted=true": "fleet_owned_keys",
+		"/api/v1/tenants/tenant-b/proxies":                            "liveness",
+		"/api/v1/tenants/tenant-b/fleet/config/rollouts":              "fleet_owned_keys",
+	} {
+		t.Run(path, func(t *testing.T) {
+			tok := token
+			if strings.Contains(path, "tenant-b") {
+				tok = adminToken(t, f, "tenant-b") // an empty list
+			}
+			sep := "?"
+			if strings.Contains(path, "?") {
+				sep = "&"
+			}
+			var first string
+			for next, pages := "", 0; ; pages++ {
+				if pages > 3 {
+					t.Fatal("the walk ran past three pages")
+				}
+				q := sep + "limit=2"
+				if next != "" {
+					q += "&after=" + next
+				}
+				resp := f.do(t, "GET", path+q, tok, nil)
+				var body map[string]json.RawMessage
+				if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&body) != nil {
+					t.Fatalf("page %d answered %d", pages, resp.StatusCode)
+				}
+				described := string(body[member])
+				if described == "" || described == "null" {
+					t.Fatalf("page %d has no %s: %v", pages, member, body)
+				}
+				if first == "" {
+					first = described
+				} else if described != first {
+					t.Errorf("page %d's %s is %s, page 0's was %s: it describes the list, not the page", pages, member, described, first)
+				}
+				var truncated bool
+				_ = json.Unmarshal(body["truncated"], &truncated)
+				if !truncated {
+					break
+				}
+				_ = json.Unmarshal(body["next"], &next)
+			}
+		})
+	}
+}
+
+// The drifted view is drift read in the store (0031): every page holds its
+// limit unless it is the last, no row on it is caught up, and a walk of it
+// visits exactly the proxies that have not caught up. A `drifted` other than
+// `true` is the whole view.
+func TestADriftedPageHoldsOnlyDriftAndIsFull(t *testing.T) {
+	f := newServer(t)
+	token := adminToken(t, f, "tenant-a")
+	drifted := map[string]bool{}
+	for i := range 9 {
+		drifted[fmt.Sprintf("p-%d", i)] = i%3 != 1 // caught-up rows sit between drifted ones
+	}
+	seedRollouts(t, f, "tenant-a", drifted)
+	// Nothing published is never drift (0021).
+	if err := f.st.ProxyConfigs().PutState(t.Context(), "tenant-a", store.ProxyConfigState{ProxyID: "p-9"}); err != nil {
+		t.Fatalf("seed p-9: %v", err)
+	}
+	var want []string
+	for id, d := range drifted {
+		if d {
+			want = append(want, id)
+		}
+	}
+	slices.Sort(want)
+
+	base := "/api/v1/tenants/tenant-a/fleet/config/rollouts"
+	var seen []string
+	q := url.Values{"drifted": {"true"}, "limit": {"2"}}
+	for pages := 0; ; pages++ {
+		if pages > len(want) {
+			t.Fatal("the drifted walk did not end")
+		}
+		p := readListPage(t, f.do(t, "GET", withQuery(base, q), token, nil), "rollouts")
+		if p.truncated && len(p.items) != 2 {
+			t.Fatalf("drifted page %d holds %d rows and continues: drift was filtered after the page", pages, len(p.items))
+		}
+		for _, item := range p.items {
+			var row struct {
+				ProxyID        string `json:"proxy_id"`
+				DesiredVersion string `json:"desired_version"`
+				CaughtUp       bool   `json:"caught_up"`
+			}
+			if err := json.Unmarshal(item, &row); err != nil {
+				t.Fatalf("row %s: %v", item, err)
+			}
+			if row.CaughtUp || row.DesiredVersion == "" {
+				t.Errorf("the drifted view holds %s, which is not drift", item)
+			}
+			seen = append(seen, row.ProxyID)
+		}
+		if !p.truncated {
+			break
+		}
+		q.Set("after", p.next)
+	}
+	if !slices.Equal(seen, want) {
+		t.Errorf("the drifted walk saw %v, want %v", seen, want)
+	}
+
+	for _, other := range []string{"false", "yes", ""} {
+		p := readListPage(t, f.do(t, "GET", withQuery(base, url.Values{"drifted": {other}}), token, nil), "rollouts")
+		if len(p.items) != len(drifted)+1 || p.truncated {
+			t.Errorf("?drifted=%s answered %d rows (truncated %t), want the whole view's %d", other, len(p.items), p.truncated, len(drifted)+1)
+		}
+	}
+}
+
+// Two tenants (M18): neither fleet list leaks across, from any cursor. Both
+// tenants hold identically named proxies and states; a position from
+// tenant-a's view continues tenant-b's with tenant-b's rows alone.
+func TestNeitherFleetListLeaksAcrossTenantsFromAnyCursor(t *testing.T) {
+	f := newServer(t)
+	for _, tenant := range []store.Tenant{"tenant-a", "tenant-b"} {
+		zone := "zone-" + strings.TrimPrefix(string(tenant), "tenant-")
+		for _, id := range []string{"p-1", "p-2", "p-3", "p-4"} {
+			if err := f.st.Proxies().Upsert(t.Context(), tenant, storetest.Proxy(id, zone)); err != nil {
+				t.Fatalf("seed %s/%s: %v", tenant, id, err)
+			}
+		}
+		seedRollouts(t, f, tenant, map[string]bool{"p-1": true, "p-2": false, "p-3": true, "p-4": true})
+	}
+	token := adminToken(t, f, "tenant-a", "tenant-b")
+
+	// whose names the tenant a row belongs to, from what each list shows.
+	whose := map[string]func(json.RawMessage) string{
+		"proxies": func(item json.RawMessage) string {
+			var v struct{ ProxyID, Zone string }
+			_ = json.Unmarshal(item, &v)
+			return v.ProxyID + "@" + strings.Replace(v.Zone, "zone-", "tenant-", 1)
+		},
+		"rollouts": func(item json.RawMessage) string {
+			var v struct {
+				ProxyID     string `json:"proxy_id"`
+				DesiredHash string `json:"desired_hash"`
+			}
+			_ = json.Unmarshal(item, &v)
+			tenant, _, _ := strings.Cut(strings.TrimPrefix(v.DesiredHash, "sha256:"), "-h1")
+			return v.ProxyID + "@" + tenant
+		},
+	}
+	for _, view := range []struct{ path, member, query string }{
+		{"proxies", "proxies", ""},
+		{"fleet/config/rollouts", "rollouts", ""},
+		{"fleet/config/rollouts", "rollouts", "drifted=true&"},
+	} {
+		t.Run(view.path+"?"+view.query, func(t *testing.T) {
+			at := func(tenant, rest string) string {
+				return "/api/v1/tenants/" + tenant + "/" + view.path + "?" + view.query + rest
+			}
+			first := readListPage(t, f.do(t, "GET", at("tenant-a", "limit=1"), token, nil), view.member)
+			if !first.truncated {
+				t.Fatal("tenant-a's first page of one does not continue")
+			}
+			if got := whose[view.member](first.items[0]); got != "p-1@tenant-a" {
+				t.Fatalf("tenant-a's first row is %s, want p-1@tenant-a", got)
+			}
+			var rows []string
+			for next := first.next; ; {
+				p := readListPage(t, f.do(t, "GET", at("tenant-b", "limit=1&after="+next), token, nil), view.member)
+				for _, item := range p.items {
+					rows = append(rows, whose[view.member](item))
+				}
+				if !p.truncated {
+					break
+				}
+				next = p.next
+			}
+			for _, row := range rows {
+				if !strings.HasSuffix(row, "@tenant-b") || strings.HasPrefix(row, "p-1@") {
+					t.Errorf("tenant-b after tenant-a's p-1 answered %v: only tenant-b's rows, after p-1", rows)
+					break
+				}
+			}
+			if len(rows) == 0 {
+				t.Error("tenant-b after tenant-a's p-1 answered nothing")
+			}
+		})
+	}
+}
+
 // The cursor binds the filters the reader applied: one minted under a label
 // filter does not continue the list under another, and it does continue the
 // same filter however the query spells it.
@@ -524,7 +823,8 @@ func TestATargetCursorIsBoundToItsLabelFilter(t *testing.T) {
 // A failure while a page is read is a 5xx with its correlation id, never the
 // rows read before it answered as though the list had ended (M26.6, M11). Each
 // list here is given a row its reader cannot scan, after one it can, so the
-// statement fails part-way through the page.
+// statement fails part-way through the page. The fleet view's page is three
+// reads, and the row is in the second: a read that fails fails the page.
 func TestAFailureDuringAListPageIsAnOutageNeverAShortPage(t *testing.T) {
 	f := newServer(t)
 	token := adminToken(t, f, "tenant-a")
@@ -537,6 +837,16 @@ func TestAFailureDuringAListPageIsAnOutageNeverAShortPage(t *testing.T) {
 			INSERT INTO subjects (tenant, subject_id, source, claims)
 			VALUES ('tenant-a', 'u-1', 'local', '{}'),
 			       ('tenant-a', 'u-2', 'local', '{"sub": 1}')`,
+		"/api/v1/tenants/tenant-a/proxies": `
+			INSERT INTO proxies (tenant, proxy_id, zone, public_key, enrollment_state)
+			VALUES ('tenant-a', 'u-1', 'zone-a', 'k-1', 'enrolled'),
+			       ('tenant-a', 'u-2', 'zone-a', 'k-2', 'enrolled');
+			INSERT INTO relay_registrations (tenant, upstream_proxy_id, downstream_proxy_id, last_seen_at)
+			VALUES ('tenant-a', 'u-2', 'u-2-down', 'infinity')`,
+		"/api/v1/tenants/tenant-a/fleet/config/rollouts?drifted=true": `
+			INSERT INTO proxy_config_state (tenant, proxy_id, desired_version, restart_required)
+			VALUES ('tenant-a', 'u-1', 1, '{}'),
+			       ('tenant-a', 'u-2', 1, '{NULL}')`,
 	} {
 		t.Run(route, func(t *testing.T) {
 			if _, err := f.st.Pool().Exec(t.Context(), unscannable); err != nil {

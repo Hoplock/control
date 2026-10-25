@@ -124,7 +124,7 @@ func TestDriftIsDerivedFromTheReport(t *testing.T) {
 
 	rollout := func() fleet.ConfigRollout {
 		t.Helper()
-		all, err := r.ConfigRollouts(ctx, testTenant)
+		all, err := rolloutsOf(ctx, r, testTenant, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -176,7 +176,7 @@ func TestDriftIsDerivedFromTheReport(t *testing.T) {
 	if row := rollout(); !row.CaughtUp {
 		t.Errorf("applied on the desired document = %+v, want caught up", row)
 	}
-	if drift, _ := r.ConfigDrift(ctx, testTenant); len(drift) != 0 {
+	if drift, _ := rolloutsOf(ctx, r, testTenant, true); len(drift) != 0 {
 		t.Errorf("drift = %+v after the proxy caught up", drift)
 	}
 	if h := healthOf(t, r, "p-a"); !h.Config.CaughtUp {
@@ -476,7 +476,7 @@ func TestNothingPublishedIsNeitherAnnouncedNorDrift(t *testing.T) {
 		t.Errorf("announced %+v (%v) for a proxy with nothing published", tried, err)
 	}
 	report(t, r, "p-a", contract.ProxyConfigReport{State: contract.ConfigStateApplied}, c.now())
-	if drift, err := r.ConfigDrift(ctx, testTenant); err != nil || len(drift) != 0 {
+	if drift, err := rolloutsOf(ctx, r, testTenant, true); err != nil || len(drift) != 0 {
 		t.Errorf("drift = %+v (%v) for a proxy on its bootstrap file with nothing published", drift, err)
 	}
 
@@ -489,7 +489,7 @@ func TestNothingPublishedIsNeitherAnnouncedNorDrift(t *testing.T) {
 	if got := pub.announced(); len(got) != 1 || pub.events[0].Version != doc.Version || pub.events[0].Hash != doc.Hash {
 		t.Errorf("announced %v %+v, want the one document the fetch serves (%s)", got, pub.events, doc.Version)
 	}
-	if drift, _ := r.ConfigDrift(ctx, testTenant); len(drift) != 1 {
+	if drift, _ := rolloutsOf(ctx, r, testTenant, true); len(drift) != 1 {
 		t.Errorf("drift = %+v, want p-a behind its first document", drift)
 	}
 }
@@ -523,7 +523,7 @@ func TestAnAnnouncementLostInAnyTenantIsRetriedUntilTheProxyConverges(t *testing
 	if _, err := r.RecordConfigReport(ctx, tenantB, "p-b", applied(state), c.now()); err != nil {
 		t.Fatal(err)
 	}
-	if drift, err := r.ConfigDrift(ctx, tenantB); err != nil || len(drift) != 0 {
+	if drift, err := rolloutsOf(ctx, r, tenantB, true); err != nil || len(drift) != 0 {
 		t.Errorf("drift = %+v (%v) after the proxy applied the retried document", drift, err)
 	}
 }

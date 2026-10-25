@@ -746,20 +746,30 @@ func (s *Server) handleClaimMappingPut(w http.ResponseWriter, r *http.Request) {
 // proxies: the fleet view, enrollment and withdrawal (0006)
 // ---------------------------------------------------------------------------
 
+// proxyList is the fleet view (M26): by proxy id, the primary key.
+var proxyList = list{name: "proxies", key: []keyKind{keyString}}
+
+// handleProxyList is the fleet view, one page at a time (M26). `liveness`, the
+// staleness rule every row was judged by, is the same on every page.
 func (s *Server) handleProxyList(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
-	health, err := s.fleet.Health(r.Context(), tenant)
+	p, ok := readPage(w, r, proxyList)
+	if !ok {
+		return
+	}
+	page, err := s.fleet.HealthPage(r.Context(), tenant, p.Page)
 	if err != nil {
 		s.fail(w, r, "fleet health", err)
 		return
 	}
-	if health == nil {
-		health = []fleet.ProxyHealth{}
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].ProxyID}
 	}
-	answer(w, http.StatusOK, map[string]any{"proxies": health, "liveness": s.fleet.Liveness()})
+	s.answerPage(w, r, p, "proxies", page.Rows, page.More, last, map[string]any{"liveness": s.fleet.Liveness()})
 }
 
 type enrollmentBody struct {
@@ -994,30 +1004,38 @@ func (s *Server) configFailure(w http.ResponseWriter, r *http.Request, err error
 	}
 }
 
-// handleConfigRollouts is the rollout view: every proxy's desired and running
-// document and its reported state. `?drifted=true` narrows it to drift.
+// rolloutList is the rollout view (M26): by proxy id, the primary key. Its one
+// filter is `drifted=true`, so a cursor from one view is refused on the other.
+var rolloutList = list{name: "rollouts", key: []keyKind{keyString}}
+
+// handleConfigRollouts is the rollout view, one page at a time (M26): each
+// proxy's desired and running document and its reported state.
+// `?drifted=true` narrows it to drift, and any other value of it is the whole
+// view. `fleet_owned_keys` is the same on every page.
 func (s *Server) handleConfigRollouts(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
-	var (
-		rows []fleet.ConfigRollout
-		err  error
-	)
-	if r.URL.Query().Get("drifted") == "true" {
-		rows, err = s.fleet.ConfigDrift(r.Context(), tenant)
-	} else {
-		rows, err = s.fleet.ConfigRollouts(r.Context(), tenant)
+	drifted := r.URL.Query().Get("drifted") == "true"
+	var filters []string
+	if drifted {
+		filters = append(filters, "drifted=true")
 	}
+	p, ok := readPage(w, r, rolloutList, filters...)
+	if !ok {
+		return
+	}
+	page, err := s.fleet.ConfigRolloutPage(r.Context(), tenant, drifted, p.Page)
 	if err != nil {
 		s.fail(w, r, "configuration rollouts", err)
 		return
 	}
-	if rows == nil {
-		rows = []fleet.ConfigRollout{}
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].ProxyID}
 	}
-	answer(w, http.StatusOK, map[string]any{"rollouts": rows, "fleet_owned_keys": fleet.FleetOwnedKeys()})
+	s.answerPage(w, r, p, "rollouts", page.Rows, page.More, last, map[string]any{"fleet_owned_keys": fleet.FleetOwnedKeys()})
 }
 
 // ---------------------------------------------------------------------------
