@@ -62,6 +62,16 @@ func checkPage(op string, o order, p Page) error {
 	return nil
 }
 
+// checkPageIDs refuses a read for the rows of one page's items that names more
+// items than a page may hold: such a read is a whole-tenant read in another
+// form, and M26 bounds it by the page it serves.
+func checkPageIDs(op string, ids []string) error {
+	if len(ids) > MaxPageLimit {
+		return invalid(op, fmt.Sprintf("%d ids is more than a page of %d", len(ids), MaxPageLimit))
+	}
+	return nil
+}
+
 // after renders the keyset predicate that continues the list after p.After,
 // as a row comparison in the list's direction — `(c1, c2) > ($n, $m)`, or `<`
 // for a list read newest first — appending its arguments to args. It is ""

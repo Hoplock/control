@@ -220,6 +220,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return s.Proxies().Upsert(ctx, "", Proxy{ID: "p", State: EnrollmentEnrolled})
 		},
 		"Proxies.List": func() error { _, err := s.Proxies().List(ctx, ""); return err },
+		"Proxies.Page": func() error { _, err := s.Proxies().Page(ctx, "", Page{Limit: 1}); return err },
 		"Proxies.RecordHealth": func() error {
 			return s.Proxies().RecordHealth(ctx, "", ProxyHealthReport{ProxyID: "p", At: nowForTest()})
 		},
@@ -342,6 +343,10 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return s.ProxyEdges().ReplaceForProxy(ctx, "", "p", nil)
 		},
 		"RelayRegistrations.List": func() error { _, err := s.RelayRegistrations().List(ctx, ""); return err },
+		"RelayRegistrations.ForUpstreams": func() error {
+			_, err := s.RelayRegistrations().ForUpstreams(ctx, "", []string{"p"})
+			return err
+		},
 		"RelayRegistrations.ReplaceForUpstream": func() error {
 			return s.RelayRegistrations().ReplaceForUpstream(ctx, "", "p", nil, nowForTest())
 		},
@@ -371,6 +376,14 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		},
 		"ProxyConfigs.GetState":   func() error { _, err := s.ProxyConfigs().GetState(ctx, "", "p"); return err },
 		"ProxyConfigs.ListStates": func() error { _, err := s.ProxyConfigs().ListStates(ctx, ""); return err },
+		"ProxyConfigs.StatesFor": func() error {
+			_, err := s.ProxyConfigs().StatesFor(ctx, "", []string{"p"})
+			return err
+		},
+		"ProxyConfigs.PageStates": func() error {
+			_, err := s.ProxyConfigs().PageStates(ctx, "", true, Page{Limit: 1})
+			return err
+		},
 		"ProxyConfigs.PutReport": func() error {
 			return s.ProxyConfigs().PutReport(ctx, "", "p", ConfigReport{LastHeardAt: nowForTest()}, 1, "h")
 		},

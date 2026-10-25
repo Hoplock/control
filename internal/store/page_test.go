@@ -5,6 +5,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
@@ -58,6 +59,52 @@ var pagedReaders = map[string]pagedReader{
 			return ids, got.More, err
 		},
 	},
+	"Proxies.Page": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return st.Proxies().Upsert(ctx, tenant, storetest.Proxy(id, "zone-a"))
+		},
+		del: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return st.Proxies().Delete(ctx, tenant, id)
+		},
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.Proxies().Page(ctx, tenant, p)
+			ids := make([]string, 0, len(got.Rows))
+			for _, px := range got.Rows {
+				ids = append(ids, px.ID)
+			}
+			return ids, got.More, err
+		},
+	},
+	// The rollout view, whole and drifted. Every state put here is drifted:
+	// published, and never reported.
+	"ProxyConfigs.PageStates": {
+		put: putDriftedState,
+		del: store.DeleteProxyConfigState,
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			return stateIDs(st.ProxyConfigs().PageStates(ctx, tenant, false, p))
+		},
+	},
+	"ProxyConfigs.PageStates drifted": {
+		put: putDriftedState,
+		del: store.DeleteProxyConfigState,
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			return stateIDs(st.ProxyConfigs().PageStates(ctx, tenant, true, p))
+		},
+	},
+}
+
+func putDriftedState(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+	return st.ProxyConfigs().PutState(ctx, tenant, store.ProxyConfigState{
+		ProxyID: id, DesiredVersion: 1, DesiredHash: "h1", DesiredDocument: json.RawMessage(`{}`),
+	})
+}
+
+func stateIDs(got store.Paged[store.ProxyConfigState], err error) ([]string, bool, error) {
+	ids := make([]string, 0, len(got.Rows))
+	for _, s := range got.Rows {
+		ids = append(ids, s.ProxyID)
+	}
+	return ids, got.More, err
 }
 
 func putAll(t *testing.T, st *store.Store, r pagedReader, tenant store.Tenant, ids ...string) {

@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ProxyHealthReport is what one heartbeat carries.
@@ -295,8 +297,36 @@ func (r relayRegistrationRepo) List(ctx context.Context, tenant Tenant) ([]Relay
 	if err != nil {
 		return nil, wrap(op, err)
 	}
-	defer rows.Close()
+	return scanRelayRegistrations(op, rows)
+}
 
+func (r relayRegistrationRepo) ForUpstreams(ctx context.Context, tenant Tenant, upstreamProxyIDs []string) ([]RelayRegistration, error) {
+	const op = "store.RelayRegistrations.ForUpstreams"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+	if err := checkPageIDs(op, upstreamProxyIDs); err != nil || len(upstreamProxyIDs) == 0 {
+		return nil, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	// The primary key (tenant, upstream_proxy_id, downstream_proxy_id)
+	// serves the selection and the order.
+	rows, err := r.s.db.Query(ctx, `
+		SELECT upstream_proxy_id, downstream_proxy_id, registered_at, last_seen_at
+		FROM relay_registrations
+		WHERE tenant = $1 AND upstream_proxy_id = ANY($2)
+		ORDER BY upstream_proxy_id, downstream_proxy_id`, tenant, upstreamProxyIDs)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	return scanRelayRegistrations(op, rows)
+}
+
+func scanRelayRegistrations(op string, rows pgx.Rows) ([]RelayRegistration, error) {
+	defer rows.Close()
 	var out []RelayRegistration
 	for rows.Next() {
 		var reg RelayRegistration
@@ -580,6 +610,75 @@ func (r proxyConfigRepo) ListStates(ctx context.Context, tenant Tenant) ([]Proxy
 	return out, wrap(op, rows.Err())
 }
 
+func (r proxyConfigRepo) StatesFor(ctx context.Context, tenant Tenant, proxyIDs []string) ([]ProxyConfigState, error) {
+	const op = "store.ProxyConfigs.StatesFor"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+	if err := checkPageIDs(op, proxyIDs); err != nil || len(proxyIDs) == 0 {
+		return nil, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.s.db.Query(ctx, `
+		SELECT `+proxyRolloutStateColumns+`
+		FROM proxy_config_state
+		WHERE tenant = $1 AND proxy_id = ANY($2)
+		ORDER BY proxy_id`, tenant, proxyIDs)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+
+	var out []ProxyConfigState
+	for rows.Next() {
+		s, err := scanProxyConfigState(op, rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, wrap(op, rows.Err())
+}
+
+// proxyConfigStateOrder is the rollout view's order: the primary key.
+var proxyConfigStateOrder = order{columns: []string{"proxy_id"}}
+
+// driftPredicate is ProxyConfigState.Drifted, in SQL, over the same columns:
+// something is published, and the proxy has not reported `applied` on exactly
+// that document. Every column it reads is NOT NULL, so it is true or false for
+// every row and never unknown. A table test holds the two equal, and a change
+// to one is a change to both.
+const driftPredicate = `desired_version <> 0 AND (report_state <> 'applied'
+		OR running_hash <> desired_hash OR running_version <> desired_version)`
+
+func (r proxyConfigRepo) PageStates(ctx context.Context, tenant Tenant, drifted bool, p Page) (Paged[ProxyConfigState], error) {
+	const op = "store.ProxyConfigs.PageStates"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[ProxyConfigState]{}, err
+	}
+	if err := checkPage(op, proxyConfigStateOrder, p); err != nil {
+		return Paged[ProxyConfigState]{}, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	// Drift is a predicate here rather than a filter over the page, so a page
+	// of the drifted view holds its limit unless it is the last.
+	where := `tenant = $1`
+	if drifted {
+		where += ` AND ` + driftPredicate
+	}
+	tail, args := proxyConfigStateOrder.clause(p, []any{tenant})
+	return queryPage(ctx, r.s.db, op, p, `
+		SELECT `+proxyRolloutStateColumns+`
+		FROM proxy_config_state
+		WHERE `+where+tail, args, scanProxyConfigState)
+}
+
 // LockState takes one proxy's state row for the rest of the transaction,
 // creating it empty when it is not there, so two reports arriving together are
 // compared one after the other rather than both against the same old row.
@@ -672,7 +771,16 @@ func (r proxyConfigRepo) MarkAnnounced(ctx context.Context, tenant Tenant, proxy
 	return wrap(op, err)
 }
 
-const proxyConfigStateColumns = `proxy_id, desired_version, desired_hash, desired_document, desired_at,
+// proxyConfigStateColumns is a whole state row, in the order
+// scanProxyConfigState reads it.
+const proxyConfigStateColumns = `proxy_id, desired_version, desired_hash, desired_document, ` + proxyConfigStateRest
+
+// proxyRolloutStateColumns is the same row without the desired document,
+// which no rollout row and no fleet view shows: NULL stands in its place, and
+// the scan leaves DesiredDocument nil.
+const proxyRolloutStateColumns = `proxy_id, desired_version, desired_hash, NULL::text, ` + proxyConfigStateRest
+
+const proxyConfigStateRest = `desired_at,
 		       running_version, running_hash, reported_at,
 		       report_running_version, report_running_hash, report_desired_version, report_desired_hash,
 		       report_state, restart_required, last_error, report_reported_at, last_reported_at,
@@ -681,7 +789,7 @@ const proxyConfigStateColumns = `proxy_id, desired_version, desired_hash, desire
 func scanProxyConfigState(op string, row rowScanner) (ProxyConfigState, error) {
 	var (
 		s                                    ProxyConfigState
-		doc                                  string
+		doc                                  *string
 		desiredAt, reportedAt                *time.Time
 		reportReportedAt, lastHeard, annouAt *time.Time
 	)
@@ -692,7 +800,9 @@ func scanProxyConfigState(op string, row rowScanner) (ProxyConfigState, error) {
 		&s.AnnouncedHash, &annouAt); err != nil {
 		return ProxyConfigState{}, wrap(op, err)
 	}
-	s.DesiredDocument = json.RawMessage(doc)
+	if doc != nil {
+		s.DesiredDocument = json.RawMessage(*doc)
+	}
 	s.DesiredAt = timeOrZero(desiredAt)
 	s.ReportedAt = timeOrZero(reportedAt)
 	s.Report.ReportedAt = timeOrZero(reportReportedAt)

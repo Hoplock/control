@@ -95,6 +95,28 @@ func (r proxyRepo) List(ctx context.Context, tenant Tenant) ([]Proxy, error) {
 	return out, wrap(op, rows.Err())
 }
 
+// proxyOrder is the fleet view's order: the primary key.
+var proxyOrder = order{columns: []string{"proxy_id"}}
+
+func (r proxyRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[Proxy], error) {
+	const op = "store.Proxies.Page"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[Proxy]{}, err
+	}
+	if err := checkPage(op, proxyOrder, p); err != nil {
+		return Paged[Proxy]{}, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	tail, args := proxyOrder.clause(p, []any{tenant})
+	return queryPage(ctx, r.s.db, op, p, `
+		SELECT `+proxyColumns+`
+		FROM proxies
+		WHERE tenant = $1`+tail, args, scanProxy)
+}
+
 func (r proxyRepo) Upsert(ctx context.Context, tenant Tenant, p Proxy) error {
 	const op = "store.Proxies.Upsert"
 	if err := checkTenant(op, tenant); err != nil {

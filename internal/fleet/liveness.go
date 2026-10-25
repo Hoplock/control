@@ -132,13 +132,15 @@ type SubscriptionState interface {
 	// subscription, when it was last seen. A proxy absent from the map holds
 	// none.
 	//
-	// It is a whole-tenant read for the graph load and the operator views,
-	// which need all of it at once.
+	// It is a whole-tenant read for the graph load, which needs all of it
+	// at once.
 	LiveSubscriptions(ctx context.Context, tenant store.Tenant) (map[string]time.Time, error)
 	// LiveSubscription is the same answer for one proxy: when it was last
 	// seen, and whether it holds a subscription at all. It is the decision
 	// path's read — the cache-hint gate asks it on every hinted answer — so
 	// its cost does not grow with the deployment's subscription set (M5).
+	// The fleet view asks it for each proxy of a page, for the same reason
+	// (M26).
 	LiveSubscription(ctx context.Context, tenant store.Tenant, proxyID string) (time.Time, bool, error)
 }
 

@@ -708,15 +708,24 @@ type ConfigRollout struct {
 	Announced bool `json:"announced"`
 }
 
-// ConfigRollouts is the rollout's status page, one row per proxy, in id order.
-func (r *Registry) ConfigRollouts(ctx context.Context, tenant store.Tenant) ([]ConfigRollout, error) {
-	states, err := r.st.ProxyConfigs().ListStates(ctx, tenant)
+// ConfigRolloutPage is one page of the rollout's status, one row per proxy
+// with a configuration state, in proxy-id order (M26).
+//
+// With drifted, the page holds only the proxies that have not caught up:
+// exactly the states store.ProxyConfigState.Drifted selects, read as a
+// predicate in the statement, so a page of drift is a full page. A fleet whose
+// drifted view is empty has finished rolling out; a fleet where it is not is
+// either mid-rollout or broken, and which one the row's state says:
+// `pending_restart` is waiting for a restart, `rejected` needs an operator and
+// carries the error, `fetch_failed` is retrying.
+func (r *Registry) ConfigRolloutPage(ctx context.Context, tenant store.Tenant, drifted bool, p store.Page) (store.Paged[ConfigRollout], error) {
+	states, err := r.st.ProxyConfigs().PageStates(ctx, tenant, drifted, p)
 	if err != nil {
-		return nil, err
+		return store.Paged[ConfigRollout]{}, err
 	}
-	out := make([]ConfigRollout, 0, len(states))
-	for _, s := range states {
-		out = append(out, rolloutOf(s))
+	out := store.Paged[ConfigRollout]{Rows: make([]ConfigRollout, 0, len(states.Rows)), More: states.More}
+	for _, s := range states.Rows {
+		out.Rows = append(out.Rows, rolloutOf(s))
 	}
 	return out, nil
 }
@@ -734,24 +743,4 @@ func rolloutOf(s store.ProxyConfigState) ConfigRollout {
 		c.DesiredVersion, c.DesiredHash = WireConfigVersion(s.DesiredVersion), WireConfigHash(s.DesiredHash)
 	}
 	return c
-}
-
-// ConfigDrift returns every proxy that has not caught up, in id order.
-//
-// A fleet where this is empty has finished rolling out; a fleet where it is not
-// is either mid-rollout or broken, and which one the row's state says:
-// `pending_restart` is waiting for a restart, `rejected` needs an operator and
-// carries the error, `fetch_failed` is retrying.
-func (r *Registry) ConfigDrift(ctx context.Context, tenant store.Tenant) ([]ConfigRollout, error) {
-	all, err := r.ConfigRollouts(ctx, tenant)
-	if err != nil {
-		return nil, err
-	}
-	drifted := make([]ConfigRollout, 0)
-	for _, c := range all {
-		if c.DesiredVersion != "" && !c.CaughtUp {
-			drifted = append(drifted, c)
-		}
-	}
-	return drifted, nil
 }

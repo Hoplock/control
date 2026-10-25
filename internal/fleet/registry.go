@@ -584,33 +584,44 @@ type ProxyHealth struct {
 	LastErrorAt  time.Time
 }
 
-// Health returns the fleet view for one tenant, in proxy-id order.
+// HealthPage returns one page of the fleet view for one tenant, in proxy-id
+// order (M26).
+//
+// It reads three things, each for the page alone and each by an index: the
+// page of proxies, the relay registrations those proxies hold as upstreams,
+// and their configuration states. Liveness reads the subscription copy from
+// memory, one proxy of the page at a time (M25), never the store. A read that
+// fails fails the page (M26.6): there is no half a fleet view.
 //
 // It never reaches another tenant's rows: every read below names the tenant, so
 // two tenants running identically named proxies in identically named zones see
 // only their own (M18).
-func (r *Registry) Health(ctx context.Context, tenant store.Tenant) ([]ProxyHealth, error) {
+func (r *Registry) HealthPage(ctx context.Context, tenant store.Tenant, p store.Page) (store.Paged[ProxyHealth], error) {
 	now := r.now()
 
-	proxies, err := r.st.Proxies().List(ctx, tenant)
+	proxies, err := r.st.Proxies().Page(ctx, tenant, p)
 	if err != nil {
-		return nil, err
+		return store.Paged[ProxyHealth]{}, err
 	}
-	regs, err := r.st.RelayRegistrations().List(ctx, tenant)
+	out := store.Paged[ProxyHealth]{Rows: make([]ProxyHealth, 0, len(proxies.Rows)), More: proxies.More}
+	if len(proxies.Rows) == 0 {
+		return out, nil
+	}
+	ids := make([]string, 0, len(proxies.Rows))
+	for _, px := range proxies.Rows {
+		ids = append(ids, px.ID)
+	}
+	regs, err := r.st.RelayRegistrations().ForUpstreams(ctx, tenant, ids)
 	if err != nil {
-		return nil, err
+		return store.Paged[ProxyHealth]{}, err
 	}
-	states, err := r.st.ProxyConfigs().ListStates(ctx, tenant)
+	states, err := r.st.ProxyConfigs().StatesFor(ctx, tenant, ids)
 	if err != nil {
-		return nil, err
+		return store.Paged[ProxyHealth]{}, err
 	}
-
-	var subs map[string]time.Time
-	if r.subs != nil {
-		subs, err = r.subs.LiveSubscriptions(ctx, tenant)
-		if err != nil {
-			return nil, err
-		}
+	subs, err := r.subscriptionsOf(ctx, tenant, ids)
+	if err != nil {
+		return store.Paged[ProxyHealth]{}, err
 	}
 
 	relays := make(map[string][]string, len(regs))
@@ -625,25 +636,46 @@ func (r *Registry) Health(ctx context.Context, tenant store.Tenant) ([]ProxyHeal
 		byProxy[s.ProxyID] = s
 	}
 
-	out := make([]ProxyHealth, 0, len(proxies))
-	for _, p := range proxies {
-		cfg := byProxy[p.ID]
-		cfg.ProxyID = p.ID
-		out = append(out, ProxyHealth{
-			ProxyID:            p.ID,
-			Zone:               Zone(p.Zone),
-			State:              p.State,
-			Live:               r.isLive(p, subs, now),
-			LastHeartbeatAt:    p.LastHeartbeatAt,
-			SubscriptionSeenAt: subs[p.ID],
-			ContractVersion:    p.ContractVersion,
-			Capabilities:       UnmarshalCapabilities(p.DeclaredCapabilities),
-			RelayRegistrations: relays[p.ID],
+	for _, px := range proxies.Rows {
+		cfg := byProxy[px.ID]
+		cfg.ProxyID = px.ID
+		out.Rows = append(out.Rows, ProxyHealth{
+			ProxyID:            px.ID,
+			Zone:               Zone(px.Zone),
+			State:              px.State,
+			Live:               r.isLive(px, subs, now),
+			LastHeartbeatAt:    px.LastHeartbeatAt,
+			SubscriptionSeenAt: subs[px.ID],
+			ContractVersion:    px.ContractVersion,
+			Capabilities:       UnmarshalCapabilities(px.DeclaredCapabilities),
+			RelayRegistrations: relays[px.ID],
 			Config:             rolloutOf(cfg),
-			SessionCount:       p.SessionCount,
-			LastError:          p.LastError,
-			LastErrorAt:        p.LastErrorAt,
+			SessionCount:       px.SessionCount,
+			LastError:          px.LastError,
+			LastErrorAt:        px.LastErrorAt,
 		})
+	}
+	return out, nil
+}
+
+// subscriptionsOf reads when each of these proxies' event subscription was
+// last seen, on any node, from memory (M25): the per-proxy read, so a page
+// costs what the page holds however many streams the deployment has. A proxy
+// absent from the answer holds none. A nil SubscriptionState answers nil, and
+// the heartbeat stays in charge.
+func (r *Registry) subscriptionsOf(ctx context.Context, tenant store.Tenant, ids []string) (map[string]time.Time, error) {
+	if r.subs == nil {
+		return nil, nil
+	}
+	out := make(map[string]time.Time, len(ids))
+	for _, id := range ids {
+		seen, ok, err := r.subs.LiveSubscription(ctx, tenant, id)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out[id] = seen
+		}
 	}
 	return out, nil
 }
