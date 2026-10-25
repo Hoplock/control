@@ -136,6 +136,46 @@ var pagedLists = map[string][]pagedList{
 			},
 		},
 	},
+	"GET /api/v1/tenants/{tenant}/fleet/algorithms": {{
+		member: "declarations", path: "/api/v1/tenants/tenant-a/fleet/algorithms",
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			for _, id := range []string{"p-3", "p-1", "p-2"} {
+				seedDeclaration(t, f, "tenant-a", id, `{}`)
+			}
+			got, err := f.st.ProxyAlgorithmDeclarations().Page(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
+			if err != nil || got.More {
+				t.Fatalf("count declarations: %v (more=%t)", err, got.More)
+			}
+			return len(got.Rows)
+		},
+	}},
+	// The two observation lists (M26.5). Each seed shares a hostname across
+	// rows, so the walk continues from every component of the key.
+	"GET /api/v1/tenants/{tenant}/fleet/target-observations/rungs": {{
+		member: "rungs", path: "/api/v1/tenants/tenant-a/fleet/target-observations/rungs",
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			seedRungs(t, f, "tenant-a", time.Now(), "h-1:22:linux", "h-1:2222:", "h-1:22:", "h-2:22:")
+			got, err := f.st.TargetCapabilities().Page(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
+			if err != nil || got.More {
+				t.Fatalf("count rungs: %v (more=%t)", err, got.More)
+			}
+			return len(got.Rows)
+		},
+	}},
+	"GET /api/v1/tenants/{tenant}/fleet/target-observations/key-exchanges": {{
+		member: "key_exchanges", path: "/api/v1/tenants/tenant-a/fleet/target-observations/key-exchanges",
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			seedKex(t, f, "tenant-a", time.Now(), "h-1:2222", "h-1:22", "h-2:22")
+			got, err := f.st.TargetKexObservations().Page(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
+			if err != nil || got.More {
+				t.Fatalf("count key exchanges: %v (more=%t)", err, got.More)
+			}
+			return len(got.Rows)
+		},
+	}},
 }
 
 // seedRollouts stores a published configuration state per proxy, drifted
@@ -202,8 +242,6 @@ var exemptRoutes = map[string]string{
 // that takes each (0028's inventory). Each chunk deletes its rows and moves
 // them to the map above that rules them; 0037 deletes this map.
 var pendingBounded = map[string]string{
-	"GET /api/v1/tenants/{tenant}/fleet/algorithms":                      "0032",
-	"GET /api/v1/tenants/{tenant}/fleet/target-observations":             "0032",
 	"GET /api/v1/tenants/{tenant}/grants":                                "0033",
 	"GET /api/v1/tenants/{tenant}/me/grant-requests":                     "0033",
 	"GET /api/v1/tenants/{tenant}/grants/{grant}":                        "0033",
@@ -495,7 +533,7 @@ func TestTheListCheckFailsOnARouteNobodyClassified(t *testing.T) {
 	if got := reasonless.problems(routes); len(got) != 1 || !strings.Contains(got[0], "exempt with no reason") {
 		t.Errorf("an exemption with no reason: %v", got)
 	}
-	chunkless := listClasses{paged: c.paged, signal: c.signal, exempt: c.exempt, pending: withEntry(c.pending, "GET /api/v1/tenants/{tenant}/fleet/algorithms", "later")}
+	chunkless := listClasses{paged: c.paged, signal: c.signal, exempt: c.exempt, pending: withEntry(c.pending, "GET /api/v1/tenants/{tenant}/audit/negotiated", "later")}
 	if got := chunkless.problems(routes); len(got) != 1 || !strings.Contains(got[0], "not a four-digit chunk") {
 		t.Errorf("a pending list with no chunk: %v", got)
 	}
