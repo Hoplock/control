@@ -53,16 +53,18 @@ func (s *Service) RequestOwn(ctx context.Context, tenant store.Tenant, actor Act
 	return s.request(ctx, tenant, actor, spec, now)
 }
 
-// OwnRequests returns the requests whose holder is subject, newest first.
-func (s *Service) OwnRequests(ctx context.Context, tenant store.Tenant, subject string, q store.GrantRequestQuery) ([]store.GrantRequest, error) {
+// OwnRequestPage returns one page of the requests whose holder is subject,
+// newest first (M26). The subject is the caller's credential's on every page,
+// never the position's.
+func (s *Service) OwnRequestPage(ctx context.Context, tenant store.Tenant, subject string, q store.GrantRequestQuery, p store.Page) (store.Paged[store.GrantRequest], error) {
 	if strings.TrimSpace(subject) == "" {
-		return nil, errNoSubject
+		return store.Paged[store.GrantRequest]{}, errNoSubject
 	}
-	rows, err := s.store.GrantRequests().ListForSubject(ctx, tenant, subject, q)
+	page, err := s.store.GrantRequests().PageForSubject(ctx, tenant, subject, q, p)
 	if err != nil {
-		return nil, err
+		return store.Paged[store.GrantRequest]{}, err
 	}
-	for _, req := range rows {
+	for _, req := range page.Rows {
 		if req.State == store.GrantRequestPending {
 			// Reading a pending request is the moment this server learns
 			// the tenant has one to poll, as Request says.
@@ -70,7 +72,7 @@ func (s *Service) OwnRequests(ctx context.Context, tenant store.Tenant, subject 
 			break
 		}
 	}
-	return rows, nil
+	return page, nil
 }
 
 // OwnRequest returns one request whose holder is subject, asking the workflow

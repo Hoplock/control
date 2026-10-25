@@ -17,6 +17,7 @@ import (
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
+	"github.com/hoplock/control/internal/store/storetest"
 )
 
 // Just-in-time grants over the wire (0012): the route table's permissions, the
@@ -116,7 +117,7 @@ func TestARoleWithoutGrantCreationPermissionIsRefused(t *testing.T) {
 			}
 		})
 	}
-	if rows, _ := f.st.Grants().List(t.Context(), "tenant-a", store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, f.st, "tenant-a"); len(rows) != 0 {
 		t.Fatalf("a refused caller created %d grants", len(rows))
 	}
 }
@@ -289,7 +290,7 @@ func TestAWorkflowRequestOverTheWire(t *testing.T) {
 		e.Parameters["request_id"] == "" {
 		t.Errorf("a denied create: %d %+v", resp.StatusCode, e)
 	}
-	if rows, _ := f.st.Grants().List(t.Context(), "tenant-a", store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, f.st, "tenant-a"); len(rows) != 0 {
 		t.Errorf("the workflow path created %d grants it never approved", len(rows))
 	}
 

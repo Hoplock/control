@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,6 +43,19 @@ type pagedList struct {
 	// seed stores at least two items of the view in tenant-a and returns how
 	// many the view then holds.
 	seed func(t *testing.T, f *serverFixture) int
+	// token is the credential the view is read with: an administrator of
+	// tenant-a when nil. A self route is read as the requester whose list
+	// it is (0016).
+	token func(t *testing.T, f *serverFixture) string
+}
+
+// reader is the credential the view is read with.
+func (l pagedList) reader(t *testing.T, f *serverFixture) string {
+	t.Helper()
+	if l.token != nil {
+		return l.token(t, f)
+	}
+	return adminToken(t, f, "tenant-a")
 }
 
 // name is the view as a test names it: its route and its filter.
@@ -164,6 +178,60 @@ var pagedLists = map[string][]pagedList{
 			return len(got.Rows)
 		},
 	}},
+	// The operator's grants (0033), whole and under each filter. Each seed
+	// puts a grant the view leaves out beside the ones it holds, so a view
+	// that ignored its filter walks more items than it holds.
+	"GET /api/v1/tenants/{tenant}/grants": {
+		{
+			member: "grants", path: "/api/v1/tenants/tenant-a/grants",
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedGrants(t, f, "tenant-a", "all", "alice@example.com", 3)
+				return countGrants(t, f, store.GrantQuery{})
+			},
+		},
+		{
+			member: "grants", path: "/api/v1/tenants/tenant-a/grants",
+			query: url.Values{"subject": {"bob@example.com"}},
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedGrants(t, f, "tenant-a", "bob", "bob@example.com", 3)
+				seedGrants(t, f, "tenant-a", "not-bob", "carol@example.com", 2)
+				return countGrants(t, f, store.GrantQuery{SubjectID: "bob@example.com"})
+			},
+		},
+		{
+			member: "grants", path: "/api/v1/tenants/tenant-a/grants",
+			query: url.Values{"state": {"revoked"}},
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedGrants(t, f, "tenant-a", "revoked", "alice@example.com", 3)
+				for i := range 3 {
+					if _, err := f.st.Grants().Revoke(t.Context(), "tenant-a", fmt.Sprintf("revoked-%d", i),
+						store.GrantRevocation{At: time.Now(), Reason: "test"}); err != nil {
+						t.Fatalf("revoke: %v", err)
+					}
+				}
+				return countGrants(t, f, store.GrantQuery{State: store.GrantRevoked, At: time.Now()})
+			},
+		},
+	},
+	// A requester's own requests (0016), read as that requester: bob's
+	// requests sit between alice's, so a view that read the tenant's would
+	// walk more items than alice holds.
+	"GET /api/v1/tenants/{tenant}/me/grant-requests": {{
+		member: "requests", path: "/api/v1/tenants/tenant-a/me/grant-requests",
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			seedOwnRequests(t, f, "alice@example.com", "bob@example.com", "alice@example.com", "bob@example.com", "alice@example.com")
+			return countOwnRequests(t, f, "alice@example.com")
+		},
+		token: func(t *testing.T, f *serverFixture) string {
+			t.Helper()
+			token, _ := f.requester(t, "alice@example.com")
+			return token
+		},
+	}},
 	"GET /api/v1/tenants/{tenant}/fleet/target-observations/key-exchanges": {{
 		member: "key_exchanges", path: "/api/v1/tenants/tenant-a/fleet/target-observations/key-exchanges",
 		seed: func(t *testing.T, f *serverFixture) int {
@@ -176,6 +244,58 @@ var pagedLists = map[string][]pagedList{
 			return len(got.Rows)
 		},
 	}},
+}
+
+// seedGrants stores n live grants for holder in tenant, prefix-0 the newest,
+// one second apart.
+func seedGrants(t *testing.T, f *serverFixture, tenant store.Tenant, prefix, holder string, n int) {
+	t.Helper()
+	at := time.Now().UTC()
+	for i := range n {
+		id := fmt.Sprintf("%s-%d", prefix, i)
+		if err := f.st.Grants().Insert(t.Context(), tenant, storetest.Grant(id, holder, time.Hour)); err != nil {
+			t.Fatalf("seed grant %s: %v", id, err)
+		}
+		if _, err := f.st.Pool().Exec(t.Context(), `UPDATE grants SET created_at = $3 WHERE tenant = $1 AND grant_id = $2`,
+			tenant, id, at.Add(-time.Duration(i)*time.Second)); err != nil {
+			t.Fatalf("place grant %s: %v", id, err)
+		}
+	}
+}
+
+func countGrants(t *testing.T, f *serverFixture, q store.GrantQuery) int {
+	t.Helper()
+	got, err := f.st.Grants().Page(t.Context(), "tenant-a", q, store.Page{Limit: store.MaxPageLimit})
+	if err != nil || got.More {
+		t.Fatalf("count grants: %v (more=%t)", err, got.More)
+	}
+	return len(got.Rows)
+}
+
+var ownRequestSeq atomic.Int64
+
+// seedOwnRequests stores one pending request in tenant-a for each holder, the
+// first the newest, one second apart.
+func seedOwnRequests(t *testing.T, f *serverFixture, holders ...string) {
+	t.Helper()
+	at := time.Now().UTC()
+	for i, holder := range holders {
+		req := storetest.GrantRequest(fmt.Sprintf("req-%d", ownRequestSeq.Add(1)), holder, time.Hour)
+		req.RequestedAt = at.Add(-time.Duration(i) * time.Second)
+		if err := f.st.GrantRequests().Insert(t.Context(), "tenant-a", req); err != nil {
+			t.Fatalf("seed request %s: %v", req.ID, err)
+		}
+	}
+}
+
+func countOwnRequests(t *testing.T, f *serverFixture, holder string) int {
+	t.Helper()
+	got, err := f.st.GrantRequests().PageForSubject(t.Context(), "tenant-a", holder, store.GrantRequestQuery{},
+		store.Page{Limit: store.MaxPageLimit})
+	if err != nil || got.More {
+		t.Fatalf("count requests: %v (more=%t)", err, got.More)
+	}
+	return len(got.Rows)
 }
 
 // seedRollouts stores a published configuration state per proxy, drifted
@@ -208,10 +328,28 @@ func countRollouts(t *testing.T, f *serverFixture, drifted bool) int {
 	return len(got.Rows)
 }
 
-// signalLists are the lists bounded by one object (M26.3): each keeps its
+// signalList is a list bounded by one object (M26.3): it keeps its
 // server-side bound, takes no limit and no cursor, and names the member that
 // says the bound cut it.
-var signalLists = map[string]string{}
+type signalList struct {
+	member string
+	// seed stores, in tenant-a, the object the route's sample path names:
+	// each `{name}` segment of the pattern is "sample" (samplePath).
+	seed func(t *testing.T, f *serverFixture)
+}
+
+var signalLists = map[string]signalList{
+	// The decisions a grant's view samples (0033).
+	"GET /api/v1/tenants/{tenant}/grants/{grant}": {
+		member: "decisions_truncated",
+		seed: func(t *testing.T, f *serverFixture) {
+			t.Helper()
+			if err := f.st.Grants().Insert(t.Context(), "tenant-a", storetest.Grant("sample", "alice@example.com", time.Hour)); err != nil {
+				t.Fatalf("seed grant: %v", err)
+			}
+		},
+	},
+}
 
 // exemptRoutes answer one object, or a list bounded by configuration rather
 // than by the estate (M26), each with its reason (0028's inventory).
@@ -242,9 +380,6 @@ var exemptRoutes = map[string]string{
 // that takes each (0028's inventory). Each chunk deletes its rows and moves
 // them to the map above that rules them; 0037 deletes this map.
 var pendingBounded = map[string]string{
-	"GET /api/v1/tenants/{tenant}/grants":                                "0033",
-	"GET /api/v1/tenants/{tenant}/me/grant-requests":                     "0033",
-	"GET /api/v1/tenants/{tenant}/grants/{grant}":                        "0033",
 	"GET /api/v1/tenants/{tenant}/role-bindings":                         "0034",
 	"GET /api/v1/tenants/{tenant}/ca/certificates":                       "0034",
 	"GET /api/v1/tenants/{tenant}/policy/bundles":                        "0035",
@@ -263,7 +398,7 @@ var pendingBounded = map[string]string{
 // listClasses is the four maps, so the check can be run over another set.
 type listClasses struct {
 	paged   map[string][]pagedList
-	signal  map[string]string
+	signal  map[string]signalList
 	exempt  map[string]string
 	pending map[string]string
 }
@@ -417,6 +552,7 @@ func TestEveryListIsBoundedOrSaysWhyNot(t *testing.T) {
 			if want < 2 {
 				t.Fatalf("seed left %d items; a walk of one page proves nothing about the next", want)
 			}
+			token := l.reader(t, f)
 
 			// 1–3: every refusal is the grammar every malformed parameter
 			// uses, never a clamp (M26.1, M26.2, M21).
@@ -471,14 +607,15 @@ func TestEveryListIsBoundedOrSaysWhyNot(t *testing.T) {
 				continue
 			}
 			t.Run(from+" → "+to, func(t *testing.T) {
-				expectInvalid(t, f.do(t, "GET", l.at(url.Values{"after": {next}}), token, nil),
+				expectInvalid(t, f.do(t, "GET", l.at(url.Values{"after": {next}}), l.reader(t, f), nil),
 					"after", access.ProblemInvalid, "")
 			})
 		}
 	}
 
-	for route, member := range signalLists {
+	for route, l := range signalLists {
 		t.Run(route, func(t *testing.T) {
+			l.seed(t, f)
 			pattern := strings.TrimPrefix(route, "GET ")
 			resp := f.do(t, "GET", samplePath(pattern, "tenant-a"), token, nil)
 			if resp.StatusCode != http.StatusOK {
@@ -488,8 +625,16 @@ func TestEveryListIsBoundedOrSaysWhyNot(t *testing.T) {
 			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 				t.Fatalf("body: %v", err)
 			}
-			if _, ok := body[member].(bool); !ok {
-				t.Fatalf("%s is %#v, want a boolean", member, body[member])
+			if _, ok := body[l.member].(bool); !ok {
+				t.Fatalf("%s is %#v, want a boolean", l.member, body[l.member])
+			}
+			// It takes no cursor and no limit: a bound the server keeps is
+			// not the caller's to move (M26.3).
+			for _, q := range []string{"?limit=1", "?after=not-a-cursor"} {
+				resp := f.do(t, "GET", samplePath(pattern, "tenant-a")+q, token, nil)
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("%s answered %d, want the same 200 as without it", q, resp.StatusCode)
+				}
 			}
 		})
 	}
@@ -501,10 +646,13 @@ func TestEveryListIsBoundedOrSaysWhyNot(t *testing.T) {
 func TestTheListCheckFailsOnARouteNobodyClassified(t *testing.T) {
 	var routes []north.RouteInfo
 	c := classes()
-	for _, m := range []map[string]string{c.signal, c.exempt, c.pending} {
+	for _, m := range []map[string]string{c.exempt, c.pending} {
 		for name := range m {
 			routes = append(routes, routeNamed(t, name))
 		}
+	}
+	for name := range c.signal {
+		routes = append(routes, routeNamed(t, name))
 	}
 	for name := range c.paged {
 		routes = append(routes, routeNamed(t, name))

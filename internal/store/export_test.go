@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // TargetIDPageFailingAt reads one page of a tenant's target ids through the
@@ -45,6 +46,49 @@ func DeleteProxyConfigState(ctx context.Context, s *Store, tenant Tenant, proxyI
 		return notFound("test.DeleteProxyConfigState")
 	}
 	return err
+}
+
+// GrantPageSQL and GrantRequestPageSQL are the statements Grants().Page and
+// GrantRequests().PageForSubject run, for the test that asks Postgres how it
+// would plan them. They are compiled into the test binary alone.
+func GrantPageSQL(q GrantQuery, p Page) string {
+	sql, _, err := grantPageSQL("test.GrantPageSQL", "tenant", q, p)
+	if err != nil {
+		panic(err)
+	}
+	return sql
+}
+
+func GrantRequestPageSQL(q GrantRequestQuery, p Page) string {
+	sql, _, err := grantRequestPageSQL("test.GrantRequestPageSQL", "tenant", "subject", q, p)
+	if err != nil {
+		panic(err)
+	}
+	return sql
+}
+
+// SetGrantCreatedAt moves when a grant was created, which nothing in the
+// product does: Insert takes the database's clock, and the paged-reader tests
+// place each grant in the list's order. DeleteGrant and DeleteGrantRequest
+// remove a row, which nothing in the product does either: those tests delete
+// an item of every list they walk. All three are compiled into the test binary
+// alone.
+func SetGrantCreatedAt(ctx context.Context, s *Store, tenant Tenant, grantID string, at time.Time) error {
+	tag, err := s.db.Exec(ctx, `UPDATE grants SET created_at = $3 WHERE tenant = $1 AND grant_id = $2`, tenant, grantID, at)
+	if err == nil && tag.RowsAffected() == 0 {
+		return notFound("test.SetGrantCreatedAt")
+	}
+	return err
+}
+
+func DeleteGrant(ctx context.Context, s *Store, tenant Tenant, grantID string) error {
+	return deleteOne(ctx, s, "test.DeleteGrant",
+		`DELETE FROM grants WHERE tenant = $1 AND grant_id = $2`, tenant, grantID)
+}
+
+func DeleteGrantRequest(ctx context.Context, s *Store, tenant Tenant, requestID string) error {
+	return deleteOne(ctx, s, "test.DeleteGrantRequest",
+		`DELETE FROM grant_requests WHERE tenant = $1 AND request_id = $2`, tenant, requestID)
 }
 
 // AuditQuerySQL is the statement Query runs for a selection, for the test that

@@ -137,20 +137,20 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 			return len(got), err
 		},
 		"Decisions.ListByGrant": func() (int, error) {
-			got, err := st.Decisions().ListByGrant(ctx, tenantA, bOnly, 0)
+			got, _, err := st.Decisions().ListByGrant(ctx, tenantA, bOnly, 0)
 			return len(got), err
 		},
 		"Decisions.SessionsByGrant": func() (int, error) {
 			got, _, err := st.Decisions().SessionsByGrant(ctx, tenantA, bOnly, 10)
 			return len(got), err
 		},
-		"Grants.List": func() (int, error) {
-			got, err := st.Grants().List(ctx, tenantA, store.GrantQuery{SubjectID: bOnly})
-			return len(got), err
+		"Grants.Page": func() (int, error) {
+			got, err := st.Grants().Page(ctx, tenantA, store.GrantQuery{SubjectID: bOnly}, store.Page{Limit: store.MaxPageLimit})
+			return len(got.Rows), err
 		},
-		"GrantRequests.ListForSubject": func() (int, error) {
-			got, err := st.GrantRequests().ListForSubject(ctx, tenantA, bOnly, store.GrantRequestQuery{})
-			return len(got), err
+		"GrantRequests.PageForSubject": func() (int, error) {
+			got, err := st.GrantRequests().PageForSubject(ctx, tenantA, bOnly, store.GrantRequestQuery{}, store.Page{Limit: store.MaxPageLimit})
+			return len(got.Rows), err
 		},
 		"GrantRequests.ListPending": func() (int, error) {
 			got, err := st.GrantRequests().ListPending(ctx, tenantA, 0)

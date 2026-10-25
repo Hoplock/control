@@ -303,6 +303,18 @@ func Grant(id, subjectID string, d time.Duration) store.Grant {
 	}
 }
 
+// Grants returns every grant in a tenant, newest first, failing the test on an
+// error or on more grants than one page holds: what a test reads to ask which
+// grants an act left behind.
+func Grants(t testing.TB, st *store.Store, tenant store.Tenant) []store.Grant {
+	t.Helper()
+	got, err := st.Grants().Page(t.Context(), tenant, store.GrantQuery{}, store.Page{Limit: store.MaxPageLimit})
+	if err != nil || got.More {
+		t.Fatalf("storetest.Grants: %s: %v (more=%t)", tenant, err, got.More)
+	}
+	return got.Rows
+}
+
 // GrantRequest returns a pending workflow request for a subject, asking for d
 // from now.
 func GrantRequest(id, subjectID string, d time.Duration) store.GrantRequest {

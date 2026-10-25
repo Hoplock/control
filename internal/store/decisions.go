@@ -192,16 +192,19 @@ func (r decisionRepo) ListBySession(ctx context.Context, tenant Tenant, sessionI
 //
 // It is the grant's side of M4: "what did this grant let anybody do" is the
 // first question an auditor asks of one, and decisions_by_grant_idx answers it
-// without a scan of every explanation the tenant has produced.
-func (r decisionRepo) ListByGrant(ctx context.Context, tenant Tenant, grantID string, limit int) ([]Decision, error) {
+// without a scan of every explanation the tenant has produced. It is a sample
+// bounded by the server, not a list the caller pages (M26.3), so it reads one
+// row past the limit and the boolean reports that the limit cut it: every
+// record the grant backed is in the audit query, which is paged.
+func (r decisionRepo) ListByGrant(ctx context.Context, tenant Tenant, grantID string, limit int) ([]Decision, bool, error) {
 	const op = "store.Decisions.ListByGrant"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if grantID == "" {
 		// The empty id is every decision no grant supplied, which is not
 		// a question anybody means to ask of a grant.
-		return nil, invalid(op, "grant id is required")
+		return nil, false, invalid(op, "grant id is required")
 	}
 	if limit <= 0 {
 		limit = defaultDecisionLimit
@@ -215,9 +218,9 @@ func (r decisionRepo) ListByGrant(ctx context.Context, tenant Tenant, grantID st
 		FROM decisions
 		WHERE tenant = $1 AND grant_id = $2
 		ORDER BY decided_at DESC, decision_id DESC
-		LIMIT $3`, tenant, grantID, limit)
+		LIMIT $3`, tenant, grantID, limit+1)
 	if err != nil {
-		return nil, wrap(op, err)
+		return nil, false, wrap(op, err)
 	}
 	defer rows.Close()
 
@@ -225,11 +228,18 @@ func (r decisionRepo) ListByGrant(ctx context.Context, tenant Tenant, grantID st
 	for rows.Next() {
 		d, err := scanDecision(op, rows)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, d)
 	}
-	return out, wrap(op, rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, false, wrap(op, err)
+	}
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
 }
 
 // SessionsByGrant returns the distinct sessions a grant backed.

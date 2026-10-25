@@ -162,6 +162,101 @@ var pagedReaders = map[string]pagedReader{
 		},
 		key: func(id string) []any { return []any{id, int64(22)} },
 	},
+	// The grant lists (0033) are read newest first, so each item is put at
+	// the instant newestFirst gives its id: later for a smaller id, so the
+	// ids sort as the list does. The holder's view reads the other index.
+	"Grants.Page": {
+		put:  putGrant,
+		del:  store.DeleteGrant,
+		page: grantIDs(store.GrantQuery{}),
+		key:  func(id string) []any { return []any{newestFirst(id), id} },
+	},
+	"Grants.Page subject": {
+		put:  putGrant,
+		del:  store.DeleteGrant,
+		page: grantIDs(store.GrantQuery{SubjectID: "alice"}),
+		key:  func(id string) []any { return []any{newestFirst(id), id} },
+	},
+	"GrantRequests.PageForSubject": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			req := storetest.GrantRequest(id, "alice", time.Hour)
+			req.RequestedAt = newestFirst(id)
+			if err := st.GrantRequests().Insert(ctx, tenant, req); err != nil && !store.IsConflict(err) {
+				return err
+			}
+			return nil
+		},
+		del: store.DeleteGrantRequest,
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.GrantRequests().PageForSubject(ctx, tenant, "alice", store.GrantRequestQuery{}, p)
+			ids := make([]string, 0, len(got.Rows))
+			for _, req := range got.Rows {
+				ids = append(ids, req.ID)
+			}
+			return ids, got.More, err
+		},
+		key: func(id string) []any { return []any{newestFirst(id), id} },
+	},
+}
+
+// newestFirstEpoch is the latest instant newestFirst gives.
+var newestFirstEpoch = time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// newestFirst is when the item put as id was created in a list read newest
+// first: strictly earlier for a later id, comparing ids as Go does, so a walk
+// of such a list reads the ids in ascending order as every other list here
+// does. It reads the first eight bytes of the id in base 64 over the alphabet
+// these tests' ids use (`-`, digits and lower-case letters, in their byte
+// order), a missing byte lowest, as microseconds before the epoch.
+func newestFirst(id string) time.Time {
+	if len(id) > 8 {
+		panic(fmt.Sprintf("newestFirst: %q is longer than eight bytes", id))
+	}
+	var n int64
+	for i := range 8 {
+		n *= 64
+		if i >= len(id) {
+			continue
+		}
+		switch c := id[i]; {
+		case c == '-':
+			n++
+		case c >= '0' && c <= '9':
+			n += 2 + int64(c-'0')
+		case c >= 'a' && c <= 'z':
+			n += 12 + int64(c-'a')
+		default:
+			panic(fmt.Sprintf("newestFirst: %q is outside the ids' alphabet", id))
+		}
+	}
+	return newestFirstEpoch.Add(-time.Duration(n) * time.Microsecond)
+}
+
+// putGrant stores a live grant held by alice, created at newestFirst(id), in
+// one transaction: a concurrent walk never sees it at the database's clock. A
+// grant already stored is left as it is, as the other lists' upserts do.
+func putGrant(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+	err := st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		if err := tx.Grants().Insert(ctx, tenant, storetest.Grant(id, "alice", time.Hour)); err != nil {
+			return err
+		}
+		return store.SetGrantCreatedAt(ctx, tx, tenant, id, newestFirst(id))
+	})
+	if store.IsConflict(err) {
+		return nil
+	}
+	return err
+}
+
+func grantIDs(q store.GrantQuery) func(context.Context, *store.Store, store.Tenant, store.Page) ([]string, bool, error) {
+	return func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+		got, err := st.Grants().Page(ctx, tenant, q, p)
+		ids := make([]string, 0, len(got.Rows))
+		for _, g := range got.Rows {
+			ids = append(ids, g.ID)
+		}
+		return ids, got.More, err
+	}
 }
 
 func putDriftedState(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {

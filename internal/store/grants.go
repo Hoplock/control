@@ -22,14 +22,12 @@ const grantColumns = `grant_id, subject_id, scope, scope_targets, scope_labels, 
 	`revoked_at, revoked_by, revoked_by_principal, revoke_reason, created_at, ` +
 	`external_assertion_id, external_mode`
 
-// defaultGrantLimit and maxGrantLimit bound an operator's list of grants and a
-// requester's list of their own requests. There is no unbounded list on this
-// surface, for the reason there is none beside the
-// decision path (M5): a tenant's history only grows.
-const (
-	defaultGrantLimit = 100
-	maxGrantLimit     = 1000
-)
+// grantOrder is the operator's list of grants (M26.4): newest first, by
+// creation and then grant id, which is unique within the tenant. Creation never
+// moves, so a grant's place in the list is fixed though its state is not.
+// grants_created_order_idx serves it for a tenant, and grants_subject_order_idx
+// for one holder (migration 0017).
+var grantOrder = order{columns: []string{"created_at", "grant_id"}, desc: true}
 
 func (r grantRepo) Insert(ctx context.Context, tenant Tenant, g Grant) error {
 	const op = "store.Grants.Insert"
@@ -161,19 +159,28 @@ func (r grantRepo) ListLive(ctx context.Context, tenant Tenant, subjectID string
 	return out, wrap(op, rows.Err())
 }
 
-func (r grantRepo) List(ctx context.Context, tenant Tenant, q GrantQuery) ([]Grant, error) {
-	const op = "store.Grants.List"
+func (r grantRepo) Page(ctx context.Context, tenant Tenant, q GrantQuery, p Page) (Paged[Grant], error) {
+	const op = "store.Grants.Page"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return Paged[Grant]{}, err
 	}
-	limit := q.Limit
-	switch {
-	case limit <= 0:
-		limit = defaultGrantLimit
-	case limit > maxGrantLimit:
-		limit = maxGrantLimit
+	sql, args, err := grantPageSQL(op, tenant, q, p)
+	if err != nil {
+		return Paged[Grant]{}, err
 	}
 
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	return queryPage(ctx, r.s.db, op, p, sql, args, scanGrant)
+}
+
+// grantPageSQL is the statement one page of the operator's list runs, and its
+// arguments.
+func grantPageSQL(op string, tenant Tenant, q GrantQuery, p Page) (string, []any, error) {
+	if err := checkPage(op, grantOrder, p); err != nil {
+		return "", nil, err
+	}
 	conds := []string{"tenant = $1"}
 	args := []any{tenant}
 	arg := func(v any) string {
@@ -184,7 +191,7 @@ func (r grantRepo) List(ctx context.Context, tenant Tenant, q GrantQuery) ([]Gra
 		conds = append(conds, "subject_id = "+arg(q.SubjectID))
 	}
 	if q.State != "" && q.At.IsZero() {
-		return nil, invalid(op, "a state filter needs the instant it is judged at")
+		return "", nil, invalid(op, "a state filter needs the instant it is judged at")
 	}
 	// The same four states Grant.State computes, as predicates over the
 	// instant the caller supplied. Three of them are functions of the clock
@@ -201,32 +208,14 @@ func (r grantRepo) List(ctx context.Context, tenant Tenant, q GrantQuery) ([]Gra
 	case GrantRevoked:
 		conds = append(conds, "revoked_at IS NOT NULL")
 	default:
-		return nil, invalid(op, fmt.Sprintf("%q is not a grant state", q.State))
+		return "", nil, invalid(op, fmt.Sprintf("%q is not a grant state", q.State))
 	}
 
-	ctx, cancel := r.s.withTimeout(ctx)
-	defer cancel()
-
-	rows, err := r.s.db.Query(ctx, `
-		SELECT `+grantColumns+`
+	tail, args := grantOrder.clause(p, args)
+	return `
+		SELECT ` + grantColumns + `
 		FROM grants
-		WHERE `+strings.Join(conds, " AND ")+`
-		ORDER BY created_at DESC, grant_id DESC
-		LIMIT `+arg(limit), args...)
-	if err != nil {
-		return nil, wrap(op, err)
-	}
-	defer rows.Close()
-
-	var out []Grant
-	for rows.Next() {
-		g, err := scanGrant(op, rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, g)
-	}
-	return out, wrap(op, rows.Err())
+		WHERE ` + strings.Join(conds, " AND ") + tail, args, nil
 }
 
 func (r grantRepo) Revoke(ctx context.Context, tenant Tenant, grantID string, rev GrantRevocation) (bool, error) {
@@ -311,6 +300,12 @@ const grantRequestColumns = `request_id, subject_id, scope, scope_targets, scope
 
 // defaultPendingLimit bounds one pass over a tenant's pending requests.
 const defaultPendingLimit = 50
+
+// grantRequestOrder is a requester's list of their own requests (M26.4):
+// newest first, by when each was raised and then request id, which is unique
+// within the tenant. grant_requests_subject_order_idx serves it (migration
+// 0017).
+var grantRequestOrder = order{columns: []string{"requested_at", "request_id"}, desc: true}
 
 func (r grantRequestRepo) Insert(ctx context.Context, tenant Tenant, req GrantRequest) error {
 	const op = "store.GrantRequests.Insert"
@@ -504,22 +499,33 @@ func (r grantRequestRepo) GetForSubject(ctx context.Context, tenant Tenant, subj
 	return scanGrantRequest(op, row)
 }
 
-func (r grantRequestRepo) ListForSubject(ctx context.Context, tenant Tenant, subjectID string, q GrantRequestQuery) ([]GrantRequest, error) {
-	const op = "store.GrantRequests.ListForSubject"
+func (r grantRequestRepo) PageForSubject(ctx context.Context, tenant Tenant, subjectID string, q GrantRequestQuery, p Page) (Paged[GrantRequest], error) {
+	const op = "store.GrantRequests.PageForSubject"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return Paged[GrantRequest]{}, err
 	}
-	if subjectID == "" {
-		return nil, invalid(op, "a subject is required")
-	}
-	limit := q.Limit
-	switch {
-	case limit <= 0:
-		limit = defaultGrantLimit
-	case limit > maxGrantLimit:
-		limit = maxGrantLimit
+	sql, args, err := grantRequestPageSQL(op, tenant, subjectID, q, p)
+	if err != nil {
+		return Paged[GrantRequest]{}, err
 	}
 
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	return queryPage(ctx, r.s.db, op, p, sql, args, scanGrantRequest)
+}
+
+// grantRequestPageSQL is the statement one page of a requester's own list
+// runs, and its arguments. The holder is in the WHERE clause on every page, as
+// the tenant is (M18): the position says where the list continues, never
+// whose list it is.
+func grantRequestPageSQL(op string, tenant Tenant, subjectID string, q GrantRequestQuery, p Page) (string, []any, error) {
+	if subjectID == "" {
+		return "", nil, invalid(op, "a subject is required")
+	}
+	if err := checkPage(op, grantRequestOrder, p); err != nil {
+		return "", nil, err
+	}
 	conds := []string{"tenant = $1", "subject_id = $2"}
 	args := []any{tenant, subjectID}
 	switch q.State {
@@ -529,33 +535,14 @@ func (r grantRequestRepo) ListForSubject(ctx context.Context, tenant Tenant, sub
 		args = append(args, string(q.State))
 		conds = append(conds, fmt.Sprintf("state = $%d", len(args)))
 	default:
-		return nil, invalid(op, fmt.Sprintf("%q is not a request state", q.State))
+		return "", nil, invalid(op, fmt.Sprintf("%q is not a request state", q.State))
 	}
-	args = append(args, limit)
 
-	ctx, cancel := r.s.withTimeout(ctx)
-	defer cancel()
-
-	rows, err := r.s.db.Query(ctx, `
-		SELECT `+grantRequestColumns+`
+	tail, args := grantRequestOrder.clause(p, args)
+	return `
+		SELECT ` + grantRequestColumns + `
 		FROM grant_requests
-		WHERE `+strings.Join(conds, " AND ")+`
-		ORDER BY requested_at DESC, request_id DESC
-		LIMIT `+fmt.Sprintf("$%d", len(args)), args...)
-	if err != nil {
-		return nil, wrap(op, err)
-	}
-	defer rows.Close()
-
-	var out []GrantRequest
-	for rows.Next() {
-		req, err := scanGrantRequest(op, rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, req)
-	}
-	return out, wrap(op, rows.Err())
+		WHERE ` + strings.Join(conds, " AND ") + tail, args, nil
 }
 
 func nonNilApprovals(v []GrantApproval) []GrantApproval {

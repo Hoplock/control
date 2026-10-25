@@ -164,8 +164,9 @@ type DecisionRepository interface {
 	// simulation replays (0019).
 	ListRange(ctx context.Context, tenant Tenant, from, to time.Time, limit int) ([]Decision, bool, error)
 	// ListByGrant returns the decisions a grant supplied, newest first,
-	// bounded by limit: "what did this grant let anybody do" (M10).
-	ListByGrant(ctx context.Context, tenant Tenant, grantID string, limit int) ([]Decision, error)
+	// bounded by limit: "what did this grant let anybody do" (M10). The
+	// boolean reports that the limit cut the answer short (M26.3).
+	ListByGrant(ctx context.Context, tenant Tenant, grantID string, limit int) ([]Decision, bool, error)
 	// SessionsByGrant returns the distinct sessions a grant backed — every
 	// allowed decision under it that named a proxy and a session — bounded by
 	// limit. It is what revocation ends. The boolean reports that the limit
@@ -330,8 +331,9 @@ type GrantRepository interface {
 	// this subject at instant t. Revoked and expired grants are excluded by
 	// the index, not by the caller.
 	ListLive(ctx context.Context, tenant Tenant, subjectID string, at time.Time) ([]Grant, error)
-	// List is the operator's list, newest first, bounded (GrantQuery).
-	List(ctx context.Context, tenant Tenant, q GrantQuery) ([]Grant, error)
+	// Page is one page of the operator's list, newest first (M26): by
+	// creation, then grant id.
+	Page(ctx context.Context, tenant Tenant, q GrantQuery, p Page) (Paged[Grant], error)
 	// Revoke withdraws a grant. Absent is ErrNotFound. It reports whether
 	// THIS call revoked it: a grant already revoked keeps its original
 	// time, revoker and reason, because the question an auditor asks is when
@@ -395,9 +397,11 @@ type GrantRequestRepository interface {
 	// ErrNotFound, exactly as one that does not exist: the subject is a
 	// predicate in the query, never a check on the row it returned.
 	GetForSubject(ctx context.Context, tenant Tenant, subjectID, requestID string) (GrantRequest, error)
-	// ListForSubject returns the requests that would grant to subjectID,
-	// newest first, bounded (GrantRequestQuery).
-	ListForSubject(ctx context.Context, tenant Tenant, subjectID string, q GrantRequestQuery) ([]GrantRequest, error)
+	// PageForSubject is one page of the requests that would grant to
+	// subjectID, newest first (M26): by when each was raised, then request
+	// id. The subject is a predicate on every page, never part of the
+	// position.
+	PageForSubject(ctx context.Context, tenant Tenant, subjectID string, q GrantRequestQuery, p Page) (Paged[GrantRequest], error)
 }
 
 // UIDCursorRepository owns the uid non-reuse floor (PLAN §4).

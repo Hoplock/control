@@ -237,26 +237,30 @@ func (s *Service) Get(ctx context.Context, tenant store.Tenant, grantID string) 
 }
 
 // Inspect returns one grant and the most recent decisions it supplied: what it
-// let anybody do, which is the first thing asked of a grant.
-func (s *Service) Inspect(ctx context.Context, tenant store.Tenant, grantID string) (store.Grant, []store.Decision, error) {
+// let anybody do, which is the first thing asked of a grant. The decisions are
+// a sample of at most inspectDecisions, and the boolean reports that the
+// sample was cut (M26.3).
+func (s *Service) Inspect(ctx context.Context, tenant store.Tenant, grantID string) (store.Grant, []store.Decision, bool, error) {
 	g, err := s.store.Grants().Get(ctx, tenant, grantID)
 	if err != nil {
-		return store.Grant{}, nil, err
+		return store.Grant{}, nil, false, err
 	}
-	decisions, err := s.store.Decisions().ListByGrant(ctx, tenant, grantID, inspectDecisions)
+	decisions, truncated, err := s.store.Decisions().ListByGrant(ctx, tenant, grantID, inspectDecisions)
 	if err != nil {
-		return store.Grant{}, nil, err
+		return store.Grant{}, nil, false, err
 	}
-	return g, decisions, nil
+	return g, decisions, truncated, nil
 }
 
-// List returns a tenant's grants, newest first. A state filter is judged at
-// this server's current instant, which is the only instant a list is about.
-func (s *Service) List(ctx context.Context, tenant store.Tenant, q store.GrantQuery) ([]store.Grant, error) {
+// GrantPage returns one page of a tenant's grants, newest first (M26). A state
+// filter is judged at this server's current instant, which is the only instant
+// a list is about, and it is judged again on every page: a grant can change
+// state between pages, and its place in the list, its creation, cannot.
+func (s *Service) GrantPage(ctx context.Context, tenant store.Tenant, q store.GrantQuery, p store.Page) (store.Paged[store.Grant], error) {
 	if q.State != "" {
 		q.At = s.now().UTC()
 	}
-	return s.store.Grants().List(ctx, tenant, q)
+	return s.store.Grants().Page(ctx, tenant, q, p)
 }
 
 // Now is the service's clock, so a transport renders a grant's state at the

@@ -404,9 +404,50 @@ func TestADecisionMadeUnderAGrantNamesItInTheRecord(t *testing.T) {
 	}
 
 	// And from the grant's side: what did it let anybody do.
-	_, used, err := h.grants.Inspect(t.Context(), tenant, g.ID)
-	if err != nil || len(used) != 1 || used[0].ID != out.Response.DecisionID {
-		t.Errorf("Inspect decisions = %+v, %v; want the one decision the grant supplied", used, err)
+	_, used, cut, err := h.grants.Inspect(t.Context(), tenant, g.ID)
+	if err != nil || len(used) != 1 || used[0].ID != out.Response.DecisionID || cut {
+		t.Errorf("Inspect decisions = %+v (cut %t), %v; want the one decision the grant supplied", used, cut, err)
+	}
+}
+
+// The list passthrough (0033): a state filter is judged at the service's own
+// clock, again on every page, and the caller's page reaches the store as it
+// was asked. g-1 is live when the walk starts and has expired by its second
+// page, so that page is empty and the list ends.
+func TestAGrantPageIsJudgedAtTheServicesClockOnEveryPage(t *testing.T) {
+	h := newHarness(t)
+	// Inserted in this order, so g-2 is the newer, or created in the same
+	// instant with the greater id: first either way.
+	for _, c := range []struct {
+		id    string
+		lasts time.Duration
+	}{{"g-1", time.Minute}, {"g-2", time.Hour}} {
+		id := c.id
+		g := storetest.Grant(id, alice, c.lasts)
+		g.NotBefore, g.ExpiresAt = h.now().Add(-time.Hour), h.now().Add(c.lasts)
+		if err := h.store.Grants().Insert(t.Context(), tenant, g); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	active := store.GrantQuery{State: store.GrantActive}
+
+	first, err := h.grants.GrantPage(t.Context(), tenant, active, store.Page{Limit: 1})
+	if err != nil || len(first.Rows) != 1 || first.Rows[0].ID != "g-2" || !first.More {
+		t.Fatalf("first page: %+v, %v; want g-2 and more", first, err)
+	}
+	after := []any{first.Rows[0].CreatedAt, first.Rows[0].ID}
+	if again, err := h.grants.GrantPage(t.Context(), tenant, active, store.Page{Limit: 1, After: after}); err != nil ||
+		len(again.Rows) != 1 || again.Rows[0].ID != "g-1" {
+		t.Fatalf("the second page before the clock moved: %+v, %v; want g-1", again.Rows, err)
+	}
+
+	h.advance(2 * time.Minute)
+	rest, err := h.grants.GrantPage(t.Context(), tenant, active, store.Page{Limit: 1, After: after})
+	if err != nil || len(rest.Rows) != 0 || rest.More {
+		t.Errorf("the second page two minutes on: %+v (more %t), %v; want nothing, g-1 having expired", rest.Rows, rest.More, err)
+	}
+	if _, err := h.grants.GrantPage(t.Context(), tenant, active, store.Page{Limit: store.MaxPageLimit + 1}); !store.IsInvalid(err) {
+		t.Errorf("a page above the maximum reached the store as %v, want refused there, never clamped", err)
 	}
 }
 
@@ -650,9 +691,8 @@ func TestAGrantThatCannotBeAuditedIsNotCreated(t *testing.T) {
 	if _, err := failing.Create(t.Context(), tenant, operator, dbaFor30m()); err == nil {
 		t.Fatal("a create whose audit record failed succeeded")
 	}
-	rows, err := h.store.Grants().List(t.Context(), tenant, store.GrantQuery{})
-	if err != nil || len(rows) != 0 {
-		t.Fatalf("grants after a failed audit: %d, %v — want none", len(rows), err)
+	if rows := storetest.Grants(t, h.store, tenant); len(rows) != 0 {
+		t.Fatalf("grants after a failed audit: %d — want none", len(rows))
 	}
 	if out := h.authorize("db01.example.com", "sess-1"); out.Deny == nil {
 		t.Error("an unaudited grant allowed access")
@@ -671,7 +711,7 @@ func TestABreakGlassGrantIsFlaggedCritical(t *testing.T) {
 	if len(recs) != 1 || recs[0].Attributes[audit.AttrBreakGlass] != "true" || recs[0].Severity != "critical" {
 		t.Fatalf("break-glass grant record = %+v", recs)
 	}
-	g, _ := h.store.Grants().List(t.Context(), tenant, store.GrantQuery{})
+	g := storetest.Grants(t, h.store, tenant)
 	if len(g) != 1 || !g[0].CreatedBy.BreakGlass {
 		t.Errorf("the grant does not carry its creator's break-glass flag: %+v", g)
 	}
@@ -842,7 +882,7 @@ func TestAGrantTheWorkflowDeniesIsNeverCreated(t *testing.T) {
 		out.Request.OutcomeCode != "outside_change_window" || len(out.Request.Approvals) != 1 {
 		t.Fatalf("request = %+v, want it closed as denied with the workflow's reason", out.Request)
 	}
-	if rows, _ := h.store.Grants().List(t.Context(), tenant, store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, h.store, tenant); len(rows) != 0 {
 		t.Errorf("grants after a denial: %+v", rows)
 	}
 	if out := h.authorize("db01.example.com", "sess-1"); out.Deny == nil {
@@ -881,7 +921,7 @@ func TestAPendingRequestBecomesAGrantOnlyWhenApproved(t *testing.T) {
 	if err := h.grants.Poll(t.Context(), tenant); err != nil {
 		t.Fatalf("poll: %v", err)
 	}
-	if rows, _ := h.store.Grants().List(t.Context(), tenant, store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, h.store, tenant); len(rows) != 0 {
 		t.Fatalf("a grant exists while its request is pending: %+v", rows)
 	}
 
@@ -986,7 +1026,7 @@ func TestCancellingAPendingRequest(t *testing.T) {
 	if err := h.grants.Poll(t.Context(), tenant); err != nil {
 		t.Fatalf("poll: %v", err)
 	}
-	if rows, _ := h.store.Grants().List(t.Context(), tenant, store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, h.store, tenant); len(rows) != 0 {
 		t.Errorf("a cancelled request produced a grant: %+v", rows)
 	}
 	if _, err := h.grants.Cancel(t.Context(), tenant, operator, out.Request.ID, ""); !errors.Is(err, access.ErrNotPending) {
