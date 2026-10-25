@@ -26,6 +26,50 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.19.0
+
+Phase 0032, bounded lists 4: algorithm declarations and target observations.
+`GET /api/v1/tenants/{tenant}/fleet/algorithms` now answers in decision M26's
+shape (`docs/PLAN.md` §2), one page at a time, and the target observations,
+which answered two lists side by side, are now two lists of their own.
+
+### Breaking
+
+No signature changes; `make release-check` finds none. Four behaviour
+changes:
+
+- **`GET …/fleet/target-observations` is withdrawn.** It answers
+  `404 not_found`. Its two lists are now
+  `GET /api/v1/tenants/{tenant}/fleet/target-observations/rungs`
+  (`{"rungs": [...], "ttl_seconds": N, "truncated": bool, "next": "<cursor>"}`,
+  by hostname, port and platform) and
+  `GET /api/v1/tenants/{tenant}/fleet/target-observations/key-exchanges`
+  (`{"key_exchanges": [...], "ttl_seconds": N, "floor_levels": [...], "truncated": bool, "next": "<cursor>"}`,
+  by hostname and port), each taking `fleet:read` as the old route did. Each
+  item is the one the old answer held, with its own `fresh`. `ttl_seconds`
+  and `floor_levels` describe the list and are the same on every page.
+- **A host route on either new path is refused at start-up**, as on every
+  path Control serves: a host that served `GET` or `POST` on
+  `fleet/target-observations/rungs` or `…/key-exchanges` no longer starts.
+- **The three lists answer at most 500 items by default.** They answered the
+  whole tenant. `?limit=` asks for 1 to 10 000; a page holds exactly that
+  many unless it is the last. Above 10 000 is `400 invalid_request`
+  `{field: limit, problem: exceeds_maximum, limit: "10000"}`; zero, a
+  negative or a non-integer is `{field: limit, problem: invalid}`.
+- **Each answer gains `truncated` and, when cut, `next`.** `fleet/algorithms`
+  is `{"declarations": [...], "truncated": bool, "next": "<cursor>"}`. Pass
+  `next` back as `?after=` to read the following page. A client that read a
+  whole list from one answer must now follow `next` until `truncated` is
+  false. A cursor whose port is outside a 32-bit integer is
+  `400 invalid_request` `{field: after, problem: invalid}`.
+
+- **Phase:** 0032, bounded lists 4: algorithm declarations and target
+  observations.
+- **Public packages:** none changed.
+- **Behaviour no API diff shows:** a stored declaration on a page that does
+  not decode fails that page with a `500` and its correlation id, as it
+  failed the whole list before; a page never skips it.
+
 ## v0.18.0
 
 Phase 0031, bounded lists 3: proxies and configuration rollouts.

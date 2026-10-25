@@ -1294,12 +1294,13 @@ decision.
      selection is a floor, a ban or a negotiated value over a window, narrow
      by construction, and ordering by session id instead would lose the
      recency the runbook reads.
-  5. **A list of two lists is two lists.** `…/fleet/target-observations`
-     answered rungs and key exchanges side by side, keyed differently. One
-     answer with two cursors has no single `next`, and its two pages would
-     cover different targets anyway. So it becomes
+  5. **A list of two lists is two lists.** A target's rung observations and
+     its key-exchange observations are keyed differently. One answer holding
+     both would need two cursors and have no single `next`, and its two pages
+     would cover different targets anyway. So they are
      `…/fleet/target-observations/rungs` and
-     `…/fleet/target-observations/key-exchanges`, each a list.
+     `…/fleet/target-observations/key-exchanges`, each a list, and no route
+     answers them side by side.
   6. **A failure is never a short page (M11).** A store or service failure
      while reading a page is a `5xx` with its correlation id, as on every read.
      A page is never cut to what was read before the failure and answered as
@@ -1991,8 +1992,9 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   time, so a stale observation costs a refused session and never a session
   below its floor. It is what lets an author see, before raising a route's
   floor, which targets the raise would break: the publish-time report warns
-  from it and `GET …/fleet/target-observations` serves it (0043 renders it).
-  The key-exchange observation is stored by host and port
+  from it, and `GET …/fleet/target-observations/key-exchanges` serves it a
+  page at a time, beside the rung observations at `…/rungs` (M26.5; 0043
+  renders it). The key-exchange observation is stored by host and port
   (`target_kex_observations`), never by platform, because the proxy's report
   names no platform.
 
