@@ -14,9 +14,9 @@ simulate FILE [-from T -to T] [-cases FILE] [-fail-on-flip]
                                        replay recorded decisions, and dry-run synthetic ones
 apply FILE [-accept ID]...             upload and activate; accept warnings by id
 activate VERSION [-accept ID]...       make a stored version active; rolling back is activating an older one
-versions                               every stored version, newest first
+versions                               every stored version, newest first, every page
 explain DECISION_ID                    the whole story of one decision
-explain -session SESSION_ID            the story of every decision taken for a session
+explain -session SESSION_ID            the story of a session's decisions, newest first; warns when the server cut them
 ```
 
 `-server`, `-token` and `-tenant` default to `HOPLOCK_SERVER`, `HOPLOCK_TOKEN`
@@ -58,6 +58,16 @@ nothing:
 A tab or a line break inside a field — a validator's message, say — is printed
 as a space, so a record is always one line. `-json` prints the server's answer
 instead, unchanged.
+
+`versions` reads the whole history, following the server's `next` cursor page
+by page (M26), and prints nothing until the last page is read, so a failure on
+any page is exit `2` and never a partial history. With `-json` it prints one
+answer in the server's shape, `{"versions": [...], "truncated": false}`,
+holding every page's versions as the server wrote them.
+
+`explain -session` answers the server's own bound of a session's decisions, the
+newest. When the server says it cut them (`truncated`), the command prints a
+warning on stderr and still exits `0`: the answer is the server's.
 
 ## Exit codes
 

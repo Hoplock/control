@@ -694,7 +694,7 @@ func TestAnUnservedDecisionIsRecordedAsSuch(t *testing.T) {
 	if _, err := h.authorize(t, request("lost-host.example.com", "proxy-1")); err == nil {
 		t.Fatal("the unreachable target was answered")
 	}
-	recs, err := h.store.Decisions().ListBySession(t.Context(), testTenant, "sess-1", 10)
+	recs, _, err := h.store.Decisions().ListBySession(t.Context(), testTenant, "sess-1", 10)
 	if err != nil {
 		t.Fatalf("list by session: %v", err)
 	}

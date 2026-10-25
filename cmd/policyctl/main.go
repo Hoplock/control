@@ -47,9 +47,9 @@ commands:
                                         replay recorded decisions, and dry-run synthetic ones
   apply FILE [-accept ID]...            upload and activate; accept warnings by id
   activate VERSION [-accept ID]...      make a stored version active; rolling back is activating an older one
-  versions                              every stored version, newest first
+  versions                              every stored version, newest first, every page
   explain DECISION_ID                   the whole story of one decision
-  explain -session SESSION_ID           the story of every decision taken for a session
+  explain -session SESSION_ID           the story of a session's decisions, newest first; warns when the server cut them
 
 -server, -token and -tenant default to HOPLOCK_SERVER, HOPLOCK_TOKEN and
 HOPLOCK_TENANT (default "default").
@@ -613,23 +613,54 @@ func (c *client) activate(args []string) (int, error) {
 	return exitOK, nil
 }
 
+// versions prints the whole history. The server answers it a page at a time
+// (M26), and a pipeline wants all of it, so this follows `next` until the
+// server says the list has ended; it takes no limit. Nothing is printed until
+// the last page is read: a failure on any page is the command's error, never
+// the versions before it presented as the whole history. With -json it prints
+// one answer in the server's shape holding every page's versions, each as the
+// server wrote it.
 func (c *client) versions(args []string) (int, error) {
 	fs := flag.NewFlagSet("versions", flag.ContinueOnError)
 	if _, err := parse(fs, args, 0); err != nil {
 		return exitError, err
 	}
-	var res struct {
-		Versions []version `json:"versions"`
-	}
-	raw, err := c.call(http.MethodGet, "/policy/bundles", nil, &res)
-	if err != nil {
-		return exitError, err
+	var all []json.RawMessage
+	path := "/policy/bundles"
+	for {
+		var page struct {
+			Versions  []json.RawMessage `json:"versions"`
+			Truncated bool              `json:"truncated"`
+			Next      string            `json:"next"`
+		}
+		if _, err := c.call(http.MethodGet, path, nil, &page); err != nil {
+			return exitError, err
+		}
+		all = append(all, page.Versions...)
+		if !page.Truncated {
+			break
+		}
+		if page.Next == "" {
+			return exitError, errors.New("the server said the version list continues and gave no cursor to continue it from")
+		}
+		path = "/policy/bundles?after=" + url.QueryEscape(page.Next)
 	}
 	if c.json {
+		if all == nil {
+			all = []json.RawMessage{}
+		}
+		raw, err := json.Marshal(map[string]any{"versions": all, "truncated": false})
+		if err != nil {
+			return exitError, err
+		}
 		c.raw(raw)
 		return exitOK, nil
 	}
-	for _, v := range res.Versions {
+	for _, r := range all {
+		var v version
+		if err := json.Unmarshal(r, &v); err != nil {
+			return exitError, fmt.Errorf("the server's answer does not decode: %w", err)
+		}
 		state := "inactive"
 		if v.Active {
 			state = "active"
@@ -688,10 +719,18 @@ func (c *client) explain(args []string) (int, error) {
 	if *session != "" {
 		var res struct {
 			Decisions []story `json:"decisions"`
+			Truncated bool    `json:"truncated"`
 		}
 		raw, err := c.call(http.MethodGet, "/sessions/"+url.PathEscape(*session)+"/decisions", nil, &res)
 		if err != nil {
 			return exitError, err
+		}
+		// The server keeps its own bound on a session's decisions and says
+		// when it cut them (M26.3). The answer is still the server's, so
+		// this is a warning and not a refusal.
+		if res.Truncated {
+			_, _ = fmt.Fprintf(c.errOut, "policyctl: warning: session %s has more decisions than the server answers; "+
+				"these are its newest %d\n", *session, len(res.Decisions))
 		}
 		if c.json {
 			c.raw(raw)

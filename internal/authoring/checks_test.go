@@ -215,20 +215,31 @@ func bannedRule(id, host, bans string) string {
 }
 
 // An emptied axis is judged per build, from each build's own declaration, and
-// reported as a warning naming the proxy and the axis — never a refusal.
-func TestAnEmptiedAxisIsAPerBuildFinding(t *testing.T) {
+// reported as one warning per rule and axis naming each build it empties on,
+// with what that build offered — never a refusal.
+func TestAnEmptiedAxisIsJudgedPerBuildAndNamesEachBuild(t *testing.T) {
 	t.Parallel()
 	facts := Facts{Declarations: []fleet.DeclaredAlgorithms{
 		declaration("proxy-old", "aes128-ctr"),
 		declaration("proxy-new", "aes128-ctr", "chacha20-poly1305@openssh.com"),
+		declaration("proxy-old-2", "aes128-ctr"),
 	}}
 	fs := withCode(run(t, bannedRule("no-ctr", "a.example.com", "        ciphers: [aes128-ctr]\n"), facts), CodeAxisEmptied)
 	if len(fs) != 1 {
-		t.Fatalf("got %+v, want exactly one finding, for proxy-old", fs)
+		t.Fatalf("got %+v, want exactly one finding, for the rule and the cipher axis", fs)
 	}
 	f := fs[0]
-	if f.Severity != SeverityWarning || f.Parameters["proxy_id"] != "proxy-old" || f.Parameters["axis"] != contract.AxisCiphers {
-		t.Errorf("finding = %s %v, want a warning for proxy-old on ciphers", f.Severity, f.Parameters)
+	if f.ID != findingID(CodeAxisEmptied, "no-ctr", contract.AxisCiphers) || f.Severity != SeverityWarning ||
+		f.Parameters["axis"] != contract.AxisCiphers {
+		t.Errorf("finding = %s %s %v, want a warning on no-ctr's ciphers", f.ID, f.Severity, f.Parameters)
+	}
+	on := f.Parameters["proxies"].([]emptiedOn)
+	if len(on) != 2 || on[0].ProxyID != "proxy-old" || on[1].ProxyID != "proxy-old-2" ||
+		!slices.Equal(on[0].Offered, []string{"aes128-ctr"}) {
+		t.Errorf("emptied on %+v, want proxy-old and proxy-old-2, each with what it offered", on)
+	}
+	if f.Parameters["proxies_count"] != 2 || f.Parameters["proxies_truncated"] != false {
+		t.Errorf("count %v truncated %v, want 2 and false", f.Parameters["proxies_count"], f.Parameters["proxies_truncated"])
 	}
 	if f.Parameters["profile"] != "default" {
 		t.Errorf("a route naming no profile is judged under %v, want default", f.Parameters["profile"])
@@ -262,12 +273,16 @@ func TestAFloorABuildDoesNotDeclareAndAnUnknownDeclaration(t *testing.T) {
 ` + route("      algorithm_floor: pq-hybrid-kex\n")
 	fs := run(t, rule, facts)
 	undeclared := withCode(fs, CodeFloorUndeclared)
-	if len(undeclared) != 2 || undeclared[0].Severity != SeverityWarning {
-		t.Errorf("pq-hybrid-kex, which neither build declares: %+v, want a warning per proxy", undeclared)
+	if len(undeclared) != 1 || undeclared[0].Severity != SeverityWarning || undeclared[0].ID != findingID(CodeFloorUndeclared, "pq") {
+		t.Fatalf("pq-hybrid-kex, which neither build declares: %+v, want one warning for the rule", undeclared)
+	}
+	if got := undeclared[0].Parameters["proxies"].([]string); !slices.Equal(got, []string{"proxy-1", "proxy-2"}) {
+		t.Errorf("the floor is undeclared on %v, want both builds named", got)
 	}
 	unknown := withCode(fs, CodeAlgorithmUnknown)
-	if len(unknown) != 1 || unknown[0].Parameters["proxy_id"] != "proxy-2" || unknown[0].Severity != SeverityAdvice {
-		t.Errorf("a declaration with no profiles: %+v, want advice for proxy-2 alone", unknown)
+	if len(unknown) != 1 || unknown[0].Severity != SeverityAdvice || unknown[0].ID != findingID(CodeAlgorithmUnknown, "pq", "default") ||
+		!slices.Equal(unknown[0].Parameters["proxies"].([]string), []string{"proxy-2"}) {
+		t.Errorf("a declaration with no profiles: %+v, want advice naming proxy-2 alone", unknown)
 	}
 }
 

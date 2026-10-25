@@ -234,6 +234,32 @@ var pagedReaders = map[string]pagedReader{
 		},
 		key: func(id string) []any { return []any{newestFirst(id), certificateSerial(id)} },
 	},
+	// The policy version history (0035), newest first by version alone. A
+	// version is numbered from its id so that a later id is an older
+	// version, and its digest is the id, which is how a page names it.
+	"PolicyBundles.Page": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			err := st.PolicyBundles().Insert(ctx, tenant, store.PolicyBundle{
+				Version: bundleVersion(id), Source: []byte("# " + id), Hash: id, UploadedBy: "test",
+			})
+			if store.IsConflict(err) {
+				return nil
+			}
+			return err
+		},
+		del: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return store.DeletePolicyBundle(ctx, st, tenant, bundleVersion(id))
+		},
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.PolicyBundles().Page(ctx, tenant, p)
+			ids := make([]string, 0, len(got.Rows))
+			for _, b := range got.Rows {
+				ids = append(ids, b.Hash)
+			}
+			return ids, got.More, err
+		},
+		key: func(id string) []any { return []any{bundleVersion(id)} },
+	},
 }
 
 // newestFirstEpoch is the latest instant newestFirst gives.

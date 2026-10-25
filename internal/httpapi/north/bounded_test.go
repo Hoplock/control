@@ -263,6 +263,16 @@ var pagedLists = map[string][]pagedList{
 			return len(got.Rows)
 		},
 	}},
+	// The policy version history (0035), seeded through the surface as an
+	// author uploads.
+	"GET /api/v1/tenants/{tenant}/policy/bundles": {{
+		member: "versions", path: "/api/v1/tenants/tenant-a/policy/bundles",
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			uploadVersions(t, f, "bounded", 2)
+			return countVersions(t, f)
+		},
+	}},
 	"GET /api/v1/tenants/{tenant}/fleet/target-observations/key-exchanges": {{
 		member: "key_exchanges", path: "/api/v1/tenants/tenant-a/fleet/target-observations/key-exchanges",
 		seed: func(t *testing.T, f *serverFixture) int {
@@ -370,6 +380,16 @@ type signalList struct {
 }
 
 var signalLists = map[string]signalList{
+	// A session's decisions (0035), bounded by its hops.
+	"GET /api/v1/tenants/{tenant}/sessions/{session}/decisions": {
+		member: "truncated",
+		seed: func(t *testing.T, f *serverFixture) {
+			t.Helper()
+			if err := f.st.Decisions().Insert(t.Context(), "tenant-a", storyRecord("sample-1", "sample", time.Now().UTC())); err != nil {
+				t.Fatalf("seed decision: %v", err)
+			}
+		},
+	},
 	// The decisions a grant's view samples (0033).
 	"GET /api/v1/tenants/{tenant}/grants/{grant}": {
 		member: "decisions_truncated",
@@ -411,8 +431,6 @@ var exemptRoutes = map[string]string{
 // that takes each (0028's inventory). Each chunk deletes its rows and moves
 // them to the map above that rules them; 0037 deletes this map.
 var pendingBounded = map[string]string{
-	"GET /api/v1/tenants/{tenant}/policy/bundles":                        "0035",
-	"GET /api/v1/tenants/{tenant}/sessions/{session}/decisions":          "0035",
 	"GET /api/v1/tenants/{tenant}/audit/records":                         "0036",
 	"GET /api/v1/tenants/{tenant}/audit/drift":                           "0036",
 	"GET /api/v1/tenants/{tenant}/audit/algorithm-policy-unmet":          "0036",

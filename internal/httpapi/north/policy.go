@@ -90,20 +90,32 @@ func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {
 	answer(w, http.StatusOK, rep)
 }
 
+// versionList is the tenant's policy version history (M26): newest first, by
+// version.
+var versionList = list{name: "policy_versions", key: []keyKind{keyInt}}
+
+// handlePolicyList lists the stored versions, one page at a time (M26). A
+// version's source is not read: `…/policy/bundles/{version}` answers one
+// version whole.
 func (s *Server) handlePolicyList(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
-	versions, err := s.authoring.Versions(r.Context(), tenant)
+	p, ok := readPage(w, r, versionList)
+	if !ok {
+		return
+	}
+	page, err := s.authoring.Versions(r.Context(), tenant, p.Page)
 	if err != nil {
 		s.fail(w, r, "list policy versions", err)
 		return
 	}
-	if versions == nil {
-		versions = []authoring.Version{}
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].Version}
 	}
-	answer(w, http.StatusOK, map[string]any{"versions": versions})
+	s.answerPage(w, r, p, "versions", page.Rows, page.More, last, nil)
 }
 
 func (s *Server) handlePolicyUpload(w http.ResponseWriter, r *http.Request) {
@@ -428,7 +440,7 @@ func (s *Server) handleExplainSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	stories, err := decision.ExplainSession(r.Context(), s.st, s.mapping, tenant, r.PathValue("session"))
+	stories, truncated, err := decision.ExplainSession(r.Context(), s.st, s.mapping, tenant, r.PathValue("session"))
 	if err != nil {
 		s.explainFailure(w, r, err)
 		return
@@ -440,7 +452,10 @@ func (s *Server) handleExplainSession(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	answer(w, http.StatusOK, map[string]any{"session_id": r.PathValue("session"), "decisions": stories})
+	// A session's decisions are bounded by its hops, so the list keeps the
+	// server's bound and takes no limit and no cursor; `truncated` says when
+	// the bound cut it (M26.3).
+	answer(w, http.StatusOK, map[string]any{"session_id": r.PathValue("session"), "decisions": stories, "truncated": truncated})
 }
 
 // explainFailure answers an unexplainable record LOUDLY: logged at error and

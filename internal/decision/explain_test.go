@@ -54,9 +54,9 @@ func TestExplainADeny(t *testing.T) {
 	h := newHarness(t)
 	id := h.recordSession(t, "forbidden.example.com", "sess-deny")
 
-	stories, err := decision.ExplainSession(t.Context(), h.store, activeMapping(0), testTenant, "sess-deny")
-	if err != nil {
-		t.Fatalf("explain session: %v", err)
+	stories, truncated, err := decision.ExplainSession(t.Context(), h.store, activeMapping(0), testTenant, "sess-deny")
+	if err != nil || truncated {
+		t.Fatalf("explain session: %v (truncated=%t)", err, truncated)
 	}
 	if len(stories) != 1 || stories[0].DecisionID != id {
 		t.Fatalf("the session explains as %+v, want the one decision %s", stories, id)
@@ -133,7 +133,7 @@ func TestAnUnexplainableDecisionIsLoud(t *testing.T) {
 func TestExplainRefusesTheEmptySession(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	if _, err := decision.ExplainSession(t.Context(), h.store, nil, testTenant, ""); !errors.Is(err, decision.ErrNoSession) {
+	if _, _, err := decision.ExplainSession(t.Context(), h.store, nil, testTenant, ""); !errors.Is(err, decision.ErrNoSession) {
 		t.Errorf("explaining session \"\" answered %v, want ErrNoSession", err)
 	}
 }

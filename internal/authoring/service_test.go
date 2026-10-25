@@ -5,6 +5,7 @@ package authoring_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"slices"
@@ -201,8 +202,8 @@ func TestValidationReturnsTheCompilersErrorsVerbatim(t *testing.T) {
 	if _, err := h.svc.Upload(t.Context(), tenant, broken, author); !errors.As(err, new(*authoring.InvalidError)) {
 		t.Errorf("uploading a broken bundle answered %v, want InvalidError", err)
 	}
-	if v, _ := h.svc.Versions(t.Context(), tenant); len(v) != 0 {
-		t.Errorf("a refused upload stored %d versions", len(v))
+	if v, _ := h.svc.Versions(t.Context(), tenant, store.Page{Limit: store.DefaultPageLimit}); len(v.Rows) != 0 {
+		t.Errorf("a refused upload stored %d versions", len(v.Rows))
 	}
 }
 
@@ -322,7 +323,9 @@ func TestSatisfiabilityAgainstTheFleet(t *testing.T) {
 		t.Errorf("a target that cannot take the rung: %+v", rep.Findings)
 	}
 
-	// A rung no enrolled proxy provides: a warning naming rule and proxy.
+	// A rung no enrolled proxy provides: a warning naming the rule, and the
+	// proxy in its parameters beside their count (0035); the message gives the
+	// count, never the list.
 	confined := strings.Replace(restricted("confined", "app.example.com", "/usr/bin/uptime"),
 		"execution: account-restricted", "execution: account-confined", 1)
 	rep, _, err = h.svc.Validate(ctx, tenant, bundle(confined), "")
@@ -330,8 +333,13 @@ func TestSatisfiabilityAgainstTheFleet(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	f := findingWith(rep, authoring.CodeNoProxyProvides)
-	if f == nil || f.Rule != "confined" || !strings.Contains(f.Message, "proxy-1") {
-		t.Errorf("a rung no proxy provides: %+v", rep.Findings)
+	if f == nil || f.Rule != "confined" {
+		t.Fatalf("a rung no proxy provides: %+v", rep.Findings)
+	}
+	if params, _ := json.Marshal(f.Parameters); !strings.Contains(string(params), `"proxy_id":"proxy-1"`) ||
+		f.Parameters["proxies_count"] != 1 || strings.Contains(f.Message, "proxy-1") {
+		t.Errorf("a rung no proxy provides names %s and says %q; want proxy-1 in its parameters, counted, and a message giving the count",
+			params, f.Message)
 	}
 
 	// STALE, UNDATED OR ABSENT publishes. Refusing it is the plausible bug
@@ -476,10 +484,11 @@ func TestConcurrentUploadsMintOneVersionPerSource(t *testing.T) {
 			t.Fatalf("a concurrent upload failed: %v", err)
 		}
 	}
-	versions, err := h.svc.Versions(t.Context(), tenant)
-	if err != nil {
-		t.Fatalf("versions: %v", err)
+	page, err := h.svc.Versions(t.Context(), tenant, store.Page{Limit: store.DefaultPageLimit})
+	if err != nil || page.More {
+		t.Fatalf("versions: %v (more=%t)", err, page.More)
 	}
+	versions := page.Rows
 	digests := map[string]int{}
 	for _, v := range versions {
 		digests[v.Digest]++

@@ -232,7 +232,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"PolicyBundles.GetActive":   func() error { _, err := s.PolicyBundles().GetActive(ctx, ""); return err },
 		"PolicyBundles.Activate":    func() error { return s.PolicyBundles().Activate(ctx, "", 1) },
 		"PolicyBundles.NextVersion": func() error { _, err := s.PolicyBundles().NextVersion(ctx, ""); return err },
-		"PolicyBundles.List":        func() error { _, err := s.PolicyBundles().List(ctx, ""); return err },
+		"PolicyBundles.Page":        func() error { _, err := s.PolicyBundles().Page(ctx, "", Page{Limit: 1}); return err },
 		"PolicyBundles.GetByHash":   func() error { _, err := s.PolicyBundles().GetByHash(ctx, "", "h"); return err },
 		"PolicyBundles.Lock":        func() error { return s.PolicyBundles().Lock(ctx, "") },
 		"Targets.Lock":              func() error { return s.Targets().Lock(ctx, "") },
@@ -243,7 +243,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		},
 		"Decisions.Get":           func() error { _, err := s.Decisions().Get(ctx, "", "d"); return err },
 		"Decisions.ListBySubject": func() error { _, err := s.Decisions().ListBySubject(ctx, "", "s", 1); return err },
-		"Decisions.ListBySession": func() error { _, err := s.Decisions().ListBySession(ctx, "", "s", 1); return err },
+		"Decisions.ListBySession": func() error { _, _, err := s.Decisions().ListBySession(ctx, "", "s", 1); return err },
 		"Decisions.ListRange": func() error {
 			_, _, err := s.Decisions().ListRange(ctx, "", nowForTest(), nowForTest(), 1)
 			return err

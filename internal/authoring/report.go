@@ -81,15 +81,18 @@ const (
 	// the hint reuses the answer from any address; no duration and no grant
 	// bounds that. Warning.
 	CodeCacheHintSpansSources = "authoring.cache_hint_spans_sources"
-	// CodeFloorUndeclared: a proxy's latest declaration lacks the route's
-	// floor level, so authorize refuses the route there. Warning.
+	// CodeFloorUndeclared: proxies whose latest declaration lacks the
+	// route's floor level, so authorize refuses the route on each. One per
+	// rule, naming each such proxy. Warning.
 	CodeFloorUndeclared = "algorithm.floor_undeclared"
-	// CodeAxisEmptied: on one build the route's bans leave an axis nothing to
-	// offer, so authorize refuses the route there. Warning.
+	// CodeAxisEmptied: on some builds the route's bans leave an axis nothing
+	// to offer, so authorize refuses the route on each. One per rule and
+	// axis, naming each such build and what it offered. Warning.
 	CodeAxisEmptied = "algorithm.axis_emptied"
-	// CodeAlgorithmUnknown: a declaration cannot judge the route's bans — it
-	// omits the route's profile, or omits `algorithm_profiles` — or no proxy
-	// has declared its algorithms at all. Advice.
+	// CodeAlgorithmUnknown: declarations cannot judge the route's bans — they
+	// omit the route's profile, or omit `algorithm_profiles` (one per rule,
+	// naming each such proxy) — or no proxy has declared its algorithms at
+	// all (one per rule, naming none). Advice.
 	CodeAlgorithmUnknown = "algorithm.declaration_unknown"
 	// CodeBanUnmatched: a banned name no recorded build offers. A typo looks
 	// exactly like a working ban. Warning.
@@ -123,7 +126,9 @@ var ControlCodes = []string{
 type Finding struct {
 	// ID is stable for the same finding on the same bundle against the same
 	// fleet, and it is what an author accepts. It is built from the code and
-	// what the finding is about, never from the message.
+	// what the finding is about, never from the message. A finding about
+	// many targets or proxies lists them in its parameters, at most
+	// MaxFindingItems of them, and its id names none of them.
 	ID       string `json:"id"`
 	Severity string `json:"severity"`
 	Code     string `json:"code"`

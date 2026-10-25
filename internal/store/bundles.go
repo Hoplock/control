@@ -153,33 +153,51 @@ func (r bundleRepo) NextVersion(ctx context.Context, tenant Tenant) (int64, erro
 	return next, nil
 }
 
-func (r bundleRepo) List(ctx context.Context, tenant Tenant) ([]PolicyBundle, error) {
-	const op = "store.PolicyBundles.List"
-	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
-	}
+// versionColumns are what a version shows in the history: everything but its
+// source. A version's source is bounded only by the upload body, so a list of
+// versions never reads it; one version's route does (0035).
+const versionColumns = `version, hash, uploaded_by, uploaded_at, active`
 
+// versionOrder is the tenant's version history (M26.4): newest first by
+// version, which is unique within the tenant. The primary key
+// (tenant, version) serves it, read backwards.
+var versionOrder = order{columns: []string{"version"}, desc: true}
+
+func (r bundleRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[PolicyBundle], error) {
+	const op = "store.PolicyBundles.Page"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[PolicyBundle]{}, err
+	}
+	sql, args, err := bundlePageSQL(op, tenant, p)
+	if err != nil {
+		return Paged[PolicyBundle]{}, err
+	}
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	rows, err := r.s.db.Query(ctx, `
-		SELECT `+bundleColumns+`
+	return queryPage(ctx, r.s.db, op, p, sql, args, scanVersion)
+}
+
+// bundlePageSQL is the statement one page of the version history runs, and
+// its arguments.
+func bundlePageSQL(op string, tenant Tenant, p Page) (string, []any, error) {
+	if err := checkPage(op, versionOrder, p); err != nil {
+		return "", nil, err
+	}
+	tail, args := versionOrder.clause(p, []any{tenant})
+	return `
+		SELECT ` + versionColumns + `
 		FROM policy_bundles
-		WHERE tenant = $1
-		ORDER BY version DESC`, tenant)
-	if err != nil {
-		return nil, wrap(op, err)
+		WHERE tenant = $1` + tail, args, nil
+}
+
+// scanVersion reads a row of versionColumns: a bundle with no Source.
+func scanVersion(op string, row rowScanner) (PolicyBundle, error) {
+	var b PolicyBundle
+	if err := row.Scan(&b.Version, &b.Hash, &b.UploadedBy, &b.UploadedAt, &b.Active); err != nil {
+		return PolicyBundle{}, wrap(op, err)
 	}
-	defer rows.Close()
-	var out []PolicyBundle
-	for rows.Next() {
-		b, err := scanBundle(op, rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, b)
-	}
-	return out, wrap(op, rows.Err())
+	return b, nil
 }
 
 func scanBundle(op string, row rowScanner) (PolicyBundle, error) {
