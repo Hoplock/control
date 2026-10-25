@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -257,6 +256,10 @@ func (s *Server) answerOutcome(w http.ResponseWriter, r *http.Request, tenant st
 	}
 }
 
+// grantList is the operator's list of grants (M26): newest first, by creation
+// and then grant id.
+var grantList = list{name: "grants", key: []keyKind{keyTime, keyString}}
+
 func (s *Server) handleGrantList(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
@@ -272,25 +275,25 @@ func (s *Server) handleGrantList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n <= 0 {
-			s.invalid(w, r, "limit", access.ProblemInvalid, "")
-			return
-		}
-		q.Limit = n
+	p, ok := readPage(w, r, grantList, "subject="+q.SubjectID, "state="+string(q.State))
+	if !ok {
+		return
 	}
-	rows, err := s.grants.List(r.Context(), tenant, q)
+	page, err := s.grants.GrantPage(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.grantFailure(w, r, "list grants", err)
 		return
 	}
 	now := s.grants.Now()
-	out := make([]grantView, 0, len(rows))
-	for _, g := range rows {
+	out := make([]grantView, 0, len(page.Rows))
+	for _, g := range page.Rows {
 		out = append(out, viewGrant(tenant, g, now))
 	}
-	answer(w, http.StatusOK, map[string]any{"tenant": tenant.String(), "grants": out})
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].CreatedAt, page.Rows[n-1].ID}
+	}
+	s.answerPage(w, r, p, "grants", out, page.More, last, map[string]any{"tenant": tenant.String()})
 }
 
 type grantDecisionView struct {
@@ -307,13 +310,15 @@ func (s *Server) handleGrantGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	g, decisions, err := s.grants.Inspect(r.Context(), tenant, r.PathValue("grant"))
+	g, decisions, truncated, err := s.grants.Inspect(r.Context(), tenant, r.PathValue("grant"))
 	if err != nil {
 		s.grantFailure(w, r, "inspect grant", err)
 		return
 	}
 	// What the grant let anybody do: the decisions it supplied, newest
-	// first. Each is resolvable into the whole story by its id (M4).
+	// first. Each is resolvable into the whole story by its id (M4). It is a
+	// sample the server bounds, so it says when the bound cut it and takes
+	// no cursor (M26.3): every record the grant backed is in the audit query.
 	used := make([]grantDecisionView, 0, len(decisions))
 	for _, d := range decisions {
 		used = append(used, grantDecisionView{
@@ -322,8 +327,9 @@ func (s *Server) handleGrantGet(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	answer(w, http.StatusOK, map[string]any{
-		"grant":     viewGrant(tenant, g, s.grants.Now()),
-		"decisions": used,
+		"grant":               viewGrant(tenant, g, s.grants.Now()),
+		"decisions":           used,
+		"decisions_truncated": truncated,
 	})
 }
 
@@ -524,6 +530,11 @@ func (s *Server) handleOwnRequestCreate(w http.ResponseWriter, r *http.Request) 
 	s.answerOutcome(w, r, tenant, out)
 }
 
+// ownRequestList is a requester's own requests (M26): newest first, by when
+// each was raised and then request id. Whose requests they are is never in the
+// cursor; it is the subject the middleware resolved, on every page (M18).
+var ownRequestList = list{name: "own_requests", key: []keyKind{keyTime, keyString}}
+
 func (s *Server) handleOwnRequestList(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
@@ -544,24 +555,24 @@ func (s *Server) handleOwnRequestList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n <= 0 {
-			s.invalid(w, r, "limit", access.ProblemInvalid, "")
-			return
-		}
-		q.Limit = n
+	p, ok := readPage(w, r, ownRequestList, "state="+string(q.State))
+	if !ok {
+		return
 	}
-	rows, err := s.grants.OwnRequests(r.Context(), tenant, subject, q)
+	page, err := s.grants.OwnRequestPage(r.Context(), tenant, subject, q, p.Page)
 	if err != nil {
 		s.grantFailure(w, r, "list own grant requests", err)
 		return
 	}
-	out := make([]requestView, 0, len(rows))
-	for _, req := range rows {
+	out := make([]requestView, 0, len(page.Rows))
+	for _, req := range page.Rows {
 		out = append(out, viewRequest(tenant, req, s.grants.WorkflowProvider()))
 	}
-	answer(w, http.StatusOK, map[string]any{"tenant": tenant.String(), "requests": out})
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].RequestedAt, page.Rows[n-1].ID}
+	}
+	s.answerPage(w, r, p, "requests", out, page.More, last, map[string]any{"tenant": tenant.String()})
 }
 
 func (s *Server) handleOwnRequestGet(w http.ResponseWriter, r *http.Request) {

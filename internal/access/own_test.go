@@ -65,9 +65,9 @@ func TestARequesterAsksForThemselvesAndTheWorkflowDecides(t *testing.T) {
 	if err := h.grants.Poll(t.Context(), tenant); err != nil {
 		t.Fatalf("poll: %v", err)
 	}
-	rows, err := h.store.Grants().List(t.Context(), tenant, store.GrantQuery{})
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("grants after approval: %+v, %v", rows, err)
+	rows := storetest.Grants(t, h.store, tenant)
+	if len(rows) != 1 {
+		t.Fatalf("grants after approval: %+v", rows)
 	}
 	g := rows[0]
 	if g.SubjectID != alice || g.CreatedBy.Subject != alice || g.CreatedBy.Principal != "p-alice" ||
@@ -116,10 +116,11 @@ func TestWithNoWorkflowARequestOfOnesOwnIsRefusedAndNothingIsStored(t *testing.T
 	if !errors.Is(err, access.ErrNoWorkflow) {
 		t.Fatalf("request own with no workflow: %v, want ErrNoWorkflow", err)
 	}
-	if rows, err := h.store.GrantRequests().ListForSubject(t.Context(), tenant, alice, store.GrantRequestQuery{}); err != nil || len(rows) != 0 {
-		t.Errorf("request rows after a refusal: %+v, %v", rows, err)
+	if rows, err := h.store.GrantRequests().PageForSubject(t.Context(), tenant, alice, store.GrantRequestQuery{},
+		store.Page{Limit: 1}); err != nil || len(rows.Rows) != 0 {
+		t.Errorf("request rows after a refusal: %+v, %v", rows.Rows, err)
 	}
-	if rows, _ := h.store.Grants().List(t.Context(), tenant, store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, h.store, tenant); len(rows) != 0 {
 		t.Errorf("grants after a refusal: %+v", rows)
 	}
 	if recs, err := h.store.Audit().Query(t.Context(), tenant, store.AuditQuery{Limit: 100}); err != nil || len(recs) != 0 {
@@ -153,10 +154,10 @@ func TestARequestOfOnesOwnNamesNoOtherHolder(t *testing.T) {
 	if _, err := h.grants.RequestOwn(t.Context(), tenant, token, ownDBAFor30m()); err == nil || errors.As(err, &ve) {
 		t.Errorf("a self request from a machine token: %v, want a wiring fault", err)
 	}
-	if _, err := h.grants.OwnRequests(t.Context(), tenant, "", store.GrantRequestQuery{}); err == nil {
+	if _, err := h.grants.OwnRequestPage(t.Context(), tenant, "", store.GrantRequestQuery{}, store.Page{Limit: 1}); err == nil {
 		t.Error("a list of nobody's own requests was answered")
 	}
-	if rows, _ := h.store.Grants().List(t.Context(), tenant, store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, h.store, tenant); len(rows) != 0 {
 		t.Errorf("a refused self request created %d grants", len(rows))
 	}
 }
@@ -186,10 +187,11 @@ func TestARequesterReadsAndWithdrawsOnlyTheirOwnRequests(t *testing.T) {
 		t.Fatalf("create for bob: %v", err)
 	}
 
-	list, err := h.grants.OwnRequests(t.Context(), tenant, alice, store.GrantRequestQuery{})
-	if err != nil {
-		t.Fatalf("own requests: %v", err)
+	page, err := h.grants.OwnRequestPage(t.Context(), tenant, alice, store.GrantRequestQuery{}, store.Page{Limit: store.DefaultPageLimit})
+	if err != nil || page.More {
+		t.Fatalf("own requests: %v (more=%t)", err, page.More)
 	}
+	list := page.Rows
 	if len(list) != 2 {
 		t.Fatalf("alice's list has %d requests, want her own two", len(list))
 	}

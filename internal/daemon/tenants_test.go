@@ -172,7 +172,7 @@ func TestADecisionIsAppliedInATenantWhoseProxySubscribesAfterARestart(t *testing
 	// know this tenant and nothing is applied.
 	wf.approve()
 	time.Sleep(6 * cfg.Grants.WorkflowPollInterval)
-	if rows, _ := st.Grants().List(ctx, otherTenant, store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, st, otherTenant); len(rows) != 0 {
 		t.Fatalf("a grant exists before any proxy of %s subscribed: the poller listed tenants it was never shown", otherTenant)
 	}
 
@@ -202,7 +202,7 @@ func TestADecisionIsAppliedInATenantWhoseProxySubscribesAfterARestart(t *testing
 	deadline := time.Now().Add(5 * time.Second)
 	var rows []store.Grant
 	for time.Now().Before(deadline) {
-		rows, _ = st.Grants().List(ctx, otherTenant, store.GrantQuery{})
+		rows = storetest.Grants(t, st, otherTenant)
 		if len(rows) > 0 {
 			break
 		}

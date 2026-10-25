@@ -20,6 +20,7 @@ import (
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
+	"github.com/hoplock/control/internal/store/storetest"
 )
 
 // A requester's own door over the wire (0016): the AccessSelf family, whose
@@ -210,11 +211,11 @@ func TestWithNoWorkflowTheSelfCreateIsRefusedAndNothingIsStored(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden || e.Code != north.CodeGrantWorkflowNotRegistered || e.Message == "" {
 		t.Fatalf("self create with no workflow: %d %+v, want 403 %s", resp.StatusCode, e, north.CodeGrantWorkflowNotRegistered)
 	}
-	if rows, err := f.st.GrantRequests().ListForSubject(t.Context(), "tenant-a", "alice@example.com",
-		store.GrantRequestQuery{}); err != nil || len(rows) != 0 {
-		t.Errorf("request rows after the refusal: %+v, %v", rows, err)
+	if rows, err := f.st.GrantRequests().PageForSubject(t.Context(), "tenant-a", "alice@example.com",
+		store.GrantRequestQuery{}, store.Page{Limit: 1}); err != nil || len(rows.Rows) != 0 {
+		t.Errorf("request rows after the refusal: %+v, %v", rows.Rows, err)
 	}
-	if rows, _ := f.st.Grants().List(t.Context(), "tenant-a", store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, f.st, "tenant-a"); len(rows) != 0 {
 		t.Errorf("grants after the refusal: %+v", rows)
 	}
 	if after, _ := f.st.Audit().Query(t.Context(), "tenant-a", store.AuditQuery{Limit: 1000}); len(after) != len(before) {
@@ -250,7 +251,7 @@ func TestASelfCreateNamingAHolderIsRefusedAndADenialCreatesNothing(t *testing.T)
 	if e := decodeError(t, resp); resp.StatusCode != http.StatusForbidden || e.Code != north.CodeGrantRequestDenied {
 		t.Errorf("a denied self request: %d %+v", resp.StatusCode, e)
 	}
-	if rows, _ := f.st.Grants().List(t.Context(), "tenant-a", store.GrantQuery{}); len(rows) != 0 {
+	if rows := storetest.Grants(t, f.st, "tenant-a"); len(rows) != 0 {
 		t.Errorf("a denied self request created %d grants", len(rows))
 	}
 }

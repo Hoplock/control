@@ -292,7 +292,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.Grants().Revoke(ctx, "", "g", GrantRevocation{At: nowForTest()})
 			return err
 		},
-		"Grants.List": func() error { _, err := s.Grants().List(ctx, "", GrantQuery{}); return err },
+		"Grants.Page": func() error { _, err := s.Grants().Page(ctx, "", GrantQuery{}, Page{Limit: 1}); return err },
 		"GrantRequests.Insert": func() error {
 			return s.GrantRequests().Insert(ctx, "", GrantRequest{
 				ID: "r", SubjectID: "s", NotBefore: nowForTest(), ExpiresAt: nowForTest().Add(time.Hour),
@@ -312,11 +312,11 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.GrantRequests().GetForSubject(ctx, "", "s", "r")
 			return err
 		},
-		"GrantRequests.ListForSubject": func() error {
-			_, err := s.GrantRequests().ListForSubject(ctx, "", "s", GrantRequestQuery{})
+		"GrantRequests.PageForSubject": func() error {
+			_, err := s.GrantRequests().PageForSubject(ctx, "", "s", GrantRequestQuery{}, Page{Limit: 1})
 			return err
 		},
-		"Decisions.ListByGrant": func() error { _, err := s.Decisions().ListByGrant(ctx, "", "g", 1); return err },
+		"Decisions.ListByGrant": func() error { _, _, err := s.Decisions().ListByGrant(ctx, "", "g", 1); return err },
 		"Decisions.SessionsByGrant": func() error {
 			_, _, err := s.Decisions().SessionsByGrant(ctx, "", "g", 1)
 			return err

@@ -606,7 +606,8 @@ func (g Grant) State(t time.Time) GrantState {
 	}
 }
 
-// GrantQuery selects grants for an operator's list.
+// GrantQuery selects grants for an operator's list. The page it is read in is
+// the caller's (Page, M26).
 type GrantQuery struct {
 	// SubjectID narrows to one holder. Empty means every holder.
 	SubjectID string
@@ -615,9 +616,6 @@ type GrantQuery struct {
 	// At is the instant State is judged at. Required when State is set:
 	// time is an input, never a clock this layer reads.
 	At time.Time
-	// Limit bounds the answer. Zero takes a default; there is no unbounded
-	// list.
-	Limit int
 }
 
 // GrantRevocation is one operator's withdrawal of a grant.
@@ -702,13 +700,11 @@ type GrantRequest struct {
 	PolledAt  time.Time
 }
 
-// GrantRequestQuery selects one subject's requests (0016).
+// GrantRequestQuery selects one subject's requests (0016). The page it is read
+// in is the caller's (Page, M26).
 type GrantRequestQuery struct {
 	// State narrows to one state. Empty means every state.
 	State GrantRequestState
-	// Limit bounds the answer. Zero takes a default; there is no unbounded
-	// list.
-	Limit int
 }
 
 // GrantRequestResolution is how a pending request leaves `pending`.

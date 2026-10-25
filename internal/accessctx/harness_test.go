@@ -374,11 +374,7 @@ func (h *harness) controlRecords(event string) []store.AuditRecord {
 // grantCount is how many grants the tenant holds, whatever their state.
 func (h *harness) grantCount() int {
 	h.t.Helper()
-	gs, err := h.store.Grants().List(h.t.Context(), tenant, store.GrantQuery{Limit: 1000})
-	if err != nil {
-		h.t.Fatalf("list grants: %v", err)
-	}
-	return len(gs)
+	return len(storetest.Grants(h.t, h.store, tenant))
 }
 
 // ---------------------------------------------------------------------------

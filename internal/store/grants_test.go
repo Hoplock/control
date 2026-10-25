@@ -167,12 +167,12 @@ func TestTheListFiltersByStateAtAnInstant(t *testing.T) {
 
 	ids := func(q store.GrantQuery) []string {
 		t.Helper()
-		got, err := st.Grants().List(ctx, tenantA, q)
-		if err != nil {
-			t.Fatalf("List(%+v): %v", q, err)
+		got, err := st.Grants().Page(ctx, tenantA, q, store.Page{Limit: store.MaxPageLimit})
+		if err != nil || got.More {
+			t.Fatalf("Page(%+v): %v (more=%t)", q, err, got.More)
 		}
 		var out []string
-		for _, g := range got {
+		for _, g := range got.Rows {
 			out = append(out, g.ID)
 		}
 		return out
@@ -195,14 +195,12 @@ func TestTheListFiltersByStateAtAnInstant(t *testing.T) {
 	if got := ids(store.GrantQuery{}); len(got) != 5 {
 		t.Errorf("the tenant's grants: %v, want five", got)
 	}
-	if got := ids(store.GrantQuery{Limit: 2}); len(got) != 2 {
-		t.Errorf("a limit of 2 returned %v", got)
-	}
 
-	if _, err := st.Grants().List(ctx, tenantA, store.GrantQuery{State: store.GrantActive}); !store.IsInvalid(err) {
+	page := store.Page{Limit: 1}
+	if _, err := st.Grants().Page(ctx, tenantA, store.GrantQuery{State: store.GrantActive}, page); !store.IsInvalid(err) {
 		t.Errorf("a state with no instant: %v, want ErrInvalid", err)
 	}
-	if _, err := st.Grants().List(ctx, tenantA, store.GrantQuery{State: "stale", At: now}); !store.IsInvalid(err) {
+	if _, err := st.Grants().Page(ctx, tenantA, store.GrantQuery{State: "stale", At: now}, page); !store.IsInvalid(err) {
 		t.Errorf("an unknown state: %v, want ErrInvalid", err)
 	}
 }
@@ -270,11 +268,11 @@ func TestSessionsByGrantAreTheAllowedDistinctPairs(t *testing.T) {
 		t.Errorf("a limit of 1 returned %+v, cut %v, %v: want one pair and a cut answer", got, cut, err)
 	}
 
-	byGrant, err := st.Decisions().ListByGrant(ctx, tenantA, "g-1", 0)
-	if err != nil || len(byGrant) != 5 {
-		t.Errorf("ListByGrant: %d, %v, want the five decisions g-1 supplied", len(byGrant), err)
+	byGrant, cut, err := st.Decisions().ListByGrant(ctx, tenantA, "g-1", 0)
+	if err != nil || len(byGrant) != 5 || cut {
+		t.Errorf("ListByGrant: %d (cut %t), %v, want the five decisions g-1 supplied", len(byGrant), cut, err)
 	}
-	if _, err := st.Decisions().ListByGrant(ctx, tenantA, "", 0); !store.IsInvalid(err) {
+	if _, _, err := st.Decisions().ListByGrant(ctx, tenantA, "", 0); !store.IsInvalid(err) {
 		t.Errorf("ListByGrant of the empty id: %v, want ErrInvalid", err)
 	}
 	for _, d := range byGrant {
@@ -403,32 +401,32 @@ func TestASubjectReadsOnlyTheRequestsItHolds(t *testing.T) {
 		t.Errorf("a read with no subject: %v, want ErrInvalid", err)
 	}
 
-	list, err := st.GrantRequests().ListForSubject(ctx, tenantA, "alice", store.GrantRequestQuery{})
+	page := store.Page{Limit: store.DefaultPageLimit}
+	mine, err := st.GrantRequests().PageForSubject(ctx, tenantA, "alice", store.GrantRequestQuery{}, page)
 	if err != nil {
-		t.Fatalf("ListForSubject: %v", err)
+		t.Fatalf("PageForSubject: %v", err)
 	}
-	if len(list) != 2 || list[0].ID != "gr-alice-2" || list[1].ID != "gr-alice-1" {
-		t.Fatalf("alice's list = %+v, want her two, newest first", list)
+	if list := mine.Rows; len(list) != 2 || list[0].ID != "gr-alice-2" || list[1].ID != "gr-alice-1" || mine.More {
+		t.Fatalf("alice's list = %+v (more=%t), want her two, newest first", list, mine.More)
 	}
 
-	// A state narrows; a limit bounds.
+	// A state narrows.
 	if err := st.GrantRequests().Resolve(ctx, tenantA, "gr-alice-1", store.GrantRequestResolution{
 		State: store.GrantRequestCancelled, At: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	cancelled, err := st.GrantRequests().ListForSubject(ctx, tenantA, "alice",
-		store.GrantRequestQuery{State: store.GrantRequestCancelled})
-	if err != nil || len(cancelled) != 1 || cancelled[0].ID != "gr-alice-1" {
-		t.Errorf("cancelled filter = %+v, %v", cancelled, err)
+	cancelled, err := st.GrantRequests().PageForSubject(ctx, tenantA, "alice",
+		store.GrantRequestQuery{State: store.GrantRequestCancelled}, page)
+	if err != nil || len(cancelled.Rows) != 1 || cancelled.Rows[0].ID != "gr-alice-1" {
+		t.Errorf("cancelled filter = %+v, %v", cancelled.Rows, err)
 	}
-	one, err := st.GrantRequests().ListForSubject(ctx, tenantA, "alice", store.GrantRequestQuery{Limit: 1})
-	if err != nil || len(one) != 1 {
-		t.Errorf("limit 1 = %d rows, %v", len(one), err)
-	}
-	if _, err := st.GrantRequests().ListForSubject(ctx, tenantA, "alice",
-		store.GrantRequestQuery{State: "approved-ish"}); !store.IsInvalid(err) {
+	if _, err := st.GrantRequests().PageForSubject(ctx, tenantA, "alice",
+		store.GrantRequestQuery{State: "approved-ish"}, page); !store.IsInvalid(err) {
 		t.Errorf("an unknown state: %v, want ErrInvalid", err)
+	}
+	if _, err := st.GrantRequests().PageForSubject(ctx, tenantA, "", store.GrantRequestQuery{}, page); !store.IsInvalid(err) {
+		t.Errorf("a page with no subject: %v, want ErrInvalid", err)
 	}
 }
 
