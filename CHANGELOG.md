@@ -26,6 +26,51 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.18.0
+
+Phase 0031, bounded lists 3: proxies and configuration rollouts.
+`GET /api/v1/tenants/{tenant}/proxies` and
+`GET /api/v1/tenants/{tenant}/fleet/config/rollouts` now answer in decision
+M26's shape (`docs/PLAN.md` §2), one page at a time, as the target and subject
+lists have since `v0.16.0`.
+
+### Breaking
+
+No signature changes; `make release-check` finds none. Three behaviour
+changes on the two lists:
+
+- **They answer at most 500 items by default.** They answered the whole
+  tenant. `?limit=` asks for 1 to 10 000; a page holds exactly that many
+  unless it is the last. Above 10 000 is `400 invalid_request`
+  `{field: limit, problem: exceeds_maximum, limit: "10000"}`; zero, a
+  negative or a non-integer is `{field: limit, problem: invalid}`.
+- **Both answers gain `truncated` and, when cut, `next`.** They are
+  `{"proxies": [...], "liveness": {...}, "truncated": bool, "next": "<cursor>"}`
+  and
+  `{"rollouts": [...], "fleet_owned_keys": [...], "truncated": bool, "next": "<cursor>"}`.
+  `liveness` and `fleet_owned_keys` describe the list and are the same on
+  every page. Pass `next` back as `?after=` to read the following page. A
+  client that read the whole fleet from one answer must now follow `next`
+  until `truncated` is false.
+- **`?drifted=true` is now a cursor filter.** A cursor from the drifted view
+  continues only the drifted view, and one from the whole view only the whole
+  view; either presented to the other is `400 invalid_request`
+  `{field: after, problem: invalid}`. Any other value of `drifted` is the
+  whole view, as before.
+
+- **Phase:** 0031, bounded lists 3: proxies and configuration rollouts.
+- **Public packages:** none changed.
+- **Behaviour no API diff shows:**
+  - The drifted view is filtered as it is read, so a page of it holds its
+    limit unless it is the last. It holds exactly the proxies with a
+    published document (desired version not 0) that have not reported
+    `applied` on that document. For every state Control writes, that is the
+    set it answered before.
+  - A page of the fleet view reads relay registrations and configuration
+    states for its own proxies only, and a proxy's event subscription, on
+    any node, for each proxy of the page. A failure in any of those reads is
+    a `500` with its correlation id, never a shorter page.
+
 ## v0.17.0
 
 Phase 0030, bounded lists 2: the shape for a host's lists. A host's list
