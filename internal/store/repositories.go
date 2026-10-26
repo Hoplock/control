@@ -206,8 +206,13 @@ type AuditRepository interface {
 	// Streams lists the streams a tenant has records in — what a whole
 	// verification walks, and what a departing tenant takes (M18).
 	Streams(ctx context.Context, tenant Tenant) ([]string, error)
-	// Query selects records over the dimensions PLAN §7 names.
+	// Query selects records over the dimensions PLAN §7 names, up to the
+	// query's limit, for a reader inside Control.
 	Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]AuditRecord, error)
+	// Page reads one page of the same selection, by recorded-at, stream and
+	// chain sequence in the query's direction (M26): every north-bound
+	// audit list reads it.
+	Page(ctx context.Context, tenant Tenant, q AuditQuery, p Page) (Paged[AuditRecord], error)
 	// Sessions answers the distinct sessions whose records match, newest
 	// first and never "", its limit counting sessions rather than records,
 	// and whether more matched than the limit let it return.

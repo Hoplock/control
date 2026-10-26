@@ -799,4 +799,30 @@ func TestATruncatedUnmetReadSaysSo(t *testing.T) {
 	if f == nil || f.Severity != authoring.SeverityAdvice || f.Parameters["limit"] != 2 {
 		t.Errorf("a read cut short at 2 of 3: %+v, want advice naming the limit", f)
 	}
+
+	// The read is one page of the audit query, so its limit is one a page
+	// may hold; a larger one is refused rather than clamped short of it
+	// (M26.1), which would read as a complete answer.
+	opts := authoring.Options{Store: h.st, Fleet: fleet.New(h.st), Emitter: emitterFor(t, h.st), Reader: h.reader,
+		UnmetLimit: store.MaxPageLimit + 1}
+	if _, err := authoring.New(opts); err == nil {
+		t.Errorf("an unmet limit of %d, past one page, was accepted", opts.UnmetLimit)
+	}
+	opts.UnmetLimit = store.MaxPageLimit
+	if _, err := authoring.New(opts); err != nil {
+		t.Errorf("an unmet limit of one whole page was refused: %v", err)
+	}
+}
+
+func emitterFor(t *testing.T, st *store.Store) *audit.Emitter {
+	t.Helper()
+	in, err := audit.New(audit.Options{Store: st})
+	if err != nil {
+		t.Fatalf("ingester: %v", err)
+	}
+	emitter, err := audit.NewEmitter(in)
+	if err != nil {
+		t.Fatalf("emitter: %v", err)
+	}
+	return emitter
 }

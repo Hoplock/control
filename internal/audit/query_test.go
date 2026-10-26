@@ -327,7 +327,7 @@ func TestTheAccountMappingEventIsQueryableOnItsOwn(t *testing.T) {
 		t.Error("the mapping event lost the attribution it exists to carry")
 	}
 
-	changes, err := reader.DeviceConfigChanges(ctx, tenantA, audit.DriftQuery{})
+	changes, err := rowsOf(reader.DeviceConfigChanges(ctx, tenantA, audit.DriftQuery{}, allOfIt))
 	if err != nil {
 		t.Fatalf("DeviceConfigChanges: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestRecordsAreFoundByEveryDimensionTheyCarry(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			rows, err := reader.Find(ctx, tenantA, tc.query)
+			rows, err := rowsOf(reader.Find(ctx, tenantA, tc.query, allOfIt))
 			if err != nil {
 				t.Fatalf("Find: %v", err)
 			}
@@ -383,7 +383,7 @@ func TestRecordsAreFoundByEveryDimensionTheyCarry(t *testing.T) {
 
 	t.Run("by time range", func(t *testing.T) {
 		future := time.Now().UTC().Add(time.Hour)
-		rows, err := reader.Find(ctx, tenantA, audit.Query{From: future})
+		rows, err := rowsOf(reader.Find(ctx, tenantA, audit.Query{From: future}, allOfIt))
 		if err != nil {
 			t.Fatalf("Find: %v", err)
 		}

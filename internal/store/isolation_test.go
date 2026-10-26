@@ -160,6 +160,10 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 			got, err := st.Audit().Chain(ctx, tenantA, "session", 0, 0)
 			return len(got) - 1, err // A's own record is expected
 		},
+		"Audit.Page": func() (int, error) {
+			got, err := st.Audit().Page(ctx, tenantA, store.AuditQuery{}, store.Page{Limit: store.MaxPageLimit})
+			return len(got.Rows) - 1, err // A's own record is expected
+		},
 	}
 	for name, list := range lists {
 		extra, err := list()

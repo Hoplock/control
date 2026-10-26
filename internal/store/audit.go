@@ -28,15 +28,6 @@ const auditColumns = `record_id, stream, chain_seq, prev_hash, hash, session_id,
 	negotiated, device_change_op, target_account, device_object_kind,
 	gap_cause, gap_records, gap_bytes, gap_first_at, gap_last_at, gap_kinds, gap_critical, gap_record_ids`
 
-// defaultAuditLimit bounds a chain walk or a query when the caller asks for no
-// limit.
-const defaultAuditLimit = 500
-
-// maxAuditLimit is the ceiling on a caller-supplied limit. A query surface
-// that can be asked for the whole store is one request away from being an
-// outage (M5's reasoning, one layer out).
-const maxAuditLimit = 10000
-
 func (r auditRepo) Append(ctx context.Context, tenant Tenant, rec AuditRecord) error {
 	const op = "store.Audit.Append"
 	if err := checkTenant(op, tenant); err != nil {
@@ -511,7 +502,8 @@ type AuditQuery struct {
 	// instant the event happened, never the instant it arrived.
 	From time.Time
 	To   time.Time
-	// Limit is bounded by maxAuditLimit; zero takes defaultAuditLimit.
+	// Limit is Query's and Sessions': bounded by MaxPageLimit, zero taking
+	// DefaultPageLimit. Page reads its page's limit and never this one.
 	Limit int
 	// Ascending reads oldest first. The default is newest first, because
 	// every caller looking at a WINDOW wants the recent end of it; a
@@ -520,36 +512,51 @@ type AuditQuery struct {
 	Ascending bool
 }
 
-// auditOrder is the ordering both directions share.
+// auditOrder is every audit read's one total order (M26.4): recorded-at,
+// stream and chain sequence, newest first unless the query is Ascending.
+// `audit_records_order_idx` holds it, read backwards for Ascending.
 //
 // The tie-break is not decoration. Records arriving in one batch carry
 // timestamps to whatever precision the proxy sent — RFC 3339 to the second is
 // normal — so a session's records routinely share an instant, and ordering on
 // the timestamp alone would return them in whatever order the planner chose.
 // The chain position within a stream is the arrival order, which is the
-// closest thing to a true sequence this store has.
-func auditOrder(ascending bool) string {
-	if ascending {
-		return "recorded_at, stream, chain_seq"
-	}
-	return "recorded_at DESC, stream DESC, chain_seq DESC"
+// closest thing to a true sequence this store has, and `(tenant, stream,
+// chain_seq)` is unique, so the key is total and a page's position is exact.
+func auditOrder(ascending bool) order {
+	return order{columns: []string{"recorded_at", "stream", "chain_seq"}, desc: !ascending}
 }
 
+// Query answers the first records matching a selection, up to its Limit, for
+// a reader inside Control that takes no position. A north-bound list reads
+// Page.
 func (r auditRepo) Query(ctx context.Context, tenant Tenant, q AuditQuery) ([]AuditRecord, error) {
-	const op = "store.Audit.Query"
+	got, err := r.page(ctx, "store.Audit.Query", tenant, q, Page{Limit: boundLimit(q.Limit)})
+	return got.Rows, err
+}
+
+// Page reads one page of the records matching a selection, in its direction
+// (M26): at most p.Limit records after the position p.After, which is the
+// last record's recorded-at, stream and chain sequence (time.Time, string,
+// int64). q.Limit is not read. A window narrows the page but is never its
+// position, because many records share an instant.
+func (r auditRepo) Page(ctx context.Context, tenant Tenant, q AuditQuery, p Page) (Paged[AuditRecord], error) {
+	return r.page(ctx, "store.Audit.Page", tenant, q, p)
+}
+
+func (r auditRepo) page(ctx context.Context, op string, tenant Tenant, q AuditQuery, p Page) (Paged[AuditRecord], error) {
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return Paged[AuditRecord]{}, err
+	}
+	sql, args, err := auditPageSQL(op, tenant, q, p)
+	if err != nil {
+		return Paged[AuditRecord]{}, err
 	}
 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	sql, args := auditQuerySQL(tenant, q)
-	rows, err := r.s.db.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, wrap(op, err)
-	}
-	return collectAuditRecords(op, rows)
+	return queryPage(ctx, r.s.db, op, p, sql, args, scanAuditRecord)
 }
 
 // Sessions answers the distinct sessions whose records match a selection,
@@ -599,17 +606,20 @@ func (r auditRepo) Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([
 	return out, false, nil
 }
 
-// auditQuerySQL renders Query's statement. It is one function so that the test
-// which asks Postgres for the statement's plan reads exactly what Query runs.
-func auditQuerySQL(tenant Tenant, q AuditQuery) (string, []any) {
+// auditPageSQL renders the statement Page and Query run. It is one function so
+// that the tests which ask Postgres for the statement's plan read exactly what
+// runs.
+func auditPageSQL(op string, tenant Tenant, q AuditQuery, p Page) (string, []any, error) {
+	o := auditOrder(q.Ascending)
+	if err := checkPage(op, o, p); err != nil {
+		return "", nil, err
+	}
 	where, args := auditWhere(tenant, q)
-	args = append(args, boundLimit(q.Limit))
+	tail, args := o.clause(p, args)
 	return `
 		SELECT ` + auditColumns + `
 		FROM audit_records
-		WHERE ` + where + `
-		ORDER BY ` + auditOrder(q.Ascending) + `
-		LIMIT $` + fmt.Sprint(len(args)), args
+		WHERE ` + where + tail, args, nil
 }
 
 // auditWhere renders a selection's WHERE clause, the tenant always `$1`.
@@ -958,12 +968,18 @@ func jsonPair(name, value string) string {
 	return string(encoded)
 }
 
+// boundLimit bounds a read that is not a page — Chain, Query, Sessions and
+// BlockedCommands — when its caller asks for no limit or for more than a
+// page. A query surface that can be asked for the whole store is one
+// request away from being an outage (M5's reasoning, one layer out). Its
+// numbers are M26's, so an internal read and a page agree on what "a page"
+// is; a north-bound list refuses rather than clamps (store.Page).
 func boundLimit(limit int) int {
 	switch {
 	case limit <= 0:
-		return defaultAuditLimit
-	case limit > maxAuditLimit:
-		return maxAuditLimit
+		return DefaultPageLimit
+	case limit > MaxPageLimit:
+		return MaxPageLimit
 	default:
 		return limit
 	}
