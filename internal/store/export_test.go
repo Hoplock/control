@@ -128,6 +128,25 @@ func DeleteSSHCertificate(ctx context.Context, s *Store, tenant Tenant, serial i
 		`DELETE FROM ssh_certificates WHERE tenant = $1 AND serial = $2`, tenant, serial)
 }
 
+// BundlePageSQL is the statement PolicyBundles().Page runs, for the test that
+// asks Postgres how it would plan it. It is compiled into the test binary
+// alone.
+func BundlePageSQL(p Page) string {
+	sql, _, err := bundlePageSQL("test.BundlePageSQL", "tenant", p)
+	if err != nil {
+		panic(err)
+	}
+	return sql
+}
+
+// DeletePolicyBundle removes one stored version, which nothing in the product
+// does (a version is immutable and kept, M4): the paged-reader tests delete an
+// item of every list they walk. It is compiled into the test binary alone.
+func DeletePolicyBundle(ctx context.Context, s *Store, tenant Tenant, version int64) error {
+	return deleteOne(ctx, s, "test.DeletePolicyBundle",
+		`DELETE FROM policy_bundles WHERE tenant = $1 AND version = $2`, tenant, version)
+}
+
 // DeleteAlgorithmDeclaration, DeleteTargetCapability and DeleteTargetKex
 // remove one row of the lists 0032 pages, which nothing in the product does:
 // the paged-reader tests delete an item of every list they walk. They are

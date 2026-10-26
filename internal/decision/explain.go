@@ -98,23 +98,27 @@ func Explain(ctx context.Context, st *store.Store, active ActiveMapping, tenant 
 // ExplainSession resolves a session id — what the user was told — into the
 // story of every decision taken for it, newest first: a chained session is one
 // decision per hop. The empty id is refused.
-func ExplainSession(ctx context.Context, st *store.Store, active ActiveMapping, tenant store.Tenant, sessionID string) ([]Story, error) {
+//
+// A session's decisions are bounded by its hops, so this is not a list the
+// caller pages (M26.3): it reads the store's own bound of them, the newest,
+// and the boolean reports that the bound cut the answer short.
+func ExplainSession(ctx context.Context, st *store.Store, active ActiveMapping, tenant store.Tenant, sessionID string) ([]Story, bool, error) {
 	if sessionID == "" {
-		return nil, ErrNoSession
+		return nil, false, ErrNoSession
 	}
-	records, err := st.Decisions().ListBySession(ctx, tenant, sessionID, 0)
+	records, truncated, err := st.Decisions().ListBySession(ctx, tenant, sessionID, 0)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	out := make([]Story, 0, len(records))
 	for _, d := range records {
 		s, err := story(ctx, active, tenant, d)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, s)
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 func story(ctx context.Context, active ActiveMapping, tenant store.Tenant, d store.Decision) (Story, error) {

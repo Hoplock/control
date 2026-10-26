@@ -26,6 +26,78 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.22.0
+
+Phase 0035, bounded lists 7: policy versions, a session's decisions and a
+finding's targets. `GET /api/v1/tenants/{tenant}/policy/bundles` now answers
+in decision M26's shape (`docs/PLAN.md` §2), one page at a time, and the two
+lists bounded by one object say when their bound cut them: a session's
+decisions, and the targets or proxies a publish-time finding names.
+
+### Breaking
+
+No signature changes; `make release-check` finds none. Five behaviour
+changes:
+
+- **The version list answers at most 500 versions by default, and refuses
+  above 10 000.** It answered every version the tenant ever uploaded.
+  `?limit=` asks for 1 to 10 000; a page holds exactly that many unless it
+  is the last. Above 10 000 is `400 invalid_request`
+  `{field: limit, problem: exceeds_maximum, limit: "10000"}`; zero, a
+  negative or a non-integer is `{field: limit, problem: invalid}`.
+- **The version list gains `truncated` and, when cut, `next`.** It is
+  `{"versions": [...], "truncated": bool, "next": "<cursor>"}`, newest first
+  by version; a version in it is unchanged. Pass `next` back as `?after=` to
+  read the following page; a cursor from another list is
+  `400 invalid_request` `{field: after, problem: invalid}`. A client that
+  read the history from one answer must now follow `next` until `truncated`
+  is false. `policyctl versions` does, and prints the same lines as before;
+  its `-json` prints one answer holding every page's versions.
+- **A session's decisions gain `truncated`.**
+  `GET /api/v1/tenants/{tenant}/sessions/{session}/decisions` answers its
+  newest 100, as before, and now says `"truncated": true` when the session
+  has more. It takes no `limit` and no `after`. `policyctl explain -session`
+  prints a warning on stderr when the answer is cut, and still exits `0`.
+- **A publish-time finding names at most 100 targets or proxies.** On
+  `satisfiability.no_proxy_provides`, `satisfiability.target_cannot_take`,
+  `satisfiability.target_unproven`, `algorithm.target_below_floor`,
+  `algorithm.target_not_reported` and the three findings below, `targets` or
+  `proxies` keeps its first 100, in its existing order, beside
+  `targets_count` (or `proxies_count`), the whole number, and
+  `targets_truncated` (or `proxies_truncated`). Both are present on every
+  such finding, cut or not. `satisfiability.no_proxy_provides`'s message now
+  gives how many proxies fall short instead of naming each. The report is
+  the answer to validate, upload, apply and activate, and the body of
+  `409 findings_not_accepted`.
+- **What a build lacks is one finding per rule, naming each build.** These
+  were one finding per proxy, so a report grew with the fleet:
+  - `algorithm.floor_undeclared` is `algorithm.floor_undeclared/<rule>`
+    (was `…/<rule>/<proxy>`), with `proxies`, a list of proxy ids, in place
+    of `proxy_id`;
+  - `algorithm.axis_emptied` is `algorithm.axis_emptied/<rule>/<axis>` (was
+    `…/<rule>/<proxy>/<axis>`), with
+    `proxies: [{"proxy_id": "...", "offered": [...]}]` in place of
+    `proxy_id` and `offered`;
+  - `algorithm.declaration_unknown` naming proxies is
+    `algorithm.declaration_unknown/<rule>/<profile>` (was
+    `…/<rule>/<proxy>`), with `proxies` in place of `proxy_id`. The one that
+    names no proxy, `algorithm.declaration_unknown/<rule>`, is unchanged.
+
+  **An acceptance of an old id accepts nothing.** An `apply` or `activate`
+  that accepted `algorithm.floor_undeclared/<rule>/<proxy>` or
+  `algorithm.axis_emptied/<rule>/<proxy>/<axis>` under `v0.21.0` is refused
+  `409 findings_not_accepted` until it accepts the new id, which covers
+  every build the rule falls short on. A pipeline carrying `-accept` flags
+  forward must replace them. Activation records already written keep the ids they
+  accepted.
+
+- **Phase:** 0035, bounded lists 7: policy versions, a session's decisions
+  and a finding's targets.
+- **Public packages:** none changed.
+- **Migration:** none. The version list's order is the primary key
+  `(tenant, version)`, read backwards, and the list no longer reads a
+  version's source; `GET …/policy/bundles/{version}` still answers it.
+
 ## v0.21.0
 
 Phase 0034, bounded lists 6: role bindings and outstanding certificates.

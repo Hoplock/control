@@ -127,9 +127,11 @@ type PolicyBundleRepository interface {
 	Activate(ctx context.Context, tenant Tenant, version int64) error
 	// NextVersion returns the version number a new bundle should carry.
 	NextVersion(ctx context.Context, tenant Tenant) (int64, error)
-	// List returns every version, newest first: the bundle history an
-	// operator diffs and rolls back through (0019).
-	List(ctx context.Context, tenant Tenant) ([]PolicyBundle, error)
+	// Page returns one page of the tenant's versions (M26), newest first:
+	// the bundle history an operator diffs and rolls back through (0019).
+	// A row carries no Source: a version's source is read by Get, one
+	// version at a time, and never by a list.
+	Page(ctx context.Context, tenant Tenant, p Page) (Paged[PolicyBundle], error)
 	// GetByHash returns the version holding a source digest — the oldest,
 	// should there be several. Absent is ErrNotFound. It is how an upload
 	// learns that an identical source is already stored without reading
@@ -156,9 +158,11 @@ type DecisionRepository interface {
 	// first, bounded by limit.
 	ListBySubject(ctx context.Context, tenant Tenant, subjectID string, limit int) ([]Decision, error)
 	// ListBySession returns the decisions taken for one SSH session, newest
-	// first. It is the lookup an operator arrives with, because a session id
-	// is what the user was told; a chained session has one record per hop.
-	ListBySession(ctx context.Context, tenant Tenant, sessionID string, limit int) ([]Decision, error)
+	// first, bounded by limit. It is the lookup an operator arrives with,
+	// because a session id is what the user was told; a chained session has
+	// one record per hop. The boolean reports that the limit cut the answer
+	// short (M26.3).
+	ListBySession(ctx context.Context, tenant Tenant, sessionID string, limit int) ([]Decision, bool, error)
 	// ListRange returns the decisions taken in [from, to), oldest first,
 	// bounded by limit, and whether the limit cut the range short: what a
 	// simulation replays (0019).

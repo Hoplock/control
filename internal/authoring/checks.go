@@ -78,6 +78,25 @@ func isInterpreter(executable string, list []string) (string, bool) {
 	return "", false
 }
 
+// MaxFindingItems is the most targets or proxies one finding names (M26.3).
+// A finding's list is sized by the estate rather than by the bundle — a rule
+// over `env=prod` reaches every appliance in it — and the report answers
+// every validate, upload, apply and activate, and `409 findings_not_accepted`.
+// So each list keeps its first MaxFindingItems, in its own order, beside
+// `<name>_count`, the whole number, and `<name>_truncated`, whether the cap
+// cut it. Both are present on every such finding, cut or not; the message
+// gives the count.
+const MaxFindingItems = 100
+
+// capped puts list in params under name, cut to its first MaxFindingItems,
+// beside name_count and name_truncated, and answers params.
+func capped[T any](params map[string]any, name string, list []T) map[string]any {
+	params[name+"_count"] = len(list)
+	params[name+"_truncated"] = len(list) > MaxFindingItems
+	params[name] = slices.Clip(list[:min(len(list), MaxFindingItems)])
+	return params
+}
+
 // controlFindings runs Control's own checks. It is pure.
 func controlFindings(b *model.Bundle, prog *compile.Program, facts Facts, interpreters []string) []Finding {
 	rules := make(map[string]model.Rule, len(b.Rules))
@@ -163,18 +182,14 @@ func satisfiability(facts Facts) []Finding {
 				})
 			}
 			if !served && len(short) > 0 {
-				ids := make([]string, 0, len(short))
-				for _, s := range short {
-					ids = append(ids, s.ProxyID)
-				}
 				out = append(out, Finding{
 					ID: findingID(CodeNoProxyProvides, sat.RuleID), Severity: SeverityWarning,
 					Code: CodeNoProxyProvides, Source: SourceControl, Rule: sat.RuleID,
-					Parameters: map[string]any{"rule": sat.RuleID, "proxies": short},
-					Message: fmt.Sprintf("no proxy that has declared its capabilities can serve rule %q (%s): "+
-						"a rung a proxy cannot honour is skipped silently, and on a one-rung ladder the "+
-						"session is denied with nobody having authored the denial",
-						sat.RuleID, strings.Join(ids, ", ")),
+					Parameters: capped(map[string]any{"rule": sat.RuleID}, "proxies", short),
+					Message: fmt.Sprintf("no proxy that has declared its capabilities can serve rule %q, and %d "+
+						"declaring proxy(ies) fall short of it: a rung a proxy cannot honour is skipped silently, "+
+						"and on a one-rung ladder the session is denied with nobody having authored the denial",
+						sat.RuleID, len(short)),
 				})
 			}
 		}
@@ -198,7 +213,7 @@ func satisfiability(facts Facts) []Finding {
 			out = append(out, Finding{
 				ID: findingID(CodeTargetCannotTake, sat.RuleID), Severity: SeverityWarning,
 				Code: CodeTargetCannotTake, Source: SourceControl, Rule: sat.RuleID,
-				Parameters: map[string]any{"rule": sat.RuleID, "targets": cannot},
+				Parameters: capped(map[string]any{"rule": sat.RuleID}, "targets", cannot),
 				Message: fmt.Sprintf("rule %q claims a rung that %d target(s) it reaches cannot take, by their "+
 					"fresh capability records; sessions there are refused at connect time as an outage",
 					sat.RuleID, len(cannot)),
@@ -208,7 +223,7 @@ func satisfiability(facts Facts) []Finding {
 			out = append(out, Finding{
 				ID: findingID(CodeTargetUnproven, sat.RuleID), Severity: SeverityAdvice,
 				Code: CodeTargetUnproven, Source: SourceControl, Rule: sat.RuleID,
-				Parameters: map[string]any{"rule": sat.RuleID, "targets": unproven},
+				Parameters: capped(map[string]any{"rule": sat.RuleID}, "targets", unproven),
 				Message: fmt.Sprintf("rule %q claims an applied rung on %d target(s) whose capability record is "+
 					"stale, undated or absent; that is the absence of proof, so an applied rung is not "+
 					"served there until a probe reports one", sat.RuleID, len(unproven)),
@@ -413,41 +428,7 @@ func algorithmFindings(prog *compile.Program, facts Facts) []Finding {
 					"offers yet; it is answered as authored, and each proxy's own check is the backstop", id),
 			})
 		}
-		for _, d := range facts.Declarations {
-			j := fleet.JudgeAlgorithms(policy, d.Declaration.Capabilities())
-			if j.FloorUndeclared {
-				out = append(out, Finding{
-					ID: findingID(CodeFloorUndeclared, id, d.ProxyID), Severity: SeverityWarning,
-					Code: CodeFloorUndeclared, Source: SourceControl, Rule: id, Line: rule.Line(),
-					Parameters: map[string]any{"rule": id, "proxy_id": d.ProxyID, "floor": string(policy.Floor)},
-					Message: fmt.Sprintf("proxy %s does not declare the floor level %s that rule %q names; "+
-						"authorize refuses the route on that proxy until its build does", d.ProxyID, policy.Floor, id),
-				})
-			}
-			if j.Unknown {
-				out = append(out, Finding{
-					ID: findingID(CodeAlgorithmUnknown, id, d.ProxyID), Severity: SeverityAdvice,
-					Code: CodeAlgorithmUnknown, Source: SourceControl, Rule: id, Line: rule.Line(),
-					Parameters: map[string]any{"rule": id, "proxy_id": d.ProxyID, "profile": string(policy.ResolvedProfile())},
-					Message: fmt.Sprintf("proxy %s's declaration does not say what profile %s offers, so whether "+
-						"rule %q's bans empty an axis there is unknown; it is answered as authored",
-						d.ProxyID, policy.ResolvedProfile(), id),
-				})
-			}
-			for _, e := range j.Emptied {
-				out = append(out, Finding{
-					ID: findingID(CodeAxisEmptied, id, d.ProxyID, e.Axis), Severity: SeverityWarning,
-					Code: CodeAxisEmptied, Source: SourceControl, Rule: id, Line: rule.Line(),
-					Parameters: map[string]any{
-						"rule": id, "proxy_id": d.ProxyID, "axis": e.Axis, "offered": e.Offered,
-						"profile": string(policy.ResolvedProfile()), "floor": string(policy.Floor),
-					},
-					Message: fmt.Sprintf("on proxy %s, rule %q's bans leave %s nothing to offer under profile %s; "+
-						"authorize refuses the route on that build, which is an outage and never a widening",
-						d.ProxyID, id, e.Axis, policy.ResolvedProfile()),
-				})
-			}
-		}
+		out = append(out, perBuildFindings(rule, policy, facts.Declarations)...)
 		if policy.Bans != nil && judgeable {
 			for axis, names := range fleet.UnmatchedBans(policy.Bans, decls) {
 				for _, name := range names {
@@ -482,7 +463,7 @@ func algorithmFindings(prog *compile.Program, facts Facts) []Finding {
 				out = append(out, Finding{
 					ID: findingID(CodeTargetBelowFloor, id), Severity: SeverityWarning,
 					Code: CodeTargetBelowFloor, Source: SourceControl, Rule: id, Line: rule.Line(),
-					Parameters: map[string]any{"rule": id, "floor": string(policy.Floor), "targets": below},
+					Parameters: capped(map[string]any{"rule": id, "floor": string(policy.Floor)}, "targets", below),
 					Message: fmt.Sprintf("%d target(s) rule %q reaches last negotiated below the floor %s; "+
 						"raising it fails those targets closed until they are upgraded", len(below), id, policy.Floor),
 				})
@@ -491,7 +472,7 @@ func algorithmFindings(prog *compile.Program, facts Facts) []Finding {
 				out = append(out, Finding{
 					ID: findingID(CodeTargetNotReported, id), Severity: SeverityAdvice,
 					Code: CodeTargetNotReported, Source: SourceControl, Rule: id, Line: rule.Line(),
-					Parameters: map[string]any{"rule": id, "floor": string(policy.Floor), "targets": notReported},
+					Parameters: capped(map[string]any{"rule": id, "floor": string(policy.Floor)}, "targets", notReported),
 					Message: fmt.Sprintf("%d target(s) rule %q reaches have no fresh key-exchange observation; "+
 						"whether they meet the floor %s is not reported", len(notReported), id, policy.Floor),
 				})
@@ -519,6 +500,78 @@ func algorithmFindings(prog *compile.Program, facts Facts) []Finding {
 			Parameters: map[string]any{"axis": axis, "name": name, "rules": rules},
 			Message: fmt.Sprintf("no recorded proxy build offers %q on %s; a typo looks exactly like a working "+
 				"ban, so check the spelling — a name no build implements is a ban already satisfied", name, axis),
+		})
+	}
+	return out
+}
+
+// emptiedOn is one build on which a route's bans leave an axis nothing, and
+// what that build's profile offered on it before them.
+type emptiedOn struct {
+	ProxyID string   `json:"proxy_id"`
+	Offered []string `json:"offered"`
+}
+
+// perBuildFindings judges one route against each proxy's own latest
+// declaration (#72) and says what falls short ONCE PER RULE, naming each build:
+// the floor level a build did not declare, a declaration that does not say what
+// the route's profile offers, and — once per rule and axis — an axis the bans
+// empty. The judgement is per build, because the facts are; the finding is not,
+// because a fleet's builds are as many as its proxies, and a report holding a
+// finding for each would be sized by the fleet rather than by the bundle
+// (M26.3). Each finding's list of builds is capped like any other.
+func perBuildFindings(rule *compile.Rule, policy fleet.AlgorithmPolicy, decls []fleet.DeclaredAlgorithms) []Finding {
+	id, profile := rule.ID(), string(policy.ResolvedProfile())
+	var floorUndeclared, unknown []string
+	emptied := map[string][]emptiedOn{}
+	for _, d := range decls {
+		j := fleet.JudgeAlgorithms(policy, d.Declaration.Capabilities())
+		if j.FloorUndeclared {
+			floorUndeclared = append(floorUndeclared, d.ProxyID)
+		}
+		if j.Unknown {
+			unknown = append(unknown, d.ProxyID)
+		}
+		for _, e := range j.Emptied {
+			emptied[e.Axis] = append(emptied[e.Axis], emptiedOn{ProxyID: d.ProxyID, Offered: e.Offered})
+		}
+	}
+
+	var out []Finding
+	if len(floorUndeclared) > 0 {
+		out = append(out, Finding{
+			ID: findingID(CodeFloorUndeclared, id), Severity: SeverityWarning,
+			Code: CodeFloorUndeclared, Source: SourceControl, Rule: id, Line: rule.Line(),
+			Parameters: capped(map[string]any{"rule": id, "floor": string(policy.Floor)}, "proxies", floorUndeclared),
+			Message: fmt.Sprintf("%d proxy(ies) do not declare the floor level %s that rule %q names; authorize "+
+				"refuses the route on each of them until its build does", len(floorUndeclared), policy.Floor, id),
+		})
+	}
+	if len(unknown) > 0 {
+		// The profile tells this finding from the one that says nothing could
+		// be judged at all, which is about the rule alone.
+		out = append(out, Finding{
+			ID: findingID(CodeAlgorithmUnknown, id, profile), Severity: SeverityAdvice,
+			Code: CodeAlgorithmUnknown, Source: SourceControl, Rule: id, Line: rule.Line(),
+			Parameters: capped(map[string]any{"rule": id, "profile": profile}, "proxies", unknown),
+			Message: fmt.Sprintf("%d proxy declaration(s) do not say what profile %s offers, so whether rule %q's "+
+				"bans empty an axis on those builds is unknown; it is answered as authored", len(unknown), profile, id),
+		})
+	}
+	for _, axis := range contract.Axes {
+		on := emptied[axis]
+		if len(on) == 0 {
+			continue
+		}
+		out = append(out, Finding{
+			ID: findingID(CodeAxisEmptied, id, axis), Severity: SeverityWarning,
+			Code: CodeAxisEmptied, Source: SourceControl, Rule: id, Line: rule.Line(),
+			Parameters: capped(map[string]any{
+				"rule": id, "axis": axis, "profile": profile, "floor": string(policy.Floor),
+			}, "proxies", on),
+			Message: fmt.Sprintf("on %d proxy build(s), rule %q's bans leave %s nothing to offer under profile %s; "+
+				"authorize refuses the route on each of those builds, which is an outage and never a widening",
+				len(on), id, axis, profile),
 		})
 	}
 	return out

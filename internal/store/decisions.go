@@ -20,7 +20,8 @@ const decisionColumns = `decision_id, subject_id, target_id, inputs_digest, inpu
 // drift apart.
 const DecisionEffectAllow = "allow"
 
-// defaultDecisionLimit bounds ListBySubject when the caller asks for no limit.
+// defaultDecisionLimit bounds ListBySubject, ListBySession and ListByGrant when
+// the caller asks for no limit.
 // Unbounded work is never acceptable on a path the decision layer shares (M5).
 const defaultDecisionLimit = 100
 
@@ -152,12 +153,15 @@ func (r decisionRepo) ListRange(ctx context.Context, tenant Tenant, from, to tim
 //
 // It is the lookup an operator actually arrives with: the proxy tells a user
 // "access denied" and a session id (M4), and a chained session produces one
-// record per hop under that id. Bounded like ListBySubject — nothing on or
-// beside the decision path does unbounded work (M5).
-func (r decisionRepo) ListBySession(ctx context.Context, tenant Tenant, sessionID string, limit int) ([]Decision, error) {
+// record per hop under that id. A session's decisions are bounded by its hops,
+// not by the estate or by time, so it is not a list the caller pages (M26.3):
+// it keeps a bound of the server's, reads one row past it, and the boolean
+// reports that the bound cut it. Nothing on or beside the decision path does
+// unbounded work (M5).
+func (r decisionRepo) ListBySession(ctx context.Context, tenant Tenant, sessionID string, limit int) ([]Decision, bool, error) {
 	const op = "store.Decisions.ListBySession"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if limit <= 0 {
 		limit = defaultDecisionLimit
@@ -171,9 +175,9 @@ func (r decisionRepo) ListBySession(ctx context.Context, tenant Tenant, sessionI
 		FROM decisions
 		WHERE tenant = $1 AND session_id = $2
 		ORDER BY decided_at DESC, decision_id DESC
-		LIMIT $3`, tenant, sessionID, limit)
+		LIMIT $3`, tenant, sessionID, limit+1)
 	if err != nil {
-		return nil, wrap(op, err)
+		return nil, false, wrap(op, err)
 	}
 	defer rows.Close()
 
@@ -181,11 +185,18 @@ func (r decisionRepo) ListBySession(ctx context.Context, tenant Tenant, sessionI
 	for rows.Next() {
 		d, err := scanDecision(op, rows)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, d)
 	}
-	return out, wrap(op, rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, false, wrap(op, err)
+	}
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
 }
 
 // ListByGrant returns the decisions a grant supplied, newest first.

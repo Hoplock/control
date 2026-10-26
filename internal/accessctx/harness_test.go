@@ -305,7 +305,7 @@ func (h *harness) authorize(subject, target, session string) (decision.Outcome, 
 // session, because an outage hands the caller no decision id.
 func (h *harness) recordOf(session string) (store.Decision, recordedInputs, recordedExplanation) {
 	h.t.Helper()
-	ds, err := h.store.Decisions().ListBySession(h.t.Context(), tenant, session, 1)
+	ds, _, err := h.store.Decisions().ListBySession(h.t.Context(), tenant, session, 1)
 	if err != nil || len(ds) != 1 {
 		h.t.Fatalf("the record of %s: %v (%d records)", session, err, len(ds))
 	}

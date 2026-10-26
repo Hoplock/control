@@ -319,7 +319,7 @@ func TestARefusalToMintIs401ThroughItsOwnCode(t *testing.T) {
 	if res := h.post(t, contract.PathAuthorize, denyReq); res.Code != http.StatusUnauthorized {
 		t.Fatalf("the denied target answered %d", res.Code)
 	}
-	denied, err := h.store.Decisions().ListBySession(ctx, testTenant, "sess-denied", 1)
+	denied, _, err := h.store.Decisions().ListBySession(ctx, testTenant, "sess-denied", 1)
 	if err != nil || len(denied) != 1 {
 		t.Fatalf("the denial's record: %v (%d)", err, len(denied))
 	}

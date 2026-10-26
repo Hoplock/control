@@ -479,15 +479,17 @@ func (s *Service) Apply(ctx context.Context, tenant store.Tenant, source []byte,
 	return ApplyResult{Upload: up, Activate: act}, nil
 }
 
-// Versions lists every stored version, newest first.
-func (s *Service) Versions(ctx context.Context, tenant store.Tenant) ([]Version, error) {
-	rows, err := s.st.PolicyBundles().List(ctx, tenant)
+// Versions reads one page of the stored versions, newest first (M26). A
+// version's source is not read: a list shows what a version is, and Bundle
+// reads one version whole.
+func (s *Service) Versions(ctx context.Context, tenant store.Tenant, p store.Page) (store.Paged[Version], error) {
+	page, err := s.st.PolicyBundles().Page(ctx, tenant, p)
 	if err != nil {
-		return nil, err
+		return store.Paged[Version]{}, err
 	}
-	out := make([]Version, 0, len(rows))
-	for _, b := range rows {
-		out = append(out, versionOf(b))
+	out := store.Paged[Version]{Rows: make([]Version, 0, len(page.Rows)), More: page.More}
+	for _, b := range page.Rows {
+		out.Rows = append(out.Rows, versionOf(b))
 	}
 	return out, nil
 }
