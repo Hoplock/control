@@ -74,6 +74,12 @@ session is, so each **needs only the signal**. Neither takes `limit` or
 ### 4. The enumerating test, finished
 - `blocked-commands` and `negotiated` move to `pagedLists`, and the two
   per-session routes to `signalLists`.
+- **0036 left one clamped-limit reader for these two handlers:**
+  `windowParams` and `windowLimit` (`audit.go`) and `limitParam`
+  (`policy.go`). Once both read `readPage`, nothing else reads them: delete
+  all three, and read the window through `window` as the paged audit lists
+  do. A filter either list reads binds its cursor, as `auditFilters` renders
+  the five paged lists' selections.
 - `pendingBounded` is now empty. **Delete it and its plumbing**, so no route
   can be "pending" again. From here on, every `GET` route is paged,
   signal-only, or exempt with its reason, and a route added later must be

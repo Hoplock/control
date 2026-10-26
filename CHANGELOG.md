@@ -26,6 +26,59 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.23.0
+
+Phase 0036, bounded lists 8: the audit query. Five audit lists now answer in
+decision M26's shape (`docs/PLAN.md` §2), one page at a time, by recorded-at,
+stream and chain sequence: `GET /api/v1/tenants/{tenant}/audit/records`,
+`…/audit/drift`, `…/audit/algorithm-policy-unmet`, `…/audit/gaps` and
+`…/audit/certificates/{serial}/records`.
+
+### Breaking
+
+No signature changes; `make release-check` finds none. Four behaviour
+changes:
+
+- **A limit above 10 000 is refused, not clamped.** The five lists took
+  `?limit=` above 10 000 and answered 10 000 without saying so. It is now
+  `400 invalid_request` `{field: limit, problem: exceeds_maximum, limit:
+  "10000"}`; zero, a negative or a non-integer is still `{field: limit,
+  problem: invalid}`. Absent, a page holds at most 500, as before, and a
+  page holds exactly `limit` unless it is the last.
+- **The five answers gain `truncated` and, when cut, `next`.** Each is
+  `{"<member>": [...], "truncated": bool, "next": "<cursor>"}` — `records`,
+  `changes`, `unmet`, `gaps`, and `records` beside `serial` for the
+  certificate join, which every page carries. Pass `next` back as `?after=`
+  with the same filters to read the following page. A cursor binds the
+  list, every filter the list read (repeated `kind` and `severity` values in
+  any order bind once), the window and the order, and is
+  `400 invalid_request` `{field: after, problem: invalid}` under anything
+  else. A client that read one of these lists from one answer, and stopped
+  at what it was given, must now follow `next` until `truncated` is false.
+- **Every one of the five takes `?order=asc`.** Only `…/audit/records` did;
+  the others now read oldest first with it, and newest first otherwise, as
+  before. Within one instant, records are ordered by stream and then chain
+  sequence, in the list's direction, where the order among them was the
+  planner's.
+- **Migration `0019` locks `audit_records` while it runs.** It builds one
+  index in one transaction, which blocks writes to the table — every
+  proxy's log batch, which a proxy buffers to disk and resends, and every
+  operator act's record — until it commits, and drops the index it replaces
+  at the end, which blocks reads from the drop to the commit. Run
+  `hoplock-control migrate` when that pause is acceptable; its length grows
+  with the table.
+
+Also observable: an item of `…/audit/drift`, `…/audit/algorithm-policy-unmet`
+and `…/audit/gaps` gains `stream` and `chain_seq`, its record's place in the
+order, which is what a cursor holds.
+
+- **Phase:** 0036, bounded lists 8: the audit query.
+- **Public packages:** none changed.
+- **Migration:** `0019_audit_query_order` replaces `audit_records_recorded_idx`
+  `(tenant, recorded_at DESC)` with `audit_records_order_idx`
+  `(tenant, recorded_at DESC, stream DESC, chain_seq DESC)`, read backwards
+  for `?order=asc`. No row is rewritten.
+
 ## v0.22.0
 
 Phase 0035, bounded lists 7: policy versions, a session's decisions and a
