@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -627,6 +629,87 @@ func TestTheSerialFilterIsCanonical(t *testing.T) {
 // the emergency runbook (Hoplock/proxy#69)
 // ---------------------------------------------------------------------------
 
+// negotiatedSessions is the runbook's third step as its doc says to take it
+// (PLAN §5.2, §7): the negotiated sessions a question names, read to the last
+// page, following next until truncated is false. A limit of 0 asks for none.
+func negotiatedSessions(t *testing.T, f *serverFixture, token, question string, limit int) []string {
+	t.Helper()
+	var out []string
+	q := question
+	if limit > 0 {
+		q += fmt.Sprintf("&limit=%d", limit)
+	}
+	for pages := 0; ; pages++ {
+		if pages > 1000 {
+			t.Fatal("the negotiated sessions never ended")
+		}
+		resp := f.send(t, "GET", api+"/audit/negotiated?"+q, token, nil)
+		mustStatus(t, resp, http.StatusOK)
+		var page struct {
+			Sessions []struct {
+				SessionID string `json:"session_id"`
+			} `json:"sessions"`
+			Truncated bool   `json:"truncated"`
+			Next      string `json:"next"`
+		}
+		decodeInto(t, resp, &page)
+		for _, s := range page.Sessions {
+			out = append(out, s.SessionID)
+		}
+		if !page.Truncated {
+			return out
+		}
+		q = question + fmt.Sprintf("&limit=%d&after=%s", limit, url.QueryEscape(page.Next))
+	}
+}
+
+// The runbook ends exactly the sessions its third step lists, so that step is
+// read to the end (M26): walked a page at a time, the question a ban asks
+// lists every session that ran under the ban, each once, and none that did
+// not, whichever page boundary falls between two sessions of one instant.
+func TestTheRunbooksQueryWalkedToTheEndListsEverySessionABanMatches(t *testing.T) {
+	f := newServer(t)
+	auditor := f.roleToken(t, identity.RoleAuditor)
+	ingest, err := audit.New(audit.Options{Store: f.st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	var recs []contract.LogRecord
+	var banned []string
+	for i := range 7 {
+		bans := "aes128-cbc,aes128-ctr"
+		session := fmt.Sprintf("sess-ban-%d", i)
+		if i%3 == 2 {
+			bans, session = "aes128-ctr", fmt.Sprintf("sess-other-%d", i)
+		} else {
+			banned = append(banned, session)
+		}
+		// Every record of a session is stamped with the ban, and the
+		// sessions share instants in pairs.
+		for leg := range 2 {
+			recs = append(recs, contract.LogRecord{
+				RecordID: fmt.Sprintf("%s-%d", session, leg), SessionID: session, Kind: "provisioning",
+				Severity: contract.SeverityInfo, Message: "provisioned",
+				Timestamp: at.Add(-time.Duration(i/2) * time.Minute).Format(time.RFC3339),
+				Attributes: map[string]string{
+					audit.AttrAlgorithmProfile: "default", audit.AttrAlgorithmBansPrefix + "ciphers": bans,
+				},
+			})
+		}
+	}
+	if _, err := ingest.Ingest(t.Context(), audit.Submission{Tenant: "tenant-a", ProxyID: "proxy-ban", Records: recs}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, limit := range []int{1, 2, 3, 0} {
+		got := negotiatedSessions(t, f, auditor, "ban_axis=ciphers&ban_name=aes128-cbc", limit)
+		if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(banned))) {
+			t.Errorf("limit %d: the walk listed %v, want every session under the ban once: %v", limit, got, banned)
+		}
+	}
+}
+
 // The runbook's three steps are each callable over this surface and each
 // audited: a publish that adds a ban everywhere, `cache_invalidate` with `all`,
 // and `session_kill` for the sessions the by-value query returns.
@@ -670,18 +753,13 @@ func TestTheEmergencyRunbookIsCallableAndAudited(t *testing.T) {
 	// 2. Drop every cached decision, so the ban reaches the next connection.
 	mustStatus(t, f.send(t, "POST", api+"/revocations", desk, map[string]any{"type": "cache_invalidate", "all": true}), http.StatusOK)
 
-	// 3. End the sessions that negotiated it.
-	resp = f.send(t, "GET", api+"/audit/negotiated?axis=key_exchanges&value=diffie-hellman-group14-sha1", auditor, nil)
-	mustStatus(t, resp, http.StatusOK)
-	var found struct {
-		Sessions []string `json:"sessions"`
-	}
-	decodeInto(t, resp, &found)
-	if !slices.Equal(found.Sessions, []string{"sess-sha1"}) {
-		t.Fatalf("the by-value query found %v", found.Sessions)
+	// 3. End the sessions that negotiated it, every page of them.
+	found := negotiatedSessions(t, f, auditor, "axis=key_exchanges&value=diffie-hellman-group14-sha1", 0)
+	if !slices.Equal(found, []string{"sess-sha1"}) {
+		t.Fatalf("the by-value query found %v", found)
 	}
 	mustStatus(t, f.send(t, "POST", api+"/revocations", desk, map[string]any{
-		"type": "session_kill", "session_ids": found.Sessions, "reason": "an insecure key exchange was withdrawn",
+		"type": "session_kill", "session_ids": found, "reason": "an insecure key exchange was withdrawn",
 	}), http.StatusOK)
 
 	if recs := f.operatorRecords(t, audit.EventPolicyActivated); len(recs) != 1 || recs[0].Attributes[audit.AttrAfter] != "1" {

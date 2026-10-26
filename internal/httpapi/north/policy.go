@@ -496,17 +496,3 @@ func (s *Server) timeParam(w http.ResponseWriter, r *http.Request, name string) 
 	}
 	return t, true
 }
-
-// limitParam reads `?limit=`; absent is zero, which takes the store's default.
-func (s *Server) limitParam(w http.ResponseWriter, r *http.Request) (int, bool) {
-	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
-	if raw == "" {
-		return 0, true
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		s.invalid(w, r, "limit", access.ProblemInvalid, "")
-		return 0, false
-	}
-	return n, true
-}

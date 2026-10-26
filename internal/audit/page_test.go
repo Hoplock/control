@@ -23,6 +23,15 @@ var allOfIt = store.Page{Limit: store.MaxPageLimit}
 // rowsOf is a page's rows, for a test that reads a list in one page.
 func rowsOf[T any](p store.Paged[T], err error) ([]T, error) { return p.Rows, err }
 
+// sessionIDs is a page of SessionsBy as its sessions' ids, in its order.
+func sessionIDs(p store.Paged[audit.NegotiatedSession], err error) ([]string, bool, error) {
+	ids := make([]string, 0, len(p.Rows))
+	for _, s := range p.Rows {
+		ids = append(ids, s.SessionID)
+	}
+	return ids, p.More, err
+}
+
 // auditPlace is an item's place in the audit order (M26.4), as the item
 // carries it.
 type auditPlace struct {

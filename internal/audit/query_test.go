@@ -86,10 +86,12 @@ func TestTheShowcaseQueryJoinsAuditToDecisions(t *testing.T) {
 
 	mustIngest(ctx, t, in, tenantA, proxyA, prodBlocked, allowed, devBlocked, unknownTargetBlocked)
 
-	rows, err := reader.BlockedCommands(ctx, tenantA, "env", "prod", time.Time{}, time.Time{}, 0)
+	page, err := reader.BlockedCommands(ctx, tenantA, store.BlockedCommandQuery{LabelName: "env", LabelValue: "prod"},
+		store.Page{Limit: store.DefaultPageLimit})
 	if err != nil {
 		t.Fatalf("BlockedCommands: %v", err)
 	}
+	rows := page.Rows
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want exactly the one blocked command on an env=prod target: %+v", len(rows), rows)
 	}
@@ -132,10 +134,12 @@ func TestABlockedCommandWithNoDecisionRowIsStillReported(t *testing.T) {
 	mustIngest(ctx, t, in, tenantA, proxyA,
 		blocked("rec-orphan", "sess-prod", "db-1.example.invalid", "dec-aged-out", "curl evil"))
 
-	rows, err := reader.BlockedCommands(ctx, tenantA, "env", "prod", time.Time{}, time.Time{}, 0)
+	page, err := reader.BlockedCommands(ctx, tenantA, store.BlockedCommandQuery{LabelName: "env", LabelValue: "prod"},
+		store.Page{Limit: store.DefaultPageLimit})
 	if err != nil {
 		t.Fatalf("BlockedCommands: %v", err)
 	}
+	rows := page.Rows
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}

@@ -10,7 +10,6 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -29,8 +28,8 @@ import (
 // Every north-bound list is bounded by its caller and says where it stopped
 // (M26). The test below walks the ROUTER, as the isolation tests do, so a `GET`
 // route added later fails it until it is classified here: a paged list, a
-// signal-only list, an exemption with its reason, or — until 0037 deletes the
-// map — a list a later chunk pages.
+// signal-only list, or an exemption with its reason. There is no fourth class
+// (0037): a route is one of the three on the day it is added.
 //
 // A host's routes are not classified. Control cannot see which of them is a
 // list, so nothing here enforces the shape on them (M26.7); `server` offers it.
@@ -313,10 +312,64 @@ var pagedLists = map[string][]pagedList{
 		auditView("records", "/api/v1/tenants/tenant-a/audit/certificates/"+boundedSerial+"/records", nil,
 			audit.CertificateQuery{Serial: 9}.Selection()),
 	},
+	// The showcase join and the negotiated sessions (0037). The join pages
+	// on its record's place in the audit order, so its walk crosses the
+	// seed's tie between two streams. The sessions page by each one's
+	// latest matching record, then the session id, so the seed's two
+	// sessions at one instant are ordered by id, across a page boundary.
+	"GET /api/v1/tenants/{tenant}/audit/blocked-commands": {
+		blockedView(nil), blockedView(url.Values{"order": {"asc"}}),
+	},
+	"GET /api/v1/tenants/{tenant}/audit/negotiated": {{
+		member: "sessions", path: "/api/v1/tenants/tenant-a/audit/negotiated",
+		query: url.Values{"axis": {contract.AxisKeyExchanges}, "value": {boundedKex}},
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			seedAuditLists(t, f, "tenant-a")
+			return countNegotiated(t, f, "tenant-a")
+		},
+	}},
 }
 
-// boundedSerial is the certificate serial seedAuditLists' records name.
-const boundedSerial = "9"
+// boundedSerial is the certificate serial seedAuditLists' records name, and
+// boundedKex the key exchange its negotiated sessions name.
+const (
+	boundedSerial = "9"
+	boundedKex    = "diffie-hellman-group14-sha1"
+)
+
+// blockedView is one view of the showcase join over env=prod, in its order:
+// it seeds every audit list and counts the blocked commands the view holds.
+func blockedView(order url.Values) pagedList {
+	query := url.Values{"label": {"env=prod"}}
+	for k, v := range order {
+		query[k] = v
+	}
+	return pagedList{
+		member: "blocked", path: "/api/v1/tenants/tenant-a/audit/blocked-commands", query: query,
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			seedAuditLists(t, f, "tenant-a")
+			got, err := f.st.Audit().BlockedCommands(t.Context(), "tenant-a",
+				store.BlockedCommandQuery{LabelName: "env", LabelValue: "prod"}, store.Page{Limit: store.MaxPageLimit})
+			if err != nil || got.More {
+				t.Fatalf("count blocked commands: %v (more=%t)", err, got.More)
+			}
+			return len(got.Rows)
+		},
+	}
+}
+
+// countNegotiated is how many sessions in tenant negotiated boundedKex.
+func countNegotiated(t *testing.T, f *serverFixture, tenant store.Tenant) int {
+	t.Helper()
+	sel, _ := audit.NegotiatedQuery{Axis: contract.AxisKeyExchanges, Value: boundedKex}.Selection()
+	got, err := f.st.Audit().Sessions(t.Context(), tenant, sel, store.Page{Limit: store.MaxPageLimit})
+	if err != nil || got.More {
+		t.Fatalf("count negotiated sessions: %v (more=%t)", err, got.More)
+	}
+	return len(got.Rows)
+}
 
 // auditView is one view of an audit list: it seeds every audit list and
 // counts the records sel selects, which is what the view holds.
@@ -338,15 +391,21 @@ var auditSeq atomic.Int64
 var auditInstant = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 
 // seedAuditLists ingests into tenant, from each of two proxies and all at
-// auditInstant, a record for each audit list: a command, a drift change, an
-// unmet algorithm policy, a gap and a provisioning record naming
-// boundedSerial. So every list holds records of one instant in two streams,
-// and a walk one item a page crosses the tiebreak (M26.4).
+// auditInstant, a record for each audit list: a blocked command on a target
+// labelled env=prod, a drift change, an unmet algorithm policy, a gap, a
+// provisioning record naming boundedSerial, and a session of its own that
+// negotiated boundedKex. So every list holds records of one instant in two
+// streams, the negotiated sessions two sessions of one instant, and a walk one
+// item a page crosses the tiebreak (M26.4).
 func seedAuditLists(t *testing.T, f *serverFixture, tenant store.Tenant) {
 	t.Helper()
 	in, err := audit.New(audit.Options{Store: f.st})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := f.st.Targets().Upsert(t.Context(), tenant,
+		storetest.Target("t-db-1", "db-1.example", map[string]string{"env": "prod"})); err != nil {
+		t.Fatalf("seed the audit lists' target: %v", err)
 	}
 	n := auditSeq.Add(1)
 	at := auditInstant.Format(time.RFC3339)
@@ -358,8 +417,12 @@ func seedAuditLists(t *testing.T, f *serverFixture, tenant store.Tenant) {
 				Target: "db-1.example", Attributes: attrs,
 			}
 		}
+		negotiated := rec("provisioning", "neg", map[string]string{
+			audit.AttrEvent: audit.EventAlgorithmsNegotiated, audit.AttrTargetKexAlgorithm: boundedKex,
+		})
+		negotiated.SessionID = fmt.Sprintf("neg-%s-%d", proxy, n)
 		recs := []contract.LogRecord{
-			rec("command", "cmd", nil),
+			rec("command", "cmd", map[string]string{"action": store.ActionBlockCommand, "command": "rm -rf /"}),
 			rec("provisioning", "drift", map[string]string{
 				audit.AttrEvent: audit.EventDeviceConfigChange, audit.AttrDeviceChangeOp: "create",
 				audit.AttrTargetAccount: "hl-" + proxy,
@@ -375,6 +438,7 @@ func seedAuditLists(t *testing.T, f *serverFixture, tenant store.Tenant) {
 				audit.AttrCredentialMethod: "brokered-certificate", audit.AttrCredentialRung: "1",
 				audit.AttrCertificateSerial: boundedSerial,
 			}),
+			negotiated,
 		}
 		if _, err := in.Ingest(t.Context(), audit.Submission{Tenant: tenant, ProxyID: proxy, Records: recs}); err != nil {
 			t.Fatalf("seed audit records from %s: %v", proxy, err)
@@ -475,6 +539,27 @@ type signalList struct {
 }
 
 var signalLists = map[string]signalList{
+	// A session's certificates and its algorithm summary (0037), each read
+	// from at most audit.SessionRecordBound of its records.
+	"GET /api/v1/tenants/{tenant}/audit/sessions/{session}/certificates": {
+		member: "truncated",
+		seed: func(t *testing.T, f *serverFixture) {
+			t.Helper()
+			seedSampleSession(t, f, map[string]string{
+				audit.AttrCredentialMethod: "brokered-certificate", audit.AttrCredentialRung: "1",
+				audit.AttrCertificateSerial: boundedSerial,
+			})
+		},
+	},
+	"GET /api/v1/tenants/{tenant}/audit/sessions/{session}/algorithms": {
+		member: "truncated",
+		seed: func(t *testing.T, f *serverFixture) {
+			t.Helper()
+			seedSampleSession(t, f, map[string]string{
+				audit.AttrEvent: audit.EventAlgorithmsNegotiated, audit.AttrTargetKexAlgorithm: boundedKex,
+			})
+		},
+	},
 	// A session's decisions (0035), bounded by its hops.
 	"GET /api/v1/tenants/{tenant}/sessions/{session}/decisions": {
 		member: "truncated",
@@ -522,29 +607,34 @@ var exemptRoutes = map[string]string{
 	"GET /api/v1/tenants/{tenant}/audit/sessions/{session}/loss":               "one row per gap cause, of which the contract names two",
 }
 
-// pendingBounded are the lists a later chunk pages or signals, by the chunk
-// that takes each (0028's inventory). Each chunk deletes its rows and moves
-// them to the map above that rules them; 0037 deletes this map.
-var pendingBounded = map[string]string{
-	"GET /api/v1/tenants/{tenant}/audit/blocked-commands":                "0037",
-	"GET /api/v1/tenants/{tenant}/audit/negotiated":                      "0037",
-	"GET /api/v1/tenants/{tenant}/audit/sessions/{session}/certificates": "0037",
-	"GET /api/v1/tenants/{tenant}/audit/sessions/{session}/algorithms":   "0037",
+// seedSampleSession stores, in tenant-a, one provisioning record of the
+// session the signal routes' sample path names, carrying attrs.
+var sampleSessionSeq atomic.Int64
+
+func seedSampleSession(t *testing.T, f *serverFixture, attrs map[string]string) {
+	t.Helper()
+	in, err := audit.New(audit.Options{Store: f.st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := in.Ingest(t.Context(), audit.Submission{Tenant: "tenant-a", ProxyID: "proxy-sample", Records: []contract.LogRecord{{
+		RecordID: fmt.Sprintf("sample-%d", sampleSessionSeq.Add(1)), SessionID: "sample", Kind: "provisioning",
+		Severity: contract.SeverityInfo, Timestamp: auditInstant.Format(time.RFC3339), Message: "sample", Attributes: attrs,
+	}}}); err != nil {
+		t.Fatalf("seed the sample session: %v", err)
+	}
 }
 
-// listClasses is the four maps, so the check can be run over another set.
+// listClasses is the three maps, so the check can be run over another set.
 type listClasses struct {
-	paged   map[string][]pagedList
-	signal  map[string]signalList
-	exempt  map[string]string
-	pending map[string]string
+	paged  map[string][]pagedList
+	signal map[string]signalList
+	exempt map[string]string
 }
-
-var chunkNumber = regexp.MustCompile(`^[0-9]{4}$`)
 
 // problems names every way routes and the classes disagree: a Control `GET`
-// route in no class or in more than one, an entry naming no such route, an
-// exemption with no reason, and a pending list with no chunk.
+// route in no class or in more than one, an entry naming no such route, and
+// an exemption with no reason.
 func (c listClasses) problems(routes []north.RouteInfo) []string {
 	var out []string
 	served := map[string]bool{}
@@ -564,12 +654,9 @@ func (c listClasses) problems(routes []north.RouteInfo) []string {
 		if _, ok := c.exempt[name]; ok {
 			in = append(in, "exemptRoutes")
 		}
-		if _, ok := c.pending[name]; ok {
-			in = append(in, "pendingBounded")
-		}
 		switch len(in) {
 		case 0:
-			out = append(out, name+" is a GET route in none of pagedLists, signalLists, exemptRoutes and pendingBounded: "+
+			out = append(out, name+" is a GET route in none of pagedLists, signalLists and exemptRoutes: "+
 				"page it, signal it, or exempt it with its reason (M26)")
 		case 1:
 		default:
@@ -577,7 +664,7 @@ func (c listClasses) problems(routes []north.RouteInfo) []string {
 		}
 	}
 	classified := slices.Concat(slices.Collect(maps.Keys(c.paged)), slices.Collect(maps.Keys(c.signal)),
-		slices.Collect(maps.Keys(c.exempt)), slices.Collect(maps.Keys(c.pending)))
+		slices.Collect(maps.Keys(c.exempt)))
 	for _, name := range classified {
 		if !served[name] {
 			out = append(out, name+" is classified but is not a GET route Control serves")
@@ -588,17 +675,12 @@ func (c listClasses) problems(routes []north.RouteInfo) []string {
 			out = append(out, name+" is exempt with no reason")
 		}
 	}
-	for name, chunk := range c.pending {
-		if !chunkNumber.MatchString(chunk) {
-			out = append(out, fmt.Sprintf("%s is pending under %q, which is not a four-digit chunk", name, chunk))
-		}
-	}
 	slices.Sort(out)
 	return out
 }
 
 func classes() listClasses {
-	return listClasses{paged: pagedLists, signal: signalLists, exempt: exemptRoutes, pending: pendingBounded}
+	return listClasses{paged: pagedLists, signal: signalLists, exempt: exemptRoutes}
 }
 
 // listPage is one page of a list as the client reads it.
@@ -778,15 +860,13 @@ func TestEveryListIsBoundedOrSaysWhyNot(t *testing.T) {
 }
 
 // The check above is only worth having if it fails. A route nobody classified,
-// one classified twice, an entry naming no route, an exemption with no reason
-// and a pending list with no chunk each fail it.
+// one classified twice, an entry naming no route and an exemption with no
+// reason each fail it.
 func TestTheListCheckFailsOnARouteNobodyClassified(t *testing.T) {
 	var routes []north.RouteInfo
 	c := classes()
-	for _, m := range []map[string]string{c.exempt, c.pending} {
-		for name := range m {
-			routes = append(routes, routeNamed(t, name))
-		}
+	for name := range c.exempt {
+		routes = append(routes, routeNamed(t, name))
 	}
 	for name := range c.signal {
 		routes = append(routes, routeNamed(t, name))
@@ -806,21 +886,17 @@ func TestTheListCheckFailsOnARouteNobodyClassified(t *testing.T) {
 		t.Errorf("an unclassified GET route beside a host's route and a write: %v, want one problem naming it", got)
 	}
 
-	twice := listClasses{paged: c.paged, signal: c.signal, exempt: withEntry(c.exempt, "GET /api/v1/tenants/{tenant}/targets", "one object"), pending: c.pending}
+	twice := listClasses{paged: c.paged, signal: c.signal, exempt: withEntry(c.exempt, "GET /api/v1/tenants/{tenant}/targets", "one object")}
 	if got := twice.problems(routes); len(got) != 1 || !strings.Contains(got[0], "classified more than once") {
 		t.Errorf("a route both paged and exempt: %v", got)
 	}
-	gone := listClasses{paged: c.paged, signal: c.signal, exempt: c.exempt, pending: withEntry(c.pending, "GET /api/v1/tenants/{tenant}/gone", "0031")}
+	gone := listClasses{paged: c.paged, signal: c.signal, exempt: withEntry(c.exempt, "GET /api/v1/tenants/{tenant}/gone", "one object")}
 	if got := gone.problems(routes); len(got) != 1 || !strings.Contains(got[0], "is not a GET route Control serves") {
-		t.Errorf("a pending entry naming no route: %v", got)
+		t.Errorf("an exemption naming no route: %v", got)
 	}
-	reasonless := listClasses{paged: c.paged, signal: c.signal, exempt: withEntry(c.exempt, "GET /api/v1/session", " "), pending: c.pending}
+	reasonless := listClasses{paged: c.paged, signal: c.signal, exempt: withEntry(c.exempt, "GET /api/v1/session", " ")}
 	if got := reasonless.problems(routes); len(got) != 1 || !strings.Contains(got[0], "exempt with no reason") {
 		t.Errorf("an exemption with no reason: %v", got)
-	}
-	chunkless := listClasses{paged: c.paged, signal: c.signal, exempt: c.exempt, pending: withEntry(c.pending, "GET /api/v1/tenants/{tenant}/audit/negotiated", "later")}
-	if got := chunkless.problems(routes); len(got) != 1 || !strings.Contains(got[0], "not a four-digit chunk") {
-		t.Errorf("a pending list with no chunk: %v", got)
 	}
 }
 

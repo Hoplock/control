@@ -282,6 +282,105 @@ var pagedReaders = map[string]pagedReader{
 		page: auditIDs(store.AuditQuery{Ascending: true}),
 		key:  func(id string) []any { return []any{newestFirstEpoch, auditStream(id), int64(1)} },
 	},
+	// The showcase join (0037), on the audit order: each record a blocked
+	// command on one labelled target, the first of a stream named for its
+	// id. Newest first, it is put at the instant newestFirst gives its id;
+	// oldest first, every record is put at one instant, as the audit
+	// query's are.
+	"Audit.BlockedCommands": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return putBlockedCommandAt(ctx, st, tenant, id, newestFirst(id))
+		},
+		del:  store.DeleteAuditRecord,
+		page: blockedIDs(store.BlockedCommandQuery{LabelName: "env", LabelValue: "prod"}),
+		key:  func(id string) []any { return []any{newestFirst(id), auditStream(id), int64(1)} },
+	},
+	"Audit.BlockedCommands ascending at one instant": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return putBlockedCommandAt(ctx, st, tenant, id, newestFirstEpoch)
+		},
+		del:  store.DeleteAuditRecord,
+		page: blockedIDs(store.BlockedCommandQuery{LabelName: "env", LabelValue: "prod", Ascending: true}),
+		key:  func(id string) []any { return []any{newestFirstEpoch, auditStream(id), int64(1)} },
+	},
+	// The negotiated sessions (0037), by each session's latest matching
+	// record, newest first, then the session id. Each session is one record,
+	// the first of a stream named for its id. Newest first, it is put at the
+	// instant newestFirst gives its id; at one instant, every session is, so
+	// the whole order — and every walk the tests above make, the racing one
+	// included — is the session id's, read through HAVING's tie.
+	"Audit.Sessions": {
+		put:  putNegotiated(newestFirst),
+		del:  store.DeleteAuditRecord,
+		page: sessionIDs(negotiatedSelection),
+		key:  func(id string) []any { return []any{newestFirst(id), id} },
+	},
+	"Audit.Sessions at one instant": {
+		put:  putNegotiated(func(string) time.Time { return newestFirstEpoch }),
+		del:  store.DeleteAuditRecord,
+		page: sessionIDs(negotiatedSelection),
+		key:  func(id string) []any { return []any{newestFirstEpoch, id} },
+	},
+}
+
+// blockedTarget is the labelled target every blocked command put here names.
+var blockedTarget = storetest.Target("t-blocked", "blocked.example", map[string]string{"env": "prod"})
+
+// putBlockedCommandAt stores the record id as a blocked command on
+// blockedTarget at at, the first of its own stream. A record already stored is
+// left as it is.
+func putBlockedCommandAt(ctx context.Context, st *store.Store, tenant store.Tenant, id string, at time.Time) error {
+	if err := st.Targets().Upsert(ctx, tenant, blockedTarget); err != nil {
+		return err
+	}
+	rec := storetest.AuditRecord(id, auditStream(id), 1)
+	rec.Kind, rec.Target, rec.RecordedAt = store.KindCommand, blockedTarget.Hostname, at
+	rec.Attributes = map[string]string{"action": store.ActionBlockCommand, "command": "rm -rf /"}
+	if err := st.Audit().Append(ctx, tenant, rec); err != nil && !store.IsConflict(err) {
+		return err
+	}
+	return nil
+}
+
+func blockedIDs(q store.BlockedCommandQuery) func(context.Context, *store.Store, store.Tenant, store.Page) ([]string, bool, error) {
+	return func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+		got, err := st.Audit().BlockedCommands(ctx, tenant, q, p)
+		ids := make([]string, 0, len(got.Rows))
+		for _, b := range got.Rows {
+			ids = append(ids, b.Record.RecordID)
+		}
+		return ids, got.More, err
+	}
+}
+
+// negotiatedSelection is the runbook's question: the sessions that negotiated
+// one key exchange.
+var negotiatedSelection = store.AuditQuery{Negotiated: "key_exchanges:diffie-hellman-group14-sha1"}
+
+// putNegotiated stores the session id as one record that answers
+// negotiatedSelection, recorded at at(id), the first of its own stream. A
+// record already stored is left as it is.
+func putNegotiated(at func(string) time.Time) func(context.Context, *store.Store, store.Tenant, string) error {
+	return func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+		rec := storetest.AuditRecord(id, auditStream(id), 1)
+		rec.SessionID, rec.RecordedAt = id, at(id)
+		rec.Negotiated = []string{negotiatedSelection.Negotiated}
+		if err := st.Audit().Append(ctx, tenant, rec); err != nil && !store.IsConflict(err) {
+			return err
+		}
+		return nil
+	}
+}
+
+func sessionIDs(q store.AuditQuery) func(context.Context, *store.Store, store.Tenant, store.Page) ([]string, bool, error) {
+	return func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+		got, err := st.Audit().Sessions(ctx, tenant, q, p)
+		ids := make([]string, 0, len(got.Rows))
+		for _, s := range got.Rows {
+			ids = append(ids, s.SessionID)
+		}
+		return ids, got.More, err
+	}
 }
 
 // auditStream is the stream the record put as id is the first of.

@@ -234,9 +234,9 @@ func TestASubjectCannotBeGivenAClaimThisServerSets(t *testing.T) {
 	}), http.StatusOK)
 }
 
-// The runbook's third step says when its limit cut the answer short, because
-// the fourth ends exactly the sessions it lists; and each question is asked
-// whole, an axis with its value.
+// The runbook's third step says when a page is not the whole answer and where
+// to continue, because the fourth ends exactly the sessions it lists (M26);
+// and each question is asked whole, an axis with its value.
 func TestTheNegotiatedQuerySaysWhenItStoppedShort(t *testing.T) {
 	f := newServer(t)
 	auditor := f.roleToken(t, identity.RoleAuditor)
@@ -257,13 +257,18 @@ func TestTheNegotiatedQuerySaysWhenItStoppedShort(t *testing.T) {
 	if _, err := in.Ingest(t.Context(), audit.Submission{Tenant: "tenant-a", ProxyID: "proxy-n", Records: recs}); err != nil {
 		t.Fatal(err)
 	}
-	ask := func(limit string) (sessions []string, truncated bool) {
+	query := api + "/audit/negotiated?axis=key_exchanges&value=diffie-hellman-group14-sha1"
+	ask := func(params string) (sessions []string, truncated bool, next string) {
 		t.Helper()
-		resp := f.send(t, "GET", api+"/audit/negotiated?axis=key_exchanges&value=diffie-hellman-group14-sha1"+limit, auditor, nil)
+		resp := f.send(t, "GET", query+params, auditor, nil)
 		mustStatus(t, resp, http.StatusOK)
 		var got struct {
-			Sessions  []string `json:"sessions"`
-			Truncated *bool    `json:"truncated"`
+			Sessions []struct {
+				SessionID string    `json:"session_id"`
+				LatestAt  time.Time `json:"latest_recorded_at"`
+			} `json:"sessions"`
+			Truncated *bool  `json:"truncated"`
+			Next      string `json:"next"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 			t.Fatal(err)
@@ -271,15 +276,29 @@ func TestTheNegotiatedQuerySaysWhenItStoppedShort(t *testing.T) {
 		if got.Truncated == nil {
 			t.Fatal("the answer carries no truncated")
 		}
-		return got.Sessions, *got.Truncated
+		for _, s := range got.Sessions {
+			if s.LatestAt.IsZero() {
+				t.Errorf("%s carries no latest_recorded_at, the instant its place in the answer is", s.SessionID)
+			}
+			sessions = append(sessions, s.SessionID)
+		}
+		return sessions, *got.Truncated, got.Next
 	}
-	if sessions, truncated := ask("&limit=2"); len(sessions) != 2 || !truncated {
-		t.Errorf("limit 2 of 3: %v, truncated %v", sessions, truncated)
+	first, truncated, next := ask("&limit=2")
+	if len(first) != 2 || !truncated || next == "" {
+		t.Fatalf("limit 2 of 3: %v, truncated %v, next %q", first, truncated, next)
 	}
-	if sessions, truncated := ask("&limit=3"); len(sessions) != 3 || truncated {
+	rest, truncated, last := ask("&limit=2&after=" + next)
+	if len(rest) != 1 || truncated || last != "" {
+		t.Errorf("the page after it: %v, truncated %v, next %q; want the one left, and the end", rest, truncated, last)
+	}
+	if all := slices.Sorted(slices.Values(append(first, rest...))); !slices.Equal(all, []string{"sess-1", "sess-2", "sess-3"}) {
+		t.Errorf("the two pages hold %v, want each session once", all)
+	}
+	if sessions, truncated, _ := ask("&limit=3"); len(sessions) != 3 || truncated {
 		t.Errorf("limit 3 of 3: %v, truncated %v", sessions, truncated)
 	}
-	if sessions, truncated := ask(""); !slices.Equal(slices.Sorted(slices.Values(sessions)), []string{"sess-1", "sess-2", "sess-3"}) || truncated {
+	if sessions, truncated, _ := ask(""); !slices.Equal(slices.Sorted(slices.Values(sessions)), []string{"sess-1", "sess-2", "sess-3"}) || truncated {
 		t.Errorf("no limit: %v, truncated %v", sessions, truncated)
 	}
 	requireRefusal(t, f.send(t, "GET", api+"/audit/negotiated?axis=key_exchanges", auditor, nil),

@@ -213,13 +213,14 @@ type AuditRepository interface {
 	// chain sequence in the query's direction (M26): every north-bound
 	// audit list reads it.
 	Page(ctx context.Context, tenant Tenant, q AuditQuery, p Page) (Paged[AuditRecord], error)
-	// Sessions answers the distinct sessions whose records match, newest
-	// first and never "", its limit counting sessions rather than records,
-	// and whether more matched than the limit let it return.
-	Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([]string, bool, error)
-	// BlockedCommands is the showcase join: blocked commands on targets
+	// Sessions reads one page of the distinct sessions whose records match,
+	// never "", by each one's latest matching record, newest first, then its
+	// id (M26): its limit counts sessions rather than records.
+	Sessions(ctx context.Context, tenant Tenant, q AuditQuery, p Page) (Paged[AuditSession], error)
+	// BlockedCommands reads one page of the showcase join, in the audit
+	// order in the query's direction (M26): blocked commands on targets
 	// carrying a label, resolved to the decision that permitted the access.
-	BlockedCommands(ctx context.Context, tenant Tenant, q BlockedCommandQuery) ([]BlockedCommand, error)
+	BlockedCommands(ctx context.Context, tenant Tenant, q BlockedCommandQuery, p Page) (Paged[BlockedCommand], error)
 	// GapLoss sums one session's `logging.gap` reports per cause
 	// (Hoplock/proxy#71). An empty session id is refused: it is no session.
 	GapLoss(ctx context.Context, tenant Tenant, sessionID string) ([]GapLoss, error)

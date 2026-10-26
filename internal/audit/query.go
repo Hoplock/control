@@ -215,14 +215,11 @@ func (r *Reader) ByDeviceField(ctx context.Context, tenant store.Tenant, name, v
 // policy inputs rather than record attributes. The approved grant that made
 // the access possible is the third leg; the grant CONTEXT is already on every
 // row (M16) and the grant record itself arrives with 0012.
-func (r *Reader) BlockedCommands(ctx context.Context, tenant store.Tenant, label, value string, from, to time.Time, limit int) ([]store.BlockedCommand, error) {
-	return r.store.Audit().BlockedCommands(ctx, tenant, store.BlockedCommandQuery{
-		LabelName:  label,
-		LabelValue: value,
-		From:       from,
-		To:         to,
-		Limit:      limit,
-	})
+//
+// It is read one page at a time, in the audit order, newest first unless the
+// query is Ascending (M26).
+func (r *Reader) BlockedCommands(ctx context.Context, tenant store.Tenant, q store.BlockedCommandQuery, p store.Page) (store.Paged[store.BlockedCommand], error) {
+	return r.store.Audit().BlockedCommands(ctx, tenant, q, p)
 }
 
 // DegradedCredentials returns the records whose session ran on something other
@@ -260,17 +257,27 @@ type CertificatePresented struct {
 	Row       store.SSHCertificate `json:"-"`
 }
 
-// SessionCertificates returns the certificates one session presented.
-func (r *Reader) SessionCertificates(ctx context.Context, tenant store.Tenant, sessionID string) ([]CertificatePresented, error) {
+// SessionRecordBound is how many of one session's records a per-session read
+// takes: its certificates, and the records its algorithm summary reads. A
+// session's records are bounded by what one session is, so neither read is a
+// list the caller pages (M26.3): each reads one record past this bound and
+// says when the bound cut it.
+const SessionRecordBound = store.DefaultPageLimit
+
+// SessionCertificates returns the certificates one session presented, oldest
+// first, from at most SessionRecordBound of its records, and whether the
+// session had more.
+func (r *Reader) SessionCertificates(ctx context.Context, tenant store.Tenant, sessionID string) ([]CertificatePresented, bool, error) {
 	if sessionID == "" {
-		return nil, ErrNoSession
+		return nil, false, ErrNoSession
 	}
-	rows, err := r.store.Audit().Query(ctx, tenant, Query{SessionID: sessionID, HasCertificate: true, Ascending: true})
+	page, err := r.store.Audit().Page(ctx, tenant, Query{SessionID: sessionID, HasCertificate: true, Ascending: true},
+		store.Page{Limit: SessionRecordBound})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var out []CertificatePresented
-	for _, row := range rows {
+	for _, row := range page.Rows {
 		if row.CertificateSerial == "" {
 			continue
 		}
@@ -282,12 +289,12 @@ func (r *Reader) SessionCertificates(ctx context.Context, tenant store.Tenant, s
 			case err == nil:
 				p.Found, p.Row = true, cert
 			case !store.IsNotFound(err):
-				return nil, err
+				return nil, false, err
 			}
 		}
 		out = append(out, p)
 	}
-	return out, nil
+	return out, page.More, nil
 }
 
 // CertificateQuery is the certificate join's question: the records naming one
@@ -380,16 +387,12 @@ type NegotiatedQuery struct {
 	// identifier.
 	BanAxis, BanName string
 	From, To         time.Time
-	Limit            int
 }
 
-// SessionsBy answers the first two questions: the distinct sessions whose
-// records match, newest first, and whether more matched than the limit let it
-// return. Session-less records name no session and are not returned. The
-// limit counts sessions, never records, because the answer is what the
-// runbook's next step ends — and why it says when it stopped short.
-func (r *Reader) SessionsBy(ctx context.Context, tenant store.Tenant, q NegotiatedQuery) ([]string, bool, error) {
-	sq := Query{From: q.From, To: q.To, Limit: q.Limit}
+// Selection is the records SessionsBy groups into sessions for q, and false
+// when q asks none of the three questions.
+func (q NegotiatedQuery) Selection() (Query, bool) {
+	sq := Query{From: q.From, To: q.To}
 	switch {
 	case q.Axis != "" && q.Value != "":
 		sq.Negotiated = q.Axis + ":" + q.Value
@@ -398,9 +401,39 @@ func (r *Reader) SessionsBy(ctx context.Context, tenant store.Tenant, q Negotiat
 	case q.BanAxis != "" && q.BanName != "":
 		sq.Banned = q.BanAxis + ":" + q.BanName
 	default:
-		return nil, false, errors.New("audit: name an axis and value, a floor, or a banned axis and name")
+		return Query{}, false
 	}
-	return r.store.Audit().Sessions(ctx, tenant, sq)
+	return sq, true
+}
+
+// NegotiatedSession is one session a negotiated-value question matches, at its
+// latest matching record: its place in the answer, which the answer hands the
+// caller because a cursor holds nothing its caller was not handed (M26.2).
+type NegotiatedSession struct {
+	SessionID string    `json:"session_id"`
+	LatestAt  time.Time `json:"latest_recorded_at"`
+}
+
+// SessionsBy answers the first two questions, one page at a time (M26): the
+// distinct sessions whose records match, by each one's latest matching
+// record, newest first, then the session id. Session-less records name no
+// session and are not returned. The limit counts sessions, never records,
+// because the answer is what the runbook's next step ends — and why the
+// caller follows the pages to the end before ending them.
+func (r *Reader) SessionsBy(ctx context.Context, tenant store.Tenant, q NegotiatedQuery, p store.Page) (store.Paged[NegotiatedSession], error) {
+	sq, ok := q.Selection()
+	if !ok {
+		return store.Paged[NegotiatedSession]{}, errors.New("audit: name an axis and value, a floor, or a banned axis and name")
+	}
+	got, err := r.store.Audit().Sessions(ctx, tenant, sq, p)
+	if err != nil {
+		return store.Paged[NegotiatedSession]{}, err
+	}
+	out := store.Paged[NegotiatedSession]{Rows: make([]NegotiatedSession, 0, len(got.Rows)), More: got.More}
+	for _, s := range got.Rows {
+		out.Rows = append(out.Rows, NegotiatedSession{SessionID: s.SessionID, LatestAt: s.LatestAt.UTC()})
+	}
+	return out, nil
 }
 
 // SessionAlgorithms is the third question, and the only per-session proof that
@@ -417,19 +450,26 @@ type SessionAlgorithms struct {
 	Floor                      string   `json:"algorithm_floor,omitempty"`
 	Bans                       []string `json:"algorithm_bans,omitempty"`
 	BansUnmatched              []string `json:"algorithm_bans_unmatched,omitempty"`
+	// Truncated reports that the session had more than SessionRecordBound
+	// records to summarise, and this summarises the first of them (M26.3).
+	// What a session negotiated rarely changes after its first legs, so the
+	// summary of those is still served.
+	Truncated bool `json:"truncated"`
 }
 
-// Algorithms reads one session's negotiated values and the policy in force.
+// Algorithms reads one session's negotiated values and the policy in force,
+// from at most SessionRecordBound of its records, oldest first.
 func (r *Reader) Algorithms(ctx context.Context, tenant store.Tenant, sessionID string) (SessionAlgorithms, error) {
 	if sessionID == "" {
 		return SessionAlgorithms{}, ErrNoSession
 	}
-	rows, err := r.store.Audit().Query(ctx, tenant, Query{SessionID: sessionID, HasAlgorithms: true, Ascending: true})
+	page, err := r.store.Audit().Page(ctx, tenant, Query{SessionID: sessionID, HasAlgorithms: true, Ascending: true},
+		store.Page{Limit: SessionRecordBound})
 	if err != nil {
 		return SessionAlgorithms{}, err
 	}
-	out := SessionAlgorithms{SessionID: sessionID, Negotiated: map[string][]string{}}
-	for _, row := range rows {
+	out := SessionAlgorithms{SessionID: sessionID, Negotiated: map[string][]string{}, Truncated: page.More}
+	for _, row := range page.Rows {
 		for _, entry := range row.Negotiated {
 			axis, value, _ := strings.Cut(entry, ":")
 			if !slices.Contains(out.Negotiated[axis], value) {

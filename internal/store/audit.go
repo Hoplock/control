@@ -502,8 +502,9 @@ type AuditQuery struct {
 	// instant the event happened, never the instant it arrived.
 	From time.Time
 	To   time.Time
-	// Limit is Query's and Sessions': bounded by MaxPageLimit, zero taking
-	// DefaultPageLimit. Page reads its page's limit and never this one.
+	// Limit is Query's: bounded by MaxPageLimit, zero taking
+	// DefaultPageLimit. Page and Sessions read their page's limit and never
+	// this one.
 	Limit int
 	// Ascending reads oldest first. The default is newest first, because
 	// every caller looking at a WINDOW wants the recent end of it; a
@@ -559,51 +560,84 @@ func (r auditRepo) page(ctx context.Context, op string, tenant Tenant, q AuditQu
 	return queryPage(ctx, r.s.db, op, p, sql, args, scanAuditRecord)
 }
 
-// Sessions answers the distinct sessions whose records match a selection,
-// newest first, and never the empty session, which is no session
+// AuditSession is one session a selection matches, at its latest matching
+// record: the place Sessions orders it by.
+type AuditSession struct {
+	SessionID string
+	LatestAt  time.Time
+}
+
+// sessionsOrder is the key Sessions orders by: each session's latest matching
+// record, newest first, then the session id, ascending (M26.4). The two
+// directions are mixed, so no row comparison continues it, and it is never
+// passed to after or clause: Sessions writes its keyset in HAVING. checkPage
+// reads its length alone.
+var sessionsOrder = order{columns: []string{"max(recorded_at)", "session_id"}}
+
+// Sessions reads one page of the distinct sessions whose records match a
+// selection (M26), and never the empty session, which is no session
 // (Hoplock/proxy#71). Its limit counts SESSIONS: a session with several
-// matching records takes one place, so the answer is the one a caller ending
-// sessions needs. It reads one session past the limit to say whether the
-// answer stopped short, because a caller that ends the sessions it was given
-// must know whether those were all of them (0023). Ascending is not read.
-func (r auditRepo) Sessions(ctx context.Context, tenant Tenant, q AuditQuery) ([]string, bool, error) {
+// matching records takes one place, so a page is what a caller ending
+// sessions needs, and More says whether those were all of them (0023). The
+// position p.After is the last session's latest matching instant and its id
+// (time.Time, string). Ascending and q.Limit are not read.
+//
+// NO INDEX SERVES THIS ORDER, and M26.4 keeps it so: it is an aggregate over
+// the selection, so every page re-reads the selection and groups it. The
+// selection is a floor, a ban or a negotiated value over a window, which the
+// containment indexes narrow.
+//
+// A session that gains a newer matching record moves in the order, toward its
+// head, and so behind any position past it. A page reads only what lies past
+// its position, so a walk never reads one session twice: one it has listed
+// and that moves is listed again only by a later walk. One it has not reached
+// yet and that moves behind the position is missed by this walk, and found by
+// the next.
+func (r auditRepo) Sessions(ctx context.Context, tenant Tenant, q AuditQuery, p Page) (Paged[AuditSession], error) {
 	const op = "store.Audit.Sessions"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, false, err
+		return Paged[AuditSession]{}, err
+	}
+	sql, args, err := sessionsPageSQL(op, tenant, q, p)
+	if err != nil {
+		return Paged[AuditSession]{}, err
 	}
 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	limit := boundLimit(q.Limit)
-	where, args := auditWhere(tenant, q)
-	args = append(args, limit+1)
-	rows, err := r.s.db.Query(ctx, `
-		SELECT session_id
-		FROM audit_records
-		WHERE `+where+` AND session_id <> ''
-		GROUP BY session_id
-		ORDER BY max(recorded_at) DESC, session_id
-		LIMIT $`+fmt.Sprint(len(args)), args...)
-	if err != nil {
-		return nil, false, wrap(op, err)
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, false, wrap(op, err)
+	return queryPage(ctx, r.s.db, op, p, sql, args, func(op string, row rowScanner) (AuditSession, error) {
+		var s AuditSession
+		if err := row.Scan(&s.SessionID, &s.LatestAt); err != nil {
+			return AuditSession{}, wrap(op, err)
 		}
-		out = append(out, id)
+		return s, nil
+	})
+}
+
+// sessionsPageSQL renders the statement Sessions runs. The keyset is in
+// HAVING, written out rather than as a row comparison, because the order's
+// two directions differ.
+func sessionsPageSQL(op string, tenant Tenant, q AuditQuery, p Page) (string, []any, error) {
+	if err := checkPage(op, sessionsOrder, p); err != nil {
+		return "", nil, err
 	}
-	if err := rows.Err(); err != nil {
-		return nil, false, wrap(op, err)
+	where, args := auditWhere(tenant, q)
+	having := ""
+	if len(p.After) != 0 {
+		args = append(args, p.After[0], p.After[1])
+		t, s := len(args)-1, len(args)
+		having = fmt.Sprintf(`
+		HAVING max(recorded_at) < $%d OR (max(recorded_at) = $%d AND session_id > $%d)`, t, t, s)
 	}
-	if len(out) > limit {
-		return out[:limit], true, nil
-	}
-	return out, false, nil
+	args = append(args, p.Limit+1)
+	return `
+		SELECT session_id, max(recorded_at)
+		FROM audit_records
+		WHERE ` + where + ` AND session_id <> ''
+		GROUP BY session_id` + having + `
+		ORDER BY max(recorded_at) DESC, session_id
+		LIMIT $` + fmt.Sprint(len(args)), args, nil
 }
 
 // auditPageSQL renders the statement Page and Query run. It is one function so
@@ -797,7 +831,9 @@ type BlockedCommandQuery struct {
 	LabelValue string
 	From       time.Time
 	To         time.Time
-	Limit      int
+	// Ascending reads oldest first. The default is newest first, as every
+	// audit list's is.
+	Ascending bool
 }
 
 // BlockedCommand is one row of that join: what was blocked, who ran it, over
@@ -821,25 +857,55 @@ type BlockedCommand struct {
 	DecisionAt    time.Time
 }
 
-func (r auditRepo) BlockedCommands(ctx context.Context, tenant Tenant, q BlockedCommandQuery) ([]BlockedCommand, error) {
+// blockedOrder is the showcase join's order: the audit order on the record's
+// columns (M26.4), newest first unless the query is Ascending.
+// `audit_records_order_idx` holds it, read backwards for Ascending.
+func blockedOrder(ascending bool) order {
+	return order{columns: []string{"a.recorded_at", "a.stream", "a.chain_seq"}, desc: !ascending}
+}
+
+// BlockedCommands reads one page of the showcase join (M26): at most p.Limit
+// blocked commands after the position p.After, which is the last row's
+// record's recorded-at, stream and chain sequence (time.Time, string, int64),
+// in the query's direction. A window narrows the page but is never its
+// position.
+func (r auditRepo) BlockedCommands(ctx context.Context, tenant Tenant, q BlockedCommandQuery, p Page) (Paged[BlockedCommand], error) {
 	const op = "store.Audit.BlockedCommands"
 	if err := checkTenant(op, tenant); err != nil {
-		return nil, err
+		return Paged[BlockedCommand]{}, err
 	}
 	if q.LabelName == "" {
-		return nil, invalid(op, "a target label is required")
+		return Paged[BlockedCommand]{}, invalid(op, "a target label is required")
+	}
+	sql, args, err := blockedPageSQL(op, tenant, q, p)
+	if err != nil {
+		return Paged[BlockedCommand]{}, err
 	}
 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	// A LEFT JOIN onto decisions, an inner one onto targets. The asymmetry
-	// is the point: a blocked command on a target this store does not know
-	// is outside the question being asked, but a blocked command whose
-	// decision has aged out is still a blocked command and dropping it
-	// would under-report an incident.
-	rows, err := r.s.db.Query(ctx, `
-		SELECT `+prefixed(auditColumns, "a")+`,
+	return queryPage(ctx, r.s.db, op, p, sql, args, scanBlockedCommand)
+}
+
+// blockedPageSQL renders the statement BlockedCommands runs, for the test that
+// asks Postgres how it plans it.
+//
+// A LEFT JOIN onto decisions, an inner one onto targets. The asymmetry is the
+// point: a blocked command on a target this store does not know is outside the
+// question being asked, but a blocked command whose decision has aged out is
+// still a blocked command and dropping it would under-report an incident.
+func blockedPageSQL(op string, tenant Tenant, q BlockedCommandQuery, p Page) (string, []any, error) {
+	o := blockedOrder(q.Ascending)
+	if err := checkPage(op, o, p); err != nil {
+		return "", nil, err
+	}
+	tail, args := o.clause(p, []any{
+		tenant, KindCommand, ActionBlockCommand, jsonPair(q.LabelName, q.LabelValue),
+		nullableTime(q.From), nullableTime(q.To),
+	})
+	return `
+		SELECT ` + prefixed(auditColumns, "a") + `,
 		       t.zone, t.labels,
 		       d.decision_id IS NOT NULL, coalesce(d.matched_rule, ''),
 		       coalesce(d.snapshot->>'route_type', ''), d.decided_at
@@ -851,44 +917,23 @@ func (r auditRepo) BlockedCommands(ctx context.Context, tenant Tenant, q Blocked
 		  AND a.attributes->>'action' = $3
 		  AND t.labels @> $4::jsonb
 		  AND ($5::timestamptz IS NULL OR a.recorded_at >= $5)
-		  AND ($6::timestamptz IS NULL OR a.recorded_at < $6)
-		ORDER BY a.recorded_at DESC, a.stream DESC, a.chain_seq DESC
-		LIMIT $7`,
-		tenant, KindCommand, ActionBlockCommand,
-		jsonPair(q.LabelName, q.LabelValue),
-		nullableTime(q.From), nullableTime(q.To), boundLimit(q.Limit))
-	if err != nil {
-		return nil, wrap(op, err)
-	}
-	defer rows.Close()
+		  AND ($6::timestamptz IS NULL OR a.recorded_at < $6)` + tail, args, nil
+}
 
-	var out []BlockedCommand
-	for rows.Next() {
-		var (
-			row       BlockedCommand
-			decidedAt *time.Time
-			labels    map[string]string
-			zone      string
-			found     bool
-			rule      string
-			routeType string
-		)
-		dest := auditScanDest(&row.Record)
-		dest = append(dest, &zone, &labels, &found, &rule, &routeType, &decidedAt)
-		if err := rows.Scan(dest...); err != nil {
-			return nil, wrap(op, err)
-		}
-		row.TargetZone = zone
-		row.TargetLabels = labels
-		row.DecisionFound = found
-		row.MatchedRule = rule
-		row.RouteType = routeType
-		row.DecisionAt = timeOrZero(decidedAt)
-		row.Command = row.Record.Attributes["command"]
-		row.Action = row.Record.Attributes["action"]
-		out = append(out, row)
+func scanBlockedCommand(op string, rows rowScanner) (BlockedCommand, error) {
+	var (
+		row       BlockedCommand
+		decidedAt *time.Time
+	)
+	dest := auditScanDest(&row.Record)
+	dest = append(dest, &row.TargetZone, &row.TargetLabels, &row.DecisionFound, &row.MatchedRule, &row.RouteType, &decidedAt)
+	if err := rows.Scan(dest...); err != nil {
+		return BlockedCommand{}, wrap(op, err)
 	}
-	return out, wrap(op, rows.Err())
+	row.DecisionAt = timeOrZero(decidedAt)
+	row.Command = row.Record.Attributes["command"]
+	row.Action = row.Record.Attributes["action"]
+	return row, nil
 }
 
 // KindCommand and ActionBlockCommand are the two values the showcase join
@@ -968,9 +1013,8 @@ func jsonPair(name, value string) string {
 	return string(encoded)
 }
 
-// boundLimit bounds a read that is not a page — Chain, Query, Sessions and
-// BlockedCommands — when its caller asks for no limit or for more than a
-// page. A query surface that can be asked for the whole store is one
+// boundLimit bounds a read that is not a page — Chain and Query — when its
+// caller asks for no limit or for more than a page. A query surface that can be asked for the whole store is one
 // request away from being an outage (M5's reasoning, one layer out). Its
 // numbers are M26's, so an internal read and a page agree on what "a page"
 // is; a north-bound list refuses rather than clamps (store.Page).

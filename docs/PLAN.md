@@ -1213,7 +1213,7 @@ decision.
   not tell a complete answer from a cut one (0023). One shape now holds every
   list on the north-bound surface, Control's and a host's (M15). It is settled
   before 0042 makes that surface a compatibility promise (M19), and phases
-  0029–0037 build it, list by list (§10).
+  0029–0037 built it, list by list (§10).
 
   1. **The limit is the caller's, within one maximum.** `?limit=` is an
      integer from 1 to 10 000, and absent it is 500. Zero, a negative or a
@@ -1292,8 +1292,10 @@ decision.
      in a new migration: role bindings, grants and grant requests (their
      indexes had no tiebreak), outstanding certificates, and the audit query
      beyond its first key. One order has no index and is kept.
-     `audit/negotiated` pages by each session's latest matching record, an
-     aggregate no index can serve, so each page re-reads the selection. That
+     `audit/negotiated` pages by each session's latest matching record,
+     newest first, then the session id, an aggregate no index can serve, so
+     each page re-reads the selection. Its two directions differ, so its
+     keyset is written in `HAVING` rather than as a row comparison. That
      selection is a floor, a ban or a negotiated value over a window, narrow
      by construction, and ordering by session id instead would lose the
      recency the runbook reads.
@@ -1318,10 +1320,9 @@ decision.
   (`internal/httpapi/north/bounded_test.go`) walks every `GET` route on the
   router. It fails on a route that is not a paged list, a signal-only list or
   an exemption with a reason, so a route added later fails it until it is one
-  of the three. Until phase 0037 pages the last of them, a list a later chunk
-  is to page is named instead, with that chunk's number. A host's routes are
-  not walked, because Control cannot see which of them is a list (7). Two
-  kinds of route are exempt:
+  of the three, and there is no fourth: every `GET` route Control serves is
+  one of them. A host's routes are not walked, because Control cannot see
+  which of them is a list (7). Two kinds of route are exempt:
   - a route that answers one object;
   - a list bounded by configuration rather than by the estate. These are the
     sign-in methods, the trust bundle (answered whole or not at all), the
@@ -1545,8 +1546,7 @@ for nothing.
   `TestEveryListIsBoundedOrSaysWhyNot` walks the router and holds every `GET`
   route of Control's to one of three: a paged list, a signal-only list
   (`truncated` and no cursor, for a list bounded by one object), or an
-  exemption with its reason. Until 0037, a fourth map names each list a later
-  chunk is to page, by its chunk.
+  exemption with its reason, and to nothing else.
 
   Control's own routes: federation and the caller's own session under
   `/api/v1/session…`, which run before authentication or need only a live
@@ -2421,7 +2421,8 @@ the connection's lifetime (proxy D2):
   allow route's. The emergency runbook for an advisory is that ban
   (`POST …/policy/apply`), then `cache_invalidate` with `all`, then
   `session_kill` for the running sessions found by what they negotiated
-  (`GET …/audit/negotiated`, then `POST …/revocations`; §7, 0043);
+  (`GET …/audit/negotiated`, following `next` until `truncated` is false,
+  then `POST …/revocations` for every session listed; §7, 0043);
 - **additional device fields** on `ephemeral-account` routes — the open
   `device_field.<name>` namespace that sits beside the five
   `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
@@ -3157,11 +3158,13 @@ not say why, and a grant the explanation names that the inputs do not hold.
   records share an instant. A cursor binds the whole selection the reader
   applies, and an item of the drift feed, the unmet policy or the gaps
   carries its record's `stream` and `chain_seq` beside its instant, because
-  a cursor holds nothing its caller was not handed (M26.2). `audit/negotiated` counts sessions, and pages by
-  each session's latest matching record. The per-session reads keep their
-  bound of 500 records and say `truncated` when it cut them: a session's
-  certificates and its algorithm summary. A session's loss is one row per
-  cause and is never cut.
+  a cursor holds nothing its caller was not handed (M26.2).
+  `audit/negotiated` counts sessions, and pages by each session's latest
+  matching record, which each item carries as `latest_recorded_at` beside
+  its `session_id`. The per-session reads keep their bound of 500 records
+  and say `truncated` when it cut them: a session's certificates and its
+  algorithm summary, which still summarises the first 500. A session's loss
+  is one row per cause and is never cut.
 - **Device fields are audit facts.** The ephemeral-account mapping record carries
   the `device_field.<name>` values the session was provisioned with (§5.2),
   because on a device that is one unit partitioned into many the
@@ -3259,9 +3262,12 @@ not say why, and a grant the explanation names that the inputs do not hold.
   comma-joined, on the `provisioning` record) names the bans that build could
   never offer. These records are the only per-session proof that a floor or a
   ban held, and they are how the emergency runbook finds the sessions to end
-  (`GET …/audit/negotiated`, whose limit counts sessions and whose answer says
-  `truncated` when the limit cut it short: the runbook's next step ends exactly
-  the sessions listed, so a caller must know whether they were all of them).
+  (`GET …/audit/negotiated`, whose limit counts sessions: the runbook's next
+  step ends exactly the sessions listed, so a caller follows `next` until
+  `truncated` is false before ending them). A walk lists each session once,
+  at its latest matching record. A session that gains a newer one mid-walk
+  moves behind the walk's position, so the next walk is the one that lists
+  it again, or for the first time.
 - **Grant context rides every record for a session** (`grant_context`),
   copied through by the proxy as opaque data. Store it as it arrives —
   including `additional_context`, which is a string **or** an object — and never

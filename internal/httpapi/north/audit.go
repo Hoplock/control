@@ -82,13 +82,19 @@ func viewRecords(rows []store.AuditRecord) []recordView {
 	return out
 }
 
-// THE AUDIT LISTS ARE PAGED (M26, §7). Five of them read the audit query one
-// page at a time, by recorded-at, stream and chain sequence, newest first
-// unless `?order=asc`: the general query, the drift feed, the unmet algorithm
-// policy, the gaps and the certificate join. Each builds the selection its
-// reader applies, and its cursor binds that selection rendered by
-// auditFilters, so a filter the reader reads is one the cursor binds. A window
-// narrows a page and is never its position: many records share an instant.
+// THE AUDIT LISTS ARE PAGED (M26, §7). Six of them read one page at a time,
+// by recorded-at, stream and chain sequence, newest first unless
+// `?order=asc`: five over the audit query — the general query, the drift
+// feed, the unmet algorithm policy, the gaps and the certificate join — and
+// the showcase join, by its record's place. Each builds the selection its
+// reader applies, and its cursor binds that selection rendered by auditFilters
+// (blockedFilters for the join), so a filter the reader reads is one the
+// cursor binds. A window narrows a page and is never its position: many
+// records share an instant.
+//
+// The negotiated sessions are the one list in another order: each session's
+// latest matching record, newest first, then its id. That is an aggregate no
+// index serves, so each page re-reads its selection (M26.4).
 
 // auditKey is every audit list's order key: recorded-at, stream and chain
 // sequence (M26.4), the last unique within a stream.
@@ -100,6 +106,8 @@ var (
 	unmetList             = list{name: "audit_unmet", key: auditKey}
 	gapList               = list{name: "audit_gaps", key: auditKey}
 	certificateRecordList = list{name: "certificate_records", key: auditKey}
+	blockedList           = list{name: "audit_blocked_commands", key: auditKey}
+	negotiatedList        = list{name: "audit_negotiated", key: []keyKind{keyTime, keyString}}
 )
 
 // auditPosition is the position after the last of rows, which at reads as its
@@ -184,6 +192,25 @@ func auditFilters(q store.AuditQuery) []string {
 	return out
 }
 
+// blockedFilters is the selection the showcase join's cursor binds (M26.2):
+// every field of q its reader applies, instants in RFC 3339 UTC, and the
+// order. The label's value is bound even when empty, because an empty value
+// is one the join matches. A field added to the query is added here, or
+// TestEveryShowcaseFieldBindsItsCursor fails.
+func blockedFilters(q store.BlockedCommandQuery) []string {
+	out := []string{"label=" + q.LabelName, "value=" + q.LabelValue, "order=desc"}
+	if q.Ascending {
+		out[2] = "order=asc"
+	}
+	if !q.From.IsZero() {
+		out = append(out, "from="+q.From.UTC().Format(time.RFC3339Nano))
+	}
+	if !q.To.IsZero() {
+		out = append(out, "to="+q.To.UTC().Format(time.RFC3339Nano))
+	}
+	return out
+}
+
 // ascending reads `?order=`: `asc` is oldest first, and anything else the
 // newest first every audit list defaults to.
 func ascending(r *http.Request) bool { return r.URL.Query().Get("order") == "asc" }
@@ -198,25 +225,6 @@ func (s *Server) window(w http.ResponseWriter, r *http.Request) (from, to time.T
 		return time.Time{}, time.Time{}, false
 	}
 	return from, to, true
-}
-
-// windowParams reads the window and a limit the store clamps, for the two
-// audit lists not yet paged: the showcase join and the negotiated sessions.
-type windowLimit struct {
-	From, To time.Time
-	Limit    int
-}
-
-func (s *Server) windowParams(w http.ResponseWriter, r *http.Request) (windowLimit, bool) {
-	var win windowLimit
-	var ok bool
-	if win.From, win.To, ok = s.window(w, r); !ok {
-		return windowLimit{}, false
-	}
-	if win.Limit, ok = s.limitParam(w, r); !ok {
-		return windowLimit{}, false
-	}
-	return win, true
 }
 
 func boolParam(r *http.Request, name string) bool {
@@ -327,13 +335,14 @@ func (s *Server) handleAuditRecord(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBlockedCommands is the showcase join: blocked commands on targets
-// carrying a label, each with the access decision that permitted the session.
+// carrying a label, each with the access decision that permitted the session,
+// one page at a time by its record's place, newest first unless `?order=asc`.
 func (s *Server) handleBlockedCommands(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
-	win, ok := s.windowParams(w, r)
+	from, to, ok := s.window(w, r)
 	if !ok {
 		return
 	}
@@ -342,15 +351,23 @@ func (s *Server) handleBlockedCommands(w http.ResponseWriter, r *http.Request) {
 		s.invalid(w, r, "label", access.ProblemRequired, "")
 		return
 	}
-	rows, err := s.reader.BlockedCommands(r.Context(), tenant, label, value, win.From, win.To, win.Limit)
+	q := store.BlockedCommandQuery{LabelName: label, LabelValue: value, From: from, To: to, Ascending: ascending(r)}
+	p, ok := readPage(w, r, blockedList, blockedFilters(q)...)
+	if !ok {
+		return
+	}
+	page, err := s.reader.BlockedCommands(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.auditFailure(w, r, "blocked commands", err)
 		return
 	}
-	if rows == nil {
-		rows = []store.BlockedCommand{}
-	}
-	answer(w, http.StatusOK, map[string]any{"blocked": rows})
+	s.answerPage(w, r, p, "blocked", page.Rows, page.More, auditPosition(page.Rows, blockedPosition), nil)
+}
+
+// blockedPosition is a blocked command's place in the audit order: its
+// record's, which the item carries.
+func blockedPosition(b store.BlockedCommand) (time.Time, string, int64) {
+	return b.Record.RecordedAt, b.Record.Stream, b.Record.ChainSeq
 }
 
 // handleDrift is the drift feed: one record per change the proxy made on a
@@ -407,13 +424,13 @@ func (s *Server) handleAlgorithmPolicyUnmet(w http.ResponseWriter, r *http.Reque
 
 // handleNegotiated answers "which sessions negotiated this", "which ran under
 // this floor" and "which ran under a ban on this" — the runbook's third step
-// reads the first and hands the answer to session_kill.
+// reads the first to its last page and hands the answer to session_kill.
 func (s *Server) handleNegotiated(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
-	win, ok := s.windowParams(w, r)
+	from, to, ok := s.window(w, r)
 	if !ok {
 		return
 	}
@@ -421,7 +438,7 @@ func (s *Server) handleNegotiated(w http.ResponseWriter, r *http.Request) {
 	q := audit.NegotiatedQuery{
 		Axis: v.Get("axis"), Value: v.Get("value"), Floor: v.Get("floor"),
 		BanAxis: v.Get("ban_axis"), BanName: v.Get("ban_name"),
-		From: win.From, To: win.To, Limit: win.Limit,
+		From: from, To: to,
 	}
 	set := 0
 	for _, on := range []bool{q.Axis != "" || q.Value != "", q.Floor != "", q.BanAxis != "" || q.BanName != ""} {
@@ -445,17 +462,24 @@ func (s *Server) handleNegotiated(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	sessions, truncated, err := s.reader.SessionsBy(r.Context(), tenant, q)
+	sel, _ := q.Selection()
+	p, ok := readPage(w, r, negotiatedList, auditFilters(sel)...)
+	if !ok {
+		return
+	}
+	page, err := s.reader.SessionsBy(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.auditFailure(w, r, "negotiated sessions", err)
 		return
 	}
-	if sessions == nil {
-		sessions = []string{}
+	// truncated says the page is not the whole answer: the runbook's next
+	// step ends exactly the sessions listed, so the caller follows next
+	// until truncated is false before ending them.
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].LatestAt, page.Rows[n-1].SessionID}
 	}
-	// truncated says the limit cut the answer short: the runbook's next step
-	// ends exactly these sessions, so the caller asks again for the rest.
-	answer(w, http.StatusOK, map[string]any{"sessions": sessions, "truncated": truncated})
+	s.answerPage(w, r, p, "sessions", page.Rows, page.More, last, nil)
 }
 
 // handleGaps finds what a proxy could not deliver (Hoplock/proxy#71).
@@ -538,7 +562,7 @@ func (s *Server) handleSessionCertificates(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	certs, err := s.reader.SessionCertificates(r.Context(), tenant, r.PathValue("session"))
+	certs, truncated, err := s.reader.SessionCertificates(r.Context(), tenant, r.PathValue("session"))
 	if err != nil {
 		s.auditFailure(w, r, "session certificates", err)
 		return
@@ -552,7 +576,12 @@ func (s *Server) handleSessionCertificates(w http.ResponseWriter, r *http.Reques
 		}
 		out = append(out, v)
 	}
-	answer(w, http.StatusOK, map[string]any{"session_id": r.PathValue("session"), "certificates": out})
+	// truncated says the session had more records than one read takes
+	// (audit.SessionRecordBound): bounded by one session, it is signalled
+	// rather than paged (M26.3).
+	answer(w, http.StatusOK, map[string]any{
+		"session_id": r.PathValue("session"), "certificates": out, "truncated": truncated,
+	})
 }
 
 // handleCertificateSessions resolves a certificate's serial back to the records

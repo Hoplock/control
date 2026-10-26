@@ -102,6 +102,17 @@ func AuditPageSQL(q AuditQuery, p Page) string {
 	return sql
 }
 
+// BlockedPageSQL is the statement Audit().BlockedCommands runs for a page,
+// for the test that asks Postgres how it would plan it. It is compiled into
+// the test binary alone.
+func BlockedPageSQL(ascending bool, p Page) string {
+	sql, _, err := blockedPageSQL("test.BlockedPageSQL", "tenant", BlockedCommandQuery{LabelName: "env", Ascending: ascending}, p)
+	if err != nil {
+		panic(err)
+	}
+	return sql
+}
+
 // DeleteAuditRecord removes one record, for the paging tests' writes between
 // and during a walk. Nothing in Control deletes a record but retention, which
 // deletes a stream's prefix (M8).
