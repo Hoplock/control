@@ -26,6 +26,56 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.24.0
+
+Phase 0037, bounded lists 9: the audit joins, negotiated sessions and
+per-session reads. The last two lists answer in decision M26's shape
+(`docs/PLAN.md` §2): `GET /api/v1/tenants/{tenant}/audit/blocked-commands`,
+by its record's recorded-at, stream and chain sequence, and
+`…/audit/negotiated`, by each session's latest matching record. A session's
+certificates and its algorithm summary say when their bound cut them. Every
+`GET` route Control serves is now a paged list, a list bounded by one object
+that says when it was cut, or one object or a list bounded by configuration.
+
+### Breaking
+
+No signature changes; `make release-check` finds none. Five behaviour
+changes:
+
+- **`…/audit/blocked-commands` gains `truncated` and `next`.** It is
+  `{"blocked": [...], "truncated": bool, "next": "<cursor>"}`, newest first,
+  and now takes `?order=asc` for oldest first. Pass `next` back as `?after=`
+  with the same `label`, window and order to read the following page; a
+  cursor is `400 invalid_request` `{field: after, problem: invalid}` under
+  any other label, label value, window or order.
+- **`…/audit/negotiated` gains `next`, and each session is an object.**
+  `sessions` was a list of session ids; each item is now
+  `{"session_id": "…", "latest_recorded_at": "<RFC 3339>"}`, the session's
+  latest matching record being its place in the answer, which is what a
+  cursor holds. The order is unchanged: that instant, newest first, then the
+  session id. `truncated` keeps its meaning, and `next` is present exactly
+  when it is true; a cursor binds the question (`axis`/`value`, `floor` or
+  `ban_axis`/`ban_name`) and the window. The emergency runbook ends exactly
+  the sessions listed, so a caller follows `next` until `truncated` is false
+  and hands every `session_id` to `session_kill`.
+- **`…/audit/sessions/{session}/certificates` and `…/algorithms` gain
+  `truncated`.** Each reads at most 500 of the session's records, as before,
+  and now says when the session had more. The algorithm summary of the
+  first 500 is still served. Neither takes `limit` or `after`.
+- **A limit above 10 000 is refused on both lists, not clamped.** It is
+  `400 invalid_request` `{field: limit, problem: exceeds_maximum, limit:
+  "10000"}`. Absent, a page holds at most 500, as before.
+- **A walk of `…/audit/negotiated` lists each session once.** A session
+  that gains a newer matching record while a caller walks the pages moves
+  toward the head of the list, behind the walk's position. That walk does
+  not list it again, nor at all if it had not reached it yet; the next walk
+  lists it.
+
+- **Phase:** 0037, bounded lists 9: the audit joins, negotiated sessions and
+  per-session reads.
+- **Public packages:** none changed.
+- **Migration:** none.
+
 ## v0.23.0
 
 Phase 0036, bounded lists 8: the audit query. Five audit lists now answer in

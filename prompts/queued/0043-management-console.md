@@ -179,6 +179,9 @@ is written so that half can fail a review rather than merely disappoint one.
      policy until its hint runs out; then find the running sessions by what
      they negotiated (for example every open session whose
      `target_cipher_out` is the banned cipher) and end them with `session_kill`.
+     `GET …/audit/negotiated` is paged (M26, 0037): the workflow reads it to
+     its last page, following `next` until `truncated` is false, and ends
+     every `session_id` listed, never only the first page's.
      The `reason` is shown to the user, so the workflow asks for it and shows
      it before sending. Each step is a destructive action and confirms as one.
      Each shows what the call reported covering, and the workflow never skips
