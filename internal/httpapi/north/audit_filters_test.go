@@ -81,3 +81,44 @@ func TestEverySelectionFieldBindsTheAuditCursor(t *testing.T) {
 		t.Error("two kinds bind what one does")
 	}
 }
+
+// The showcase join's cursor binds the whole of its query the same way
+// (0037): each field, set alone, moves the digest, and no two move it alike.
+// The label's value binds even when empty, because an empty value is one the
+// join matches.
+func TestEveryShowcaseFieldBindsItsCursor(t *testing.T) {
+	digest := func(q store.BlockedCommandQuery) string { return filterDigest(blockedFilters(q)) }
+	base := store.BlockedCommandQuery{LabelName: "env"}
+
+	typ := reflect.TypeFor[store.BlockedCommandQuery]()
+	seen := map[string]string{digest(base): "the base"}
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		q := base
+		v := reflect.ValueOf(&q).Elem().Field(i)
+		switch v.Interface().(type) {
+		case string:
+			v.SetString("x")
+		case bool:
+			v.SetBool(true)
+		case time.Time:
+			v.Set(reflect.ValueOf(time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)))
+		default:
+			t.Fatalf("BlockedCommandQuery.%s is a %s, which this test does not know how to set", field.Name, field.Type)
+		}
+		after := digest(q)
+		if other, ok := seen[after]; ok {
+			t.Errorf("BlockedCommandQuery.%s binds what %s binds: blockedFilters does not render it apart", field.Name, other)
+		}
+		seen[after] = "BlockedCommandQuery." + field.Name
+	}
+
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	if digest(store.BlockedCommandQuery{LabelName: "env", From: at.In(time.FixedZone("x", 3600))}) !=
+		digest(store.BlockedCommandQuery{LabelName: "env", From: at}) {
+		t.Error("one instant in two zones binds two cursors")
+	}
+	if digest(store.BlockedCommandQuery{LabelName: "env", From: at}) == digest(store.BlockedCommandQuery{LabelName: "env", To: at}) {
+		t.Error("a window's start binds what its end does")
+	}
+}

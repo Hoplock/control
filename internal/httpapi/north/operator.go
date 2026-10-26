@@ -31,7 +31,7 @@ import (
 // listener's: `type` plus one selector. The emergency runbook's three steps are
 // a publish that adds a ban (`…/policy/apply`), then `cache_invalidate` with
 // `all` here, then `session_kill` here for the sessions `…/audit/negotiated`
-// returned.
+// listed, read to its last page (M26).
 
 type revocationBody struct {
 	// Type is `session_kill`, `cache_invalidate`, `resync` or
