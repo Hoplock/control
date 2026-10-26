@@ -1,4 +1,4 @@
-# 0042 — Instance identity, north-bound compatibility & supervisory registration
+# 0043 — Instance identity, north-bound compatibility & supervisory registration
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -117,7 +117,7 @@ A supervisor consuming many deployments meets version skew, so:
   answer says it stopped short — is part of what is promised, list by list,
   so a client paging a list at one version pages it the same way at the next.
 
-**This retires an assumption phase 0047 rests on.** Its premise — "this product
+**This retires an assumption phase 0048 rests on.** Its premise — "this product
 ships its proxy and its server together and has no installed base" — is true
 only while nobody operates a fleet of deployments. Update that phase's prompt in
 this PR to say the north-bound surface is exempt from its single-version rule
@@ -168,7 +168,7 @@ An opt-in outbound registration to a supervisor, off by default:
   attributed to the supervisor rather than folded into an anonymous "API"
   actor. The operator being supervised must be able to read what was done to
   them, in their own audit store, without asking the supervisor.
-- Its scope is visible in the north-bound API and in the console (0043), and it
+- Its scope is visible in the north-bound API and in the console (0044), and it
   is revocable there.
 
 ## Out of scope
@@ -219,7 +219,7 @@ An opt-in outbound registration to a supervisor, off by default:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0042-instance-identity-and-supervision-learnings.md`. Summary
+`docs/learnings/0043-instance-identity-and-supervision-learnings.md`. Summary
 block MUST give: the identity shape and where it is persisted; the health model
 at all three levels, its states, its freshness bounds, and how "absent" is
 distinguished from "healthy"; the north-bound
