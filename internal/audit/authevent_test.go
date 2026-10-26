@@ -49,7 +49,7 @@ func TestABreakGlassLoginIsAssertedInTheAuditRecord(t *testing.T) {
 		t.Fatalf("emit: %v", err)
 	}
 
-	rows, err := audit.NewReader(st).Find(ctx, "tenant-a", audit.Query{Kinds: []string{"auth"}, Limit: 10})
+	rows, err := rowsOf(audit.NewReader(st).Find(ctx, "tenant-a", audit.Query{Kinds: []string{"auth"}}, store.Page{Limit: 10}))
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestAFederatedLoginRecordsItsMappingVersionAndIsNotBreakGlass(t *testing.T)
 		t.Fatalf("emit: %v", err)
 	}
 
-	rows, err := audit.NewReader(st).Find(ctx, "tenant-a", audit.Query{Kinds: []string{"auth"}, Limit: 10})
+	rows, err := rowsOf(audit.NewReader(st).Find(ctx, "tenant-a", audit.Query{Kinds: []string{"auth"}}, store.Page{Limit: 10}))
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestTwoLoginsAreTwoRecords(t *testing.T) {
 			t.Fatalf("emit: %v", err)
 		}
 	}
-	rows, err := audit.NewReader(st).Find(ctx, "tenant-a", audit.Query{Kinds: []string{"auth"}, Limit: 10})
+	rows, err := rowsOf(audit.NewReader(st).Find(ctx, "tenant-a", audit.Query{Kinds: []string{"auth"}}, store.Page{Limit: 10}))
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestARecordCarriesNoCredential(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	rows, err := audit.NewReader(st).Find(ctx, "tenant-a", audit.Query{Kinds: []string{"auth"}, Limit: 10})
+	rows, err := rowsOf(audit.NewReader(st).Find(ctx, "tenant-a", audit.Query{Kinds: []string{"auth"}}, store.Page{Limit: 10}))
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}

@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/access"
+	"github.com/hoplock/control/internal/audit"
+	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
@@ -285,6 +287,99 @@ var pagedLists = map[string][]pagedList{
 			return len(got.Rows)
 		},
 	}},
+	// The audit query (0036): five lists, each read by recorded-at, stream
+	// and chain sequence, newest first or with `?order=asc`. Every seed
+	// ingests its records from two proxies at one instant, so each walk
+	// crosses a tie between two streams.
+	"GET /api/v1/tenants/{tenant}/audit/records": {
+		auditView("records", "/api/v1/tenants/tenant-a/audit/records", nil, store.AuditQuery{}),
+		auditView("records", "/api/v1/tenants/tenant-a/audit/records", url.Values{"order": {"asc"}},
+			store.AuditQuery{Ascending: true}),
+		auditView("records", "/api/v1/tenants/tenant-a/audit/records", url.Values{"kind": {"provisioning", "command"}},
+			store.AuditQuery{Kinds: []string{"command", "provisioning"}}),
+	},
+	"GET /api/v1/tenants/{tenant}/audit/drift": {
+		auditView("changes", "/api/v1/tenants/tenant-a/audit/drift", nil, audit.DriftQuery{}.Selection()),
+		auditView("changes", "/api/v1/tenants/tenant-a/audit/drift", url.Values{"order": {"asc"}},
+			audit.DriftQuery{Ascending: true}.Selection()),
+	},
+	"GET /api/v1/tenants/{tenant}/audit/algorithm-policy-unmet": {
+		auditView("unmet", "/api/v1/tenants/tenant-a/audit/algorithm-policy-unmet", nil, audit.UnmetQuery{}.Selection()),
+	},
+	"GET /api/v1/tenants/{tenant}/audit/gaps": {
+		auditView("gaps", "/api/v1/tenants/tenant-a/audit/gaps", nil, audit.GapQuery{}.Selection()),
+	},
+	"GET /api/v1/tenants/{tenant}/audit/certificates/{serial}/records": {
+		auditView("records", "/api/v1/tenants/tenant-a/audit/certificates/"+boundedSerial+"/records", nil,
+			audit.CertificateQuery{Serial: 9}.Selection()),
+	},
+}
+
+// boundedSerial is the certificate serial seedAuditLists' records name.
+const boundedSerial = "9"
+
+// auditView is one view of an audit list: it seeds every audit list and
+// counts the records sel selects, which is what the view holds.
+func auditView(member, path string, query url.Values, sel store.AuditQuery) pagedList {
+	return pagedList{member: member, path: path, query: query, seed: func(t *testing.T, f *serverFixture) int {
+		t.Helper()
+		seedAuditLists(t, f, "tenant-a")
+		got, err := f.st.Audit().Page(t.Context(), "tenant-a", sel, store.Page{Limit: store.MaxPageLimit})
+		if err != nil || got.More {
+			t.Fatalf("count %s: %v (more=%t)", path, err, got.More)
+		}
+		return len(got.Rows)
+	}}
+}
+
+var auditSeq atomic.Int64
+
+// auditInstant is when every record seedAuditLists ingests happened.
+var auditInstant = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+
+// seedAuditLists ingests into tenant, from each of two proxies and all at
+// auditInstant, a record for each audit list: a command, a drift change, an
+// unmet algorithm policy, a gap and a provisioning record naming
+// boundedSerial. So every list holds records of one instant in two streams,
+// and a walk one item a page crosses the tiebreak (M26.4).
+func seedAuditLists(t *testing.T, f *serverFixture, tenant store.Tenant) {
+	t.Helper()
+	in, err := audit.New(audit.Options{Store: f.st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := auditSeq.Add(1)
+	at := auditInstant.Format(time.RFC3339)
+	for _, proxy := range []string{"proxy-x", "proxy-y"} {
+		rec := func(kind, name string, attrs map[string]string) contract.LogRecord {
+			return contract.LogRecord{
+				RecordID: fmt.Sprintf("%s-%s-%d", name, proxy, n), SessionID: fmt.Sprintf("sess-%d", n),
+				Kind: kind, Severity: contract.SeverityInfo, Timestamp: at, Message: name,
+				Target: "db-1.example", Attributes: attrs,
+			}
+		}
+		recs := []contract.LogRecord{
+			rec("command", "cmd", nil),
+			rec("provisioning", "drift", map[string]string{
+				audit.AttrEvent: audit.EventDeviceConfigChange, audit.AttrDeviceChangeOp: "create",
+				audit.AttrTargetAccount: "hl-" + proxy,
+			}),
+			rec("error", "unmet", map[string]string{
+				audit.AttrEvent: audit.EventAlgorithmPolicyUnmet, audit.AttrAlgorithmAxis: "host_key",
+				audit.AttrAlgorithmPolicyCause: "profile", audit.AttrAlgorithmProfile: "default",
+			}),
+			rec("error", "gap", map[string]string{
+				audit.AttrEvent: audit.EventLoggingGap, audit.AttrGapCause: "evicted", audit.AttrGapRecords: "1",
+			}),
+			rec("provisioning", "cert", map[string]string{
+				audit.AttrCredentialMethod: "brokered-certificate", audit.AttrCredentialRung: "1",
+				audit.AttrCertificateSerial: boundedSerial,
+			}),
+		}
+		if _, err := in.Ingest(t.Context(), audit.Submission{Tenant: tenant, ProxyID: proxy, Records: recs}); err != nil {
+			t.Fatalf("seed audit records from %s: %v", proxy, err)
+		}
+	}
 }
 
 // seedGrants stores n live grants for holder in tenant, prefix-0 the newest,
@@ -431,11 +526,6 @@ var exemptRoutes = map[string]string{
 // that takes each (0028's inventory). Each chunk deletes its rows and moves
 // them to the map above that rules them; 0037 deletes this map.
 var pendingBounded = map[string]string{
-	"GET /api/v1/tenants/{tenant}/audit/records":                         "0036",
-	"GET /api/v1/tenants/{tenant}/audit/drift":                           "0036",
-	"GET /api/v1/tenants/{tenant}/audit/algorithm-policy-unmet":          "0036",
-	"GET /api/v1/tenants/{tenant}/audit/gaps":                            "0036",
-	"GET /api/v1/tenants/{tenant}/audit/certificates/{serial}/records":   "0036",
 	"GET /api/v1/tenants/{tenant}/audit/blocked-commands":                "0037",
 	"GET /api/v1/tenants/{tenant}/audit/negotiated":                      "0037",
 	"GET /api/v1/tenants/{tenant}/audit/sessions/{session}/certificates": "0037",

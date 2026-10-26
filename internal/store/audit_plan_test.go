@@ -77,7 +77,7 @@ func TestEveryIndexedAuditFilterCanUseItsIndex(t *testing.T) {
 
 			// The simple protocol, because a generic plan is asked for with
 			// its parameters unbound and the extended one binds them.
-			results, err := tx.Conn().PgConn().Exec(ctx, "EXPLAIN (GENERIC_PLAN) "+store.AuditQuerySQL(tc.q)).ReadAll()
+			results, err := tx.Conn().PgConn().Exec(ctx, "EXPLAIN (GENERIC_PLAN) "+store.AuditPageSQL(tc.q, store.Page{Limit: store.DefaultPageLimit})).ReadAll()
 			if err != nil {
 				t.Fatal(err)
 			}

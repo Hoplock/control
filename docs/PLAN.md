@@ -1221,9 +1221,9 @@ decision.
      Above the maximum it is `400 invalid_request` `{field: limit, problem:
      exceeds_maximum, limit: "10000"}`: refused, never clamped. So a page
      holds exactly `limit` items unless it is the last, and nothing answers
-     shorter than asked without saying so. The numbers are the audit reads'
-     (`store.boundLimit`), one default and one maximum for every list, so a
-     client has one rule.
+     shorter than asked without saying so. The numbers are the ones the
+     audit reads always had (`store.DefaultPageLimit`, `store.MaxPageLimit`),
+     one default and one maximum for every list, so a client has one rule.
   2. **The cursor is a keyset position, opaque by contract.** `?after=`
      continues a list after the last item the caller was handed, in the
      list's own order. It is never an offset, so a page is stable under
@@ -3154,7 +3154,10 @@ not say why, and a grant the explanation names that the inputs do not hold.
   first unless `?order=asc`. That key is total, and
   `audit_records_order_idx` serves it, replacing the index on recorded-at
   alone. A window narrows a page but is never the cursor, because many
-  records share an instant. `audit/negotiated` counts sessions, and pages by
+  records share an instant. A cursor binds the whole selection the reader
+  applies, and an item of the drift feed, the unmet policy or the gaps
+  carries its record's `stream` and `chain_seq` beside its instant, because
+  a cursor holds nothing its caller was not handed (M26.2). `audit/negotiated` counts sessions, and pages by
   each session's latest matching record. The per-session reads keep their
   bound of 500 records and say `truncated` when it cut them: a session's
   certificates and its algorithm summary. A session's loss is one row per

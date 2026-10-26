@@ -260,6 +260,54 @@ var pagedReaders = map[string]pagedReader{
 		},
 		key: func(id string) []any { return []any{bundleVersion(id)} },
 	},
+	// The audit query (0036), keyed by recorded-at, stream and chain
+	// sequence. Each record is the first of a stream named for its id, so
+	// its position follows from the id. Newest first, a record is put at
+	// the instant newestFirst gives its id. Oldest first, every record is
+	// put at ONE instant, so the whole order — and every walk the tests
+	// below make, the racing one included — is the tiebreak's.
+	"Audit.Page": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return putAuditRecord(ctx, st, tenant, id, newestFirst(id))
+		},
+		del:  store.DeleteAuditRecord,
+		page: auditIDs(store.AuditQuery{}),
+		key:  func(id string) []any { return []any{newestFirst(id), auditStream(id), int64(1)} },
+	},
+	"Audit.Page ascending at one instant": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return putAuditRecord(ctx, st, tenant, id, newestFirstEpoch)
+		},
+		del:  store.DeleteAuditRecord,
+		page: auditIDs(store.AuditQuery{Ascending: true}),
+		key:  func(id string) []any { return []any{newestFirstEpoch, auditStream(id), int64(1)} },
+	},
+}
+
+// auditStream is the stream the record put as id is the first of.
+func auditStream(id string) string { return "proxy:" + id }
+
+// putAuditRecord stores the record id, recorded at at, as the first of its
+// own stream. A record already stored is left as it is, as the other lists'
+// upserts do.
+func putAuditRecord(ctx context.Context, st *store.Store, tenant store.Tenant, id string, at time.Time) error {
+	rec := storetest.AuditRecord(id, auditStream(id), 1)
+	rec.RecordedAt = at
+	if err := st.Audit().Append(ctx, tenant, rec); err != nil && !store.IsConflict(err) {
+		return err
+	}
+	return nil
+}
+
+func auditIDs(q store.AuditQuery) func(context.Context, *store.Store, store.Tenant, store.Page) ([]string, bool, error) {
+	return func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+		got, err := st.Audit().Page(ctx, tenant, q, p)
+		ids := make([]string, 0, len(got.Rows))
+		for _, rec := range got.Rows {
+			ids = append(ids, rec.RecordID)
+		}
+		return ids, got.More, err
+	}
 }
 
 // newestFirstEpoch is the latest instant newestFirst gives.

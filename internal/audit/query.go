@@ -42,9 +42,29 @@ type Query = store.AuditQuery
 // Record is one stored row as a reader sees it.
 type Row = store.AuditRecord
 
-// Find returns the records matching a query, newest first.
-func (r *Reader) Find(ctx context.Context, tenant store.Tenant, q Query) ([]Row, error) {
-	return r.store.Audit().Query(ctx, tenant, q)
+// Find returns one page of the records matching a query, newest first unless
+// it is Ascending (M26). q.Limit is not read: the page's limit is.
+func (r *Reader) Find(ctx context.Context, tenant store.Tenant, q Query, p store.Page) (store.Paged[Row], error) {
+	return r.store.Audit().Page(ctx, tenant, q, p)
+}
+
+// Every list below is one page of the audit query, in its order: recorded-at,
+// stream and chain sequence (M26.4). Each item carries its record's stream and
+// chain sequence beside its instant, because a cursor holds nothing its caller
+// was not handed (M26.2). Each query type renders the selection it reads as a
+// Query (Selection), so that what a cursor binds is exactly what the reader
+// applies.
+
+// pageOf renders a page of records as a page of what a reader answers.
+func pageOf[T any](got store.Paged[Row], err error, render func(Row) T) (store.Paged[T], error) {
+	if err != nil {
+		return store.Paged[T]{}, err
+	}
+	out := store.Paged[T]{Rows: make([]T, 0, len(got.Rows)), More: got.More}
+	for _, row := range got.Rows {
+		out.Rows = append(out.Rows, render(row))
+	}
+	return out, nil
 }
 
 // Get returns one record by its client-assigned id. It is the lookup the
@@ -103,7 +123,25 @@ type DriftQuery struct {
 	// Op is `create`, `modify` or `delete`.
 	Op       string
 	From, To time.Time
-	Limit    int
+	// Ascending reads oldest first; the default is newest first.
+	Ascending bool
+}
+
+// Selection is the records the drift feed reads for q.
+func (q DriftQuery) Selection() Query {
+	sq := Query{
+		Event: EventDeviceConfigChange, Target: q.Device,
+		TargetAccount: q.Account, DeviceChangeOp: q.Op,
+		From: q.From, To: q.To, Ascending: q.Ascending,
+	}
+	if q.ObjectKind != "" {
+		kind := q.ObjectKind
+		if kind == DriftAdministrator {
+			kind = ""
+		}
+		sq.DeviceObjectKind = &kind
+	}
+	return sq
 }
 
 // DriftAdministrator is the object kind a reconciliation names for an
@@ -114,6 +152,8 @@ const DriftAdministrator = "administrator"
 // than an attribute map the caller has to parse.
 type DriftChange struct {
 	RecordID  string `json:"record_id"`
+	Stream    string `json:"stream"`
+	ChainSeq  int64  `json:"chain_seq"`
 	SessionID string `json:"session_id,omitempty"`
 	Device    string `json:"device"`
 	Platform  string `json:"platform,omitempty"`
@@ -131,33 +171,16 @@ type DriftChange struct {
 // sees every one as an unexplained change; this is the query that lets a SIEM
 // close them, and an orphan sweep's change comes back with no session and no
 // device fields, because a sweep has no route.
-func (r *Reader) DeviceConfigChanges(ctx context.Context, tenant store.Tenant, q DriftQuery) ([]DriftChange, error) {
-	sq := Query{
-		Event: EventDeviceConfigChange, Target: q.Device,
-		TargetAccount: q.Account, DeviceChangeOp: q.Op,
-		From: q.From, To: q.To, Limit: q.Limit,
-	}
-	if q.ObjectKind != "" {
-		kind := q.ObjectKind
-		if kind == DriftAdministrator {
-			kind = ""
-		}
-		sq.DeviceObjectKind = &kind
-	}
-	rows, err := r.store.Audit().Query(ctx, tenant, sq)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]DriftChange, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, DriftChange{
-			RecordID: row.RecordID, SessionID: row.SessionID, Device: row.Target,
+func (r *Reader) DeviceConfigChanges(ctx context.Context, tenant store.Tenant, q DriftQuery, p store.Page) (store.Paged[DriftChange], error) {
+	got, err := r.store.Audit().Page(ctx, tenant, q.Selection(), p)
+	return pageOf(got, err, func(row Row) DriftChange {
+		return DriftChange{
+			RecordID: row.RecordID, Stream: row.Stream, ChainSeq: row.ChainSeq, SessionID: row.SessionID, Device: row.Target,
 			Platform: row.Attributes[AttrPlatform], Op: row.Device.Op, Account: row.Device.Account,
 			ObjectKind: row.Device.ObjectKind, DeviceFields: row.DeviceFields,
 			ProxyID: row.ProxyID, RecordedAt: row.RecordedAt,
-		})
-	}
-	return out, nil
+		}
+	})
 }
 
 // UnderGrant returns every record of every session that ran under one external
@@ -267,12 +290,23 @@ func (r *Reader) SessionCertificates(ctx context.Context, tenant store.Tenant, s
 	return out, nil
 }
 
+// CertificateQuery is the certificate join's question: the records naming one
+// brokered certificate.
+type CertificateQuery struct {
+	Serial uint64
+	// Ascending reads oldest first; the default is newest first.
+	Ascending bool
+}
+
+// Selection is the records the certificate join reads for q.
+func (q CertificateQuery) Selection() Query {
+	return Query{CertificateSerial: contract.FormatSerial(q.Serial), Ascending: q.Ascending}
+}
+
 // CertificateSessions answers the reverse: which sessions presented one
-// certificate, by its serial.
-func (r *Reader) CertificateSessions(ctx context.Context, tenant store.Tenant, serial uint64, limit int) ([]Row, error) {
-	return r.store.Audit().Query(ctx, tenant, Query{
-		CertificateSerial: contract.FormatSerial(serial), Limit: limit,
-	})
+// certificate, by its serial, one page of their records at a time.
+func (r *Reader) CertificateSessions(ctx context.Context, tenant store.Tenant, q CertificateQuery, p store.Page) (store.Paged[Row], error) {
+	return r.store.Audit().Page(ctx, tenant, q.Selection(), p)
 }
 
 // UnmetAlgorithmPolicy is one `target.algorithm_policy_unmet`: a target the
@@ -280,6 +314,8 @@ func (r *Reader) CertificateSessions(ctx context.Context, tenant store.Tenant, s
 // outage (Hoplock/proxy#66, #69).
 type UnmetAlgorithmPolicy struct {
 	RecordID string `json:"record_id"`
+	Stream   string `json:"stream"`
+	ChainSeq int64  `json:"chain_seq"`
 	Target   string `json:"target"`
 	Addr     string `json:"target_addr,omitempty"`
 	// Axis is the axis that failed; Cause is `profile`, `floor` or `ban`.
@@ -299,29 +335,37 @@ type UnmetAlgorithmPolicy struct {
 	RecordedAt time.Time `json:"recorded_at"`
 }
 
+// UnmetQuery selects the unmet-policy records: one target's, or every
+// target's when Target is empty, in a window.
+type UnmetQuery struct {
+	Target   string
+	From, To time.Time
+	// Ascending reads oldest first; the default is newest first.
+	Ascending bool
+}
+
+// Selection is the records AlgorithmPolicyUnmet reads for q.
+func (q UnmetQuery) Selection() Query {
+	return Query{Event: EventAlgorithmPolicyUnmet, Target: q.Target, From: q.From, To: q.To, Ascending: q.Ascending}
+}
+
 // AlgorithmPolicyUnmet lists the targets that have reported an unmet algorithm
 // policy, newest first — what an operator reads to choose a route's profile,
-// floor or bans, and what the publish-time report warns from. An empty target
-// lists every one.
-func (r *Reader) AlgorithmPolicyUnmet(ctx context.Context, tenant store.Tenant, target string, from, to time.Time, limit int) ([]UnmetAlgorithmPolicy, error) {
-	rows, err := r.store.Audit().Query(ctx, tenant, Query{
-		Event: EventAlgorithmPolicyUnmet, Target: target, From: from, To: to, Limit: limit,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]UnmetAlgorithmPolicy, 0, len(rows))
-	for _, row := range rows {
+// floor or bans, and what the publish-time report warns from, one page at a
+// time. The report reads one page and warns when it continues.
+func (r *Reader) AlgorithmPolicyUnmet(ctx context.Context, tenant store.Tenant, q UnmetQuery, p store.Page) (store.Paged[UnmetAlgorithmPolicy], error) {
+	got, err := r.store.Audit().Page(ctx, tenant, q.Selection(), p)
+	return pageOf(got, err, func(row Row) UnmetAlgorithmPolicy {
 		offered, known := row.Attributes[AttrTargetAlgorithmsOffered]
-		out = append(out, UnmetAlgorithmPolicy{
-			RecordID: row.RecordID, Target: row.Target, Addr: row.Attributes[AttrTargetAddr],
+		return UnmetAlgorithmPolicy{
+			RecordID: row.RecordID, Stream: row.Stream, ChainSeq: row.ChainSeq,
+			Target: row.Target, Addr: row.Attributes[AttrTargetAddr],
 			Axis: row.Attributes[AttrAlgorithmAxis], Cause: row.Attributes[AttrAlgorithmPolicyCause],
 			Offered: splitList(offered), OfferedKnown: known,
 			Profile: row.AlgorithmProfile, Floor: row.AlgorithmFloor, Bans: row.AlgorithmBans,
 			SessionID: row.SessionID, ProxyID: row.ProxyID, RecordedAt: row.RecordedAt,
-		})
-	}
-	return out, nil
+		}
+	})
 }
 
 // NegotiatedQuery is one of the three questions the algorithm records answer
@@ -424,12 +468,24 @@ type GapQuery struct {
 	// that hid something critical.
 	Kind     string
 	Critical bool
-	Limit    int
+	// Ascending reads the oldest report first; the default is newest first.
+	Ascending bool
+}
+
+// Selection is the records Gaps reads for q.
+func (q GapQuery) Selection() Query {
+	return Query{
+		Gaps: true, SessionID: q.SessionID, NoSession: q.NoSession, ProxyID: q.ProxyID,
+		GapCause: q.Cause, SpanFrom: q.SpanFrom, SpanTo: q.SpanTo,
+		GapRecordID: q.RecordID, GapKind: q.Kind, GapCritical: q.Critical, Ascending: q.Ascending,
+	}
 }
 
 // Gap is one `logging.gap` record, its keys as fields.
 type Gap struct {
 	RecordID         string     `json:"record_id"`
+	Stream           string     `json:"stream"`
+	ChainSeq         int64      `json:"chain_seq"`
 	SessionID        string     `json:"session_id,omitempty"`
 	ProxyID          string     `json:"proxy_id,omitempty"`
 	Severity         string     `json:"severity"`
@@ -449,28 +505,18 @@ type Gap struct {
 	ReportedAt time.Time `json:"reported_at"`
 }
 
-// Gaps lists what a proxy could not deliver, newest report first.
-func (r *Reader) Gaps(ctx context.Context, tenant store.Tenant, q GapQuery) ([]Gap, error) {
-	rows, err := r.store.Audit().Query(ctx, tenant, Query{
-		Gaps: true, SessionID: q.SessionID, NoSession: q.NoSession, ProxyID: q.ProxyID,
-		GapCause: q.Cause, SpanFrom: q.SpanFrom, SpanTo: q.SpanTo,
-		GapRecordID: q.RecordID, GapKind: q.Kind, GapCritical: q.Critical, Limit: q.Limit,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Gap, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, GapOf(row))
-	}
-	return out, nil
+// Gaps lists what a proxy could not deliver, newest report first, one page at
+// a time.
+func (r *Reader) Gaps(ctx context.Context, tenant store.Tenant, q GapQuery, p store.Page) (store.Paged[Gap], error) {
+	got, err := r.store.Audit().Page(ctx, tenant, q.Selection(), p)
+	return pageOf(got, err, GapOf)
 }
 
 // GapOf renders one stored gap record.
 func GapOf(row Row) Gap {
 	return Gap{
-		RecordID: row.RecordID, SessionID: row.SessionID, ProxyID: row.ProxyID, Severity: row.Severity,
-		Cause: row.Gap.Cause, Records: row.Gap.Records, Bytes: row.Gap.Bytes,
+		RecordID: row.RecordID, Stream: row.Stream, ChainSeq: row.ChainSeq,
+		SessionID: row.SessionID, ProxyID: row.ProxyID, Severity: row.Severity, Cause: row.Gap.Cause, Records: row.Gap.Records, Bytes: row.Gap.Bytes,
 		FirstAt: row.Gap.FirstAt, LastAt: row.Gap.LastAt, Kinds: row.Gap.Kinds,
 		Critical: row.Gap.Critical, RecordIDs: row.Gap.RecordIDs,
 		RecordIDsTrimmed: row.Attributes[AttrGapRecordIDsTruncated] == "true",

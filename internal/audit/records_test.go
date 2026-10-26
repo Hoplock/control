@@ -84,7 +84,7 @@ func TestSessionLessRecordsAreStoredOnBothPaths(t *testing.T) {
 		}
 	}
 
-	stored, err := reader.Find(ctx, tenantA, audit.Query{NoSession: true, Limit: 100})
+	stored, err := rowsOf(reader.Find(ctx, tenantA, audit.Query{NoSession: true}, store.Page{Limit: 100}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestTheDriftFeedFiltersByDeviceObjectAndOperation(t *testing.T) {
 
 	ids := func(q audit.DriftQuery) []string {
 		t.Helper()
-		got, err := reader.DeviceConfigChanges(ctx, tenantA, q)
+		got, err := rowsOf(reader.DeviceConfigChanges(ctx, tenantA, q, allOfIt))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,7 +174,7 @@ func TestTheDriftFeedFiltersByDeviceObjectAndOperation(t *testing.T) {
 		t.Errorf("hl-a7f3 changes = %v", got)
 	}
 
-	sweeps, err := reader.DeviceConfigChanges(ctx, tenantA, audit.DriftQuery{Op: "delete"})
+	sweeps, err := rowsOf(reader.DeviceConfigChanges(ctx, tenantA, audit.DriftQuery{Op: "delete"}, allOfIt))
 	if err != nil || len(sweeps) != 1 {
 		t.Fatalf("deletes = %+v (%v)", sweeps, err)
 	}
@@ -256,7 +256,7 @@ func TestACertificateSerialJoinsItsRow(t *testing.T) {
 	if len(presented) != 1 || !presented[0].Found || presented[0].Row.SessionID != "sess-cert" {
 		t.Fatalf("presented = %+v, want the row minted for the session", presented)
 	}
-	sessions, err := reader.CertificateSessions(ctx, tenantA, uint64(issued.Serial), 0)
+	sessions, err := rowsOf(reader.CertificateSessions(ctx, tenantA, audit.CertificateQuery{Serial: uint64(issued.Serial)}, allOfIt))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestTheUnmetAlgorithmPolicyIsFindable(t *testing.T) {
 	pubkey.Target = "old-switch"
 	mustIngest(ctx, t, in, tenantA, proxyA, unmet, pubkey)
 
-	got, err := reader.AlgorithmPolicyUnmet(ctx, tenantA, "old-switch", time.Time{}, time.Time{}, 0)
+	got, err := rowsOf(reader.AlgorithmPolicyUnmet(ctx, tenantA, audit.UnmetQuery{Target: "old-switch"}, allOfIt))
 	if err != nil || len(got) != 2 {
 		t.Fatalf("unmet = %+v (%v)", got, err)
 	}
@@ -416,7 +416,7 @@ func TestWhatAProxyCouldNotDeliverIsFindable(t *testing.T) {
 
 	ids := func(q audit.GapQuery) []string {
 		t.Helper()
-		got, err := reader.Gaps(ctx, tenantA, q)
+		got, err := rowsOf(reader.Gaps(ctx, tenantA, q, allOfIt))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -618,7 +618,7 @@ func TestEveryReaderStaysInsideItsTenant(t *testing.T) {
 		}
 	}
 
-	found, err := reader.Find(ctx, tenantA, audit.Query{SessionID: "sess-shared"})
+	found, err := rowsOf(reader.Find(ctx, tenantA, audit.Query{SessionID: "sess-shared"}, allOfIt))
 	mustOK(err)
 	own("Find", ids(found))
 	degraded, err := reader.DegradedCredentials(ctx, tenantA, time.Time{}, time.Time{}, 0)
@@ -627,11 +627,11 @@ func TestEveryReaderStaysInsideItsTenant(t *testing.T) {
 	weakened, err := reader.Weakened(ctx, tenantA, time.Time{}, time.Time{}, 0)
 	mustOK(err)
 	own("Weakened", ids(weakened))
-	bySerial, err := reader.CertificateSessions(ctx, tenantA, 9, 0)
+	bySerial, err := rowsOf(reader.CertificateSessions(ctx, tenantA, audit.CertificateQuery{Serial: 9}, allOfIt))
 	mustOK(err)
 	own("CertificateSessions", ids(bySerial))
 
-	drift, err := reader.DeviceConfigChanges(ctx, tenantA, audit.DriftQuery{})
+	drift, err := rowsOf(reader.DeviceConfigChanges(ctx, tenantA, audit.DriftQuery{}, allOfIt))
 	mustOK(err)
 	var driftIDs []string
 	for _, d := range drift {
@@ -639,7 +639,7 @@ func TestEveryReaderStaysInsideItsTenant(t *testing.T) {
 	}
 	own("DeviceConfigChanges", driftIDs)
 
-	unmet, err := reader.AlgorithmPolicyUnmet(ctx, tenantA, "", time.Time{}, time.Time{}, 0)
+	unmet, err := rowsOf(reader.AlgorithmPolicyUnmet(ctx, tenantA, audit.UnmetQuery{}, allOfIt))
 	mustOK(err)
 	var unmetIDs []string
 	for _, u := range unmet {
@@ -647,7 +647,7 @@ func TestEveryReaderStaysInsideItsTenant(t *testing.T) {
 	}
 	own("AlgorithmPolicyUnmet", unmetIDs)
 
-	gaps, err := reader.Gaps(ctx, tenantA, audit.GapQuery{RecordID: "rec-x"})
+	gaps, err := rowsOf(reader.Gaps(ctx, tenantA, audit.GapQuery{RecordID: "rec-x"}, allOfIt))
 	mustOK(err)
 	var gapIDs []string
 	for _, g := range gaps {

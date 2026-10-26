@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -81,23 +82,139 @@ func viewRecords(rows []store.AuditRecord) []recordView {
 	return out
 }
 
-// queryParams reads the common window: from, to and limit.
-type window struct {
+// THE AUDIT LISTS ARE PAGED (M26, §7). Five of them read the audit query one
+// page at a time, by recorded-at, stream and chain sequence, newest first
+// unless `?order=asc`: the general query, the drift feed, the unmet algorithm
+// policy, the gaps and the certificate join. Each builds the selection its
+// reader applies, and its cursor binds that selection rendered by
+// auditFilters, so a filter the reader reads is one the cursor binds. A window
+// narrows a page and is never its position: many records share an instant.
+
+// auditKey is every audit list's order key: recorded-at, stream and chain
+// sequence (M26.4), the last unique within a stream.
+var auditKey = []keyKind{keyTime, keyString, keyInt}
+
+var (
+	auditRecordList       = list{name: "audit_records", key: auditKey}
+	driftList             = list{name: "audit_drift", key: auditKey}
+	unmetList             = list{name: "audit_unmet", key: auditKey}
+	gapList               = list{name: "audit_gaps", key: auditKey}
+	certificateRecordList = list{name: "certificate_records", key: auditKey}
+)
+
+// auditPosition is the position after the last of rows, which at reads as its
+// record's instant, stream and chain sequence; nil for no rows.
+func auditPosition[T any](rows []T, at func(T) (time.Time, string, int64)) []any {
+	if len(rows) == 0 {
+		return nil
+	}
+	recorded, stream, seq := at(rows[len(rows)-1])
+	return []any{recorded, stream, seq}
+}
+
+// auditFilters is the selection an audit list's cursor binds (M26.2): every
+// field of q the reader applies, canonical — kinds and severities sorted and
+// once each, instants in RFC 3339 UTC — and the order, which every audit list
+// offers both ways. A field added to the query is added here, or
+// TestEverySelectionFieldBindsTheAuditCursor fails.
+func auditFilters(q store.AuditQuery) []string {
+	var out []string
+	add := func(name, value string) {
+		if value != "" {
+			out = append(out, name+"="+value)
+		}
+	}
+	flag := func(name string, on bool) {
+		if on {
+			out = append(out, name+"=true")
+		}
+	}
+	instant := func(name string, t time.Time) {
+		if !t.IsZero() {
+			out = append(out, name+"="+t.UTC().Format(time.RFC3339Nano))
+		}
+	}
+	each := func(name string, values []string) {
+		for _, v := range slices.Compact(slices.Sorted(slices.Values(values))) {
+			out = append(out, name+"="+v)
+		}
+	}
+	add("session", q.SessionID)
+	add("subject", q.Subject)
+	add("login", q.Login)
+	add("target", q.Target)
+	add("decision", q.DecisionID)
+	add("proxy", q.ProxyID)
+	each("kind", q.Kinds)
+	each("severity", q.Severities)
+	add("event", q.Event)
+	add("grant_system", q.GrantSystem)
+	add("grant_reference", q.GrantReference)
+	if q.DeviceFieldName != "" {
+		out = append(out, "device_field="+q.DeviceFieldName+"="+q.DeviceFieldValue)
+	}
+	flag("no_session", q.NoSession)
+	flag("weakened", q.Weakened)
+	flag("degraded", q.Degraded)
+	add("credential_certificate_serial", q.CertificateSerial)
+	flag("has_certificate", q.HasCertificate)
+	flag("has_algorithms", q.HasAlgorithms)
+	add("algorithm_floor", q.AlgorithmFloor)
+	add("banned", q.Banned)
+	add("negotiated", q.Negotiated)
+	add("device_change_op", q.DeviceChangeOp)
+	add("target_account", q.TargetAccount)
+	if q.DeviceObjectKind != nil {
+		out = append(out, "device_object_kind="+*q.DeviceObjectKind)
+	}
+	flag("gaps", q.Gaps)
+	add("gap_cause", q.GapCause)
+	add("gap_kind", q.GapKind)
+	add("gap_record_id", q.GapRecordID)
+	flag("gap_critical", q.GapCritical)
+	instant("span_from", q.SpanFrom)
+	instant("span_to", q.SpanTo)
+	instant("from", q.From)
+	instant("to", q.To)
+	if q.Ascending {
+		out = append(out, "order=asc")
+	} else {
+		out = append(out, "order=desc")
+	}
+	return out
+}
+
+// ascending reads `?order=`: `asc` is oldest first, and anything else the
+// newest first every audit list defaults to.
+func ascending(r *http.Request) bool { return r.URL.Query().Get("order") == "asc" }
+
+// window reads `?from=` and `?to=`, RFC 3339, on recorded-at: from inclusive,
+// to exclusive, each absent when zero.
+func (s *Server) window(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok bool) {
+	if from, ok = s.timeParam(w, r, "from"); !ok {
+		return time.Time{}, time.Time{}, false
+	}
+	if to, ok = s.timeParam(w, r, "to"); !ok {
+		return time.Time{}, time.Time{}, false
+	}
+	return from, to, true
+}
+
+// windowParams reads the window and a limit the store clamps, for the two
+// audit lists not yet paged: the showcase join and the negotiated sessions.
+type windowLimit struct {
 	From, To time.Time
 	Limit    int
 }
 
-func (s *Server) windowParams(w http.ResponseWriter, r *http.Request) (window, bool) {
-	var win window
+func (s *Server) windowParams(w http.ResponseWriter, r *http.Request) (windowLimit, bool) {
+	var win windowLimit
 	var ok bool
-	if win.From, ok = s.timeParam(w, r, "from"); !ok {
-		return window{}, false
-	}
-	if win.To, ok = s.timeParam(w, r, "to"); !ok {
-		return window{}, false
+	if win.From, win.To, ok = s.window(w, r); !ok {
+		return windowLimit{}, false
 	}
 	if win.Limit, ok = s.limitParam(w, r); !ok {
-		return window{}, false
+		return windowLimit{}, false
 	}
 	return win, true
 }
@@ -114,7 +231,7 @@ func (s *Server) handleAuditRecords(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	win, ok := s.windowParams(w, r)
+	from, to, ok := s.window(w, r)
 	if !ok {
 		return
 	}
@@ -131,7 +248,7 @@ func (s *Server) handleAuditRecords(w http.ResponseWriter, r *http.Request) {
 		DeviceChangeOp: v.Get("device_change_op"), TargetAccount: v.Get("target_account"),
 		Gaps: boolParam(r, "gaps"), GapCause: v.Get("gap_cause"), GapKind: v.Get("gap_kind"),
 		GapRecordID: v.Get("gap_record_id"), GapCritical: boolParam(r, "gap_critical"),
-		From: win.From, To: win.To, Limit: win.Limit, Ascending: v.Get("order") == "asc",
+		From: from, To: to, Ascending: ascending(r),
 	}
 	if q.SessionID != "" && q.NoSession {
 		s.invalid(w, r, "no_session", "conflicts_with_session", "")
@@ -167,13 +284,34 @@ func (s *Server) handleAuditRecords(w http.ResponseWriter, r *http.Request) {
 	if q.SpanTo, okSpan = s.timeParam(w, r, "span_to"); !okSpan {
 		return
 	}
-	rows, err := s.reader.Find(r.Context(), tenant, q)
+	p, ok := readPage(w, r, auditRecordList, auditFilters(q)...)
+	if !ok {
+		return
+	}
+	page, err := s.reader.Find(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.auditFailure(w, r, "query audit", err)
 		return
 	}
-	answer(w, http.StatusOK, map[string]any{"records": viewRecords(rows)})
+	s.answerPage(w, r, p, "records", viewRecords(page.Rows), page.More, auditPosition(page.Rows, recordPosition), nil)
 }
+
+// recordPosition, driftPosition, unmetPosition and gapPosition are each list's
+// item's place in the audit order: its record's. A gap's instant is its
+// report's, when the proxy wrote it.
+func recordPosition(row store.AuditRecord) (time.Time, string, int64) {
+	return row.RecordedAt, row.Stream, row.ChainSeq
+}
+
+func driftPosition(c audit.DriftChange) (time.Time, string, int64) {
+	return c.RecordedAt, c.Stream, c.ChainSeq
+}
+
+func unmetPosition(u audit.UnmetAlgorithmPolicy) (time.Time, string, int64) {
+	return u.RecordedAt, u.Stream, u.ChainSeq
+}
+
+func gapPosition(g audit.Gap) (time.Time, string, int64) { return g.ReportedAt, g.Stream, g.ChainSeq }
 
 func (s *Server) handleAuditRecord(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := s.requireTenant(w, r)
@@ -222,23 +360,25 @@ func (s *Server) handleDrift(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	win, ok := s.windowParams(w, r)
+	from, to, ok := s.window(w, r)
 	if !ok {
 		return
 	}
 	v := r.URL.Query()
-	rows, err := s.reader.DeviceConfigChanges(r.Context(), tenant, audit.DriftQuery{
+	q := audit.DriftQuery{
 		Device: v.Get("device"), Account: v.Get("account"), ObjectKind: v.Get("object_kind"), Op: v.Get("op"),
-		From: win.From, To: win.To, Limit: win.Limit,
-	})
+		From: from, To: to, Ascending: ascending(r),
+	}
+	p, ok := readPage(w, r, driftList, auditFilters(q.Selection())...)
+	if !ok {
+		return
+	}
+	page, err := s.reader.DeviceConfigChanges(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.auditFailure(w, r, "drift feed", err)
 		return
 	}
-	if rows == nil {
-		rows = []audit.DriftChange{}
-	}
-	answer(w, http.StatusOK, map[string]any{"changes": rows})
+	s.answerPage(w, r, p, "changes", page.Rows, page.More, auditPosition(page.Rows, driftPosition), nil)
 }
 
 // handleAlgorithmPolicyUnmet lists the targets that reported an unmet algorithm
@@ -248,19 +388,21 @@ func (s *Server) handleAlgorithmPolicyUnmet(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	win, ok := s.windowParams(w, r)
+	from, to, ok := s.window(w, r)
 	if !ok {
 		return
 	}
-	rows, err := s.reader.AlgorithmPolicyUnmet(r.Context(), tenant, r.URL.Query().Get("target"), win.From, win.To, win.Limit)
+	q := audit.UnmetQuery{Target: r.URL.Query().Get("target"), From: from, To: to, Ascending: ascending(r)}
+	p, ok := readPage(w, r, unmetList, auditFilters(q.Selection())...)
+	if !ok {
+		return
+	}
+	page, err := s.reader.AlgorithmPolicyUnmet(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.auditFailure(w, r, "unmet algorithm policy", err)
 		return
 	}
-	if rows == nil {
-		rows = []audit.UnmetAlgorithmPolicy{}
-	}
-	answer(w, http.StatusOK, map[string]any{"unmet": rows})
+	s.answerPage(w, r, p, "unmet", page.Rows, page.More, auditPosition(page.Rows, unmetPosition), nil)
 }
 
 // handleNegotiated answers "which sessions negotiated this", "which ran under
@@ -322,15 +464,11 @@ func (s *Server) handleGaps(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limit, ok := s.limitParam(w, r)
-	if !ok {
-		return
-	}
 	v := r.URL.Query()
 	q := audit.GapQuery{
 		SessionID: v.Get("session"), NoSession: boolParam(r, "no_session"), ProxyID: v.Get("proxy"),
 		Cause: v.Get("cause"), RecordID: v.Get("record_id"), Kind: v.Get("kind"), Critical: boolParam(r, "critical"),
-		Limit: limit,
+		Ascending: ascending(r),
 	}
 	var okSpan bool
 	if q.SpanFrom, okSpan = s.timeParam(w, r, "span_from"); !okSpan {
@@ -339,15 +477,16 @@ func (s *Server) handleGaps(w http.ResponseWriter, r *http.Request) {
 	if q.SpanTo, okSpan = s.timeParam(w, r, "span_to"); !okSpan {
 		return
 	}
-	gaps, err := s.reader.Gaps(r.Context(), tenant, q)
+	p, ok := readPage(w, r, gapList, auditFilters(q.Selection())...)
+	if !ok {
+		return
+	}
+	page, err := s.reader.Gaps(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.auditFailure(w, r, "gaps", err)
 		return
 	}
-	if gaps == nil {
-		gaps = []audit.Gap{}
-	}
-	answer(w, http.StatusOK, map[string]any{"gaps": gaps})
+	s.answerPage(w, r, p, "gaps", page.Rows, page.More, auditPosition(page.Rows, gapPosition), nil)
 }
 
 // handleSessionLoss sums one session's gap reports per cause: two reports of
@@ -428,16 +567,18 @@ func (s *Server) handleCertificateSessions(w http.ResponseWriter, r *http.Reques
 		s.invalid(w, r, "serial", access.ProblemInvalid, "")
 		return
 	}
-	limit, ok := s.limitParam(w, r)
+	q := audit.CertificateQuery{Serial: serial, Ascending: ascending(r)}
+	p, ok := readPage(w, r, certificateRecordList, auditFilters(q.Selection())...)
 	if !ok {
 		return
 	}
-	rows, err := s.reader.CertificateSessions(r.Context(), tenant, serial, limit)
+	page, err := s.reader.CertificateSessions(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.auditFailure(w, r, "certificate sessions", err)
 		return
 	}
-	answer(w, http.StatusOK, map[string]any{"serial": contract.FormatSerial(serial), "records": viewRecords(rows)})
+	s.answerPage(w, r, p, "records", viewRecords(page.Rows), page.More, auditPosition(page.Rows, recordPosition),
+		map[string]any{"serial": contract.FormatSerial(serial)})
 }
 
 // auditFailure classifies a reader error: a session lookup of "", an absence, a

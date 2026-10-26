@@ -53,8 +53,9 @@ type Options struct {
 	// takes DefaultUnmetWindow.
 	UnmetWindow time.Duration
 	// UnmetLimit bounds how many unmet-policy records one report reads, the
-	// newest first. Zero takes DefaultUnmetLimit. A report that read the
-	// limit and found more says so (CodePolicyUnmetTruncated).
+	// newest first: one page, so at most store.MaxPageLimit. Zero takes
+	// DefaultUnmetLimit. A report whose page continues says so
+	// (CodePolicyUnmetTruncated).
 	UnmetLimit int
 	Now        func() time.Time
 }
@@ -97,6 +98,9 @@ func New(o Options) (*Service, error) {
 	}
 	if s.unmetLimit <= 0 {
 		s.unmetLimit = DefaultUnmetLimit
+	}
+	if s.unmetLimit > store.MaxPageLimit {
+		return nil, fmt.Errorf("authoring: an unmet-policy limit of %d is more than one page of %d", s.unmetLimit, store.MaxPageLimit)
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -245,15 +249,17 @@ func (s *Service) gather(ctx context.Context, tenant store.Tenant, b *model.Bund
 		return Facts{}, err
 	}
 	if s.reader != nil {
-		// One more than the limit, so a read cut short is known to be: one
-		// target reporting often can push every other target's records out
-		// of the newest N, and a report that hid that would read as clean.
-		facts.Unmet, err = s.reader.AlgorithmPolicyUnmet(ctx, tenant, "", now.Add(-s.unmetWindow), now.Add(time.Minute), s.unmetLimit+1)
+		// One page of the limit, which says whether the list continues, so
+		// a read cut short is known to be: one target reporting often can
+		// push every other target's records out of the newest N, and a
+		// report that hid that would read as clean.
+		unmet, err := s.reader.AlgorithmPolicyUnmet(ctx, tenant,
+			audit.UnmetQuery{From: now.Add(-s.unmetWindow), To: now.Add(time.Minute)}, store.Page{Limit: s.unmetLimit})
 		if err != nil {
 			return Facts{}, err
 		}
-		if len(facts.Unmet) > s.unmetLimit {
-			facts.Unmet = facts.Unmet[:s.unmetLimit]
+		facts.Unmet = unmet.Rows
+		if unmet.More {
 			facts.UnmetTruncated = &UnmetRead{Limit: s.unmetLimit, Window: s.unmetWindow}
 		}
 	}

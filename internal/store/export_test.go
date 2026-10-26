@@ -91,12 +91,23 @@ func DeleteGrantRequest(ctx context.Context, s *Store, tenant Tenant, requestID 
 		`DELETE FROM grant_requests WHERE tenant = $1 AND request_id = $2`, tenant, requestID)
 }
 
-// AuditQuerySQL is the statement Query runs for a selection, for the test that
-// asks Postgres how it would plan it. It is compiled into the test binary
-// alone.
-func AuditQuerySQL(q AuditQuery) string {
-	sql, _ := auditQuerySQL("tenant", q)
+// AuditPageSQL is the statement Audit().Page and Query run for a selection
+// and a page, for the tests that ask Postgres how it would plan it. It is
+// compiled into the test binary alone.
+func AuditPageSQL(q AuditQuery, p Page) string {
+	sql, _, err := auditPageSQL("test.AuditPageSQL", "tenant", q, p)
+	if err != nil {
+		panic(err)
+	}
 	return sql
+}
+
+// DeleteAuditRecord removes one record, for the paging tests' writes between
+// and during a walk. Nothing in Control deletes a record but retention, which
+// deletes a stream's prefix (M8).
+func DeleteAuditRecord(ctx context.Context, s *Store, tenant Tenant, recordID string) error {
+	return deleteOne(ctx, s, "test.DeleteAuditRecord",
+		`DELETE FROM audit_records WHERE tenant = $1 AND record_id = $2`, tenant, recordID)
 }
 
 // RoleBindingPageSQL and OutstandingPageSQL are the statements
