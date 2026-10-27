@@ -226,13 +226,60 @@ func normalizeWindow(spec Spec, now time.Time, maxDuration time.Duration) (windo
 	return window{notBefore: from, expiresAt: to}, nil
 }
 
-// normalizeRevokeReason validates the text a revocation shows the holder.
-func normalizeRevokeReason(reason string) (string, error) {
+// NormalizeHolderReason validates the text a revocation, a kill or a lock shows
+// the holder, as it is displayed verbatim in a terminal as the connection
+// closes: one line, no control characters, at most [MaxRevokeReasonLen], and
+// never empty. It is trimmed and never truncated or rewritten. The error is a
+// *ValidationError naming `reason`.
+func NormalizeHolderReason(reason string) (string, error) {
 	reason = strings.TrimSpace(reason)
 	if err := text("reason", reason, MaxRevokeReasonLen, true); err != nil {
 		return "", err
 	}
 	return reason, nil
+}
+
+// NormalizeReasonCode validates an optional stable reason code. The error is a
+// *ValidationError naming `reason_code`.
+func NormalizeReasonCode(code string) (string, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return "", nil
+	}
+	if len(code) > maxReasonCodeLen {
+		return "", tooLong("reason_code", maxReasonCodeLen)
+	}
+	if !reasonCodePattern.MatchString(code) {
+		return "", &ValidationError{Field: "reason_code", Problem: ProblemInvalid}
+	}
+	return code, nil
+}
+
+// MaxReasonCodeLineLen bounds a reason code an inbound action's requester chose.
+const MaxReasonCodeLineLen = 128
+
+// NormalizeReasonCodeLine validates a reason code that is not Control's to
+// shape: one a requester outside it chose (an inbound action's, 0039), which a
+// vendor spells as it likes. It is held to what a record can carry safely, one
+// bounded line with no control characters, and not to the lower-case pattern
+// of [NormalizeReasonCode]. The error is a *ValidationError naming
+// `reason_code`.
+func NormalizeReasonCodeLine(code string) (string, error) {
+	code = strings.TrimSpace(code)
+	if err := text("reason_code", code, MaxReasonCodeLineLen, false); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+// NormalizeExternalRef validates an optional external reference, one line. The
+// error is a *ValidationError naming `external_ref`.
+func NormalizeExternalRef(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if err := text("external_ref", ref, maxExternalLen, false); err != nil {
+		return "", err
+	}
+	return ref, nil
 }
 
 // text validates a one-line value: no control characters at all.

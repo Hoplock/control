@@ -146,15 +146,31 @@ func (r targetRepo) Delete(ctx context.Context, tenant Tenant, targetID string) 
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	tag, err := r.s.db.Exec(ctx, `
-		DELETE FROM targets WHERE tenant = $1 AND target_id = $2`, tenant, targetID)
-	if err != nil {
+	// A quarantined target is not deleted: the row going would lift the
+	// quarantine silently (M28). The row is locked FIRST and the quarantine
+	// read in a statement of its own, so a quarantine placed a moment ago —
+	// which holds the row FOR SHARE until it commits — is seen rather than
+	// raced.
+	return r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
+		var one int
+		if err := q.QueryRow(ctx, `
+			SELECT 1 FROM targets WHERE tenant = $1 AND target_id = $2 FOR UPDATE`,
+			tenant, targetID).Scan(&one); err != nil {
+			return wrap(op, err)
+		}
+		var held bool
+		if err := q.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM target_quarantines WHERE tenant = $1 AND target_id = $2)`,
+			tenant, targetID).Scan(&held); err != nil {
+			return wrap(op, err)
+		}
+		if held {
+			return &Error{Op: op, Kind: KindConflict, Err: ErrTargetQuarantined}
+		}
+		_, err := q.Exec(ctx, `
+			DELETE FROM targets WHERE tenant = $1 AND target_id = $2`, tenant, targetID)
 		return wrap(op, err)
-	}
-	if tag.RowsAffected() == 0 {
-		return notFound(op)
-	}
-	return nil
+	})
 }
 
 func scanTarget(op string, row rowScanner) (Target, error) {

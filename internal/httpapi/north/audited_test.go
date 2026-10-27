@@ -152,6 +152,46 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 			},
 			state: subject("dave@example.com"), before: "ops",
 		},
+		"POST /subjects/{subject}/lock": {
+			row:   `SELECT xmin::text FROM subject_locks WHERE tenant = $1 AND subject_id = 'gina@example.com'`,
+			event: audit.EventSubjectLocked, method: "POST", path: "/subjects/gina@example.com/lock",
+			body: map[string]any{"reason_code": "compromised"}, status: http.StatusOK,
+			setup: func(t *testing.T) {
+				mustSend(t, "PUT", "/subjects/gina@example.com", map[string]any{"groups": []string{"sre"}}, http.StatusOK)
+			},
+			state: func(t *testing.T) string { return count(t, `SELECT count(*) FROM subject_locks WHERE tenant = $1`) },
+		},
+		"POST /subjects/{subject}/unlock": {
+			event: audit.EventSubjectUnlocked, method: "POST", path: "/subjects/hank@example.com/unlock",
+			body: map[string]any{"reason_code": "cleared"}, status: http.StatusOK,
+			setup: func(t *testing.T) {
+				mustSend(t, "PUT", "/subjects/hank@example.com", map[string]any{"groups": []string{"sre"}}, http.StatusOK)
+				mustSend(t, "POST", "/subjects/hank@example.com/lock", map[string]any{}, http.StatusOK)
+			},
+			state: func(t *testing.T) string { return count(t, `SELECT count(*) FROM subject_locks WHERE tenant = $1`) },
+		},
+		"POST /targets/{target}/quarantine": {
+			row:   `SELECT xmin::text FROM target_quarantines WHERE tenant = $1 AND target_id = 't-quarantine'`,
+			event: audit.EventTargetQuarantined, method: "POST", path: "/targets/t-quarantine/quarantine",
+			body: map[string]any{"reason_code": "compromised"}, status: http.StatusOK,
+			setup: func(t *testing.T) {
+				mustSend(t, "PUT", "/targets/t-quarantine", map[string]any{"hostname": "quarantine.example.com", "labels": map[string]string{"env": "prod"}}, http.StatusOK)
+			},
+			state: func(t *testing.T) string {
+				return count(t, `SELECT count(*) FROM target_quarantines WHERE tenant = $1`)
+			},
+		},
+		"POST /targets/{target}/release": {
+			event: audit.EventTargetReleased, method: "POST", path: "/targets/t-release/release",
+			body: map[string]any{"reason_code": "cleared"}, status: http.StatusOK,
+			setup: func(t *testing.T) {
+				mustSend(t, "PUT", "/targets/t-release", map[string]any{"hostname": "release.example.com", "labels": map[string]string{"env": "prod"}}, http.StatusOK)
+				mustSend(t, "POST", "/targets/t-release/quarantine", map[string]any{}, http.StatusOK)
+			},
+			state: func(t *testing.T) string {
+				return count(t, `SELECT count(*) FROM target_quarantines WHERE tenant = $1`)
+			},
+		},
 		"POST /role-bindings": {
 			row:   `SELECT xmin::text FROM identity_role_bindings WHERE tenant = $1 AND subject_id = 'erin@example.com'`,
 			event: audit.EventRoleBound, method: "POST", path: "/role-bindings",

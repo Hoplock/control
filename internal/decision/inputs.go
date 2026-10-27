@@ -27,14 +27,16 @@ import (
 // one that keeps `conn.hop_trail` safe to accept: what a caller sends may
 // narrow a decision and may never widen one.
 
-// Subjects resolves a subject id into the identity policy matches on.
+// Subjects resolves a subject id into the identity policy matches on, and into
+// the standing denials on the id.
 //
-// It is a narrow interface rather than the store so that 0011's federated
-// directory drops in where the local one is today: `identity.Directory`
-// satisfies it as written.
+// It is a narrow interface rather than the store so that a federated directory
+// drops in where the local one is today. It answers in ONE round trip (M5): the
+// subject's row, if there is one, and every standing denial on the id, if any
+// stands (M28). An id with neither is not an error — a lock holds for a subject
+// this server has no row for.
 type Subjects interface {
-	// SubjectByID resolves a subject id. Absent is store.ErrNotFound.
-	SubjectByID(ctx context.Context, tenant store.Tenant, subjectID string) (store.Subject, error)
+	SubjectStanding(ctx context.Context, tenant store.Tenant, subjectID string) (store.SubjectStanding, error)
 }
 
 // assembled is one request's inputs plus what the rest of the phase needs and
@@ -82,6 +84,48 @@ type assembled struct {
 	// external is every external window this decision asked about, for the
 	// record.
 	external []accessctx.Entry
+	// standing are the standing denials that cover this call (M28): a lock on
+	// the subject, a quarantine on the target. While any stands the call is a
+	// deny whatever policy would have said, and the engine is not asked. Each
+	// is read in the round trip that reads the row it covers.
+	standing []standingDenial
+}
+
+// The reason codes a standing denial carries into the decision record, the
+// deny and `explain`. They are stable: a report groups by them.
+const (
+	// CodeSubjectLocked is a deny because a lock stands on the subject.
+	CodeSubjectLocked = "subject_locked"
+	// CodeTargetQuarantined is a deny because a quarantine stands on the
+	// target.
+	CodeTargetQuarantined = "target_quarantined"
+)
+
+// standingDenial is one standing denial as the decision recorded it.
+type standingDenial struct {
+	code        string
+	subjectID   string
+	targetID    string
+	placedAt    time.Time
+	placedBy    store.StandingActor
+	reasonCode  string
+	reason      string
+	externalRef string
+	actionID    string
+}
+
+func lockedDenial(l store.SubjectLock) standingDenial {
+	return standingDenial{
+		code: CodeSubjectLocked, subjectID: l.SubjectID, placedAt: l.LockedAt, placedBy: l.LockedBy,
+		reasonCode: l.ReasonCode, reason: l.Reason, externalRef: l.ExternalRef, actionID: l.ActionID,
+	}
+}
+
+func quarantinedDenial(q store.TargetQuarantine) standingDenial {
+	return standingDenial{
+		code: CodeTargetQuarantined, targetID: q.TargetID, placedAt: q.QuarantinedAt, placedBy: q.QuarantinedBy,
+		reasonCode: q.ReasonCode, reason: q.Reason, externalRef: q.ExternalRef, actionID: q.ActionID,
+	}
 }
 
 // assemble gathers the inputs for one authorize call.
@@ -118,16 +162,20 @@ func (s *Service) assemble(ctx context.Context, tenant store.Tenant, req *contra
 		trail: append([]string(nil), req.Conn.HopTrail...),
 	}
 
-	subject, err := s.subjects.SubjectByID(ctx, tenant, req.Identity.Subject)
-	switch {
-	case err == nil:
+	// The subject's row and the lock on the id, in ONE round trip (M5, M28).
+	standing, err := s.subjects.SubjectStanding(ctx, tenant, req.Identity.Subject)
+	if err != nil {
+		return assembled{}, err
+	}
+	if standing.Known {
+		subject := standing.Subject
 		out.subjectKnown = true
 		out.input.Subject.Source = subject.Source
 		out.input.Subject.Groups = subject.Groups
 		out.input.Subject.Claims = subject.Claims
 		out.mappingVersion = subject.MappingVersion
 		out.breakGlass = subject.BreakGlass
-	case store.IsNotFound(err):
+	} else {
 		// A subject this server holds no record of gets NO groups and NO
 		// claims — not the ones the request carries. The request's copy
 		// came from this server originally, but by the time it comes back
@@ -137,24 +185,36 @@ func (s *Service) assemble(ctx context.Context, tenant store.Tenant, req *contra
 		// about and grants nothing on its own.
 		out.input.Subject.Groups = nil
 		out.input.Subject.Claims = nil
-	default:
-		return assembled{}, err
+	}
+	if standing.Lock != nil {
+		out.standing = append(out.standing, lockedDenial(*standing.Lock))
 	}
 
-	target, err := s.store.Targets().GetByHostname(ctx, tenant, req.Target)
+	// The target's row and the quarantine on it, likewise in one round trip.
+	target, err := s.store.Targets().StandingByHostname(ctx, tenant, req.Target)
 	switch {
 	case err == nil:
 		out.known = true
-		out.targetID = target.ID
-		out.targetZone = fleet.Zone(target.Zone)
-		out.input.Target.Zone = target.Zone
-		out.input.Target.Labels = target.Labels
+		out.targetID = target.Target.ID
+		out.targetZone = fleet.Zone(target.Target.Zone)
+		out.input.Target.Zone = target.Target.Zone
+		out.input.Target.Labels = target.Target.Labels
+		if target.Quarantine != nil {
+			out.standing = append(out.standing, quarantinedDenial(*target.Quarantine))
+		}
 	case store.IsNotFound(err):
 		// Not an error: a target with no row has no labels and no zone.
 		// Policy decides what that means — in practice the default-deny —
 		// and the routing layer will refuse to invent a zone for it.
 	default:
 		return assembled{}, err
+	}
+
+	if len(out.standing) > 0 {
+		// A standing denial decides, and the engine is not asked: the grants
+		// are not read, because nothing they say can matter, and the call
+		// costs the same two round trips an unlocked one spends before it.
+		return out, nil
 	}
 
 	// Live grants are read at THIS call's instant, and that read is the whole

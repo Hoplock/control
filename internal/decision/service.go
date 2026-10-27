@@ -183,12 +183,21 @@ func (s *Service) Authorize(ctx context.Context, tenant store.Tenant, req *contr
 	defer cancel()
 
 	now := s.now()
-	prog, err := s.programs.Program(ctx, tenant)
+
+	in, err := s.assemble(ctx, tenant, req, now)
 	if err != nil {
 		return Outcome{}, err
 	}
 
-	in, err := s.assemble(ctx, tenant, req, now)
+	if len(in.standing) > 0 {
+		// A standing denial is applied ABOVE the engine (M28): it is read
+		// with the rows it covers, it decides, and the compiled policy is
+		// not consulted — so a lock holds when the policy cannot be loaded,
+		// and no rule, grant or window can write around it.
+		return s.denyStanding(ctx, tenant, req, in, now)
+	}
+
+	prog, err := s.programs.Program(ctx, tenant)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -277,6 +286,40 @@ func (s *Service) Authorize(ctx context.Context, tenant store.Tenant, req *contr
 		return Outcome{}, err
 	}
 	return Outcome{Response: resp}, nil
+}
+
+// BasisStanding is the explanation's basis when a standing denial decided and
+// the engine was not asked. The engine's own bases are `rule` and
+// `default-deny`; this is a third, and it is the layers above the engine that
+// answer it (M28).
+const BasisStanding = "standing"
+
+// denyStanding answers a call a standing denial covers: a deny, with a reason
+// code that is for this server's log and the record and never for the user, and
+// a record that names every denial that stood (M4). The write is synchronous
+// and a failed one is an outage, as it is for any other deny.
+func (s *Service) denyStanding(ctx context.Context, tenant store.Tenant, req *contract.AuthorizeRequest, in assembled, now time.Time) (Outcome, error) {
+	codes := make([]string, 0, len(in.standing))
+	for _, d := range in.standing {
+		codes = append(codes, d.code)
+	}
+	rec := record{
+		id:     s.ids(),
+		effect: EffectDeny,
+		inputs: newRecordedInputs(in, req),
+		expl: recordedExplanation{
+			Effect: string(model.EffectDeny), Basis: BasisStanding, DenyReason: codes[0], Standing: codes,
+		},
+		subjectID: in.input.Subject.ID,
+		targetID:  in.targetID,
+		proxyID:   req.Conn.ProxyID,
+		sessionID: req.Conn.SessionID,
+		decidedAt: now,
+	}
+	if err := s.write(ctx, tenant, rec); err != nil {
+		return Outcome{}, err
+	}
+	return Outcome{Deny: &Denial{DecisionID: rec.id, Reason: codes[0]}}, nil
 }
 
 // serve turns an allowed snapshot into a response, or explains why it cannot.

@@ -48,12 +48,20 @@ import (
 // window that does not parse — because a zero value in its place is not what
 // was asked: a grant whose expiry does not parse reads as expired.
 func ReplayInput(raw json.RawMessage) (model.Input, error) {
+	out, _, err := replayInput(raw)
+	return out, err
+}
+
+// replayInput is ReplayInput and the standing denials the record carries. A
+// record with any is a deny the engine never decided (M28), and replay
+// reproduces it: a candidate bundle cannot allow what a lock denied.
+func replayInput(raw json.RawMessage) (model.Input, []recordedStanding, error) {
 	var in recordedInputs
 	if err := json.Unmarshal(raw, &in); err != nil {
-		return model.Input{}, fmt.Errorf("decision: the recorded inputs do not decode: %w", err)
+		return model.Input{}, nil, fmt.Errorf("decision: the recorded inputs do not decode: %w", err)
 	}
 	if in.Now.IsZero() {
-		return model.Input{}, errors.New("decision: the recorded inputs carry no instant, and time is an input")
+		return model.Input{}, nil, errors.New("decision: the recorded inputs carry no instant, and time is an input")
 	}
 	out := model.Input{
 		Now: in.Now,
@@ -76,7 +84,7 @@ func ReplayInput(raw json.RawMessage) (model.Input, error) {
 	if in.Context.SourceAddr != "" {
 		addr, err := netip.ParseAddr(in.Context.SourceAddr)
 		if err != nil {
-			return model.Input{}, fmt.Errorf("decision: the recorded source address %q does not parse", in.Context.SourceAddr)
+			return model.Input{}, nil, fmt.Errorf("decision: the recorded source address %q does not parse", in.Context.SourceAddr)
 		}
 		out.Context.SourceAddr = addr
 	}
@@ -93,24 +101,24 @@ func ReplayInput(raw json.RawMessage) (model.Input, error) {
 			RequestRef: g.RequestID,
 		}
 		if err := parseRecordedTime(g.ID, "not_before", g.NotBefore, &grant.NotBefore); err != nil {
-			return model.Input{}, err
+			return model.Input{}, nil, err
 		}
 		if err := parseRecordedTime(g.ID, "expires_at", g.ExpiresAt, &grant.ExpiresAt); err != nil {
-			return model.Input{}, err
+			return model.Input{}, nil, err
 		}
 		if g.External.System != "" || g.External.Reference != "" {
 			ext := &model.ExternalReference{System: g.External.System, Reference: g.External.Reference}
 			if err := parseRecordedTime(g.ID, "external.window_start", g.External.WindowStart, &ext.WindowStart); err != nil {
-				return model.Input{}, err
+				return model.Input{}, nil, err
 			}
 			if err := parseRecordedTime(g.ID, "external.window_end", g.External.WindowEnd, &ext.WindowEnd); err != nil {
-				return model.Input{}, err
+				return model.Input{}, nil, err
 			}
 			grant.External = ext
 		}
 		out.Grants = append(out.Grants, grant)
 	}
-	return out, nil
+	return out, in.Standing, nil
 }
 
 // parseRecordedTime reads one recorded instant. Empty is the zero time, which
@@ -225,16 +233,34 @@ func Replay(ctx context.Context, records RecordWindow, tenant store.Tenant, cand
 			rep.Unreplayable = append(rep.Unreplayable, Unreplayable{DecisionID: d.ID, Reason: err.Error()})
 			continue
 		}
-		in, err := ReplayInput(d.Inputs)
+		in, standing, err := replayInput(d.Inputs)
 		if err != nil {
 			rep.Unreplayable = append(rep.Unreplayable, Unreplayable{DecisionID: d.ID, Reason: err.Error()})
 			continue
 		}
+		if len(standing) > 0 {
+			// A standing denial decided this call and the engine was never
+			// asked (M28), so there is no candidate answer to compare: the
+			// lock is above the policy and the candidate cannot lift it.
+			// The recorded deny is reproduced from the record. A record that
+			// pairs a standing denial with an allow is not a record replay
+			// can read.
+			if was != string(model.EffectDeny) {
+				rep.Unreplayable = append(rep.Unreplayable, Unreplayable{
+					DecisionID: d.ID,
+					Reason:     fmt.Sprintf("decision: %s carries a standing denial and an explanation that says %q", d.ID, was),
+				})
+				continue
+			}
+			rep.Replayed++
+			rep.Unchanged++
+			continue
+		}
+		rep.Replayed++
 		if labels, ok := q.Labels[in.Target.Hostname]; ok {
 			in.Target.Labels = maps.Clone(labels)
 		}
 		_, expl := eval.Evaluate(candidate, in)
-		rep.Replayed++
 		now := string(expl.Effect)
 		if now == was {
 			rep.Unchanged++

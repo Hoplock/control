@@ -23,6 +23,7 @@ import (
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/revoke"
+	"github.com/hoplock/control/internal/standing"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -68,9 +69,13 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatalf("authoring: %v", err)
 	}
+	denials, err := standing.New(standing.Options{Store: st, Recorder: emitter, Revoker: bus, Logger: log, Settle: time.Millisecond})
+	if err != nil {
+		t.Fatalf("standing: %v", err)
+	}
 	server, err := north.New(north.Options{
 		Federation: federation, Grants: grants, Store: st, Fleet: registry, Authoring: lifecycle,
-		Revocations: revoke.NewOperator(bus, registry), Audit: emitter,
+		Revocations: revoke.NewOperator(bus, registry), Standing: denials, Audit: emitter,
 		DefaultTenant: "default", InsecureCookies: true, Logger: log,
 	})
 	if err != nil {

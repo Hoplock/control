@@ -28,6 +28,7 @@ import (
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/revoke"
+	"github.com/hoplock/control/internal/standing"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -93,6 +94,7 @@ type lifecycle struct {
 	authoring *authoring.Service
 	operator  *revoke.Operator
 	bus       *revoke.Bus
+	standing  *standing.Service
 	emitter   *audit.Emitter
 	// keys is the retention key store the emitter signs with, and what a
 	// test's verifier checks against.
@@ -104,6 +106,7 @@ func withLifecycle(t *testing.T, st *store.Store, o north.Options) north.Options
 	t.Helper()
 	l := newLifecycle(t, st)
 	o.Store, o.Fleet, o.Authoring, o.Revocations, o.Audit = st, l.fleet, l.authoring, l.operator, l.emitter
+	o.Standing = l.standing
 	return o
 }
 
@@ -137,9 +140,15 @@ func newLifecycle(t *testing.T, st *store.Store) *lifecycle {
 	if err != nil {
 		t.Fatalf("authoring: %v", err)
 	}
+	denials, err := standing.New(standing.Options{
+		Store: st, Recorder: emitter, Revoker: bus, Logger: log, Settle: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("standing: %v", err)
+	}
 	return &lifecycle{
 		fleet: registry, authoring: lifecycleSvc, operator: revoke.NewOperator(bus, registry),
-		bus: bus, emitter: emitter, keys: retentionKeys,
+		bus: bus, standing: denials, emitter: emitter, keys: retentionKeys,
 	}
 }
 
@@ -180,6 +189,7 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 		Fleet:           lifecycle.fleet,
 		Authoring:       lifecycle.authoring,
 		Revocations:     lifecycle.operator,
+		Standing:        lifecycle.standing,
 		Audit:           lifecycle.emitter,
 		DefaultTenant:   "tenant-a",
 		InsecureCookies: true,

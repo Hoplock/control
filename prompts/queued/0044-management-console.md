@@ -33,6 +33,15 @@
   `namespace.go` (the prefixes); the tests are
   `namespace_internal_test.go`. Open `0041` for the report routes the Reports
   screen consumes (below).
+- **`docs/PLAN.md` M28 and `docs/learnings/0039-action-executor-lock-and-quarantine-learnings.md`
+  (open it in full), for the subject lock and the target quarantine, which
+  this console shows and lets an operator place and lift (below).** The routes
+  are `POST …/subjects/{subject}/lock` and `…/unlock` and
+  `POST …/targets/{target}/quarantine` and `…/release`, all under
+  `session:revoke`. `GET …/subjects` and `…/targets` carry `locked`, `lock`,
+  `quarantined` and `quarantine`. The error codes are `target_quarantined` and
+  `standing_denial_undelivered`. Enterprise's inbound action channel relies on
+  an operator being able to release a lockout here.
 - `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
   algorithm bullet (the floor and the bans), and **M17**, for what
   `Hoplock/proxy#69` added and 0019 serves: the impact preview, the fleet
@@ -185,6 +194,25 @@ is written so that half can fail a review rather than merely disappoint one.
      route. A proxy whose build declared no offer for the route's profile is
      shown as not judged, never as fine.
   5. **Inventory** — targets and labels, identities, groups, roles, grants.
+     **A subject that is locked and a target that is quarantined say so
+     wherever they are shown** (M28, 0039): in the list and in the detail, with
+     the lock's or the quarantine's facts — when it was placed, by whom, the
+     reason code, the external reference, and the inbound action behind it if
+     one placed it — and as a different state from a disabled or an unknown
+     subject. A lock is a deny made on purpose, and the console renders it with
+     a deny's colour and words (M11), never an outage's. A subject whose row
+     was deleted while locked is listed by the lock (`record_missing`), and its
+     lock can still be lifted. The console **offers lock, unlock, quarantine and
+     release** to a holder of `session:revoke`, and to nobody else. Each is a
+     destructive action and confirms as one. Locking asks for the text the
+     holder is shown (one line, at most 512 bytes) and shows it before sending,
+     because it is displayed verbatim as their sessions end; a quarantine says
+     plainly that it ends no session and drops every cached decision in the
+     tenant, and points to the revocation workflow for ending the ones running.
+     `503 standing_denial_undelivered` is rendered as "in force, not yet
+     delivered" with a retry that asks again, never as a failure to lock.
+     Deleting a quarantined target is refused (`target_quarantined`), and the
+     console says release it first.
   6. **Extensions** — which `ext` points have an implementation registered
      (0004). An operator debugging behaviour must be able to see that Enterprise
      is in play. **Each registered sink shows its delivery lag** for the tenant
@@ -396,6 +424,19 @@ becomes a test that runs today.
 - The emergency runbook drives 0019's three calls in order, shows the kill
   `reason` before sending it, and cannot finish without the `cache_invalidate`
   step. An end-to-end test walks it.
+- Against a seeded fixture, the inventory shows a locked subject and a
+  quarantined target in both the list and the detail with their facts, a locked
+  subject whose row was deleted by the lock alone, and offers lock, unlock,
+  quarantine and release to a `grant-admin` or `admin` session and to no
+  other role. Locking and quarantining each confirm; the lock shows the holder
+  text before sending. `standing_denial_undelivered` renders as in force and
+  retryable. Assert the API refusal for a role without `session:revoke`, not
+  only the hidden button.
+- With a fake action handler registered, the extensions screen shows it as
+  running; with one whose `Start` failed it shows it as registered and not
+  started, with the error's kind (`start_error`), and neither as an outage. With
+  none registered, the point shows what Control does instead (M15). Assert
+  each.
 - With two fake sinks registered, one behind and failing and one overtaken by a
   retention pass, the extensions screen shows each one's lag on its own row:
   the failing one as failing, the overtaken one with its skipped count. With

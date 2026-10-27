@@ -9,7 +9,9 @@
   summaries from **all** prior phases.
 - `docs/learnings/` — read every summary; open the ones whose setup you must
   wire (esp. `0002` conformance, `0006` fleet enrollment, `0008` authorize,
-  `0009` events, `0010` audit assertions, `0012` grants).
+  `0009` events, `0010` audit assertions, `0012` grants, and
+  `0039` — the inbound action executor and the lock, for the scenario below).
+  `docs/PLAN.md` **M28** says what a lock is and what it owes the stream.
 - In the **Hoplock Proxy repository**: its `deploy/` topology and its own e2e phase.
   You are extending that idea across the repository boundary, not rebuilding it.
 
@@ -64,6 +66,22 @@ Each scenario is a product claim, proven across both components:
   end to end and it is the scenario worth demoing.
 - **Outage is not a deny**: stop this server; a connecting user is told it is an
   outage and given a session id, not "access denied" (M11, proxy §4.3).
+- **An inbound action ends a session and locks its subject** (0039, M28). A
+  test host binary registers an `ext.ActionHandler` through
+  `server.Options.Registry`, whose only job is to call the executor it was
+  handed. Open a real session through the real proxy. Have the handler execute
+  `kill_session` for it: the proxy ends the session and the **user is told
+  Control's reason** (the handler's `ReasonText` verbatim, or "Your session was
+  ended as part of a security response." when it gave none), not a crash.
+  Have the handler execute `lock_subject` for the same subject: a new
+  connection by that user is denied and the user sees the deliberately vague
+  message, `explain` on its session id names `subject_locked` and the lock (who
+  placed it: `action-handler:<provider>`, the action id, the external
+  reference), and a session the subject still held is ended. Have the handler
+  execute `unlock_subject`: the user connects again where policy permits. The
+  audit store holds each act's record with the handler as actor and the action
+  id, and `audit-verify` passes. A scenario that only checks the executor's
+  return value passes on a server whose proxy never stopped the session.
 - **The three policy axes**: `sftp` denied while `shell` succeeds; a tunnel to
   the permitted host:port succeeds while another is refused; `tcpip-forward`
   refused with no listener created.
@@ -236,6 +254,9 @@ Each scenario is a product claim, proven across both components:
 - The topology comes up cleanly and the full suite passes locally and in CI.
 - The protected zone accepts **no** inbound connections and multi-hop still
   works — assert the network restriction, not just the successful session.
+- The inbound-action scenario ends a real session with Control's reason on the
+  user's terminal, and a subject locked by the handler is refused by the real
+  proxy and unlocked again, with `explain` naming the lock in between.
 - The deny scenario resolves end to end: the user's vague message, the session
   id, and `explain` naming the exact rule.
 - The outage scenario proves a stopped server is never reported as a denial.

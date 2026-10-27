@@ -79,6 +79,38 @@ type recordedInputs struct {
 	// always present, empty when nothing was asked, so a record made with
 	// external context and one made without have one shape.
 	ExternalContext []accessctx.Entry `json:"external_context"`
+	// Standing is every standing denial that covered this call: the lock on
+	// the subject, the quarantine on the target (M28). It is always present,
+	// empty when none stood, and it is what replay reproduces a locked call's
+	// deny from — a candidate bundle cannot allow what a lock denied.
+	Standing []recordedStanding `json:"standing"`
+}
+
+// recordedStanding is one standing denial as the decision saw it, whole: when
+// it was placed and by whom, and the incident and action behind it. A record
+// that had to be joined to the lock table to say so would stop saying so the
+// moment the lock was lifted (M4).
+type recordedStanding struct {
+	// Code is the reason code the deny carried: `subject_locked` or
+	// `target_quarantined`.
+	Code string `json:"code"`
+	// SubjectID or TargetID is what the denial stood on.
+	SubjectID   string             `json:"subject_id,omitempty"`
+	TargetID    string             `json:"target_id,omitempty"`
+	PlacedAt    string             `json:"placed_at"`
+	PlacedBy    recordedGrantActor `json:"placed_by"`
+	ReasonCode  string             `json:"reason_code"`
+	Reason      string             `json:"reason"`
+	ExternalRef string             `json:"external_ref"`
+	ActionID    string             `json:"action_id"`
+}
+
+func newRecordedStanding(d standingDenial) recordedStanding {
+	return recordedStanding{
+		Code: d.code, SubjectID: d.subjectID, TargetID: d.targetID, PlacedAt: timeString(d.placedAt),
+		PlacedBy:   recordedGrantActor{Subject: d.placedBy.Subject, Principal: d.placedBy.Principal, BreakGlass: d.placedBy.BreakGlass},
+		ReasonCode: d.reasonCode, Reason: d.reason, ExternalRef: d.externalRef, ActionID: d.actionID,
+	}
 }
 
 type recordedSubject struct {
@@ -193,6 +225,11 @@ type recordedExplanation struct {
 	Grant           string   `json:"grant,omitempty"`
 	BundleDigest    string   `json:"bundle_digest,omitempty"`
 	RulesConsidered int      `json:"rules_considered,omitempty"`
+	// Standing names the standing denials that decided, in the order they were
+	// applied (M28): when it is set the engine was not asked, Basis is
+	// `standing`, Rule is empty and DenyReason is the first code. The
+	// denials themselves, whole, are `inputs.standing`.
+	Standing []string `json:"standing,omitempty"`
 	// RouteType and NextProxyID are the routing layer's answer, which the
 	// engine never sees: the same rule legitimately answers `nexthop` at the
 	// edge and `direct` behind it.
@@ -357,6 +394,10 @@ func newRecordedInputs(in assembled, req *contract.AuthorizeRequest) recordedInp
 	out.ExternalContext = in.external
 	if out.ExternalContext == nil {
 		out.ExternalContext = []accessctx.Entry{}
+	}
+	out.Standing = make([]recordedStanding, 0, len(in.standing))
+	for _, d := range in.standing {
+		out.Standing = append(out.Standing, newRecordedStanding(d))
 	}
 	return out
 }

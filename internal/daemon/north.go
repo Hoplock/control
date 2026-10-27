@@ -24,6 +24,7 @@ import (
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/revoke"
+	"github.com/hoplock/control/internal/standing"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -41,6 +42,7 @@ type northDeps struct {
 	pushes      *accessctx.Service
 	fleet       *fleet.Registry
 	revocations *revoke.Operator
+	standing    *standing.Service
 	extensions  *ext.Extensions
 	// archive is the feed to a registered archive (0025), nil when none is
 	// registered — a nil interface, never a typed nil.
@@ -48,6 +50,9 @@ type northDeps struct {
 	// sinks is delivery to the registered sinks (0026), nil when none is
 	// registered, likewise.
 	sinks north.SinkDelivery
+	// actions is the registered action handler's lifecycle (0039), nil when
+	// none is registered, likewise.
+	actions north.ActionHandlerState
 }
 
 // buildNorth assembles the federation service, the policy lifecycle and the
@@ -82,10 +87,12 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 		Fleet:           d.fleet,
 		Authoring:       lifecycle,
 		Revocations:     d.revocations,
+		Standing:        d.standing,
 		Audit:           d.emitter,
 		Extensions:      d.extensions,
 		Archive:         d.archive,
 		Sinks:           d.sinks,
+		Actions:         d.actions,
 		MaxPushBytes:    cfg.AccessContext.MaxPushBytes,
 		Logger:          log,
 		MaxBodyBytes:    cfg.North.MaxBodyBytes,

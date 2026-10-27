@@ -149,6 +149,31 @@ func (r decisionRepo) ListRange(ctx context.Context, tenant Tenant, from, to tim
 	return out, truncated, nil
 }
 
+// SessionExists reports whether any decision was recorded for a session in the
+// tenant: a session id this server has never decided anything about is one no
+// proxy of the tenant can be holding (0039). It reads the session index and no
+// row.
+func (r decisionRepo) SessionExists(ctx context.Context, tenant Tenant, sessionID string) (bool, error) {
+	const op = "store.Decisions.SessionExists"
+	if err := checkTenant(op, tenant); err != nil {
+		return false, err
+	}
+	if sessionID == "" {
+		// "" is no session (Hoplock/proxy#71), and a lookup of it would match
+		// every record that belongs to none.
+		return false, invalid(op, "a session id is required")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	var found bool
+	err := r.s.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM decisions WHERE tenant = $1 AND session_id = $2)`,
+		tenant, sessionID).Scan(&found)
+	return found, wrap(op, err)
+}
+
 // ListBySession returns the decisions taken for one SSH session, newest first.
 //
 // It is the lookup an operator actually arrives with: the proxy tells a user

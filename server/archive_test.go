@@ -48,8 +48,14 @@ func (a *recordingArchive) held() []ext.AuditRecord {
 // registry and extra configuration, until the test ends.
 func runHost(t *testing.T, registry *ext.Registry, extra string) (base string, st *store.Store, logs *lockedBuffer) {
 	t.Helper()
+	return runHostAt(t, registry, extra, freeAddr(t), freeAddr(t))
+}
+
+// runHostAt is runHost on addresses the caller chose, for a test whose
+// extension needs to know where the listeners will be.
+func runHostAt(t *testing.T, registry *ext.Registry, extra, south, north string) (base string, st *store.Store, logs *lockedBuffer) {
+	t.Helper()
 	dsn := testDatabase(t)
-	south, north := freeAddr(t), freeAddr(t)
 	path := writeFile(t, configDoc(south, north, dsn)+hostSection+extra)
 	o := hostOptions(&sectionRecorder{}, registry)
 	migrate(t, path, o)

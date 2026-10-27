@@ -123,6 +123,7 @@ decision.
 | **M25** | the event stream's state is in the store, and the cluster bus only wakes nodes | live | §3, §4, §5, §10, §11 |
 | **M26** | every north-bound list is bounded by its caller and says where it stopped | live | §3, §7, §10 |
 | **M27** | the north-bound listener is four namespaces — Control's API, a host's API, Control's console, a host's console — and no path is in two | live | §3, §10 |
+| **M28** | a lock and a quarantine are standing denials applied above the engine, and an inbound action pulls only levers an operator can pull | live | §3, §5, §6, §7, §10 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -512,7 +513,8 @@ decision.
      to seal if one was promised and is missing. **Disabled:** the point adds a
      capability Control never claimed — a long-term archive, directory
      provisioning, somebody else's automation pulling a lever an operator can
-     already pull — and says so out loud. A point that supplies nothing from
+     already pull — and says so out loud. (For the action point that sentence is
+     true of every `ActionKind` since 0039: M28.) A point that supplies nothing from
      Control and is not the third case fails the build, which is what stops
      "ships a real default" from decaying into a promise.
 
@@ -1333,7 +1335,8 @@ decision.
   - a route that answers one object;
   - a list bounded by configuration rather than by the estate. These are the
     sign-in methods, the trust bundle (answered whole or not at all), the
-    extension registry (sealed), the access-context providers and their
+    extension registry (sealed; its action-handler row carries `started` and
+    `start_error` as two fields, still one object per row), the access-context providers and their
     bindings (one per configured provider), and a session's loss (one row per
     gap cause, of which the contract names two).
 
@@ -1393,6 +1396,92 @@ decision.
      a method beside one, a literal under one of its wildcards, a mux
      conflict — stays as defence in depth, held by a test of its own.
 
+- **M28 — A lock and a quarantine are standing denials applied above the engine,
+  and an inbound action pulls only levers an operator can pull (new; completes
+  M15's *disabled* form for the action point).** A **subject lock** and a
+  **target quarantine** are standing denials an operator places and lifts on
+  the north-bound API and that a registered `ext.ActionHandler` places through
+  the same code. While one stands, every authorize call it covers is a deny —
+  `EffectDeny`, never an outage (M11), with the reason code `subject_locked` or
+  `target_quarantined` — whatever policy, grants or external windows say.
+
+  **They are not policy inputs.** A rule can match an input or ignore it, and a
+  lock a policy author can write around is not a lock. M3 keeps the engine's
+  vocabulary closed, and M17 is the precedent for a constraint the decision
+  service applies on top of what policy answered. So the decision service reads
+  them and decides, and the engine is not asked: the grants are not read, the
+  external windows are not probed, and the compiled policy is not even needed,
+  so a lock holds when the policy cannot be loaded.
+
+  **They cost the decision path nothing (M5).** A lock is read in the statement
+  that reads the subject, and a quarantine in the one that reads the target,
+  each a primary-key join: the path sends the statements it sent before, and
+  `TestStandingDenialsCostTheDecisionPathNoRoundTrip` counts them. A second
+  standing denial on a subject, such as the directory's deactivation (0040),
+  is another nullable join in the same statement, not another query. Each has a
+  table of its own and no foreign key, so a login's upsert or `PUT
+  …/subjects/{subject}` never clears a lock, a lock outlives a deleted subject
+  row and holds for an id with no row at all, and deleting then re-creating a
+  subject leaves it locked. A quarantine guards its target instead:
+  `DELETE …/targets/{target}` on a quarantined target is `409
+  target_quarantined`, because deleting the row would otherwise lift the
+  quarantine silently.
+
+  **They are recorded, explained and replayed (M4).** The decision record's
+  inputs carry every standing denial that covered the call, whole — when it was
+  placed, by whom, the incident and action behind it — and its explanation says
+  the basis was `standing`, names the codes, and has no rule. `explain` renders
+  that story and refuses a record whose explanation names a denial its inputs do
+  not hold. Replay reproduces the deny from the record: a candidate bundle
+  cannot allow what a lock denied, and is never reported as flipping it.
+
+  **One service, two callers.** `internal/standing` places and lifts both, for
+  the north-bound routes (`POST …/subjects/{subject}/lock` and `…/unlock`,
+  `POST …/targets/{target}/quarantine` and `…/release`, all under
+  `session:revoke`, the permission whose holders can already end every session
+  in the tenant, which is the larger lever) and for the action executor. The
+  row and its record (`operator.subject.locked`, `…unlocked`,
+  `operator.target.quarantined`, `…released`) commit together; what the act
+  owes the revocation stream is published after the commit. A **lock** drops the
+  subject's cached decisions and ends their sessions with the holder's reason; a
+  **quarantine** drops the tenant's cached decisions and ends none, because it
+  stops *new* access (an operator who wants sessions ended has `POST
+  …/revocations`). It is `all` for the tenant rather than the keys of the
+  decisions made for that target because this server cannot name those keys
+  cheaply: a cache key is issued per rule over the components the rule names,
+  and the decision record carrying it is not indexed by target, which would
+  cost M5 more on every call than a rare emergency act saves. A placed denial
+  publishes twice, the second pass one decision budget later, as a grant's
+  revocation does (M10): an authorize that read the world just before the commit
+  may otherwise record a session or cache an allow after the first pass.
+  Lifting publishes nothing — a deny is never cached as an allow — and a lock
+  already standing is a `200` that says so and sends its kill again, because a
+  publication that failed is only ever repaired by asking.
+
+  **An inbound action is an operator's lever and nothing else.**
+  `internal/action` implements `ext.ActionExecutor` over those services and over
+  M9's stream and M10's revocation, for the five `ActionKind`s. It is
+  idempotent per tenant on `ActionID` — a ledger row (`action_executions`)
+  written in the transaction that does the act, serialised per id by an
+  advisory lock, M16's rule for an assertion's id applied to an action's: the
+  same action returns the first result, sends again what the first owed the
+  stream, and writes no second record; another action under the id is
+  `KindConflict`. The handler is the actor on every record and every grant row it
+  touches (`action-handler:<provider>`, no person), and every execution is
+  audited: the act's own record when it did something, `action.unchanged` when
+  it found nothing to do, `action.refused` when it refused. An inbound action
+  **cannot lock a break-glass subject** (M7): the break-glass path exists so
+  that access survives the failure of everything else, and a third party able to
+  lock it out holds a denial of service. An operator, acting deliberately,
+  still can. Lifting a quarantine is an operator's act only, and a lock's expiry
+  is the requester's to drive by executing `unlock_subject`.
+
+  **A handler that fails to start does not stop Control.** Access must not
+  depend on somebody else's automation (M11), so a `Start` that errors,
+  panics or does not return is logged at `ERROR` with its provider and the
+  error's kind, the extension listing shows the handler registered and not
+  started, and Control serves.
+
 ---
 
 ## 3. Architecture & repository layout
@@ -1422,6 +1511,8 @@ control/
 │   ├── archive/            # the audit feed: to a registered ext.ArchiveStore, and under every sink (M8, M5)
 │   ├── export/             # delivery to every registered ext.AuditSink, on archive's feed (M8, M5)
 │   ├── access/             # time-boxed grants, workflow requests, revocation (M10)
+│   ├── standing/           # the subject lock and the target quarantine: placed, lifted, published (M28)
+│   ├── action/             # the ext.ActionExecutor and the registered handler's lifecycle (M15, M28)
 │   ├── accessctx/          # external access context: bindings, push, probe; declarative/ (M16)
 │   ├── notify/             # operator notifications: the webhook, registered notifiers (M15)
 │   ├── extdefault/         # Control's own implementations behind the ext/ seam (M15)
@@ -1477,8 +1568,11 @@ for nothing.
   neither belongs on a path a user's handshake is held open for. The decision
   record is written **synchronously**, before the answer is returned: a decision
   this server cannot explain afterwards is one it does not serve, on the allow
-  path and the deny path alike (M4). The same package reads those records
-  back: **replay** evaluates a candidate program over a window of them, pure
+  path and the deny path alike (M4). A **standing denial** (M28) is read in
+  the statements that read the subject and the target, and decides before the
+  engine is asked: the call is a deny with `subject_locked` or
+  `target_quarantined`, recorded with the lock or quarantine whole. The same
+  package reads those records back: **replay** evaluates a candidate program over a window of them, pure
   and total — no clock, no store, no provider, every input taken from the
   record — and **explain** turns one into its story, refusing a record it
   cannot explain rather than guessing (§5.6).
@@ -1596,7 +1690,10 @@ for nothing.
   added.
   Its errors carry a stable code, typed parameters, an English message and the
   correlation id (M21), which is also why it owns its own 404 and 405 rather than
-  letting `http.ServeMux` answer them in prose.
+  letting `http.ServeMux` answer them in prose. Its subject and target views
+  show a lock or a quarantine and its facts (`locked`, `lock`, `quarantined`,
+  `quarantine`), read for a page's own rows (M26), and its extension listing
+  shows whether the registered action handler started.
 
   Every list it answers is bounded by its caller and says where it stopped
   (M26). `readPage` (`page.go`) reads `limit` and `after` against the list's
@@ -1621,7 +1718,9 @@ for nothing.
   role bindings, the claim mapping, proxies and their enrollment and
   withdrawal, fleet configuration with its rollouts and rollback, the
   algorithm declarations and the target observations; the audit query
-  (`…/audit/…`, §7) and its retention; the operator actions (`…/revocations`);
+  (`…/audit/…`, §7) and its retention; the operator actions (`…/revocations`,
+  and the lock and quarantine of M28 under `…/subjects/{subject}/` and
+  `…/targets/{target}/`);
   and the extension listing (`…/extensions`, whose archive row carries a
   registered archive's lag for the caller's tenant as scalars). Reads take the `…:read`
   permission every reading role holds; each write takes the narrowest
@@ -1659,7 +1758,9 @@ for nothing.
   body rather than by being in it. An operator's act is recorded here too, as
   `operator.<noun>.<verb>` on the control stream, written in the transaction
   that makes the change wherever there is one, naming the actor, the before
-  and after, and any warning accepted with it. The before is read in that
+  and after, and any warning accepted with it. An inbound action's records name
+  the action (`action_id`, `action_kind`, `external_ref`, `reason_code`,
+  `provider`) with the handler as the actor (§7). The before is read in that
   transaction under the tenant's lock on what the act replaces (a policy
   version, a target, a subject, the claim mapping), so two operators writing
   at once leave a chain of records rather than two that each claim the same
@@ -1729,12 +1830,28 @@ for nothing.
   is audited through `audit.Emitter` inside the act's own transaction.
   Revocation publishes through `internal/revoke` twice: once at once, and once
   more after one decision budget, so a session whose authorize raced the
-  revocation is ended as well. Its workflow poller walks the tenants this
+  revocation is ended as well. It is split into the half that commits with its
+  record (`RevokeWithin`) and the half that publishes (`Finish`), so an inbound
+  action's ledger row can commit in the same transaction (0039). Its workflow poller walks the tenants this
   process has seen, because the store cannot enumerate them (M18): the
   configured one, every tenant a proxy has opened its event subscription in —
   reported by `internal/daemon`, which wraps the stream the south-bound listener
   is handed, so neither that listener nor `internal/revoke` imports this
   package — and any in which a request was raised or read.
+- **`internal/standing`** — the subject lock and the target quarantine (M28):
+  placing and lifting each, in the caller's transaction or its own, with the
+  row and its `operator.subject.*` or `operator.target.*` record committed
+  together, and what the act owes the revocation stream published after. It is
+  the one implementation behind the north-bound lock, unlock, quarantine and
+  release routes and behind `internal/action`, so an inbound action reaches no
+  lever an operator cannot. It decides nothing on the decision path: that reads
+  the rows through `internal/store` and applies them in `internal/decision`.
+- **`internal/action`** — Control's side of the inbound action channel (M15,
+  M28): `Executor` implements `ext.ActionExecutor` for the five `ActionKind`s
+  over `internal/standing`, `internal/access` and `internal/revoke`, idempotent
+  per tenant on `ActionID` through a ledger written in the act's transaction;
+  `Runner` calls the one registered `ext.ActionHandler`'s `Start` and `Stop` and
+  reports whether it is running. With no handler registered neither exists.
 - **`internal/accessctx`** — external access context (M16): the provider set
   keyed by external system, the per-tenant scope bindings and their internal
   API, the push receiver that admits a window through its binding and creates
@@ -1782,7 +1899,9 @@ for nothing.
   `cmd/hoplock-control` imports it, that command imports nothing else of the
   module's, and `ext` imports nothing from it: three import-graph tests.
 - **`internal/daemon`** — the command line and the bring-up behind `server`:
-  subcommand dispatch, both listeners, and the wiring of every service. Every
+  subcommand dispatch, both listeners, and the wiring of every service,
+  including starting the registered action handler after the registry is sealed
+  and before either listener opens, and stopping it before they drain. Every
   way a host can be wrong is refused before the configuration file is read, a
   database opened or a port bound. A host's configuration sections are accepted
   by every subcommand and handed to the host by the daemon alone, before the
@@ -2606,6 +2725,15 @@ wildcard — and the compiler says so rather than silently opening the estate).
 Every evaluation emits a decision record (M4) naming the matched rule, the
 inputs that made it match, and the obligations emitted.
 
+**What the layers above the engine decide.** The engine answers what policy
+says, and the decision service applies two things on top of the answer. M17's
+capability constraint turns an allow the estate cannot serve into an outage. A
+**standing denial** (M28) decides before the engine is asked: a lock on the
+subject or a quarantine on the target makes the call a deny whatever any rule,
+grant or window says, so no policy can be written around one. It is a deny, not
+an outage (M11); its record has `basis: standing`, no rule, and the denials
+whole in `inputs.standing`; and replay reproduces it from the record.
+
 `conn.hop_trail` is deliberately **not** in the 5.1 table: it is a routing input,
 not a policy-matching axis. It selects where the path starts and it refuses
 loops and over-long chains (§4), and it may only ever narrow an answer — a rule
@@ -2937,7 +3065,10 @@ not say why, and a grant the explanation names that the inputs do not hold.
   publishing. `grant-admin` holds `grant:write`, `grant:approve` and
   `session:revoke`: every act on the revocation stream narrows access — the
   worst a desk can do with it is end sessions, which it already does by
-  revoking grants — and each is recorded with its actor. `fleet-admin` holds
+  revoking grants — and each is recorded with its actor. A subject lock and a
+  target quarantine (M28) sit under it for the same reason: both only narrow
+  access, and the permission already ends every session in the tenant, which
+  is the larger lever. `fleet-admin` holds
   `fleet:write` and `target:write`: it owns the estate it labels, and a
   relabel is diffed, simulable and recorded with its before, so a label that
   changes decisions is never a blind write. `admin` holds every permission,
@@ -3441,6 +3572,24 @@ not say why, and a grant the explanation names that the inputs do not hold.
   transaction that makes the change. None of these use the `grant_system` or
   `grant_reference` keys: those index a SESSION's grant context.
 
+- **Standing denials and inbound actions are audited on this server's own
+  chain** (M28, 0039). A lock or a quarantine placed or lifted is
+  `operator.subject.locked` / `operator.subject.unlocked` and
+  `operator.target.quarantined` / `operator.target.released`, written in the
+  transaction that changes the row and only when it changed one, naming the
+  actor and the reason code and text. An inbound action's every execution is
+  recorded, and every record it writes carries `action_id`, `action_kind`,
+  `external_ref`, `reason_code` and `provider`, with the actor
+  `action-handler:<provider>` and no subject: the act's own record when it
+  did something (those above, `grant.revoked`, or `operator.revocation.published`
+  for a kill, written once the kill is published and only then);
+  `action.unchanged` when it found nothing to act on, which is not the lever's
+  event because that would claim an act that did not happen; `action.refused`
+  when it refused, with the field at fault or the reason code
+  (`break_glass_subject`) and what was sent only where it is fit to be written.
+  A repeat of an action writes nothing. The decision a standing denial made is
+  a decision record like any other (§5.3).
+
 ---
 
 ## 8. Cross-cutting conventions
@@ -3553,7 +3702,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0036 | Bounded lists 8: the audit query | `GET …/audit/records`, `…/drift`, `…/algorithm-policy-unmet`, `…/gaps` and `…/certificates/{serial}/records` paged by recorded-at, stream and chain sequence in the query's direction, a limit above the maximum refused rather than clamped; `audit_records_order_idx` replacing the index on recorded-at alone (M26, M8, M21) |
 | 0037 | Bounded lists 9: the audit joins, negotiated sessions and per-session reads | `GET …/audit/blocked-commands` paged on the audit key; `GET …/audit/negotiated` gains `next`, paged by each session's latest matching record; `…/sessions/{session}/certificates` and `…/algorithms` say `truncated`; the enumerating test's pending list deleted, leaving every `GET` route paged, signal-only or exempt with its reason (M26, M8) |
 | 0038 | Host routes and the console in namespaces of their own | every way a host route can overlap a path Control serves, verified against the real route table and at the request level, with each guard proven by a mutation; then four namespaces on the north-bound listener, each under a prefix of its own — Control's API, a host's API of both classes, Control's console and a host's console screens — with no path in two, held pairwise by tests in both directions, both consoles reserved before either is built, no catch-all outside its own prefix, and start-up's refusal kept as defence in depth; a decision (M27), a `### Breaking` release (`v0.25.0`), and the sync `hoplock/enterprise` is owed (M15, M24, M18, M19, M20, M21, M23). Queued at the user's direction |
-| 0039 | Inbound actions: the executor, a subject lock & a target quarantine | Control's `ext.ActionExecutor` (`internal/action`), executing every `ActionKind` through the service an operator's route calls: `kill_session` by session or by subject through the event stream (M9), `revoke_grant` through 0012's revocation (M10), and `lock_subject`, `unlock_subject` and `quarantine_target` through a subject lock and a target quarantine this phase adds. A lock and a quarantine are standing denials applied above the engine, so no policy rule can write around one; each is recorded with the decision it denied and explained (M3, M4, M17, M5), and an operator places and lifts each on north-bound routes of its own. The executor is idempotent per tenant on `ActionID`, with a different action under one id a conflict (M16's precedent). It refuses to lock a break-glass subject (M7) and shows the holder `ReasonText` once validated, or Control's own text. Every execution is recorded on the control stream with the handler as actor and the external reference. The registered `ext.ActionHandler` is started after the registry is sealed and before the listeners open, and stopped on shutdown, and a failed `Start` never stops Control. No `ext` signature changes. A new decision, and a MINOR release (M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; on one node it depends only on merged phases (0009, 0012, 0019) |
+| 0039 | Inbound actions: the executor, a subject lock & a target quarantine | **M28.** Control's `ext.ActionExecutor` (`internal/action`), executing every `ActionKind` through the service an operator's route calls: `kill_session` by exactly one of a session or a subject through the event stream (M9), `revoke_grant` through 0012's revocation (M10, split into `RevokeWithin` and `Finish` so the ledger row commits with it), and `lock_subject`, `unlock_subject` and `quarantine_target` through a subject lock and a target quarantine (`internal/standing`; migration `0020`: `subject_locks`, `target_quarantines`, `action_executions`). A lock and a quarantine are standing denials applied above the engine — `subject_locked` and `target_quarantined`, a deny and never an outage — read in the statement that reads the subject and the target (no round trip added, counted by a test), holding for an id with no row, surviving an upsert, a delete and a re-create, recorded whole in `inputs.standing`, explained, and reproduced by replay. An operator places and lifts each on `POST …/subjects/{subject}/lock` / `unlock` and `POST …/targets/{target}/quarantine` / `release` under `session:revoke`; `GET` shows them, and `DELETE` of a quarantined target is `409 target_quarantined`. The executor is idempotent per tenant on `ActionID` (a different action under one id is `KindConflict`; a repeat returns the first result and sends again what it owed the stream), refuses to lock a break-glass subject (`KindDenied`, `break_glass_subject`), shows the holder `ReasonText` once validated or Control's own text, and records every execution with the handler as actor (`action-handler:<provider>`): the act's record, `action.unchanged`, or `action.refused`. The registered `ext.ActionHandler` is started after the registry is sealed and before the listeners open, stopped before they drain, and a `Start` that fails, panics or never returns is logged and shown on `GET …/extensions` (`started`, `start_error`) and never stops Control. No `ext` signature changes; `v0.26.0` (M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; on one node it depends only on merged phases (0009, 0012, 0019) |
 | 0040 | Identity sync: Control's sync sink & de-provisioning | Control's `ext.SyncSink` (`internal/provision`) over its identity store, handed to the registered `ext.IdentitySync`, which is started after the registry is sealed and before the listeners open and stopped on shutdown, a failed `Start` never stopping Control: a provisioned subject joined on `ExternalID` by a link row and never on the username, its principals exactly the directory's username and unique in the tenant, every method idempotent on `ExternalID` and ordered by `UpdatedAt`, with a deactivation or a group tombstone kept for an id not yet linked (0017's precedent) and Control's clock ordering a re-activation; what the directory holds reaching policy only through the tenant's claim mapping (M7); the directory the only writer of what it provisions (`409 subject_directory_managed`); a connector's `directory_claim`, through which a login reaches the provisioned subject or is refused (`federation.not_provisioned`); a deactivation a standing denial of its own beside 0039's lock, read in the same round trip, denied as `subject_deactivated` and lifted only by the directory, revoking grants, pending requests, north-bound credentials, certificates and live sessions through the services an operator's levers call, with a retry that finishes it; every applied call recorded on the control stream with the sync as actor. No `ext` signature changes. 0039's decision extended, and a MINOR release (M7, M15, M9, M10, M5, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0039 and 0027, and on merged phases (0011, 0012, 0016, 0019) |
 | 0041 | Registered reports served | every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (a report is the audit store, summarised): `GET …/reports` lists each provider's `Reports(ctx, tenant)` with a provider that failed listed with its failure rather than dropped, and `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), checks it against the descriptor the provider listed for that tenant before `Generate` is called, and streams the body with the format's own media type, `nosniff` and `attachment`, never the provider's; a generation with its own bound (`north.report_timeout`) and a per-node ceiling (`north.max_concurrent_reports`, past it `503 report_generation_busy`) beside the decision path (M5), and a body that fails after its first byte aborts the response rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation; `ErrNotFound` `404`, `ErrInvalid` `400`, and every other failure `502 report_provider_failed` or `503 report_provider_unavailable`, never a `401` or a `403` of a provider's (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
 | 0042 | North-bound answer names | every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, which rendered store and fleet structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0043 makes the names a compatibility promise (M19, M26, M17, M23) |

@@ -61,6 +61,24 @@ func (a Actor) check() error {
 	return nil
 }
 
+// ActionRef is the inbound action behind an act, when a registered
+// ext.ActionHandler's action performed it (0039). Every record such an act
+// writes carries it, so an auditor can follow "the SOAR platform did this" from
+// the record to the incident that caused it.
+type ActionRef struct {
+	// ID is the requester's id for the action: the idempotency key.
+	ID string
+	// Kind is the action kind's code, e.g. `revoke_grant`.
+	Kind string
+	// ExternalRef ties the action to the incident or detection that caused
+	// it.
+	ExternalRef string
+	// ReasonCode is why, as the requester gave it.
+	ReasonCode string
+	// Provider is the registered provider that asked.
+	Provider string
+}
+
 // Event is one act, as it is recorded and announced.
 type Event struct {
 	// Name is one of the Event constants.
@@ -83,6 +101,9 @@ type Event struct {
 	// revoked grant was (M16, 0017). Nil for every revocation an operator
 	// made.
 	Ended *ExternalEnd
+	// Action is the inbound action that performed the act, nil for every act
+	// a person or a push performed (0039).
+	Action *ActionRef
 	// At is when it happened.
 	At time.Time
 }
@@ -138,6 +159,17 @@ func notification(tenant store.Tenant, ev Event) ext.Notification {
 	}
 	if ev.Workflow != "" {
 		attrs["workflow"] = ev.Workflow
+	}
+	if a := ev.Action; a != nil {
+		attrs["action_id"] = a.ID
+		attrs["action_kind"] = a.Kind
+		attrs["action_provider"] = a.Provider
+		if a.ExternalRef != "" {
+			attrs["action_external_ref"] = a.ExternalRef
+		}
+		if a.ReasonCode != "" {
+			attrs["action_reason_code"] = a.ReasonCode
+		}
 	}
 	if r := ev.Request; r != nil {
 		n.SubjectID = r.SubjectID

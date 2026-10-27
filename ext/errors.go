@@ -49,7 +49,9 @@ const (
 	// KindDenied means the extension decided, on purpose, that the answer is
 	// no. This is the ONLY kind that may become a deny (M11), and an
 	// implementation returns it only when refusal is the answer rather than
-	// the symptom.
+	// the symptom. Control returns it too, from ActionExecutor.Execute, when
+	// it refuses an action on purpose: a lock on a break-glass subject, for
+	// one.
 	KindDenied
 )
 
