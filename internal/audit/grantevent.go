@@ -181,6 +181,8 @@ func (e *Emitter) GrantEvent(ctx context.Context, tx *store.Store, tenant store.
 		put(attrs, AttrGrantExternalEndedAdditional, strings.TrimSpace(string(end.AdditionalContext)))
 	}
 
+	putAction(attrs, ev.Action)
+
 	actor := ev.Actor
 	attrs[AttrBreakGlass] = strconv.FormatBool(actor.BreakGlass)
 	put(attrs, AttrPrincipalID, actor.Principal)

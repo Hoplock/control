@@ -173,6 +173,17 @@ const (
 	// CodeUnavailable is a request this server cannot serve right now and
 	// will on a retry: the revocation stream is shutting down.
 	CodeUnavailable = "unavailable"
+
+	// The standing denials (0039, M28).
+	//
+	// CodeTargetQuarantined is a delete of a target that is quarantined:
+	// deleting the row would lift the quarantine silently, so it is refused,
+	// answered 409, until the quarantine is released.
+	CodeTargetQuarantined = "target_quarantined"
+	// CodeDenialUndelivered is a lock or a quarantine that IS in force and
+	// recorded, whose cached-decision invalidation or session kill could not
+	// be published. Asking for it again re-sends.
+	CodeDenialUndelivered = "standing_denial_undelivered"
 )
 
 // AllCodes is every code this surface defines, so a test can assert that adding
@@ -190,6 +201,7 @@ var AllCodes = []string{
 	CodeWindowClosed, CodePayloadTooLarge,
 	CodePolicyInvalid, CodeFindingsNotAccepted, CodePolicyBlocked, CodeDecisionUnexplainable,
 	CodeConfigKeyNotFleetOwned, CodeConfigValueInvalid, CodeHostKeyUnresolved, CodeUnavailable,
+	CodeTargetQuarantined, CodeDenialUndelivered,
 }
 
 // writeJSON is the only writer in this package, so the content type cannot

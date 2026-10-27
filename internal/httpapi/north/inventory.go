@@ -58,6 +58,11 @@ type targetView struct {
 	CredentialMethod string            `json:"credential_method,omitempty"`
 	CreatedAt        time.Time         `json:"created_at,omitzero"`
 	UpdatedAt        time.Time         `json:"updated_at,omitzero"`
+	// Quarantined reports a quarantine standing on the target: no new access
+	// to it is allowed, whatever policy says (M28). Quarantine holds its
+	// facts.
+	Quarantined bool            `json:"quarantined"`
+	Quarantine  *quarantineView `json:"quarantine,omitempty"`
 }
 
 func viewTarget(t store.Target) targetView {
@@ -65,6 +70,15 @@ func viewTarget(t store.Target) targetView {
 		ID: t.ID, Hostname: t.Hostname, Zone: t.Zone, Labels: nonNilLabels(t.Labels),
 		CredentialMethod: t.CredentialMethod, CreatedAt: t.CreatedAt.UTC(), UpdatedAt: t.UpdatedAt.UTC(),
 	}
+}
+
+// viewTargetWith is a target with the quarantine on it, when one stands.
+func viewTargetWith(t store.Target, q *store.TargetQuarantine) targetView {
+	v := viewTarget(t)
+	if q != nil {
+		v.Quarantined, v.Quarantine = true, viewQuarantine(*q)
+	}
+	return v
 }
 
 type targetBody struct {
@@ -108,10 +122,26 @@ func (s *Server) handleTargetList(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "list targets", err)
 		return
 	}
+	// The quarantines standing on this page's targets, read for its own rows
+	// (M26): a list that listed every quarantine in the tenant would be a
+	// list nobody bounds.
+	ids := make([]string, 0, len(page.Rows))
+	for _, t := range page.Rows {
+		ids = append(ids, t.ID)
+	}
+	quarantines, err := s.st.TargetQuarantines().For(r.Context(), tenant, ids)
+	if err != nil {
+		s.fail(w, r, "list quarantines", err)
+		return
+	}
 	out := make([]targetView, 0, len(page.Rows))
 	var last []any
 	for _, t := range page.Rows {
-		out = append(out, viewTarget(t))
+		var q *store.TargetQuarantine
+		if found, ok := quarantines[t.ID]; ok {
+			q = &found
+		}
+		out = append(out, viewTargetWith(t, q))
 	}
 	if n := len(page.Rows); n > 0 {
 		last = []any{page.Rows[n-1].ID}
@@ -129,7 +159,12 @@ func (s *Server) handleTargetGet(w http.ResponseWriter, r *http.Request) {
 		s.inventoryFailure(w, r, "read target", err)
 		return
 	}
-	answer(w, http.StatusOK, viewTarget(t))
+	q, err := s.quarantineOf(r.Context(), tenant, t.ID)
+	if err != nil {
+		s.fail(w, r, "read quarantine", err)
+		return
+	}
+	answer(w, http.StatusOK, viewTargetWith(t, q))
 }
 
 func (s *Server) handleTargetPut(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +224,12 @@ func (s *Server) handleTargetPut(w http.ResponseWriter, r *http.Request) {
 		s.inventoryFailure(w, r, "write target", err)
 		return
 	}
-	answer(w, http.StatusOK, viewTarget(stored))
+	q, err := s.quarantineOf(r.Context(), tenant, stored.ID)
+	if err != nil {
+		s.fail(w, r, "read quarantine", err)
+		return
+	}
+	answer(w, http.StatusOK, viewTargetWith(stored, q))
 }
 
 func (s *Server) handleTargetDelete(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +260,16 @@ func (s *Server) handleTargetDelete(w http.ResponseWriter, r *http.Request) {
 			Message: "target " + id + " deleted",
 		})
 	})
+	if store.IsTargetQuarantined(err) {
+		// Deleting the row would lift the quarantine silently (M28), so it is
+		// refused until the quarantine is released on purpose.
+		writeError(w, http.StatusConflict, Error{
+			Code: CodeTargetQuarantined, CorrelationID: CorrelationIDFrom(r.Context()),
+			Parameters: map[string]any{"target": id},
+			Message:    "this target is quarantined, and deleting it would lift the quarantine; release it first",
+		})
+		return
+	}
 	if err != nil {
 		s.inventoryFailure(w, r, "delete target", err)
 		return
@@ -413,6 +463,14 @@ type subjectView struct {
 	Claims         map[string]string `json:"claims"`
 	BreakGlass     bool              `json:"break_glass"`
 	MappingVersion int               `json:"mapping_version,omitempty"`
+	// Locked reports a lock standing on the subject: every authorize for them
+	// is a deny, whatever policy says (M28). Lock holds its facts.
+	Locked bool      `json:"locked"`
+	Lock   *lockView `json:"lock,omitempty"`
+	// RecordMissing is set only on a subject this server holds a lock for and
+	// no row: the lock outlives a deleted subject, and an operator must still
+	// be able to read it.
+	RecordMissing bool `json:"record_missing,omitempty"`
 }
 
 func viewSubject(sub store.Subject) subjectView {
@@ -421,6 +479,15 @@ func viewSubject(sub store.Subject) subjectView {
 		Groups: nonNilStrings(sub.Groups), Claims: nonNilLabels(sub.Claims), BreakGlass: sub.BreakGlass,
 		MappingVersion: sub.MappingVersion,
 	}
+}
+
+// viewSubjectWith is a subject with the lock on it, when one stands.
+func viewSubjectWith(sub store.Subject, l *store.SubjectLock) subjectView {
+	v := viewSubject(sub)
+	if l != nil {
+		v.Locked, v.Lock = true, viewLock(*l)
+	}
+	return v
 }
 
 type subjectBody struct {
@@ -449,10 +516,23 @@ func (s *Server) handleSubjectList(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "list subjects", err)
 		return
 	}
+	ids := make([]string, 0, len(page.Rows))
+	for _, sub := range page.Rows {
+		ids = append(ids, sub.ID)
+	}
+	locks, err := s.st.SubjectLocks().For(r.Context(), tenant, ids)
+	if err != nil {
+		s.fail(w, r, "list locks", err)
+		return
+	}
 	out := make([]subjectView, 0, len(page.Rows))
 	var last []any
 	for _, sub := range page.Rows {
-		out = append(out, viewSubject(sub))
+		var l *store.SubjectLock
+		if found, ok := locks[sub.ID]; ok {
+			l = &found
+		}
+		out = append(out, viewSubjectWith(sub, l))
 	}
 	if n := len(page.Rows); n > 0 {
 		last = []any{page.Rows[n-1].ID}
@@ -465,12 +545,24 @@ func (s *Server) handleSubjectGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sub, err := s.st.Subjects().Get(r.Context(), tenant, r.PathValue("subject"))
+	id := r.PathValue("subject")
+	// The row and the lock in one read. A lock outlives a deleted row, so a
+	// subject with a lock and no row is answered, marked as such, instead of
+	// as a subject nobody can see the lock on.
+	standing, err := s.st.Subjects().Standing(r.Context(), tenant, id)
 	if err != nil {
-		s.inventoryFailure(w, r, "read subject", err)
+		s.fail(w, r, "read subject", err)
 		return
 	}
-	answer(w, http.StatusOK, viewSubject(sub))
+	if !standing.Known && standing.Lock == nil {
+		s.inventoryFailure(w, r, "read subject", &store.Error{Op: "north.handleSubjectGet", Kind: store.KindNotFound})
+		return
+	}
+	v := viewSubjectWith(standing.Subject, standing.Lock)
+	if !standing.Known {
+		v.ID, v.RecordMissing = id, true
+	}
+	answer(w, http.StatusOK, v)
 }
 
 func (s *Server) handleSubjectPut(w http.ResponseWriter, r *http.Request) {
@@ -541,7 +633,12 @@ func (s *Server) handleSubjectPut(w http.ResponseWriter, r *http.Request) {
 		s.inventoryFailure(w, r, "write subject", err)
 		return
 	}
-	answer(w, http.StatusOK, viewSubject(stored))
+	l, err := s.lockOf(r.Context(), tenant, stored.ID)
+	if err != nil {
+		s.fail(w, r, "read lock", err)
+		return
+	}
+	answer(w, http.StatusOK, viewSubjectWith(stored, l))
 }
 
 func (s *Server) handleSubjectDelete(w http.ResponseWriter, r *http.Request) {

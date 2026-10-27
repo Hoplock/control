@@ -59,6 +59,11 @@ type Story struct {
 	// Grant is the `inputs.grants[]` entry the explanation names, whole;
 	// nil when no grant was involved.
 	Grant json.RawMessage `json:"grant,omitempty"`
+	// Standing is the standing denials that decided the call, whole, out of
+	// `inputs.standing[]` (M28): the lock or the quarantine, who placed it
+	// and when, and the incident and action behind it. Set exactly when the
+	// engine was not asked, and then Rule is empty because no rule answered.
+	Standing json.RawMessage `json:"standing,omitempty"`
 	// Inputs, Explanation and Snapshot are the record's own documents:
 	// `explanation.external` and `explanation.unanswered` are inside the
 	// explanation, `inputs.external_context[]` inside the inputs.
@@ -180,6 +185,31 @@ func story(ctx context.Context, active ActiveMapping, tenant store.Tenant, d sto
 			// unexplained decision M4 exists to make impossible.
 			return Story{}, fmt.Errorf("%w: %s names grant %s, which its inputs do not hold", ErrUnexplainable, d.ID, expl.Grant)
 		}
+	}
+	if len(expl.Standing) > 0 {
+		// A call a standing denial decided: the explanation's codes must be
+		// the inputs' denials, in the same order, and the effect must be the
+		// deny they make. A story that names a lock its inputs do not hold is
+		// the unexplained decision M4 exists to make impossible.
+		var raw struct {
+			Standing []json.RawMessage `json:"standing"`
+		}
+		if err := json.Unmarshal(d.Inputs, &raw); err != nil || len(in.Standing) != len(expl.Standing) || len(raw.Standing) != len(in.Standing) {
+			return Story{}, fmt.Errorf("%w: %s names %d standing denials its inputs do not hold", ErrUnexplainable, d.ID, len(expl.Standing))
+		}
+		for i, code := range expl.Standing {
+			if in.Standing[i].Code != code {
+				return Story{}, fmt.Errorf("%w: %s names the standing denial %s where its inputs hold %s", ErrUnexplainable, d.ID, code, in.Standing[i].Code)
+			}
+		}
+		if d.Effect != EffectDeny || expl.Effect != EffectDeny {
+			return Story{}, fmt.Errorf("%w: %s carries a standing denial and is not a deny", ErrUnexplainable, d.ID)
+		}
+		doc, err := json.Marshal(raw.Standing)
+		if err != nil {
+			return Story{}, fmt.Errorf("%w: %s's standing denials do not encode", ErrUnexplainable, d.ID)
+		}
+		s.Standing = doc
 	}
 	if active != nil {
 		v, err := active(ctx, tenant)

@@ -52,7 +52,11 @@ const DSNEnv = "HOPLOCK_TEST_DSN"
 // still run `go test ./...` — EXCEPT in CI, where a skip is indistinguishable
 // from a pass in the log and this whole file would quietly stop being run. CI
 // gets a failure naming the missing variable instead.
-func New(t testing.TB) *store.Store {
+func New(t testing.TB) *store.Store { return NewWith(t) }
+
+// NewWith is New with options for the Store it opens: a test that counts the
+// statements a path sends passes store.WithQueryTracer.
+func NewWith(t testing.TB, opts ...store.Option) *store.Store {
 	t.Helper()
 
 	dsn := os.Getenv(DSNEnv)
@@ -68,7 +72,7 @@ func New(t testing.TB) *store.Store {
 	ctx := t.Context()
 	schema := NewSchema(t, dsn)
 
-	st, err := store.Open(ctx, DSNForSchema(dsn, schema))
+	st, err := store.Open(ctx, DSNForSchema(dsn, schema), opts...)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

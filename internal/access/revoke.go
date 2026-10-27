@@ -46,6 +46,12 @@ type Revocation struct {
 	Widened bool
 	// EventIDs are the revocation-stream events published, in order.
 	EventIDs []string
+
+	// at is the instant the revocation was stamped with, and untouched
+	// reports that it was left alone because the grant had expired: what
+	// Finish needs from the transaction that made it.
+	at        time.Time
+	untouched bool
 }
 
 // Revoke withdraws a grant, ends the sessions it backed, and tells the holder
@@ -65,11 +71,11 @@ func (s *Service) Revoke(ctx context.Context, tenant store.Tenant, actor Actor, 
 	if err := actor.check(); err != nil {
 		return Revocation{}, err
 	}
-	reason, err := normalizeRevokeReason(reason)
+	reason, err := NormalizeHolderReason(reason)
 	if err != nil {
 		return Revocation{}, err
 	}
-	return s.revoke(ctx, tenant, actor, grantID, reason, nil)
+	return s.revoke(ctx, tenant, actor, grantID, reason, nil, nil)
 }
 
 // EndExternal revokes the grant a pushed window became because the external
@@ -102,66 +108,130 @@ func (s *Service) EndExternal(ctx context.Context, tenant store.Tenant, actor Ac
 	if !AdditionalContextValid(end.AdditionalContext) {
 		return Revocation{}, &ValidationError{Field: "additional_context", Problem: ProblemInvalid}
 	}
-	return s.revoke(ctx, tenant, actor, grantID, ExternalEndReason, &end)
+	return s.revoke(ctx, tenant, actor, grantID, ExternalEndReason, &end, nil)
 }
 
 // revoke is the one revocation path, for an operator's revocation and for an
 // external system's end alike: two paths would be two places for the settle
 // pass to drift apart. end is nil for an operator's.
-func (s *Service) revoke(ctx context.Context, tenant store.Tenant, actor Actor, grantID, reason string, end *ExternalEnd) (Revocation, error) {
-	now := s.now().UTC()
-
+func (s *Service) revoke(ctx context.Context, tenant store.Tenant, actor Actor, grantID, reason string, end *ExternalEnd, action *ActionRef) (Revocation, error) {
 	var out Revocation
-	untouched := false
 	err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
-		if end != nil {
-			g, err := tx.Grants().Get(ctx, tenant, grantID)
-			if err != nil {
-				return err
-			}
-			if g.External.AssertionID == "" {
-				return fmt.Errorf("access: grant %s was not produced by a push, and only a push's own system ends one", grantID)
-			}
-			if g.RevokedAt.IsZero() && !now.Before(g.ExpiresAt) {
-				// Over already, by its own window. Nothing to end,
-				// and nothing true to add.
-				out, untouched = Revocation{Grant: g}, true
-				return nil
-			}
-		}
-		revoked, err := tx.Grants().Revoke(ctx, tenant, grantID, store.GrantRevocation{
-			At: now, By: actor.grantActor(), Reason: reason,
-		})
-		if err != nil {
-			return err
-		}
-		g, err := tx.Grants().Get(ctx, tenant, grantID)
-		if err != nil {
-			return err
-		}
-		out = Revocation{Grant: g, Revoked: revoked}
-		if !revoked {
-			// Already withdrawn, by someone and for a reason that stand.
-			// Recording a second revocation would be a second answer to
-			// "when did access stop", and it would not be more true.
-			return nil
-		}
-		return s.recorder.GrantEvent(ctx, tx, tenant, Event{
-			Name: EventGrantRevoked, Actor: actor, Grant: &g, Ended: end, At: now,
-		})
+		var err error
+		out, err = s.revokeWithin(ctx, tx, tenant, actor, grantID, reason, end, action)
+		return err
 	})
 	if err != nil {
 		return Revocation{}, err
 	}
-	if untouched {
+	return s.finish(ctx, tenant, actor, out, end, action)
+}
+
+// revokeWithin is the transaction half of a revocation: the withdrawal and its
+// audit record, which commit together or not at all.
+func (s *Service) revokeWithin(ctx context.Context, tx *store.Store, tenant store.Tenant, actor Actor, grantID, reason string, end *ExternalEnd, action *ActionRef) (Revocation, error) {
+	now := s.now().UTC()
+	if end != nil {
+		g, err := tx.Grants().Get(ctx, tenant, grantID)
+		if err != nil {
+			return Revocation{}, err
+		}
+		if g.External.AssertionID == "" {
+			return Revocation{}, fmt.Errorf("access: grant %s was not produced by a push, and only a push's own system ends one", grantID)
+		}
+		if g.RevokedAt.IsZero() && !now.Before(g.ExpiresAt) {
+			// Over already, by its own window. Nothing to end,
+			// and nothing true to add.
+			return Revocation{Grant: g, at: now, untouched: true}, nil
+		}
+	}
+	revoked, err := tx.Grants().Revoke(ctx, tenant, grantID, store.GrantRevocation{
+		At: now, By: actor.grantActor(), Reason: reason,
+	})
+	if err != nil {
+		return Revocation{}, err
+	}
+	g, err := tx.Grants().Get(ctx, tenant, grantID)
+	if err != nil {
+		return Revocation{}, err
+	}
+	out := Revocation{Grant: g, Revoked: revoked, at: now}
+	if !revoked {
+		// Already withdrawn, by someone and for a reason that stand.
+		// Recording a second revocation would be a second answer to
+		// "when did access stop", and it would not be more true.
+		return out, nil
+	}
+	if err := s.recorder.GrantEvent(ctx, tx, tenant, Event{
+		Name: EventGrantRevoked, Actor: actor, Grant: &g, Ended: end, Action: action, At: now,
+	}); err != nil {
+		return Revocation{}, err
+	}
+	return out, nil
+}
+
+// finish is the half after the commit: the announcement, and the publication
+// the revocation owes the fleet.
+func (s *Service) finish(ctx context.Context, tenant store.Tenant, actor Actor, out Revocation, end *ExternalEnd, action *ActionRef) (Revocation, error) {
+	if out.untouched {
 		return out, nil
 	}
 	if out.Revoked {
-		s.announce(ctx, tenant, Event{Name: EventGrantRevoked, Actor: actor, Grant: &out.Grant, Ended: end, At: now})
+		s.announce(ctx, tenant, Event{Name: EventGrantRevoked, Actor: actor, Grant: &out.Grant, Ended: end, Action: action, At: out.at})
 	}
 
+	grantID := out.Grant.ID
 	if err := s.withdraw(ctx, tenant, &out); err != nil {
 		s.log.ErrorContext(ctx, "a grant was revoked and ending its sessions could not be published",
+			"event", "grant_revocation_undelivered",
+			"tenant", tenant.String(),
+			"grant_id", grantID,
+			"error", err.Error(),
+		)
+		return out, fmt.Errorf("%w: %v", ErrUndelivered, err)
+	}
+	return out, nil
+}
+
+// RevokeWithin revokes a grant inside tx, the transaction an inbound action's
+// ledger row commits in (0039), and records it there as `grant.revoked`, with
+// the action named. Nothing is published: the caller commits, then calls
+// [Service.Finish] with the result. The holder's reason is the action's,
+// validated like an operator's.
+func (s *Service) RevokeWithin(ctx context.Context, tx *store.Store, tenant store.Tenant, actor Actor, grantID, reason string, action *ActionRef) (Revocation, error) {
+	if err := actor.check(); err != nil {
+		return Revocation{}, err
+	}
+	reason, err := NormalizeHolderReason(reason)
+	if err != nil {
+		return Revocation{}, err
+	}
+	return s.revokeWithin(ctx, tx, tenant, actor, grantID, reason, nil, action)
+}
+
+// Finish announces and publishes what a revocation made by [Service.RevokeWithin]
+// owes, once its transaction has committed: the same two passes a revocation
+// makes. A failure to publish is [ErrUndelivered], and the grant stays revoked.
+func (s *Service) Finish(ctx context.Context, tenant store.Tenant, actor Actor, rev Revocation, action *ActionRef) (Revocation, error) {
+	return s.finish(ctx, tenant, actor, rev, nil, action)
+}
+
+// Resend publishes again what the revocation of a grant owes the fleet, for a
+// grant that is already revoked: how an inbound action asked for a second time
+// gets its kill delivered after the first publication failed. Nothing is
+// written; the first revocation's time, actor and reason stand. A grant that
+// is not revoked is ErrNotFound-shaped: there is nothing to resend.
+func (s *Service) Resend(ctx context.Context, tenant store.Tenant, grantID string) (Revocation, error) {
+	g, err := s.store.Grants().Get(ctx, tenant, grantID)
+	if err != nil {
+		return Revocation{}, err
+	}
+	if g.RevokedAt.IsZero() {
+		return Revocation{}, fmt.Errorf("access: grant %s is not revoked, so there is nothing to resend: %w", grantID, store.ErrNotFound)
+	}
+	out := Revocation{Grant: g}
+	if err := s.withdraw(ctx, tenant, &out); err != nil {
+		s.log.ErrorContext(ctx, "a revoked grant's sessions could not be told again",
 			"event", "grant_revocation_undelivered",
 			"tenant", tenant.String(),
 			"grant_id", grantID,

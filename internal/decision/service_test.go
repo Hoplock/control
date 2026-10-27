@@ -236,6 +236,9 @@ type harness struct {
 	// registration with proxy-1. A relay edge without one is not viable and
 	// is NEVER downgraded to a dial.
 	relayRegistered bool
+	// storeOpts are the options the harness's store is opened with, set by a
+	// harness option: a test that counts statements passes a tracer.
+	storeOpts []store.Option
 }
 
 // fakeSubscriptions stands in for the revocation stream's liveness signal,
@@ -263,9 +266,7 @@ func (f *fakeSubscriptions) LiveSubscription(_ context.Context, _ store.Tenant, 
 
 func newHarness(t testing.TB, opts ...func(*harness)) *harness {
 	t.Helper()
-	st := storetest.New(t)
 	h := &harness{
-		store:    st,
 		clock:    time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC),
 		subs:     &fakeSubscriptions{},
 		proxyCap: map[string]fleet.Capabilities{},
@@ -278,6 +279,8 @@ func newHarness(t testing.TB, opts ...func(*harness)) *harness {
 	for _, opt := range opts {
 		opt(h)
 	}
+	st := storetest.NewWith(t, h.storeOpts...)
+	h.store = st
 
 	registryOpts := []fleet.Option{
 		fleet.WithClock(h.now),

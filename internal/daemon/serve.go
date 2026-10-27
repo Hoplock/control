@@ -20,6 +20,7 @@ import (
 	"github.com/hoplock/control/internal/httpapi/south"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/revoke"
+	"github.com/hoplock/control/internal/standing"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -274,9 +275,31 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
+	// The subject lock and the target quarantine (0039, M28): placed and
+	// lifted here by an operator, and by a registered action handler through
+	// the same service. Its second publication waits one authorize call's
+	// budget, as a grant's revocation does.
+	denials, err := standing.New(standing.Options{
+		Store: st, Recorder: emitter, Revoker: bus, Logger: log, Settle: cfg.Decision.Budget + settleMargin,
+	})
+	if err != nil {
+		return err
+	}
+
+	// The inbound action channel (0039): with a handler registered, the
+	// executor it acts through and the lifecycle that starts it. Nil with none.
+	revocations := revoke.NewOperator(bus, registry)
+	actions, err := buildActionRunner(cfg, st, extensions, denials, grants, revocations, emitter, log)
+	if err != nil {
+		return err
+	}
+
 	deps := northDeps{
 		st: st, ca: ca, emitter: emitter, grants: grants, pushes: pushes,
-		fleet: registry, revocations: revoke.NewOperator(bus, registry), extensions: extensions,
+		fleet: registry, revocations: revocations, standing: denials, extensions: extensions,
+	}
+	if actions != nil {
+		deps.actions = actions
 	}
 	if feed != nil {
 		deps.archive = feed
@@ -287,6 +310,23 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	northSrv, northHandler, err := buildNorth(ctx, cfg, deps, h, log)
 	if err != nil {
 		return err
+	}
+
+	// The registered action handler starts after the registry was sealed and
+	// before either listener opens, for the server's lifetime. A Start that
+	// fails does not stop Control: access must not depend on somebody else's
+	// automation (M11), so the failure is logged, the extension listing says
+	// "registered, not started", and Control serves. It is stopped before the
+	// listeners drain on the way out, and on every early way out of here.
+	if actions != nil {
+		actions.Start(ctx)
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
+			defer cancel()
+			if err := actions.Stop(stopCtx); err != nil {
+				log.Warn("the action handler did not stop cleanly", "provider", actions.Provider(), "error", err)
+			}
+		}()
 	}
 
 	// The archive feed and sink delivery start after the registry was sealed
@@ -356,6 +396,15 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
 	defer cancel()
+
+	// The action handler stops first of all, before the listeners drain: it
+	// is the one thing that can still be handing Control work, and an Execute
+	// that arrives once this has begun is KindUnavailable.
+	if actions != nil {
+		if err := actions.Stop(shutdownCtx); err != nil {
+			log.Warn("the action handler did not stop inside the shutdown grace", "provider", actions.Provider(), "error", err)
+		}
+	}
 
 	// THE ORDER MATTERS. The listeners stop accepting first, so nothing new
 	// arrives; then the broker drains, so every subscription hands over what

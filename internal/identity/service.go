@@ -585,6 +585,12 @@ func (d *StoreDirectory) SubjectByID(ctx context.Context, tenant store.Tenant, s
 	return d.st.Subjects().Get(ctx, tenant, subjectID)
 }
 
+// SubjectStanding implements decision.Subjects: the subject's row, if there is
+// one, and the lock on the id, if one stands, in one round trip (M5, M28).
+func (d *StoreDirectory) SubjectStanding(ctx context.Context, tenant store.Tenant, subjectID string) (store.SubjectStanding, error) {
+	return d.st.Subjects().Standing(ctx, tenant, subjectID)
+}
+
 // KeyByFingerprint implements Directory.
 func (d *StoreDirectory) KeyByFingerprint(ctx context.Context, tenant store.Tenant, fingerprint string) (store.SubjectKey, error) {
 	if fingerprint == "" {

@@ -38,10 +38,21 @@ type Store struct {
 	pool *pgxpool.Pool // nil on a transaction-bound Store
 
 	timeout time.Duration
+	// tracer observes every statement the pool sends; nil is none.
+	tracer pgx.QueryTracer
 }
 
 // Option configures a Store at Open.
 type Option func(*Store)
+
+// WithQueryTracer observes every statement the Store's pool sends. It exists
+// so a test can COUNT the round trips a path makes — M5 is a claim about the
+// decision path's reads, and "no extra round trip" is only a claim until
+// something counts them — and it is not a logging hook: the tracer is called on
+// the path it observes.
+func WithQueryTracer(t pgx.QueryTracer) Option {
+	return func(s *Store) { s.tracer = t }
+}
 
 // WithQueryTimeout overrides DefaultQueryTimeout. A non-positive duration
 // disables the store's own bound, leaving the caller's context in charge.
@@ -62,15 +73,19 @@ func Open(ctx context.Context, dsn string, opts ...Option) (*Store, error) {
 		return nil, &Error{Op: "store.Open", Kind: KindInvalid, Err: errDSNUnparseable}
 	}
 
+	s := &Store{timeout: DefaultQueryTimeout}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.tracer != nil {
+		cfg.ConnConfig.Tracer = s.tracer
+	}
+
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, wrap("store.Open", err)
 	}
-
-	s := &Store{db: pool, pool: pool, timeout: DefaultQueryTimeout}
-	for _, opt := range opts {
-		opt(s)
-	}
+	s.db, s.pool = pool, pool
 
 	pingCtx, cancel := s.withTimeout(ctx)
 	defer cancel()
@@ -226,6 +241,16 @@ func (s *Store) Subjects() SubjectRepository { return subjectRepo{s} }
 
 // Targets returns the target repository.
 func (s *Store) Targets() TargetRepository { return targetRepo{s} }
+
+// SubjectLocks returns the repository of standing denials on subjects (0039).
+func (s *Store) SubjectLocks() SubjectLockRepository { return subjectLockRepo{s} }
+
+// TargetQuarantines returns the repository of standing denials on targets
+// (0039).
+func (s *Store) TargetQuarantines() TargetQuarantineRepository { return targetQuarantineRepo{s} }
+
+// ActionExecutions returns the ledger of inbound actions (0039).
+func (s *Store) ActionExecutions() ActionExecutionRepository { return actionExecutionRepo{s} }
 
 // Proxies returns the proxy repository.
 func (s *Store) Proxies() ProxyRepository { return proxyRepo{s} }

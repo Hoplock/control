@@ -75,6 +75,11 @@ var repositoryInterfaces = map[string]reflect.Type{
 	// The shared event plane (0027).
 	"EventLogRepository":          reflect.TypeOf((*EventLogRepository)(nil)).Elem(),
 	"EventSubscriptionRepository": reflect.TypeOf((*EventSubscriptionRepository)(nil)).Elem(),
+
+	// Standing denials and the inbound action ledger (0039).
+	"SubjectLockRepository":      reflect.TypeOf((*SubjectLockRepository)(nil)).Elem(),
+	"TargetQuarantineRepository": reflect.TypeOf((*TargetQuarantineRepository)(nil)).Elem(),
+	"ActionExecutionRepository":  reflect.TypeOf((*ActionExecutionRepository)(nil)).Elem(),
 }
 
 // Tenancy is unforgeable at the repository boundary (M18).
@@ -172,6 +177,10 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 
 		"EventLogRepository":          s.EventLog(),
 		"EventSubscriptionRepository": s.EventSubscriptions(),
+
+		"SubjectLockRepository":      s.SubjectLocks(),
+		"TargetQuarantineRepository": s.TargetQuarantines(),
+		"ActionExecutionRepository":  s.ActionExecutions(),
 	}
 
 	if len(got) != len(repositoryInterfaces) {
@@ -236,8 +245,45 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"PolicyBundles.GetByHash":   func() error { _, err := s.PolicyBundles().GetByHash(ctx, "", "h"); return err },
 		"PolicyBundles.Lock":        func() error { return s.PolicyBundles().Lock(ctx, "") },
 		"Targets.Lock":              func() error { return s.Targets().Lock(ctx, "") },
-		"Subjects.Lock":             func() error { return s.Subjects().Lock(ctx, "") },
-		"ClaimMappings.Lock":        func() error { return s.ClaimMappings().Lock(ctx, "") },
+		"Targets.StandingByHostname": func() error {
+			_, err := s.Targets().StandingByHostname(ctx, "", "h")
+			return err
+		},
+		"Decisions.SessionExists": func() error {
+			_, err := s.Decisions().SessionExists(ctx, "", "s")
+			return err
+		},
+		"Subjects.Standing": func() error { _, err := s.Subjects().Standing(ctx, "", "s"); return err },
+		"SubjectLocks.Place": func() error {
+			_, _, err := s.SubjectLocks().Place(ctx, "", SubjectLock{SubjectID: "s", LockedBy: StandingActor{Principal: "p"}})
+			return err
+		},
+		"SubjectLocks.Lift": func() error { _, err := s.SubjectLocks().Lift(ctx, "", "s"); return err },
+		"SubjectLocks.Get":  func() error { _, err := s.SubjectLocks().Get(ctx, "", "s"); return err },
+		"SubjectLocks.For": func() error {
+			_, err := s.SubjectLocks().For(ctx, "", []string{"s"})
+			return err
+		},
+		"TargetQuarantines.Place": func() error {
+			_, _, err := s.TargetQuarantines().Place(ctx, "", TargetQuarantine{TargetID: "t", QuarantinedBy: StandingActor{Principal: "p"}})
+			return err
+		},
+		"TargetQuarantines.Lift": func() error { _, err := s.TargetQuarantines().Lift(ctx, "", "t"); return err },
+		"TargetQuarantines.Get":  func() error { _, err := s.TargetQuarantines().Get(ctx, "", "t"); return err },
+		"TargetQuarantines.For": func() error {
+			_, err := s.TargetQuarantines().For(ctx, "", []string{"t"})
+			return err
+		},
+		"ActionExecutions.Lock": func() error { return s.ActionExecutions().Lock(ctx, "", "a") },
+		"ActionExecutions.Get":  func() error { _, err := s.ActionExecutions().Get(ctx, "", "a"); return err },
+		"ActionExecutions.Insert": func() error {
+			return s.ActionExecutions().Insert(ctx, "", ActionExecution{ActionID: "a", Kind: "k", Provider: "p"})
+		},
+		"ActionExecutions.MarkRecorded": func() error {
+			return s.ActionExecutions().MarkRecorded(ctx, "", "a", nowForTest())
+		},
+		"Subjects.Lock":      func() error { return s.Subjects().Lock(ctx, "") },
+		"ClaimMappings.Lock": func() error { return s.ClaimMappings().Lock(ctx, "") },
 		"Decisions.Insert": func() error {
 			return s.Decisions().Insert(ctx, "", Decision{ID: "d", InputsDigest: "x"})
 		},

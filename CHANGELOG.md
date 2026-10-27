@@ -26,6 +26,93 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.26.0
+
+Phase 0039, inbound actions: the executor, a subject lock and a target
+quarantine. Control implements `ext.ActionExecutor` and starts the registered
+`ext.ActionHandler`, and an operator can now pull every lever the handler can
+(decision M28, `docs/PLAN.md` §2). Raised by `Hoplock/enterprise#26`. With no
+handler registered nothing runs that did not before, except the lock and the
+quarantine, which an operator places and lifts. **Run `hoplock-control
+migrate`:** migration `0020` adds `subject_locks`, `target_quarantines` and
+`action_executions`.
+
+No `ext` identifier is added, removed or changed, so `make release-check` sees
+none of this. The doc comments of `ext.ActionKillSession`, `ext.Action`,
+`ext.ActionResult`, `ext.ActionExecutor`, `ext.ActionHandler` and
+`ext.KindDenied` say what is now true. Read them before you build an inbound
+channel on them.
+
+- **A registered `ext.ActionHandler` is started.** `Start(ctx, exec)` is called
+  once, after the registry is sealed and before either listener opens, with
+  the server's lifetime as the context. `Stop` is called on shutdown before the
+  listeners drain, bounded by the shutdown deadline, whether or not `Start`
+  succeeded. A `Start` that returns an error, panics or does not return in 30
+  seconds is a broken registration: Control logs it at `ERROR` with the
+  provider and the error's kind, serves, and executes nothing. A handler whose
+  platform is merely unreachable returns nil and reconnects on its own
+  goroutines; Control never retries a `Start`.
+- **`exec.Execute` performs all five kinds.** Each goes through the service an
+  operator's north-bound route calls. The handler is the actor on every record
+  it writes and every grant row it touches: `action-handler:<provider>`, no
+  subject. Each record carries `action_id`, `action_kind`, `external_ref`,
+  `reason_code` and `provider`.
+  - `kill_session` takes exactly one of `SessionID` or `SubjectID`; both, or
+    neither, is `KindInvalid`. `Affected` is one: the kill Control published.
+    It is never a count of sessions seen to close.
+  - `lock_subject` and `unlock_subject` take `SubjectID`; `revoke_grant`
+    takes `GrantID`; `quarantine_target` takes `TargetID`. A selector a kind
+    does not take is `KindInvalid`, naming the field.
+  - It is idempotent per tenant on `ActionID`: the same action returns the
+    first result and sends again what the first owed the event stream; a
+    different action under the id is `KindConflict`.
+  - `KindNotFound` for a subject, session, grant or target not known in
+    `Action.Tenant`, which includes one that exists only in another tenant.
+    `KindDenied` with `ReasonCode` `break_glass_subject` for a lock on a
+    break-glass subject. `KindUnavailable` when the event stream refused a
+    publication, or Control is stopping: the act was made and stands, and the
+    same `ActionID` delivers it. `KindInternal` is a store failure.
+  - `ReasonText` is shown to the holder verbatim, so it must be one line, with
+    no control characters, at most 512 bytes: anything else is `KindInvalid` on
+    `reason_text` and is never truncated. When it is empty Control shows
+    "Your session was ended as part of a security response.",
+    "Your access was suspended as part of a security response." or "Your
+    temporary access grant was revoked as part of a security response."
+  - Zero `Affected` with a nil error is nothing to act on, with `ReasonCode`
+    `already_locked`, `not_locked`, `already_quarantined`, `already_revoked` or
+    `expired`.
+- **A subject lock and a target quarantine.** While one stands, every authorize
+  call it covers is a deny (`subject_locked`, `target_quarantined`) whatever
+  policy, grants or external windows say; it is a deny made on purpose and
+  never an outage. A lock holds for a subject id with no row, and survives a
+  login, a `PUT`, and a delete followed by a re-create. The decision record,
+  `GET …/decisions/{id}` and replay say so. Routes, all under `session:revoke`,
+  which `grant-admin` and `admin` hold:
+  - `POST /api/v1/tenants/{tenant}/subjects/{subject}/lock` and `…/unlock`,
+    with an optional `reason_code` and `reason` (the text the holder is shown);
+  - `POST /api/v1/tenants/{tenant}/targets/{target}/quarantine` and
+    `…/release`;
+  - each answers `200` and says whether this call changed anything, and a lock
+    or quarantine already standing, or none to lift, changes nothing and
+    writes no record;
+  - `503 standing_denial_undelivered` is a denial that stands whose
+    publication failed: ask again to re-send.
+- **`GET …/subjects`, `…/subjects/{subject}`, `…/targets` and
+  `…/targets/{target}` gain `locked` and `lock`, `quarantined` and
+  `quarantine`.** A subject whose row was deleted while locked reads with
+  `record_missing: true`. `DELETE …/targets/{target}` on a quarantined target
+  is `409 target_quarantined` until it is released.
+- **`GET …/extensions` shows whether the handler started.** The action handler's
+  row, while one is registered, gains `started` and, when `Start` failed,
+  `start_error` (the error's kind). The listing stays one object per row, which
+  M26 exempts, and no other row changes.
+- **New records on the control stream:** `operator.subject.locked`,
+  `operator.subject.unlocked`, `operator.target.quarantined`,
+  `operator.target.released`, and, for an inbound action only, `action.refused`
+  and `action.unchanged`.
+- **Hoplock Enterprise:** every obligation above holds from this release, not
+  from `main`.
+
 ## v0.25.0
 
 Phase 0038, host routes and the console in namespaces of their own. The

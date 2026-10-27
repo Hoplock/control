@@ -44,6 +44,58 @@ type SubjectRepository interface {
 	// it is refused, because a lock released when the statement ends
 	// serialises nothing.
 	Lock(ctx context.Context, tenant Tenant) error
+	// Standing is the decision path's read (M5, M28): the row, if there is
+	// one, and the lock on the id, if one stands, in ONE round trip. An id
+	// with neither is a SubjectStanding with Known false, not an error.
+	Standing(ctx context.Context, tenant Tenant, subjectID string) (SubjectStanding, error)
+}
+
+// SubjectLockRepository stores the standing denials on subjects (0039, M28).
+// A lock is keyed by the subject id and references no subject row, so it
+// outlives one.
+type SubjectLockRepository interface {
+	// Place stores a lock, or leaves the one that stands. It returns the lock
+	// now standing and whether this call placed it.
+	Place(ctx context.Context, tenant Tenant, l SubjectLock) (SubjectLock, bool, error)
+	// Lift deletes a lock and returns it. Nothing standing is ErrNotFound.
+	Lift(ctx context.Context, tenant Tenant, subjectID string) (SubjectLock, error)
+	// Get returns the lock on a subject. Nothing standing is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, subjectID string) (SubjectLock, error)
+	// For returns the locks standing on these subjects, by subject id, for a
+	// page of the subject list. It names at most a page's worth of ids.
+	For(ctx context.Context, tenant Tenant, subjectIDs []string) (map[string]SubjectLock, error)
+}
+
+// TargetQuarantineRepository stores the standing denials on targets (0039,
+// M28).
+type TargetQuarantineRepository interface {
+	// Place stores a quarantine, or leaves the one that stands. The target
+	// must have a row (ErrNotFound otherwise); it returns the quarantine now
+	// standing and whether this call placed it.
+	Place(ctx context.Context, tenant Tenant, q TargetQuarantine) (TargetQuarantine, bool, error)
+	// Lift deletes a quarantine and returns it. Nothing standing is
+	// ErrNotFound.
+	Lift(ctx context.Context, tenant Tenant, targetID string) (TargetQuarantine, error)
+	// Get returns the quarantine on a target. Nothing standing is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, targetID string) (TargetQuarantine, error)
+	// For returns the quarantines standing on these targets, by target id, for
+	// a page of the target list. It names at most a page's worth of ids.
+	For(ctx context.Context, tenant Tenant, targetIDs []string) (map[string]TargetQuarantine, error)
+}
+
+// ActionExecutionRepository is the ledger of inbound actions (0039): one row
+// per tenant and action id, which is what makes an action idempotent.
+type ActionExecutionRepository interface {
+	// Lock serialises everything done under one action id for the rest of the
+	// transaction. Outside a transaction it is refused, because a lock
+	// released when the statement ends serialises nothing.
+	Lock(ctx context.Context, tenant Tenant, actionID string) error
+	// Get returns the execution under an action id. Absent is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, actionID string) (ActionExecution, error)
+	// Insert records an execution. A second under the same id is ErrConflict.
+	Insert(ctx context.Context, tenant Tenant, a ActionExecution) error
+	// MarkRecorded stamps the time the record of an execution was written.
+	MarkRecorded(ctx context.Context, tenant Tenant, actionID string, at time.Time) error
 }
 
 // TargetRepository stores what is being reached.
@@ -53,6 +105,10 @@ type TargetRepository interface {
 	// GetByHostname is the decision path's lookup: one index hit returning
 	// the labels policy matches on, with no join and no second round trip.
 	GetByHostname(ctx context.Context, tenant Tenant, hostname string) (Target, error)
+	// StandingByHostname is GetByHostname with the quarantine on the row, read
+	// in the same statement (M28): the decision path's lookup, so a
+	// quarantine costs it no round trip.
+	StandingByHostname(ctx context.Context, tenant Tenant, hostname string) (TargetStanding, error)
 	// ListByLabels returns every target carrying all of the given labels.
 	// This is an internal read of the whole estate — the publish-time
 	// checks' — and not a decision-path one; the north-bound list is Page.
@@ -62,7 +118,9 @@ type TargetRepository interface {
 	Page(ctx context.Context, tenant Tenant, labels map[string]string, p Page) (Paged[Target], error)
 	// Upsert writes a target, replacing any existing row with the same id.
 	Upsert(ctx context.Context, tenant Tenant, t Target) error
-	// Delete removes a target. Absent is ErrNotFound.
+	// Delete removes a target. Absent is ErrNotFound; a quarantined target is
+	// ErrConflict wrapping ErrTargetQuarantined, because deleting the row
+	// would lift the quarantine silently.
 	Delete(ctx context.Context, tenant Tenant, targetID string) error
 	// Lock takes the tenant's target lock for the rest of the transaction,
 	// so an operator's write — a relabel above all, which simulates before
@@ -148,6 +206,9 @@ type PolicyBundleRepository interface {
 
 // DecisionRepository stores decision records (M4).
 type DecisionRepository interface {
+	// SessionExists reports whether any decision was recorded for a session
+	// in the tenant (0039).
+	SessionExists(ctx context.Context, tenant Tenant, sessionID string) (bool, error)
 	// Insert stores a decision record. A duplicate decision id is
 	// ErrConflict.
 	Insert(ctx context.Context, tenant Tenant, d Decision) error

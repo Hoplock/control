@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/store"
 )
@@ -44,15 +45,57 @@ const (
 	EventFleetConfigPublished  = "operator.fleet_config.published"
 	EventFleetConfigRolledBack = "operator.fleet_config.rolled_back"
 	EventRevocationPublished   = "operator.revocation.published"
-	EventAuditRetained         = "operator.audit.retained"
+	// The standing denials (0039, M28): a subject locked or unlocked, a target
+	// quarantined or released.
+	EventSubjectLocked     = "operator.subject.locked"
+	EventSubjectUnlocked   = "operator.subject.unlocked"
+	EventTargetQuarantined = "operator.target.quarantined"
+	EventTargetReleased    = "operator.target.released"
+	EventAuditRetained     = "operator.audit.retained"
 	// EventAuditRetentionKeyRotated is a new generation of a tenant's
 	// retention key: it signs from now on, and older ones still check what
 	// they signed.
 	EventAuditRetentionKeyRotated = "operator.audit.retention_key_rotated"
 )
 
+// EventActionRefused is an inbound action Control refused (0039): malformed,
+// aimed at something it has no row for, or refused on purpose. It is not under
+// the operator prefix because no operator did it: the registered handler asked,
+// and Control said no.
+const EventActionRefused = "action.refused"
+
+// EventActionUnchanged is an inbound action Control executed and found nothing
+// to act on: a lock already standing, a lock to lift that is not there, a
+// grant already revoked. The execution is audited all the same, because every
+// execution is; it is not recorded as the lever's own event, because that
+// would claim an act that did not happen.
+const EventActionUnchanged = "action.unchanged"
+
 // OperatorEventPrefix is what every act's event name starts with.
 const OperatorEventPrefix = "operator."
+
+// Attribute keys an inbound action adds to the record of an act it performed,
+// or was refused. They are the same on every such record, whichever service
+// wrote it, so that "everything this action did" is one filter.
+const (
+	AttrActionID          = "action_id"
+	AttrActionKind        = "action_kind"
+	AttrActionExternalRef = "external_ref"
+	AttrActionReasonCode  = "reason_code"
+	AttrActionProvider    = "provider"
+)
+
+// putAction writes the facts of the inbound action behind a record, if any.
+func putAction(attrs map[string]string, a *access.ActionRef) {
+	if a == nil {
+		return
+	}
+	attrs[AttrActionID] = a.ID
+	attrs[AttrActionKind] = a.Kind
+	attrs[AttrActionProvider] = a.Provider
+	put(attrs, AttrActionExternalRef, a.ExternalRef)
+	put(attrs, AttrActionReasonCode, a.ReasonCode)
+}
 
 // Attribute keys an operator record carries beside the actor's.
 const (
@@ -91,6 +134,9 @@ type OperatorAct struct {
 	Accepted []string
 	// Fields are the act's own facts, under AttrOperatorPrefix.
 	Fields map[string]string
+	// Action is the inbound action that performed the act, or was refused,
+	// nil for every act a person performed (0039).
+	Action *access.ActionRef
 	// Message is the sentence a record list shows.
 	Message string
 	// Severity defaults to warn: an operator changing the estate is worth a
@@ -123,6 +169,7 @@ func (e *Emitter) OperatorEvent(ctx context.Context, tx *store.Store, tenant sto
 	put(attrs, AttrBefore, act.Before)
 	put(attrs, AttrAfter, act.After)
 	putList(attrs, AttrAccepted, act.Accepted)
+	putAction(attrs, act.Action)
 	for k, v := range act.Fields {
 		put(attrs, AttrOperatorPrefix+k, v)
 	}

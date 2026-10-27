@@ -21,6 +21,7 @@ import (
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/revoke"
+	"github.com/hoplock/control/internal/standing"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -53,11 +54,13 @@ type Server struct {
 	fleet       *fleet.Registry
 	authoring   *authoring.Service
 	revocations *revoke.Operator
+	standing    *standing.Service
 	emitter     *audit.Emitter
 	reader      *audit.Reader
 	extensions  *ext.Extensions
 	archive     ArchiveFeed
 	sinks       SinkDelivery
+	actions     ActionHandlerState
 	mapping     decision.ActiveMapping
 
 	maxBodyBytes   int64
@@ -90,6 +93,15 @@ type ArchiveFeed interface {
 type SinkDelivery interface {
 	Lag(ctx context.Context, tenant store.Tenant, provider string) (store.FeedLag, bool, error)
 	Track(tenant store.Tenant)
+}
+
+// ActionHandlerState is what this surface knows of the registered
+// ext.ActionHandler (0039): whether its Start succeeded and, when it did not,
+// the kind of the error. The extension listing shows it on the handler's row,
+// so an operator can tell a handler that is registered and not running from
+// one that is working.
+type ActionHandlerState interface {
+	Started() (started bool, errorKind string)
 }
 
 // Options configures a Server.
@@ -126,6 +138,9 @@ type Options struct {
 	// Revocations publishes operator actions through revoke.Operator, never
 	// beside it (0009). Required.
 	Revocations *revoke.Operator
+	// Standing places and lifts the subject lock and the target quarantine
+	// (0039, M28), through the service an inbound action calls too. Required.
+	Standing *standing.Service
 	// Audit records every mutating act on this surface. Required: an audit
 	// system whose own administration is unaudited has a hole exactly where
 	// it matters.
@@ -143,6 +158,9 @@ type Options struct {
 	// the extension listing shows on each sink's registration for the
 	// caller's tenant. Nil when no sink is registered.
 	Sinks SinkDelivery
+	// Actions is the registered action handler's state (0039), shown on its
+	// row of the extension listing. Nil when none is registered.
+	Actions ActionHandlerState
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -193,6 +211,10 @@ func New(o Options) (*Server, error) {
 		return nil, fmt.Errorf("httpapi/north: a store, a fleet registry, the policy lifecycle, the revocation " +
 			"operator and the audit emitter are all required")
 	}
+	if o.Standing == nil {
+		return nil, fmt.Errorf("httpapi/north: the standing-denial service is required: a lock and a quarantine are " +
+			"levers an operator can pull, and a listener that cannot pull them is an incident discovered mid-incident")
+	}
 	// A NIL CA IS ALLOWED, and it is the one dependency that is. The software
 	// custodian refuses to exist without a key-encryption key
 	// (`credential.key_encryption_key_env`), so a deployment that has not set
@@ -224,11 +246,13 @@ func New(o Options) (*Server, error) {
 		fleet:          o.Fleet,
 		authoring:      o.Authoring,
 		revocations:    o.Revocations,
+		standing:       o.Standing,
 		emitter:        o.Audit,
 		reader:         o.AuditReader,
 		extensions:     o.Extensions,
 		archive:        o.Archive,
 		sinks:          o.Sinks,
+		actions:        o.Actions,
 		mapping:        decision.StoredActiveMapping(o.Store),
 	}
 	if s.reader == nil {

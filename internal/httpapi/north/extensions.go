@@ -51,6 +51,13 @@ type extensionPointView struct {
 	// caller's tenant (0025), on the archive's row and only while one is
 	// registered.
 	Lag *feedLagView `json:"lag,omitempty"`
+	// Started and StartError are on the action handler's row while one is
+	// registered (0039): whether its Start succeeded and, when it did not, the
+	// kind of the error. A handler whose Start failed is registered and not
+	// started, and Control serves without it. The listing stays one object per
+	// row (M26), so this is two fields on the row and not a list.
+	Started    *bool  `json:"started,omitempty"`
+	StartError string `json:"start_error,omitempty"`
 }
 
 // feedLagView is how far one consumer of the audit store — the archive, or a
@@ -119,6 +126,10 @@ func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
 		}
 		if st.Info.Point == ext.PointArchiveStore && st.Registered() {
 			v.Lag = lag
+		}
+		if st.Info.Point == ext.PointActionHandler && st.Registered() && s.actions != nil {
+			started, kind := s.actions.Started()
+			v.Started, v.StartError = &started, kind
 		}
 		out = append(out, v)
 	}
