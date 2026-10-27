@@ -17,7 +17,7 @@ import (
 type Deps struct {
 	// Node is this process's membership record. A zero ID is filled in with
 	// a placeholder, because a deployment must still start when nothing has
-	// given it an identity yet — phase 0042 makes that identity real (M19).
+	// given it an identity yet — phase 0043 makes that identity real (M19).
 	Node ext.Node
 }
 

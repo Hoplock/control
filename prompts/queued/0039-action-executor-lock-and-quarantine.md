@@ -9,8 +9,8 @@
 > **Where it sits.** After the shared event plane (0027), bounded lists (0028)
 > with every chunk it queues, and host namespaces (0038). Before identity sync
 > (0040), which runs next and builds its deactivation beside this phase's lock,
-> and before instance identity (0042), the console (0043) and the E2E topology
-> (0044). The action-executor and identity-sync renumbering notes in
+> and before instance identity (0043), the console (0044) and the E2E topology
+> (0045). The action-executor and identity-sync renumbering notes in
 > `docs/PLAN.md` §10 give one line of reasons for each. On one node it depends only on merged phases: 0009 (the
 > event stream), 0012 (grant revocation) and 0019 (the north-bound surface and
 > its operator records). It needs 0027 for a kill to reach a proxy whichever
@@ -411,11 +411,11 @@ things around the shape. Each item below says why, then what to build.
   - §10's row, revised to what was built.
 
   §11 is unchanged: SOAR itself stays Enterprise's.
-- The console prompt (0043). It shows a lock and a quarantine wherever it
+- The console prompt (0044). It shows a lock and a quarantine wherever it
   shows a subject or a target. It offers lock, unlock, quarantine and release
   under the same permission, because Enterprise's 0007 relies on an operator
   releasing a lockout there.
-- The E2E prompt (0044). Add one scenario in which an action handler kills a
+- The E2E prompt (0045). Add one scenario in which an action handler kills a
   session and locks its subject.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR (M23).
 
@@ -439,7 +439,7 @@ things around the shape. Each item below says why, then what to build.
   read and the decision's text so a second standing denial on a subject joins
   them without a second query. Do not build the deactivation here.
 - **Delivery on several nodes**, beyond what 0027 built.
-- **The console screens** (0043).
+- **The console screens** (0044).
 - **`contract/` (M1).** Nothing on the wire changes: `session_kill`,
   `cache_invalidate` and a deny all exist.
 - **Bounding the idempotency table's growth.** Note it in the learnings.
