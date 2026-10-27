@@ -25,6 +25,17 @@ import (
 
 const testHostProvider = "test/host"
 
+// Where the test host's routes are mounted (M27).
+var (
+	testHostTenant = north.HostTenantPrefix(testHostProvider)
+	testHostCross  = north.HostCrossTenantPrefix(testHostProvider)
+)
+
+// hostPath is the path of the test host's tenant route rel in tenant.
+func hostPath(tenant, rel string) string {
+	return strings.Replace(testHostTenant, "{"+north.TenantPathParam+"}", tenant, 1) + rel
+}
+
 // testHostRoutes are the three routes every test server carries: two tenant
 // routes and one cross-tenant read (M24). The report handler's behaviour is
 // chosen by its {report} segment, so one route can exercise every way a host
@@ -116,7 +127,7 @@ func TestAHostRouteRunsOnlyAfterControlHasAuthenticatedResolvedAndChecked(t *tes
 	token := cred.String()
 
 	// Allowed: audit:read, which the auditor holds, in a tenant it may act in.
-	resp := f.do(t, "GET", "/api/v1/tenants/tenant-a/reports/quarterly", token, nil)
+	resp := f.do(t, "GET", hostPath("tenant-a", "reports/quarterly"), token, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("answered %d, want 200", resp.StatusCode)
 	}
@@ -144,9 +155,9 @@ func TestAHostRouteRunsOnlyAfterControlHasAuthenticatedResolvedAndChecked(t *tes
 		status                    int
 		code                      string
 	}{
-		{"without the permission", "POST", "/api/v1/tenants/tenant-a/reports/schedules", token, http.StatusForbidden, north.CodeForbidden},
-		{"without a credential", "POST", "/api/v1/tenants/tenant-a/reports/schedules", "", http.StatusUnauthorized, north.CodeUnauthenticated},
-		{"in another tenant", "GET", "/api/v1/tenants/tenant-b/reports/quarterly", token, http.StatusForbidden, north.CodeTenantOutOfScope},
+		{"without the permission", "POST", hostPath("tenant-a", "reports/schedules"), token, http.StatusForbidden, north.CodeForbidden},
+		{"without a credential", "POST", hostPath("tenant-a", "reports/schedules"), "", http.StatusUnauthorized, north.CodeUnauthenticated},
+		{"in another tenant", "GET", hostPath("tenant-b", "reports/quarterly"), token, http.StatusForbidden, north.CodeTenantOutOfScope},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			resp := f.do(t, c.method, c.path, c.token, strings.NewReader(`{}`))
@@ -198,7 +209,7 @@ func TestBreakGlassArrivesAsAssertedAndAFederatedPrincipalArrivesWithout(t *test
 		"bg":  {Tenant: "tenant-a", Principal: "sess-root", BreakGlass: true, Subject: ext.Subject{ID: "root"}},
 		"fed": {Tenant: "tenant-a", Principal: "sess-alice", Subject: ext.Subject{ID: "alice", Groups: []string{"auditors", "sre"}}},
 	} {
-		req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-a/reports/quarterly", nil)
+		req := httptest.NewRequest("GET", hostPath("tenant-a", "reports/quarterly"), nil)
 		req.Header.Set("Authorization", "Bearer "+credential)
 		rec := httptest.NewRecorder()
 		server.ServeHTTP(rec, req)
@@ -222,7 +233,7 @@ func TestAHostAnswersErrorsInControlsEnvelopeOrNotAtAll(t *testing.T) {
 	f := newServer(t)
 	token := f.token(t, "tenant-a", map[store.Tenant]identity.RoleSet{"tenant-a": {identity.RoleAuditor}})
 
-	resp := f.do(t, "GET", "/api/v1/tenants/tenant-a/reports/missing", token, nil)
+	resp := f.do(t, "GET", hostPath("tenant-a", "reports/missing"), token, nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("a declared code answered %d, want 404", resp.StatusCode)
 	}
@@ -240,7 +251,7 @@ func TestAHostAnswersErrorsInControlsEnvelopeOrNotAtAll(t *testing.T) {
 		"undeclared", "unauthorised", "unauthenticated-code", "internal-as-refusal", "success-status", "no-message",
 	} {
 		t.Run(report, func(t *testing.T) {
-			resp := f.do(t, "GET", "/api/v1/tenants/tenant-a/reports/"+report, token, nil)
+			resp := f.do(t, "GET", hostPath("tenant-a", "reports/"+report), token, nil)
 			if resp.StatusCode != http.StatusInternalServerError {
 				t.Fatalf("answered %d, want 500", resp.StatusCode)
 			}
@@ -263,14 +274,14 @@ func TestAPanickingHostHandlerIsAnOutageAndTheServerKeepsServing(t *testing.T) {
 	f := newServer(t)
 	token := f.token(t, "tenant-a", map[store.Tenant]identity.RoleSet{"tenant-a": {identity.RoleAuditor}})
 
-	resp := f.do(t, "GET", "/api/v1/tenants/tenant-a/reports/panic", token, nil)
+	resp := f.do(t, "GET", hostPath("tenant-a", "reports/panic"), token, nil)
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("a panic answered %d, want 500", resp.StatusCode)
 	}
 	if e := decodeError(t, resp); e.Code != north.CodeInternal || e.CorrelationID == "" {
 		t.Fatalf("a panic answered %+v", e)
 	}
-	if resp := f.do(t, "GET", "/api/v1/tenants/tenant-a/reports/quarterly", token, nil); resp.StatusCode != http.StatusOK {
+	if resp := f.do(t, "GET", hostPath("tenant-a", "reports/quarterly"), token, nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("after a panic the server answered %d", resp.StatusCode)
 	}
 }
@@ -282,20 +293,20 @@ func TestTheRouteListingNamesWhoseEveryRouteIs(t *testing.T) {
 		switch {
 		case route.Provider == testHostProvider:
 			host = append(host, route.String())
-			tenant := strings.HasPrefix(route.Pattern, north.HostPrefix) && route.Access == "tenant"
-			cross := strings.HasPrefix(route.Pattern, north.CrossTenantPrefix) && route.Access == "cross-tenant"
+			tenant := strings.HasPrefix(route.Pattern, testHostTenant) && route.Access == "tenant"
+			cross := strings.HasPrefix(route.Pattern, testHostCross) && route.Access == "cross-tenant"
 			if !tenant && !cross {
 				t.Errorf("host route %s is neither a tenant route under %s nor a cross-tenant read under %s",
-					route, north.HostPrefix, north.CrossTenantPrefix)
+					route, testHostTenant, testHostCross)
 			}
 		case route.Provider != "":
 			t.Errorf("%s names provider %q", route, route.Provider)
 		}
 	}
 	want := []string{
-		"GET " + north.HostPrefix + "reports/{report}",
-		"POST " + north.HostPrefix + "reports/schedules",
-		"GET " + north.CrossTenantPrefix + "reports/privileged-access",
+		"GET " + testHostTenant + "reports/{report}",
+		"POST " + testHostTenant + "reports/schedules",
+		"GET " + testHostCross + "reports/privileged-access",
 	}
 	if !slices.Equal(host, want) {
 		t.Errorf("host routes in the listing = %v, want %v", host, want)
@@ -322,22 +333,26 @@ func TestAHostRouteControlWillNotMountIsRefusedAtStartUp(t *testing.T) {
 	read := identity.PermAuditRead
 
 	for name, routes := range map[string][]north.HostRoute{
-		"an empty method":             {route("", "reports", read)},
-		"an unknown method":           {route("BREW", "reports", read)},
-		"a leading slash":             {route("GET", "/reports", read)},
-		"a tenant wildcard":           {route("GET", "{tenant}/reports", read)},
-		"a tenant remainder":          {route("GET", "reports/{tenant...}", read)},
-		"a climb out":                 {route("GET", "reports/../ca", read)},
-		"a method prefix":             {route("GET", "GET reports", read)},
-		"an empty pattern":            {route("GET", "", read)},
-		"an undefined permission":     {route("GET", "reports", "report:invent")},
-		"no permission":               {route("GET", "reports", "")},
-		"no handler":                  {{Method: "GET", Pattern: "reports", Access: north.AccessTenant, Permission: read}},
-		"a duplicate host route":      {route("GET", "reports", read), route("GET", "reports", read)},
-		"a duplicate Control route":   {route("GET", "grants", read)},
-		"a method on Control's path":  {route("PUT", "grants", read)},
-		"a mux conflict with Control": {route("GET", "grants/{id}", read)},
-		"a mux conflict between two":  {route("GET", "zz/{a}/end", read), route("GET", "zz/start/{b}", read)},
+		"an empty method":            {route("", "reports", read)},
+		"an unknown method":          {route("BREW", "reports", read)},
+		"a leading slash":            {route("GET", "/reports", read)},
+		"a tenant wildcard":          {route("GET", "{tenant}/reports", read)},
+		"a tenant remainder":         {route("GET", "reports/{tenant...}", read)},
+		"a climb out":                {route("GET", "reports/../ca", read)},
+		"a method prefix":            {route("GET", "GET reports", read)},
+		"an empty pattern":           {route("GET", "", read)},
+		"an undefined permission":    {route("GET", "reports", "report:invent")},
+		"no permission":              {route("GET", "reports", "")},
+		"no handler":                 {{Method: "GET", Pattern: "reports", Access: north.AccessTenant, Permission: read}},
+		"a duplicate host route":     {route("GET", "reports", read), route("GET", "reports", read)},
+		"a mux conflict between two": {route("GET", "zz/{a}/end", read), route("GET", "zz/start/{b}", read)},
+
+		// A pattern stays inside the host's namespace (M27), and is one the
+		// mux would serve as written.
+		"a climb out of the namespace": {route("GET", "../../../../../tenants/{t}/grants", read)},
+		"a climb to another host":      {route("GET", "../../../../other/host/tenants/{t}/x", read)},
+		"a . segment":                  {route("GET", "reports/./x", read)},
+		"an empty segment":             {route("GET", "reports//x", read)},
 
 		// A host route is one of two classes (M24).
 		"no class at all":               {class(north.Access(0))},
@@ -374,19 +389,32 @@ func TestAHostRouteControlWillNotMountIsRefusedAtStartUp(t *testing.T) {
 	if err := north.CheckHost("", testHostRoutes(), nil); err == nil {
 		t.Error("host routes with no provider registered anyway")
 	}
+	// The provider is two segments of every path the host serves, so it is
+	// exactly two: no provider's root can sit inside another's.
+	for _, provider := range []string{"host", "a/b/c", "Test/Host", "test/", "/host", "test/host/", "a/.", "a b/c", "a/{b}"} {
+		if err := north.CheckHost(provider, testHostRoutes(), nil); err == nil {
+			t.Errorf("provider %q registered anyway", provider)
+		}
+	}
 }
 
 // A host takes no path Control serves and no code Control answers, whichever
 // phase added them: every one of Control's tenant routes is walked, so a route
-// added later is covered on the day it is added. A literal path under one of
-// Control's wildcards is Control's too — `targets/special` beside
-// `targets/{target}` — because the mux would let the host's more specific
-// pattern take it (0023).
+// added later is covered on the day it is added. Since M27 a host writing one
+// of Control's patterns — or a literal under one of its wildcards, the shape
+// 0023 found taking `targets/special` from Control's `targets/{target}` —
+// writes a path in its own namespace, which is mounted there and nowhere
+// else. TestEveryWayAHostCanOverlapControlIsRefusedOrAnswersNothingOfControls
+// asks the mux who answers.
 func TestAHostCanTakeNoPathAndNoCodeControlServes(t *testing.T) {
 	ok := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	table, err := north.Table("", nil, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	control := map[string]bool{}
+	for _, route := range table {
+		control[route.Pattern] = true
 	}
 	walked := 0
 	for _, route := range table {
@@ -394,14 +422,24 @@ func TestAHostCanTakeNoPathAndNoCodeControlServes(t *testing.T) {
 			continue
 		}
 		walked++
-		relative := strings.TrimPrefix(route.Pattern, north.HostPrefix)
+		relative := strings.TrimPrefix(route.Pattern, controlTenantPrefix)
 		literal := samplePath(relative, "x")
 		for _, pattern := range []string{relative, literal} {
 			for _, method := range []string{"GET", "POST"} {
 				host := north.HostRoute{Method: method, Pattern: pattern, Access: north.AccessTenant,
 					Permission: identity.PermAuditRead, Summary: "x", Handler: ok}
-				if err := north.CheckHost(testHostProvider, []north.HostRoute{host}, nil); err == nil {
-					t.Errorf("a host took %s %s, which Control serves at %s", method, pattern, route.Pattern)
+				listed, err := north.Table(testHostProvider, []north.HostRoute{host}, nil)
+				if err != nil {
+					t.Errorf("%s %s was refused in the host's own namespace: %v", method, pattern, err)
+					continue
+				}
+				for _, l := range listed {
+					if l.Provider == "" {
+						continue
+					}
+					if l.Pattern != testHostTenant+pattern || control[l.Pattern] {
+						t.Errorf("a host's %s %s was mounted at %s, want %s", method, pattern, l.Pattern, testHostTenant+pattern)
+					}
 				}
 			}
 		}
@@ -414,8 +452,6 @@ func TestAHostCanTakeNoPathAndNoCodeControlServes(t *testing.T) {
 			t.Errorf("a host declared %q, which is Control's", code)
 		}
 	}
-	// What a host may still take: a family of its own, and its own literal
-	// beside its own wildcard.
 	if err := north.CheckHost(testHostProvider, testHostRoutes(), []string{"report_not_found"}); err != nil {
 		t.Fatalf("the test host's own routes were refused: %v", err)
 	}

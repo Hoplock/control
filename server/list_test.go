@@ -194,7 +194,7 @@ func TestAHostListIsBoundedAndWalkedAsControlsAre(t *testing.T) {
 	token := issue(t, federation, "alpha", map[store.Tenant]identity.RoleSet{
 		"alpha": {identity.RoleAuditor}, "bravo": {identity.RoleAuditor}, "default": {identity.RoleAuditor},
 	})
-	items := base + "/api/v1/tenants/alpha/items"
+	items := hostAPI(base, "alpha", "items")
 	subjects := base + "/api/v1/tenants/alpha/subjects"
 
 	t.Run("every refusal is a Control list's", func(t *testing.T) {
@@ -218,7 +218,7 @@ func TestAHostListIsBoundedAndWalkedAsControlsAre(t *testing.T) {
 
 	t.Run("a walk", func(t *testing.T) {
 		// The example's own list, in the single-tenant deployment it pages.
-		archive := base + "/api/v1/tenants/default/archive"
+		archive := hostAPI(base, "default", "archive")
 		var walked []string
 		url, pages := archive+"?limit=2", 0
 		for {
@@ -263,8 +263,8 @@ func TestAHostListIsBoundedAndWalkedAsControlsAre(t *testing.T) {
 		for name, url := range map[string]string{
 			"a host cursor on Control's subjects":    subjects + "?after=" + *first.next,
 			"Control's subjects cursor on a host's":  items + "?after=" + subjectsCursor,
-			"a cursor from another of the host's":    base + "/api/v1/tenants/alpha/items/other?after=" + *first.next,
-			"a cursor from a list across tenants":    items + "?after=" + *readListPage(t, base+"/api/v1/cross-tenant/items/all?limit=1", token).next,
+			"a cursor from another of the host's":    hostAPI(base, "alpha", "items/other") + "?after=" + *first.next,
+			"a cursor from a list across tenants":    items + "?after=" + *readListPage(t, hostCrossAPI(base, "items/all")+"?limit=1", token).next,
 			"a cursor under other filters":           items + "?after=" + *filtered.next,
 			"a cursor without the filter it was for": items + "?prefix=r-&after=" + *first.next,
 		} {
@@ -284,14 +284,14 @@ func TestAHostListIsBoundedAndWalkedAsControlsAre(t *testing.T) {
 		// another tenant's path it continues that tenant's list.
 		alpha := readListPage(t, items+"?limit=1", token)
 		assertNoScope(t, *alpha.next, "test/enterprise:items")
-		bravo := readListPage(t, base+"/api/v1/tenants/bravo/items?after="+*alpha.next, token)
+		bravo := readListPage(t, hostAPI(base, "bravo", "items")+"?after="+*alpha.next, token)
 		if !slices.Equal(bravo.items, []string{"r-2", "r-4"}) {
 			t.Errorf("alpha's cursor under bravo's path answered %v, want bravo's list after r-1", bravo.items)
 		}
 
 		// A cross-tenant route: the same cursor whatever set Control
 		// resolved, and continued under any set.
-		all := base + "/api/v1/cross-tenant/items/all"
+		all := hostCrossAPI(base, "items/all")
 		every := readListPage(t, all+"?limit=1", token)
 		narrowed := readListPage(t, all+"?limit=1&tenant=alpha", token)
 		if every.next == nil || narrowed.next == nil || *every.next != *narrowed.next {
@@ -350,7 +350,7 @@ func TestAHostListMisusedIsAnOutageAndLogged(t *testing.T) {
 	base, federation, logs := startHostWith(t, listHostOptions())
 	token := issue(t, federation, "alpha", map[store.Tenant]identity.RoleSet{"alpha": {identity.RoleAuditor}})
 
-	if p := readListPage(t, base+"/api/v1/tenants/alpha/broken/well-formed", token); p.status != http.StatusOK {
+	if p := readListPage(t, hostAPI(base, "alpha", "broken/well-formed"), token); p.status != http.StatusOK {
 		t.Fatalf("the control case answered %d %v", p.status, p.body)
 	}
 	for name, problem := range map[string]string{
@@ -369,7 +369,7 @@ func TestAHostListMisusedIsAnOutageAndLogged(t *testing.T) {
 		"long-last":        "the last item's key has the wrong number of components",
 	} {
 		t.Run(name, func(t *testing.T) {
-			p := readListPage(t, base+"/api/v1/tenants/alpha/broken/"+name, token)
+			p := readListPage(t, hostAPI(base, "alpha", "broken/"+name), token)
 			id, _ := p.body["correlation_id"].(string)
 			if p.status != http.StatusInternalServerError || p.body["code"] != "internal" || id == "" {
 				t.Fatalf("answered %d %v, want 500 internal with a correlation id", p.status, p.body)

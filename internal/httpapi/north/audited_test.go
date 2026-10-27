@@ -14,7 +14,6 @@ import (
 
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/contract"
-	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
 )
@@ -275,7 +274,7 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 		if route.Method == http.MethodGet || route.Provider != "" || (route.Access != "tenant" && route.Access != "self") {
 			continue
 		}
-		key := route.Method + " /" + strings.TrimPrefix(route.Pattern, north.HostPrefix)
+		key := route.Method + " /" + strings.TrimPrefix(route.Pattern, controlTenantPrefix)
 		if _, ok := writes[key]; !ok && others[key] == "" {
 			t.Errorf("%s is neither a write this test checks nor listed with a reason", key)
 		}

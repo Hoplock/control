@@ -63,8 +63,8 @@ const (
 	// resolves the tenant, and no path, query or body carries one. A machine
 	// token has no own records and is refused (`subject_required`).
 	AccessSelf
-	// AccessCrossTenant is a read that spans tenants (M24), mounted under
-	// [CrossTenantPrefix] and nowhere else. It needs a live principal, and
+	// AccessCrossTenant is a read that spans tenants (M24), mounted under a
+	// host's [HostCrossTenantPrefix] and nowhere else. It needs a live principal, and
 	// then resolves a SET: every tenant in the principal's scope where it
 	// holds the route's permission, narrowed by the request's tenant
 	// selector and never widened by it. A named tenant that fails is
@@ -95,19 +95,6 @@ func (a Access) String() string {
 		return "cross-tenant"
 	}
 	return "unknown"
-}
-
-// CrossTenantPrefix is where every AccessCrossTenant route lives, and it holds
-// that class and nothing else. It sits beside /api/v1/tenants/ and
-// /api/v1/session so that an operator reading a log line can tell from the path
-// alone which class answered (M24).
-const CrossTenantPrefix = APIPrefix + "/cross-tenant/"
-
-// underCrossTenant reports whether a pattern is in the cross-tenant subtree,
-// including the bare prefix a ServeMux would treat as that subtree's root.
-func underCrossTenant(pattern string) bool {
-	return strings.HasPrefix(pattern, CrossTenantPrefix) ||
-		pattern == strings.TrimSuffix(CrossTenantPrefix, "/")
 }
 
 // namesTenantParam reports whether a pattern carries the tenant path
@@ -190,6 +177,7 @@ type Router struct {
 	mux      *http.ServeMux
 	patterns map[string]map[string]http.Handler
 	routes   []RouteInfo
+	consoles []ConsoleInfo
 	wrap     func(Route) http.Handler
 	notFound http.Handler
 }
@@ -219,9 +207,12 @@ func (r *Router) SetNotFound(h http.Handler) {
 //
 // The refusals are the point. A route with no access class, a tenant route with
 // no permission, and an anonymous route carrying one are all configuration
-// mistakes that would otherwise ship as "it seemed to work". The cross-tenant
-// prefix holds that class and nothing else, in both directions, so it stays off
-// Control's paths structurally rather than by convention (M24).
+// mistakes that would otherwise ship as "it seemed to work". And a route is
+// refused outside its namespace (M27): Control's in Control's API and able to
+// match nothing under [HostAPIPrefix], a host's under its own root, in the
+// subtree its class names — so a host's cross-tenant prefix holds that class
+// and nothing else, in both directions (M24), and Control's paths and a host's
+// stay apart structurally rather than by a check against each other.
 func (r *Router) Register(route Route) error {
 	if route.Method == "" || route.Pattern == "" {
 		return fmt.Errorf("httpapi/north: a route needs a method and a pattern")
@@ -229,10 +220,8 @@ func (r *Router) Register(route Route) error {
 	if route.Handler == nil {
 		return fmt.Errorf("httpapi/north: route %s %s has no handler", route.Method, route.Pattern)
 	}
-	if route.Access != AccessCrossTenant && underCrossTenant(route.Pattern) {
-		return fmt.Errorf(
-			"httpapi/north: route %s %s is %s but sits under %s, which holds cross-tenant reads and nothing else",
-			route.Method, route.Pattern, route.Access, CrossTenantPrefix)
+	if err := checkNamespace(route); err != nil {
+		return err
 	}
 	switch route.Access {
 	case AccessCrossTenant:
@@ -263,7 +252,7 @@ func (r *Router) Register(route Route) error {
 
 	byMethod, seen := r.patterns[route.Pattern]
 	if !seen {
-		if err := r.handle(route.Pattern); err != nil {
+		if err := r.handle(route.Pattern, r.dispatch(route.Pattern)); err != nil {
 			return fmt.Errorf("httpapi/north: route %s %s: %w", route.Method, route.Pattern, err)
 		}
 		byMethod = map[string]http.Handler{}
@@ -306,8 +295,6 @@ func checkCrossTenant(route Route) error {
 		return fmt.Errorf(
 			"httpapi/north: route %s is cross-tenant and is Control's own; Control serves no cross-tenant route, only a host does (M24)",
 			name)
-	case !strings.HasPrefix(route.Pattern, CrossTenantPrefix) || len(route.Pattern) == len(CrossTenantPrefix):
-		return fmt.Errorf("httpapi/north: route %s is cross-tenant but is not under %s", name, CrossTenantPrefix)
 	case namesTenantParam(route.Pattern):
 		return fmt.Errorf(
 			"httpapi/north: route %s is cross-tenant but names {%s}; the set it covers is resolved, never a path segment",
@@ -316,20 +303,20 @@ func checkCrossTenant(route Route) error {
 	return nil
 }
 
-// handle mounts a pattern on the mux, turning the mux's refusal into an error.
+// handle mounts a handler on the mux, turning the mux's refusal into an error.
 //
 // `http.ServeMux.Handle` PANICS on a pattern that conflicts with one already
 // mounted — `grants/{id}` beside `grants/{grant}`, or two wildcards that both
 // match one path with neither more specific. For Control's own table that is a
 // programming error caught by every test; for a host's routes it is input this
 // server was handed, and a host must never be able to crash start-up with it.
-func (r *Router) handle(pattern string) (err error) {
+func (r *Router) handle(pattern string, h http.Handler) (err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			err = fmt.Errorf("the pattern cannot be mounted: %v", rec)
 		}
 	}()
-	r.mux.Handle(pattern, r.dispatch(pattern))
+	r.mux.Handle(pattern, h)
 	return nil
 }
 
@@ -357,6 +344,9 @@ func (r *Router) dispatch(pattern string) http.Handler {
 // The isolation test enumerates from here rather than from a hand-written list,
 // which is what makes it total over routes that do not exist yet.
 func (r *Router) Routes() []RouteInfo { return slices.Clone(r.routes) }
+
+// Consoles returns every console pattern mounted, in mount order.
+func (r *Router) Consoles() []ConsoleInfo { return slices.Clone(r.consoles) }
 
 // ServeHTTP dispatches.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) { r.mux.ServeHTTP(w, req) }

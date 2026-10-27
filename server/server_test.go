@@ -174,6 +174,17 @@ func hostRoutes() []server.Route {
 	}
 }
 
+// hostAPI is where the test host's tenant route rel is served in tenant: under
+// the host's own namespace, never beside Control's routes (M27).
+func hostAPI(base, tenant, rel string) string {
+	return base + "/api/v1/hosts/" + hostProvider + "/tenants/" + tenant + "/" + rel
+}
+
+// hostCrossAPI is where the test host's cross-tenant read rel is served.
+func hostCrossAPI(base, rel string) string {
+	return base + "/api/v1/hosts/" + hostProvider + "/cross-tenant/" + rel
+}
+
 func hostOptions(rec *sectionRecorder, registry *ext.Registry) server.Options {
 	return server.Options{
 		Provider:     hostProvider,
@@ -278,7 +289,7 @@ func TestAHostStartsWithItsExtensionItsSectionAndItsRoutes(t *testing.T) {
 		t.Fatalf("token: %v", err)
 	}
 
-	resp = get(t, base+"/api/v1/tenants/default/licence", cred.String())
+	resp = get(t, hostAPI(base, "default", "licence"), cred.String())
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the host route answered %d", resp.StatusCode)
 	}
@@ -298,7 +309,7 @@ func TestAHostStartsWithItsExtensionItsSectionAndItsRoutes(t *testing.T) {
 		{"an auditor may not schedule a report", cred.String(), http.StatusForbidden, "forbidden"},
 		{"nobody may without a credential", "", http.StatusUnauthorized, "unauthenticated"},
 	} {
-		resp := post(t, base+"/api/v1/tenants/default/reports/schedules", c.token)
+		resp := post(t, hostAPI(base, "default", "reports/schedules"), c.token)
 		if resp.StatusCode != c.status {
 			t.Errorf("%s: answered %d, want %d", c.name, resp.StatusCode, c.status)
 		}
@@ -393,18 +404,26 @@ func (u unreadable) Read([]byte) (int, error) {
 func TestAHostThatCannotStartIsRefusedAtOnce(t *testing.T) {
 	absent := filepath.Join(t.TempDir(), "absent.yaml")
 	for name, mutate := range map[string]func(*server.Options){
-		"routes with no provider":         func(o *server.Options) { o.Provider = "" },
-		"Control's own provider name":     func(o *server.Options) { o.Provider = ext.ProviderControl },
-		"sections with no HostConfig":     func(o *server.Options) { o.HostConfig = nil },
-		"a permission Control lacks":      func(o *server.Options) { o.Routes[0].Permission = "licence:invent" },
-		"a pattern naming the tenant":     func(o *server.Options) { o.Routes[0].Pattern = "{tenant}/licence" },
-		"a route on Control's own path":   func(o *server.Options) { o.Routes[0].Pattern = "grants" },
-		"a mux conflict":                  func(o *server.Options) { o.Routes[0].Pattern = "grants/{id}" },
-		"a path under Control's wildcard": func(o *server.Options) { o.Routes[0].Pattern = "targets/special" },
-		"a 0019 route's own path":         func(o *server.Options) { o.Routes[0].Pattern = "audit/retention" },
-		"a 0019 error code":               func(o *server.Options) { o.ErrorCodes = []string{"findings_not_accepted"} },
-		"an error code Control owns":      func(o *server.Options) { o.ErrorCodes = []string{"forbidden"} },
-		"an error code not in snake_case": func(o *server.Options) { o.ErrorCodes = []string{"ScheduleExists"} },
+		"routes with no provider":      func(o *server.Options) { o.Provider = "" },
+		"Control's own provider name":  func(o *server.Options) { o.Provider = ext.ProviderControl },
+		"sections with no HostConfig":  func(o *server.Options) { o.HostConfig = nil },
+		"a permission Control lacks":   func(o *server.Options) { o.Routes[0].Permission = "licence:invent" },
+		"a pattern naming the tenant":  func(o *server.Options) { o.Routes[0].Pattern = "{tenant}/licence" },
+		"a provider of one segment":    func(o *server.Options) { o.Provider = "enterprise" },
+		"a provider of three segments": func(o *server.Options) { o.Provider = "test/enterprise/x" },
+		"a mux conflict between two":   func(o *server.Options) { o.Routes[0].Pattern, o.Routes[2].Pattern = "zz/{a}/end", "zz/start/{b}" },
+
+		// A host's pattern stays inside its own namespace (M27), naming the
+		// route when it would not.
+		"a pattern climbing to Control's":       func(o *server.Options) { o.Routes[0].Pattern = "../../../../../tenants/{t}/grants" },
+		"a pattern climbing under a wildcard":   func(o *server.Options) { o.Routes[0].Pattern = "../../../../../tenants/{t}/targets/special" },
+		"a pattern climbing to another host":    func(o *server.Options) { o.Routes[0].Pattern = "../../../../other/host/tenants/{t}/x" },
+		"a pattern the mux would redirect (.)":  func(o *server.Options) { o.Routes[0].Pattern = "licence/./x" },
+		"a pattern the mux would redirect (//)": func(o *server.Options) { o.Routes[0].Pattern = "licence//x" },
+		"a pattern that is absolute":            func(o *server.Options) { o.Routes[0].Pattern = "/api/v1/tenants/{t}/grants" },
+		"a 0019 error code":                     func(o *server.Options) { o.ErrorCodes = []string{"findings_not_accepted"} },
+		"an error code Control owns":            func(o *server.Options) { o.ErrorCodes = []string{"forbidden"} },
+		"an error code not in snake_case":       func(o *server.Options) { o.ErrorCodes = []string{"ScheduleExists"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			o := hostOptions(&sectionRecorder{}, nil)
@@ -415,6 +434,9 @@ func TestAHostThatCannotStartIsRefusedAtOnce(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "absent.yaml") {
 				t.Fatalf("the file was read before the host was refused: %v", err)
+			}
+			if p := o.Routes[0].Pattern; strings.HasPrefix(name, "a pattern") && !strings.Contains(err.Error(), p) {
+				t.Errorf("the refusal does not name the route %q: %v", p, err)
 			}
 		})
 	}
@@ -500,7 +522,7 @@ func issue(t *testing.T, federation *identity.Federation, home store.Tenant, sco
 
 func TestACrossTenantReadIsHandedTheSetControlResolvedAndNoMore(t *testing.T) {
 	base, federation := startHost(t)
-	report := base + "/api/v1/cross-tenant/reports/privileged-access"
+	report := hostCrossAPI(base, "reports/privileged-access")
 
 	// audit:read in a and b; in scope in c without it; d out of scope.
 	token := issue(t, federation, "a", map[store.Tenant]identity.RoleSet{
@@ -572,7 +594,7 @@ func TestACrossTenantReadIsHandedTheSetControlResolvedAndNoMore(t *testing.T) {
 	}
 
 	// The same host's tenant route is unchanged: one tenant, and no set.
-	resp = get(t, base+"/api/v1/tenants/a/licence", token)
+	resp = get(t, hostAPI(base, "a", "licence"), token)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the tenant route answered %d", resp.StatusCode)
 	}

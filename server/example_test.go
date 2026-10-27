@@ -101,7 +101,8 @@ func Example() {
 		},
 
 		Routes: []server.Route{
-			// GET /api/v1/tenants/{tenant}/archive?limit=&after=, a list:
+			// GET /api/v1/hosts/example/host/tenants/{tenant}/archive?limit=&after=,
+			// a list:
 			// {"records": [...], "truncated": true, "next": "<cursor>"}.
 			{
 				Method:     http.MethodGet,
@@ -110,8 +111,8 @@ func Example() {
 				Summary:    "archived records, a page at a time",
 				Handler:    http.HandlerFunc(listArchive),
 			},
-			// GET /api/v1/tenants/{tenant}/archive/{record}, for a caller
-			// holding audit:read in the tenant Control resolved.
+			// GET /api/v1/hosts/example/host/tenants/{tenant}/archive/{record},
+			// for a caller holding audit:read in the tenant Control resolved.
 			{
 				Method:     http.MethodGet,
 				Pattern:    "archive/{record}",
@@ -124,8 +125,8 @@ func Example() {
 						"the archive holds no such record")
 				}),
 			},
-			// GET /api/v1/cross-tenant/archive/summary, for a caller holding
-			// audit:read in each tenant it covers. Control resolves the set —
+			// GET /api/v1/hosts/example/host/cross-tenant/archive/summary, for a
+			// caller holding audit:read in each tenant it covers. Control resolves the set —
 			// narrowed by ?tenant=, never widened — and the answer names it.
 			{
 				Method:     http.MethodGet,

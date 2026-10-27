@@ -170,6 +170,11 @@ type Options struct {
 	// HostErrorCodes are the codes HostRoutes may answer with, beside
 	// Control's own (M21).
 	HostErrorCodes []string
+	// Consoles are the consoles this listener serves (M27): Control's under
+	// [ConsolePrefix], and the host's screens under its [HostConsoleRoot].
+	// Nothing mounts one before 0044 builds Control's, and a console is
+	// refused at New if any of its patterns leaves its own prefix.
+	Consoles []Console
 }
 
 // New builds the north-bound handler tree.
@@ -196,10 +201,7 @@ func New(o Options) (*Server, error) {
 	// it. The routes are still registered, so the isolation test still covers
 	// them, and they answer [CodeCANotConfigured] naming the key to set: an
 	// operator-shaped answer beats a listener that will not bind.
-	if (len(o.HostRoutes) > 0 || len(o.HostErrorCodes) > 0) && o.HostProvider == "" {
-		return nil, errNoHostProvider
-	}
-	codes, err := declaredCodes(o.HostProvider, o.HostErrorCodes)
+	codes, err := declareHost(o.HostProvider, o.HostRoutes, o.HostErrorCodes)
 	if err != nil {
 		return nil, err
 	}
@@ -259,6 +261,9 @@ func New(o Options) (*Server, error) {
 	if err := s.registerTable(o.HostProvider, o.HostRoutes); err != nil {
 		return nil, err
 	}
+	if err := s.router.mountConsoles(o.HostProvider, o.Consoles); err != nil {
+		return nil, err
+	}
 
 	// The chain, outermost first. The correlation id is first because every
 	// line below it names one; recovery is inside the log so a panic is
@@ -272,6 +277,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.S
 
 // Routes returns the registered routes, for the startup log and for the tests.
 func (s *Server) Routes() []RouteInfo { return s.router.Routes() }
+
+// Consoles returns every console pattern mounted (M27).
+func (s *Server) Consoles() []ConsoleInfo { return s.router.Consoles() }
 
 // notFoundHandler answers the envelope for a path this surface does not serve.
 //
