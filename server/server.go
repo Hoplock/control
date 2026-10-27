@@ -75,9 +75,12 @@ func Run(ctx context.Context, config io.Reader, o Options) error {
 // before the configuration file is read, a database is opened or a port is
 // bound: a host binary that will never start says so at once.
 type Options struct {
-	// Provider names the host in the route listing and the start-up log
-	// (e.g. "hoplock/enterprise"). Required when Routes, HostSections or
-	// ErrorCodes is non-empty; ext.ProviderControl is refused.
+	// Provider names the host in the route listing, the start-up log and
+	// the path of every route it serves, which is under
+	// /api/v1/hosts/<Provider>/ (see Route). It is <owner>/<name>, each
+	// lower-case letters, digits and hyphens: "hoplock/enterprise".
+	// Required when Routes, HostSections or ErrorCodes is non-empty;
+	// ext.ProviderControl is refused.
 	Provider string
 
 	// Registry is populated by the host and NOT sealed: Control registers

@@ -220,10 +220,10 @@ half of the promise. A host binary's `main` registers what it brings into an
 
 | Field | What Control does with it |
 | --- | --- |
-| `Provider` | names the host in the route listing and the start-up log; required with any of the fields below, and never `hoplock/control` |
+| `Provider` | names the host in the route listing, the start-up log and the path of every route it serves; `<owner>/<name>`, each lower-case letters, digits and hyphens (`hoplock/enterprise`); required with any of the fields below, and never `hoplock/control` |
 | `Registry` | registers Control's defaults into it, seals it — an extension beats a default — and serves with the sealed set |
 | `HostSections`, `HostConfig` | the strict decoder accepts those top-level keys, and `Run` hands each one present to `HostConfig` as YAML, before sealing and before anything serves; a key Control defines is refused, and every other unknown key is still an error |
-| `Routes` | mounted on the north-bound listener only, behind Control's authentication, tenant resolution and RBAC: by default (`server.AccessTenant`) at `/api/v1/tenants/{tenant}/<Pattern>`, resolving one tenant; with `Access: server.AccessCrossTenant`, at `/api/v1/cross-tenant/<Pattern>`, resolving a set (M24). `Permission` names one of Control's codes, never a new one, and on a cross-tenant route one the auditor role holds: a read |
+| `Routes` | mounted on the north-bound listener only, behind Control's authentication, tenant resolution and RBAC: in the host's own namespace, where no route of Control's can match (M27): by default (`server.AccessTenant`) at `/api/v1/hosts/<Provider>/tenants/{tenant}/<Pattern>`, resolving one tenant; with `Access: server.AccessCrossTenant`, at `/api/v1/hosts/<Provider>/cross-tenant/<Pattern>`, resolving a set (M24). `Permission` names one of Control's codes, never a new one, and on a cross-tenant route one the auditor role holds: a read |
 | `ErrorCodes` | the codes `server.WriteError` will render beside Control's own; anything else, and any `401`, renders `500 internal` |
 
 A handler reads who is calling with `server.CallerFrom` — the tenant Control
@@ -339,7 +339,8 @@ func Example() {
 		},
 
 		Routes: []server.Route{
-			// GET /api/v1/tenants/{tenant}/archive?limit=&after=, a list:
+			// GET /api/v1/hosts/example/host/tenants/{tenant}/archive?limit=&after=,
+			// a list:
 			// {"records": [...], "truncated": true, "next": "<cursor>"}.
 			{
 				Method:     http.MethodGet,
@@ -348,8 +349,8 @@ func Example() {
 				Summary:    "archived records, a page at a time",
 				Handler:    http.HandlerFunc(listArchive),
 			},
-			// GET /api/v1/tenants/{tenant}/archive/{record}, for a caller
-			// holding audit:read in the tenant Control resolved.
+			// GET /api/v1/hosts/example/host/tenants/{tenant}/archive/{record},
+			// for a caller holding audit:read in the tenant Control resolved.
 			{
 				Method:     http.MethodGet,
 				Pattern:    "archive/{record}",
@@ -362,8 +363,8 @@ func Example() {
 						"the archive holds no such record")
 				}),
 			},
-			// GET /api/v1/cross-tenant/archive/summary, for a caller holding
-			// audit:read in each tenant it covers. Control resolves the set —
+			// GET /api/v1/hosts/example/host/cross-tenant/archive/summary, for a
+			// caller holding audit:read in each tenant it covers. Control resolves the set —
 			// narrowed by ?tenant=, never widened — and the answer names it.
 			{
 				Method:     http.MethodGet,

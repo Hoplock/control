@@ -390,9 +390,10 @@ func TestEveryRouteDeclaresAnAccessClassAndATenantRouteDeclaresAPermission(t *te
 		default:
 			t.Errorf("%s has access class %q", route, route.Access)
 		}
-		// The cross-tenant prefix holds that class and nothing else, so the
-		// path alone says which class answered.
-		if under := strings.HasPrefix(route.Pattern, north.CrossTenantPrefix); under != (route.Access == "cross-tenant") {
+		// A host's cross-tenant prefix holds that class and nothing else, so
+		// the path alone says which class answered (M24, M27).
+		under := route.Provider != "" && strings.HasPrefix(route.Pattern, north.HostCrossTenantPrefix(route.Provider))
+		if under != (route.Access == "cross-tenant") {
 			t.Errorf("%s is %s, but its path says otherwise", route, route.Access)
 		}
 		if route.Summary == "" {
@@ -407,45 +408,45 @@ func TestARouteThatIsNotFullyClassifiedIsRefusedAtRegistration(t *testing.T) {
 
 	for name, route := range map[string]north.Route{
 		"tenant route with no permission": {
-			Method: "GET", Pattern: "/x", Access: north.AccessTenant, Handler: handler,
+			Method: "GET", Pattern: north.APIPrefix + "/x", Access: north.AccessTenant, Handler: handler,
 		},
 		"tenant route with an unknown permission": {
-			Method: "GET", Pattern: "/x", Access: north.AccessTenant,
+			Method: "GET", Pattern: north.APIPrefix + "/x", Access: north.AccessTenant,
 			Permission: "policy:invent", Handler: handler,
 		},
 		"self route with no permission": {
-			Method: "GET", Pattern: "/x", Access: north.AccessSelf, Handler: handler,
+			Method: "GET", Pattern: north.APIPrefix + "/x", Access: north.AccessSelf, Handler: handler,
 		},
 		"self route with an unknown permission": {
-			Method: "GET", Pattern: "/x", Access: north.AccessSelf,
+			Method: "GET", Pattern: north.APIPrefix + "/x", Access: north.AccessSelf,
 			Permission: "grant:take", Handler: handler,
 		},
 		"anonymous route carrying a permission": {
-			Method: "GET", Pattern: "/x", Access: north.AccessAnonymous,
+			Method: "GET", Pattern: north.APIPrefix + "/x", Access: north.AccessAnonymous,
 			Permission: identity.PermPolicyRead, Handler: handler,
 		},
 		"no handler": {
-			Method: "GET", Pattern: "/x", Access: north.AccessAnonymous,
+			Method: "GET", Pattern: north.APIPrefix + "/x", Access: north.AccessAnonymous,
 		},
 		"no method": {
-			Pattern: "/x", Access: north.AccessAnonymous, Handler: handler,
+			Pattern: north.APIPrefix + "/x", Access: north.AccessAnonymous, Handler: handler,
 		},
 
 		// The cross-tenant class (M24): a host's read, under its prefix.
 		"cross-tenant route with no permission": {
-			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessCrossTenant,
+			Method: "GET", Pattern: testHostCross + "x", Access: north.AccessCrossTenant,
 			Provider: "test/host", Handler: handler,
 		},
 		"cross-tenant route with a write": {
-			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessCrossTenant,
+			Method: "GET", Pattern: testHostCross + "x", Access: north.AccessCrossTenant,
 			Permission: identity.PermGrantWrite, Provider: "test/host", Handler: handler,
 		},
 		"cross-tenant route with an unknown permission": {
-			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessCrossTenant,
+			Method: "GET", Pattern: testHostCross + "x", Access: north.AccessCrossTenant,
 			Permission: "audit:invent", Provider: "test/host", Handler: handler,
 		},
 		"cross-tenant route of Control's own": {
-			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessCrossTenant,
+			Method: "GET", Pattern: north.APIPrefix + "/cross-tenant/x", Access: north.AccessCrossTenant,
 			Permission: identity.PermAuditRead, Handler: handler,
 		},
 		"cross-tenant route outside its prefix": {
@@ -453,26 +454,44 @@ func TestARouteThatIsNotFullyClassifiedIsRefusedAtRegistration(t *testing.T) {
 			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
 		},
 		"cross-tenant route that is the bare prefix": {
-			Method: "GET", Pattern: north.CrossTenantPrefix, Access: north.AccessCrossTenant,
+			Method: "GET", Pattern: testHostCross, Access: north.AccessCrossTenant,
 			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
 		},
 		"cross-tenant route naming the tenant": {
-			Method: "GET", Pattern: north.CrossTenantPrefix + "{tenant}/x", Access: north.AccessCrossTenant,
+			Method: "GET", Pattern: testHostCross + "{tenant}/x", Access: north.AccessCrossTenant,
 			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
 		},
 		"cross-tenant route naming a tenant remainder": {
-			Method: "GET", Pattern: north.CrossTenantPrefix + "x/{tenant...}", Access: north.AccessCrossTenant,
+			Method: "GET", Pattern: testHostCross + "x/{tenant...}", Access: north.AccessCrossTenant,
 			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
 		},
 		"tenant route under the cross-tenant prefix": {
-			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessTenant,
+			Method: "GET", Pattern: testHostCross + "x", Access: north.AccessTenant,
 			Permission: identity.PermAuditRead, Handler: handler,
 		},
 		"anonymous route under the cross-tenant prefix": {
-			Method: "GET", Pattern: north.CrossTenantPrefix + "x", Access: north.AccessAnonymous, Handler: handler,
+			Method: "GET", Pattern: testHostCross + "x", Access: north.AccessAnonymous, Handler: handler,
 		},
-		"authenticated route at the cross-tenant root": {
-			Method: "GET", Pattern: north.APIPrefix + "/cross-tenant", Access: north.AccessAuthenticated, Handler: handler,
+		"authenticated route at the host API root": {
+			Method: "GET", Pattern: north.APIPrefix + "/hosts", Access: north.AccessAuthenticated, Handler: handler,
+		},
+		"Control's route under a wildcard over the host API": {
+			Method: "GET", Pattern: north.APIPrefix + "/{family}/x", Access: north.AccessAuthenticated, Handler: handler,
+		},
+		"Control's route outside the API": {
+			Method: "GET", Pattern: "/x", Access: north.AccessAnonymous, Handler: handler,
+		},
+		"a host's tenant route under another host": {
+			Method: "GET", Pattern: north.HostTenantPrefix("other/host") + "x", Access: north.AccessTenant,
+			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
+		},
+		"a host's tenant route under its cross-tenant prefix": {
+			Method: "GET", Pattern: testHostCross + "x", Access: north.AccessTenant,
+			Permission: identity.PermAuditRead, Provider: "test/host", Handler: handler,
+		},
+		"a host's route with a provider that is not two segments": {
+			Method: "GET", Pattern: north.HostTenantPrefix("host") + "x", Access: north.AccessTenant,
+			Permission: identity.PermAuditRead, Provider: "host", Handler: handler,
 		},
 	} {
 		router := north.NewRouter(wrap)
@@ -484,13 +503,13 @@ func TestARouteThatIsNotFullyClassifiedIsRefusedAtRegistration(t *testing.T) {
 	// A duplicate is refused too: two handlers on one method and path is a
 	// route where which one answers depends on registration order.
 	router := north.NewRouter(wrap)
-	route := north.Route{Method: "GET", Pattern: "/x", Access: north.AccessAnonymous, Handler: handler}
+	route := north.Route{Method: "GET", Pattern: north.APIPrefix + "/x", Access: north.AccessAnonymous, Handler: handler}
 	if err := router.Register(route); err != nil {
 		t.Fatalf("first registration: %v", err)
 	}
 	// And a host's cross-tenant read, fully classified, is accepted.
 	if err := router.Register(north.Route{
-		Method: "GET", Pattern: north.CrossTenantPrefix + "reports", Access: north.AccessCrossTenant,
+		Method: "GET", Pattern: testHostCross + "reports", Access: north.AccessCrossTenant,
 		Permission: identity.PermLicenseRead, Provider: "test/host", Handler: handler,
 	}); err != nil {
 		t.Fatalf("a well-formed cross-tenant read was refused: %v", err)
@@ -1179,7 +1198,7 @@ func TestTheAccessLogNamesThePrincipalAndTheTenantItResolved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	req, err = http.NewRequest("GET", ts.URL+north.CrossTenantPrefix+"reports/privileged-access", nil)
+	req, err = http.NewRequest("GET", ts.URL+testHostCross+"reports/privileged-access", nil)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}

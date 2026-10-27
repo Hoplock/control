@@ -239,6 +239,15 @@ Policy is read:
   because those are the two someone opens on a phone during an incident.
 - **No horizontal page scroll at any width.** A wide table scrolls inside its
   own `overflow-x` container with the first column pinned.
+- **Every URL the console writes is under `/console/`** (PLAN **M27**): the
+  shell, every asset, every deep link, and every URL-serialisable filter —
+  `/console/audit/records?subject=alice`, never `/audit?subject=alice`. The
+  history fallback answers only there; `/` redirects to it and nothing else
+  does. A host's screens live under `/host-console/<provider>/`, every URL one
+  of them writes stays there, and Control's shell loads them from there and
+  never from inside `/console/`. A link from one console to the other names
+  the other's prefix. A deep link is part of the console's surface: it is
+  stable, and renaming one is a change someone notices.
 
 ---
 
@@ -296,7 +305,7 @@ code block, diff view, empty state, error state, keyboard hint.
 
 **Composites** — data table (sticky header, pinned first column, column sort,
 column visibility, row selection, per-row actions, saved views), filter bar
-(chip-based, URL-serialisable), time range picker (absolute and relative),
+(chip-based, URL-serialisable under `/console/`, §4), time range picker (absolute and relative),
 detail drawer, timeline (Explain), tree (fleet graph, hop path), JSON viewer
 (collapsible, copyable), command palette, page header (title, id, status,
 actions), copyable id (mono, click-to-copy, truncated with full value in the
@@ -343,6 +352,10 @@ it means revisiting every string, every layout width and every date in the
 console at once, which is the same bargain M12 and M18 struck for tenancy and for
 the same reason.
 
+- **Catalogue keys are namespaced** (M27): Control's carry no `:`, and a host's
+  screens use `<provider>:<key>` (`hoplock/enterprise:approvals.title`), so a
+  host's key can never be one of Control's; one that is is refused when the
+  host's catalogue is mounted.
 - **Every user-visible string comes from a catalogue**, keyed by a stable id. No
   literal in a component, and nothing user-visible baked into an image or a
   sprite — text in an SVG is text.

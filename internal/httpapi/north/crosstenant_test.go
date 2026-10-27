@@ -179,7 +179,7 @@ func TestAFederatedSessionCoversTheOneTenantItSignedInThrough(t *testing.T) {
 		t.Fatalf("server: %v", err)
 	}
 	get := func(query string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("GET", north.CrossTenantPrefix+"reports/privileged-access"+query, nil)
+		req := httptest.NewRequest("GET", testHostCross+"reports/privileged-access"+query, nil)
 		req.Header.Set("Authorization", "Bearer "+session.Credential.String())
 		rec := httptest.NewRecorder()
 		server.ServeHTTP(rec, req)

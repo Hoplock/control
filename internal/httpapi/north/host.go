@@ -18,25 +18,30 @@ import (
 	"github.com/hoplock/control/internal/identity"
 )
 
-// A HOST'S ROUTES ENTER THE SAME TABLE (M15, M2, M18).
+// A HOST'S ROUTES ENTER THE SAME TABLE, IN A NAMESPACE OF THEIR OWN (M15, M2,
+// M18, M27).
 //
 // Hoplock Enterprise serves its API from this listener, behind this middleware,
 // because the alternative — a second listener with a second sign-in — is a fork
 // of the credential model (its E2) and a second surface M2 has no room for. So a
 // host's route is registered through [Router.Register] exactly like Control's:
 // there is no second router, no second chain, and the isolation test enumerates
-// host routes on the day they are mounted.
+// host routes on the day they are mounted. What it does not share is
+// Control's paths: every host route is under the host's own [HostAPIRoot],
+// where no route of Control's can match (M27).
 //
 // A host route is one of two classes, and the middleware resolves what each
 // covers before the handler runs:
 //
-//   - AccessTenant, at /api/v1/tenants/{tenant}/<pattern>: the middleware
-//     authenticates, resolves exactly one tenant from the principal's scope
-//     and checks the route's permission in it.
-//   - AccessCrossTenant, at /api/v1/cross-tenant/<pattern> (M24): the
-//     middleware authenticates and resolves the set of tenants in the
-//     principal's scope where it holds the route's permission, narrowed by the
-//     request's selector and never widened. The permission must be a read.
+//   - AccessTenant, at /api/v1/hosts/<provider>/tenants/{tenant}/<pattern>
+//     ([HostTenantPrefix]): the middleware authenticates, resolves exactly
+//     one tenant from the principal's scope and checks the route's
+//     permission in it.
+//   - AccessCrossTenant, at /api/v1/hosts/<provider>/cross-tenant/<pattern>
+//     ([HostCrossTenantPrefix], M24): the middleware authenticates and
+//     resolves the set of tenants in the principal's scope where it holds
+//     the route's permission, narrowed by the request's selector and never
+//     widened. The permission must be a read.
 //
 // Three things a host does NOT get, each on purpose:
 //
@@ -54,9 +59,10 @@ import (
 type HostRoute struct {
 	// Method is one of hostMethods.
 	Method string
-	// Pattern is relative to the class's prefix — [HostPrefix] or
-	// [CrossTenantPrefix]: no leading "/", no "{tenant}", no "..", no
-	// method prefix.
+	// Pattern is relative to the class's prefix — [HostTenantPrefix] or
+	// [HostCrossTenantPrefix] of the provider: no leading "/", no
+	// "{tenant}", no "." or ".." segment, no empty segment but a trailing
+	// one, no method prefix.
 	Pattern string
 	// Access is AccessTenant or AccessCrossTenant. Every other class,
 	// including the zero value, is refused: a host gets no anonymous,
@@ -75,9 +81,6 @@ type HostRoute struct {
 var hostMethods = []string{
 	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
 }
-
-// HostPrefix is where every AccessTenant host route lives.
-const HostPrefix = APIPrefix + "/tenants/{" + TenantPathParam + "}/"
 
 // HostCaller is who Control authenticated for a host route: a public
 // projection of the principal, never the principal itself, whose scope map
@@ -251,6 +254,11 @@ const hostSampleSegment = "hoplock-host-sample"
 // host path falls under — `targets/special` beside Control's
 // `targets/{target}` — which the mux would otherwise let the host's more
 // specific pattern take from Control.
+//
+// With a host's routes in their own namespace (M27) this finds nothing: the
+// router refuses a route of Control's that can match a path there. It stays
+// because it costs nothing, and it is what still refuses the host if that
+// refusal is ever wrong.
 func (c *controlPaths) servedBy(pattern string) string {
 	if c.patterns[pattern] {
 		return pattern
@@ -271,12 +279,12 @@ func (c *controlPaths) servedBy(pattern string) string {
 	return ""
 }
 
-// hostRoute turns a host's route into a table entry, refusing one Control
-// will not mount. Control's own patterns are passed in because a host may not
-// take a path Control serves: neither by adding a method to it — the 405 and
-// the listing would then describe a path that is half Control's — nor by a
-// literal path under one of Control's wildcards, which would take that path
-// from Control.
+// hostRoute turns a host's route into a table entry under the host's own
+// namespace (M27), refusing one Control will not mount. Control's own
+// patterns are passed in as defence in depth: a host may not take a path
+// Control serves, neither by adding a method to it — the 405 and the listing
+// would then describe a path that is half Control's — nor by a literal path
+// under one of Control's wildcards, which would take that path from Control.
 func (s *Server) hostRoute(provider string, hr HostRoute, control *controlPaths) (Route, error) {
 	name := fmt.Sprintf("%s route %s %q", provider, hr.Method, hr.Pattern)
 	switch {
@@ -292,9 +300,9 @@ func (s *Server) hostRoute(provider string, hr HostRoute, control *controlPaths)
 	var prefix string
 	switch hr.Access {
 	case AccessTenant:
-		prefix = HostPrefix
+		prefix = HostTenantPrefix(provider)
 	case AccessCrossTenant:
-		prefix = CrossTenantPrefix
+		prefix = HostCrossTenantPrefix(provider)
 	case AccessAnonymous, AccessAuthenticated, AccessSelf:
 		return Route{}, fmt.Errorf("httpapi/north: %s is %s; a host route is %s or %s",
 			name, hr.Access, AccessTenant, AccessCrossTenant)
@@ -328,7 +336,10 @@ func (s *Server) hostRoute(provider string, hr HostRoute, control *controlPaths)
 }
 
 // checkHostPattern refuses a pattern that is not a plain path under its class's
-// prefix.
+// prefix. A "." or an empty segment is refused with ".." although neither
+// climbs: the mux redirects a request for such a path to its clean form, so
+// the route could never be served, and `ca//` would turn Control's 404 under
+// it into a redirect.
 func checkHostPattern(prefix, pattern string) error {
 	switch {
 	case pattern == "":
@@ -339,6 +350,8 @@ func checkHostPattern(prefix, pattern string) error {
 		return fmt.Errorf("the pattern carries a method prefix or a space; the method is a field of its own")
 	case slices.Contains(strings.Split(pattern, "/"), ".."):
 		return fmt.Errorf("the pattern climbs out of %s with a .. segment", prefix)
+	case unclean(pattern) != "":
+		return fmt.Errorf("the pattern has %s, which the mux would redirect away from", unclean(pattern))
 	case namesTenantParam(pattern):
 		return fmt.Errorf("the pattern names {%s}; Control resolves the tenant, or the set, before the handler runs", TenantPathParam)
 	}
@@ -408,19 +421,42 @@ func CheckHost(provider string, routes []HostRoute, codes []string) error {
 // It is what lets the south-bound listener's tests enumerate this surface, host
 // routes included, without standing up the services behind it (M2).
 func Table(provider string, routes []HostRoute, codes []string) ([]RouteInfo, error) {
-	if (len(routes) > 0 || len(codes) > 0) && provider == "" {
-		return nil, errNoHostProvider
+	s, err := tableServer(provider, routes, codes, func(Route) http.Handler { return http.NotFoundHandler() })
+	if err != nil {
+		return nil, err
 	}
-	declared, err := declaredCodes(provider, codes)
+	return s.router.Routes(), nil
+}
+
+// tableServer is a server with no services behind it, whose routes are wrapped
+// by wrap rather than by the middleware: what [Table] reads the listing from.
+func tableServer(provider string, routes []HostRoute, codes []string, wrap func(Route) http.Handler) (*Server, error) {
+	declared, err := declareHost(provider, routes, codes)
 	if err != nil {
 		return nil, err
 	}
 	s := &Server{codes: declared, log: slog.Default()}
-	s.router = NewRouter(func(Route) http.Handler { return http.NotFoundHandler() })
+	s.router = NewRouter(wrap)
+	s.router.SetNotFound(s.notFoundHandler())
 	if err := s.registerTable(provider, routes); err != nil {
 		return nil, err
 	}
-	return s.router.Routes(), nil
+	return s, nil
+}
+
+// declareHost refuses a host Control cannot name — routes or codes with no
+// provider, or a provider that cannot be two path segments — and returns the
+// codes its server answers with.
+func declareHost(provider string, routes []HostRoute, codes []string) (map[string]bool, error) {
+	switch {
+	case (len(routes) > 0 || len(codes) > 0) && provider == "":
+		return nil, errNoHostProvider
+	case provider != "":
+		if err := checkProvider(provider); err != nil {
+			return nil, err
+		}
+	}
+	return declaredCodes(provider, codes)
 }
 
 // errNoHostProvider refuses host routes nobody can attribute.

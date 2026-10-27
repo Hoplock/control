@@ -26,6 +26,67 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.25.0
+
+Phase 0038, host routes and the console in namespaces of their own. The
+north-bound listener is four namespaces, each under a prefix of its own, and
+no path is in two of them (decision M27, `docs/PLAN.md` §2): Control's API
+under `/api/v1/` outside `/api/v1/hosts/`; a host's API under
+`/api/v1/hosts/<provider>/`; Control's console under `/console/`; and a host's
+screens under `/host-console/<provider>/`. A host's route can no longer take
+a path Control serves, today or in a later release, and Control can no longer
+take one of the host's.
+
+### Breaking
+
+No identifier is added, removed or changed, so `make release-check` sees
+none of this. Six behaviour changes:
+
+- **Every host route moved.** A tenant route is served at
+  `/api/v1/hosts/<Provider>/tenants/{tenant}/<Pattern>`, where it was
+  `/api/v1/tenants/{tenant}/<Pattern>`; a cross-tenant read at
+  `/api/v1/hosts/<Provider>/cross-tenant/<Pattern>`, where it was
+  `/api/v1/cross-tenant/<Pattern>`. `Pattern` is unchanged and still
+  relative. The old paths answer Control's `404 not_found`. The route
+  listing and the start-up log name each route at its full path. Tenancy is
+  resolved exactly as before: `{tenant}` is a selector checked against the
+  caller's scope, and `server.CallerFrom` hands a handler what it did.
+- **`server.Options.Provider` is `<owner>/<name>`.** Each of the two is
+  lower-case letters, digits and hyphens (`hoplock/enterprise`), because it
+  is two segments of every path the host serves. Any other provider is
+  refused at start-up, before the configuration is read.
+- **A host pattern with a `.` segment, or an empty segment before its end, is
+  refused at start-up**, as one with `..` was. The mux redirects a request
+  for such a path to its clean form, so the route could never be served, and
+  `ca//` turned Control's `404` under `…/ca/` into a redirect.
+- **A host pattern equal to one of Control's is no longer refused.**
+  `targets/{target}`, `grants`, or a literal such as `targets/special` is a
+  path in the host's own namespace now, and is mounted there. Start-up still
+  refuses a host route on a path Control serves, as defence in depth, and no
+  pattern a host can write reaches one.
+- **`/console/` and `/host-console/` are reserved.** Nothing is served there
+  yet; Control's console (0044) and a host's screens will be, each under its
+  own prefix with no catch-all outside it. Once Control's console is
+  mounted, `/` redirects to `/console/`; until then it is `404 not_found`, as
+  before.
+- **What `v0.10.0` left out.** Its entry, and the doc comment of
+  `server.Route` since, said a host could not take a path Control serves.
+  That held for every path Control served and every `405` it answered — this
+  phase checked each route of Control's against every overlap shape, at the
+  request level. But a host catch-all (`{x...}`), a subtree (`targets/`), the
+  tenant root (`{$}`) or a wildcard over Control's literals answered paths
+  under `/api/v1/tenants/{tenant}/` that Control did not serve yet, in place
+  of Control's `404` envelope. A later release serving one of those paths
+  would have refused that host at start-up, or taken the path from it with
+  no error. Neither can happen now.
+
+- **Phase:** 0038, host routes and the console in namespaces of their own.
+- **Public packages:** no identifier is added, removed or changed. The doc
+  comments of `server.Route`, `server.AccessTenant`,
+  `server.AccessCrossTenant` and `server.Options.Provider` say where a host's
+  routes are served.
+- **Migration:** none.
+
 ## v0.24.0
 
 Phase 0037, bounded lists 9: the audit joins, negotiated sessions and

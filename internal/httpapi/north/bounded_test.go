@@ -879,7 +879,7 @@ func TestTheListCheckFailsOnARouteNobodyClassified(t *testing.T) {
 	}
 
 	unclassified := north.RouteInfo{Method: "GET", Pattern: "/api/v1/tenants/{tenant}/widgets"}
-	host := north.RouteInfo{Method: "GET", Pattern: "/api/v1/tenants/{tenant}/reports", Provider: "test/host"}
+	host := north.RouteInfo{Method: "GET", Pattern: testHostTenant + "reports", Provider: testHostProvider}
 	write := north.RouteInfo{Method: "POST", Pattern: "/api/v1/tenants/{tenant}/widgets"}
 	if got := c.problems(append(slices.Clone(routes), unclassified, host, write)); len(got) != 1 ||
 		!strings.HasPrefix(got[0], "GET /api/v1/tenants/{tenant}/widgets is a GET route in none") {

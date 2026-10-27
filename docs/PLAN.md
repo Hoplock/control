@@ -110,18 +110,19 @@ decision.
 | **M12** | tenancy is in the schema from day one | amended by M18 | §10 |
 | **M13** | tech choices (Go, Postgres, closed enum kinds) | live | §3 |
 | **M14** | licensing: this repository is the open-source plane | live | §8 |
-| **M15** | Enterprise extends this repository; it never forks it | live | §3, §6, §8, §10, §11 |
+| **M15** | Enterprise extends this repository; it never forks it | amended by M27 | §3, §6, §8, §10, §11 |
 | **M16** | external access context is an input; its integrations are extensions | live | §3, §5, §6, §7, §10, §11 |
 | **M17** | the fleet graph carries capabilities, not just reachability | live | §3, §4, §5, §10 |
 | **M18** | tenancy is a request dimension, not a process constant | amended by M24 | §10, §11 |
 | **M19** | a deployment has an identity and can be supervised | live | §3, §10, §11 |
-| **M20** | the console is a product surface with a specified design | live | §3, §10 |
+| **M20** | the console is a product surface with a specified design | amended by M27 | §3, §10 |
 | **M21** | the console is localisable; English is the only catalogue | live | §3, §10 |
 | **M22** | a south-bound credential carries its tenant and names its proxy | live | §3, §10 |
 | **M23** | Control is released as immutable tags of one module, and every phase is a release | live | §8, §10 |
-| **M24** | a cross-tenant read is a route class the middleware resolves, and only a host serves one | live | §3, §6, §10, §11 |
+| **M24** | a cross-tenant read is a route class the middleware resolves, and only a host serves one | amended by M27 | §3, §6, §10, §11 |
 | **M25** | the event stream's state is in the store, and the cluster bus only wakes nodes | live | §3, §4, §5, §10, §11 |
 | **M26** | every north-bound list is bounded by its caller and says where it stopped | live | §3, §7, §10 |
+| **M27** | the north-bound listener is four namespaces — Control's API, a host's API, Control's console, a host's console — and no path is in two | live | §3, §10 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -478,17 +479,18 @@ decision.
   carries its own entitlement machinery — no licence check, entitlement gate, or
   "upgrade to unlock" path belongs in this repository.
 
-- **M15 — Hoplock Enterprise extends this repository; it never forks it.**
-  Commercial functionality lives in `github.com/hoplock/enterprise`, which
-  imports this module as a library, implements the interfaces in `ext/`
+- **M15 — Hoplock Enterprise extends this repository; it never forks it
+  (amended by M27: a host's routes and screens sit in namespaces of their
+  own).** Commercial functionality lives in `github.com/hoplock/enterprise`,
+  which imports this module as a library, implements the interfaces in `ext/`
   (phase 0004), and ships its own binary. That binary starts Control through
   the public **`server/`** package (phase 0015): `server.Main` is Control's
   whole command line, and `server.Options` hands it the host's populated
   registry, the top-level configuration sections the host owns, and the
   host's north-bound routes — tenant routes, or cross-tenant reads whose set
-  of tenants Control resolves (M24) — mounted in Control's own route table
-  behind its authentication, tenant resolution and RBAC (M2, M18), naming
-  permissions Control defines, and answering in Control's error envelope with
+  of tenants Control resolves (M24) — mounted in Control's own route table, in
+  a namespace of their own (M27), behind its authentication, tenant
+  resolution and RBAC (M2, M18), naming permissions Control defines, and answering in Control's error envelope with
   codes the host declares. `hoplock-control` is the same call with nothing added, so
   there is one start-up path and not two that drift. Two invariants make that
   work, and both are enforced by tests rather than by intention:
@@ -863,8 +865,9 @@ decision.
   honest default here, the packaged product on top of it there.
 
 - **M20 — The console is a product surface, and its design is specified rather
-  than improvised (new).** Phase 0044 builds an operator console, and every
-  acceptance criterion it carries is functional: does the screen work, does RBAC
+  than improvised (new; amended by M27, which places it under `/console/` and
+  a host's screens under `/host-console/<provider>/`).** Phase 0044 builds an
+  operator console, and every acceptance criterion it carries is functional: does the screen work, does RBAC
   hold, does `make build` run without Node. Nothing in this plan said what the
   result should *look* like, and a phase whose criteria can all be met by
   unstyled HTML will, under `docs/PROTOCOL.md` §3's scope discipline, be met by
@@ -906,8 +909,10 @@ decision.
 
   The constraint this must not break is the one M2 already sets: the console is
   a north-bound API client with no privilege of its own, and no amount of design
-  earns it a private path to the database. Bundle budget, no runtime network
-  fetches (an air-gapped deployment must render identically, and a security
+  earns it a private path to the database. It is served under `/console/` and
+  nowhere else, a host's screens under that host's `/host-console/<provider>/`,
+  and neither has a catch-all outside its own prefix (M27). Bundle budget, no
+  runtime network fetches (an air-gapped deployment must render identically, and a security
   product must not report operator activity to a CDN), and the single-binary
   embed are part of the design, not exceptions to it.
 
@@ -1076,7 +1081,8 @@ decision.
   on, never the program's own.
 
 - **M24 — A cross-tenant read is a route class the middleware resolves, and only
-  a host serves one (amends M18, new).** E11 makes reporting across the
+  a host serves one (amends M18, new; amended by M27, which moves the class's
+  prefix into the host's namespace).** E11 makes reporting across the
   divisions one instance hosts Enterprise's, and before this decision every
   north-bound request resolved exactly one tenant, so the aggregate had nowhere
   to be served. This decision gives it one place, and keeps the property M18
@@ -1094,8 +1100,9 @@ decision.
      spanning tenants needs one identity linked across tenants that may
      federate from different IdPs — delegated administration, E11's governance
      on M18's mechanism, and a request of its own.
-  2. **One class, `AccessCrossTenant`, at `/api/v1/cross-tenant/<pattern>`.**
-     That prefix holds this class and nothing else, and registration refuses
+  2. **One class, `AccessCrossTenant`, at a host's
+     `/api/v1/hosts/<provider>/cross-tenant/<pattern>` (M27).** That prefix
+     holds this class and nothing else, and registration refuses
      the class outside it and every other class inside it, so an operator
      reading a log line can tell from the path which class answered. A pattern
      there never carries `{tenant}`: the set is not a path segment. It is
@@ -1330,6 +1337,62 @@ decision.
     bindings (one per configured provider), and a session's loss (one row per
     gap cause, of which the contract names two).
 
+- **M27 — The north-bound listener is four namespaces, and no path is in two of
+  them (new; amends M15, M20, M24).** A host's tenant routes used to be mounted
+  at `/api/v1/tenants/{tenant}/<pattern>`, beside every route of Control's, and
+  what kept the two apart was a check at start-up against Control's table. That
+  check was wrong until `v0.10.0` (0023), and even right it let a host
+  wildcard, subtree or `{$}` claim every path Control had not served yet — and
+  answer Control's `404` there in the host's own words (M21). A later release
+  that served one of those paths either refused the host at start-up on its
+  next pin bump or silently took the path from it. So the property holds by
+  construction instead:
+
+  | Namespace | Prefix | Holds |
+  | --- | --- | --- |
+  | Control's API | `/api/v1/`, outside `/api/v1/hosts/` | every route of Control's |
+  | a host's API | `/api/v1/hosts/<provider>/` | `tenants/{tenant}/<pattern>` (`AccessTenant`) and `cross-tenant/<pattern>` (`AccessCrossTenant`, M24) |
+  | Control's console | `/console/` | the console's shell, assets, deep links and catalogue (0044) |
+  | a host's console | `/host-console/<provider>/` | a host's screens, their assets, deep links and catalogue, loaded by Control's shell |
+
+  1. **A tree of its own, carrying the provider.** `/api/v1/hosts/` is one
+     prefix an ingress rule or a WAF matches without a wildcard tenant
+     segment; the listing and a log line say whose route answered before they
+     say which tenant; and the middleware resolves `{tenant}` exactly where it
+     always has, from the caller's scope (M18). A reserved segment under the
+     tenant prefix would have done neither of the first two. The provider is
+     in the path so that two hosts' routes, listing entries and screens never
+     collide, and it is `<owner>/<name>` — always two segments, lower-case
+     letters, digits and hyphens — so no provider's root can sit inside
+     another's. It is a literal, never a selector: no segment a host or its
+     caller writes chooses a tenant.
+  2. **Cross-tenant reads folded in.** Only a host serves one (M24), so the
+     class lives in the host's namespace; a top-level `/api/v1/cross-tenant/`
+     would leave a host path outside it and two hosts' reads sharing a
+     prefix. The class is still told by its path.
+  3. **The API under `/api/v1/`, the consoles side by side.** The API version
+     (M19) is one segment for the whole surface, and nothing of Control's has
+     a catch-all under it, so the host's API nests there at no cost. A
+     console is a single-page app whose history fallback answers a deep link
+     it does not know with its index; nested in another console's prefix,
+     that fallback would cover the other. So the consoles are siblings, each
+     fallback is a subtree of its own prefix, outside every prefix a path is
+     Control's `404` envelope, and only the bare `/` redirects — to
+     `/console/`, once Control's console is mounted. Every URL a console
+     writes, filters included, is under its own prefix. Control's catalogue
+     keys carry no `:`; a host's are `<provider>:<key>`, and one equal to
+     Control's is refused when it is loaded (M21).
+  4. **Held structurally, and walked.** The router refuses a route of
+     Control's that can match any path under `/api/v1/hosts/` and a host route
+     outside its own root or its class's subtree; the console mount refuses a
+     pattern outside its own prefix. `TestEveryPathIsInsideItsOwnNamespaceAndNoOther`
+     walks each side's own table — Control's routes, a host's, and each
+     console's mounts — and `TestEveryWayAHostCanOverlapControlIsRefusedOrAnswersNothingOfControls`
+     tries every overlap shape against every route of Control's at the request
+     level. Start-up's check against Control's table — a pattern of Control's,
+     a method beside one, a literal under one of its wildcards, a mux
+     conflict — stays as defence in depth, held by a test of its own.
+
 ---
 
 ## 3. Architecture & repository layout
@@ -1523,7 +1586,7 @@ for nothing.
   self-scoped route (`AccessSelf`, 0016: a requester's own grant requests, under
   `…/me/`) then resolves the subject from the principal as well, and refuses a
   credential with no person behind it. A cross-tenant read (`AccessCrossTenant`,
-  M24, under `/api/v1/cross-tenant/` and only there) resolves a set instead of
+  M24, under a host's `…/cross-tenant/` and only there) resolves a set instead of
   one tenant: every tenant in scope where the permission is held, narrowed by a
   selector and never widened, a named tenant that fails refused rather than
   dropped. A handler reads the tenant — on a self route the subject, on a
@@ -1568,18 +1631,25 @@ for nothing.
   list reads as what it may change.
 
   A host binary's routes (M15) enter **the same table**, after Control's and
-  through the same registration: each is `AccessTenant` under
-  `/api/v1/tenants/{tenant}/`, or a cross-tenant read under
-  `/api/v1/cross-tenant/` naming a permission the auditor holds (M24) — the
-  only routes of that class, since Control serves none of its own — names a
-  permission Control defines, takes no path Control serves (its pattern, a
-  method beside it, or a literal under one of Control's wildcards, such as
-  `targets/special` beside `targets/{target}`, which the mux would otherwise
-  hand to the host's more specific pattern), and answers
-  through a writer that renders Control's codes and the ones the host declared
-  — never a `401`, which is the middleware's alone (M11). There is no second
-  router and no second chain, so the isolation test enumerates a host's routes
-  on the day they are mounted, and the route listing names whose each route is.
+  through the same registration, **in a namespace of their own** (M27): each
+  is `AccessTenant` under `/api/v1/hosts/<provider>/tenants/{tenant}/`, or a
+  cross-tenant read under `/api/v1/hosts/<provider>/cross-tenant/` naming a
+  permission the auditor holds (M24) — the only routes of that class, since
+  Control serves none of its own. A host pattern is relative to that prefix
+  and can never leave it (no leading `/`, no `.` or `..`, no empty segment
+  before its end), so it takes no path Control serves today or later, and the
+  router refuses a route of Control's that could match one of the host's. A
+  route names a permission Control defines and answers through a writer that
+  renders Control's codes and the ones the host declared — never a `401`,
+  which is the middleware's alone (M11). Start-up still refuses a host pattern
+  on a path Control serves (its pattern, a method beside it, or a literal under
+  one of Control's wildcards), as defence in depth. There is no second router
+  and no second chain, so the isolation test enumerates a host's routes on the
+  day they are mounted, and the route listing names whose each route is, at
+  its full path. The consoles are mounted beside the API through one mount
+  point that refuses any pattern outside the console's own prefix —
+  `/console/` for Control's, `/host-console/<provider>/` for a host's screens
+  — and `/` redirects to Control's once it is mounted (M27).
 - **`internal/audit`** — append-only writer, chain verifier, and query API.
   Nothing else writes audit rows. One record is stored twice over: `body` holds
   the canonical JSON the chain hashed, as text rather than jsonb so a verifier
@@ -1698,7 +1768,8 @@ for nothing.
   `internal/httpapi/north`, where every check a host can fail lives. A host
   gets Control's whole command line, top-level configuration sections of its
   own, north-bound routes of its own behind Control's middleware — tenant
-  routes and cross-tenant reads (M24) — and Control's error envelope. Its lists
+  routes and cross-tenant reads (M24), under `/api/v1/hosts/<provider>/` and
+  nowhere else (M27) — and Control's error envelope. Its lists
   answer in Control's bounded shape (M26.7): `ReadList` and `List.Write` go
   through north's `ReadHostPage` and `WriteHostPage` into the same `readPage`
   and page body Control's lists use, so one codec, one limit rule and one set
@@ -3461,7 +3532,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0015 | Public server package & host routes | `server/`, a public package beside `ext/` and the "server package" M15 names: `server.Main`, Control's whole command line, which `cmd/hoplock-control` becomes one call to, and `server.Run`, the daemon alone, with the wiring moved to `internal/daemon`; host configuration sections accepted by the strict decoder in every subcommand and handed to the host by the daemon before its registry is sealed; a host's north-bound routes mounted in the one route table as `AccessTenant`, naming a permission Control defines (`report:write` and `license:read` added), seen through `server.CallerFrom` and answering through `server.WriteError` in the M21 envelope with codes the host declares, never a `401`; everything a host can get wrong refused before a file is read or a port bound; no cross-tenant host route; import guards holding one start-up path; `v0.2.0` (M15, M2, M18, M11, M21, M23). Raised by `Hoplock/enterprise#11` |
 | 0016 | Self-service grant requests | a requester's own door into a registered approval workflow — `grant:request`, the `requester` role holding exactly that and no read set (and so not `license:read`), the `AccessSelf` class whose subject the middleware resolves from the credential (`subject_required` for a machine token), and four routes under `/api/v1/tenants/{tenant}/me/grant-requests` — create (`202`/`201`/`403 grant_request_denied`/`502 grant_workflow_failed`, and `403 grant_workflow_not_registered` with nothing stored while no workflow is registered), list, read and cancel, where somebody else's request is `404`; the subject a `WHERE` predicate (`GetForSubject`, `ListForSubject`, migration `0010`); `ext.GrantRequest.BreakGlass`, copied from the stored request so a resubmission keeps it; the poller learning every tenant a proxy subscribes in, wired in `internal/daemon` around the event stream, so a decision is applied across a restart without a cross-tenant read; `v0.3.0` (M10, M15, M18, M7, M11, M2, M9, M22, M23). Raised by `Hoplock/enterprise#10`; depends only on merged phases (0011, 0012, 0013) |
 | 0017 | Ending an external window | `ext.WindowAssertion.Ended`: a push that ends the window its id opened, through the open's door (credential, binding, rate) and nothing else, revoking the grant it became through 0012's revocation (`access.Service.EndExternal`, one body with `Revoke`) — its sessions ended with `ExternalEndReason`, never the vendor's text, audited as `grant.revoked` with the credential that pushed and `grant_external_ended_*`; read by id alone and never refused for its age, scope or window; answered `200` `revoked` · `already_ended` · `recorded`, or `503 grant_revocation_undelivered`, push again to re-send; an end that arrives before its open kept (`access_context_window_ends`, migration `0011`, `access_context.window_ended`), and the open refused (`400 window_closed` on `id`) — both written under the assertion's advisory lock, so an id never has a grant and a kept end; an expired window never rewritten as revoked; the declarative provider's `push.ended`; a probe that stops confirming still revokes nothing; `v0.4.0` (M16, M10, M9, M5, M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#12`; depends only on merged phases (0009, 0012, 0013) |
-| 0018 | Cross-tenant access class | one north-bound route class that spans tenants, for a host's reads (M24, new): `AccessCrossTenant`, mounted at `/api/v1/cross-tenant/<pattern>` and nowhere else, with the middleware resolving every tenant in the caller's scope where it holds the route's permission (`identity.Principal.TenantsWith`, one caller, held by a source test), narrowed by a `tenant` query or `X-Hoplock-Tenant` selector and never widened, a named tenant that fails refused rather than dropped (`403 tenant_out_of_scope` / `403 forbidden`, no new code), and the set handed to the handler as `server.Caller.Tenants` and logged as `tenants`; `server.Access` (`AccessTenant`, the zero value, and `AccessCrossTenant`) and `server.Route.Access`; reads only — a permission the auditor role holds; Control registers none of its own; a session covers the one tenant it signed in through, so today a token minted on the box is the instance operator; the isolation test class extended to it; `v0.5.0` (M24, M18, M15, M2, M11, M8, M23). Raised by `Hoplock/enterprise#19`; depends only on merged phases (0011, 0015) |
+| 0018 | Cross-tenant access class | one north-bound route class that spans tenants, for a host's reads (M24, new): `AccessCrossTenant`, mounted under one prefix that holds it and nowhere else (a host's `/api/v1/hosts/<provider>/cross-tenant/` since M27), with the middleware resolving every tenant in the caller's scope where it holds the route's permission (`identity.Principal.TenantsWith`, one caller, held by a source test), narrowed by a `tenant` query or `X-Hoplock-Tenant` selector and never widened, a named tenant that fails refused rather than dropped (`403 tenant_out_of_scope` / `403 forbidden`, no new code), and the set handed to the handler as `server.Caller.Tenants` and logged as `tenants`; `server.Access` (`AccessTenant`, the zero value, and `AccessCrossTenant`) and `server.Route.Access`; reads only — a permission the auditor role holds; Control registers none of its own; a session covers the one tenant it signed in through, so today a token minted on the box is the instance operator; the isolation test class extended to it; `v0.5.0` (M24, M18, M15, M2, M11, M8, M23). Raised by `Hoplock/enterprise#19`; depends only on merged phases (0011, 0015) |
 | 0019 | North-bound API, inventory & policy lifecycle | authoring, versioning, validation, **simulation**, **explain**, targets/identities CRUD, GitOps (M2, M4), machine-readable error codes (M21); fleet configuration made deliverable — the contract re-vendored at `4.7.0`, `fleet.ConfigPublisher` wired to `config_changed`, the config fetch and report served, publish limited to proxy D18's fleet-owned keys; the records proxy phase 0043 emits (`Hoplock/proxy#66`) ingested and answered for — `session_id: ""` accepted on every kind (`Hoplock/proxy#71`), the drift feed indexed, `credential_method`/`credential_rung` (counting from 1) the only names, the weakening and degradation queries, and the `target.algorithm_policy_unmet` authoring warning; brokered certificates reach a proxy (`Hoplock/proxy#68`) — `policy_version` `5` with `brokered-certificate` never sent below it, a policy-only ladder entry with the tripwire changed to pin it, `POST /v1/credentials/certificate` served over the CA once per session and never from memory, and `credential_certificate_serial` joined to the certificate's row; the algorithm floor and bans reach a proxy (`Hoplock/proxy#69`) — `policy_version` `6` with neither sent below it and no floor level sent that the proxy did not declare, both authorable with the proxy's own refusals matched and no more, an emptied axis judged per proxy from what each build declares its profiles offer (`Hoplock/proxy#72`, which met the cross-repo dependency `Hoplock/control#41` raised) and shown to the author as a finding, the key-exchange observation merged beside the rungs rather than over them, the negotiated-algorithm records ingested under the proxy's names, an impact preview served from the stored observations, and every step of the emergency runbook callable; what a proxy could not deliver made findable (`Hoplock/proxy#71`) — `logging.gap` stored and indexed by session, cause and span, and a `400` answered only for a record this server will never store |
 | 0020 | Audit of 0019, part 1: south-bound & decision path | every claim 0019 made about the contract, the vocabulary tiers, brokered-certificate issuance, the algorithm floor and bans on the decision path, the capability report, log ingest's `400` classes and the conformance suite, checked against the code with a verdict and evidence each, and every defect fixed under a test that failed first (M1, M5, M11, M17, M22) |
 | 0021 | Audit of 0019, part 2: audit store & fleet configuration | the same for migration `0012`, the derived columns and readers, retention and the resumed verifier, fleet configuration delivery (D18), the store's changes, the deleted debug paths, `seed`, configuration and the daemon's wiring (M8, M6, M12, M2) |
@@ -3481,7 +3552,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0035 | Bounded lists 7: policy versions, a session's decisions and a finding's targets | `GET …/policy/bundles` paged newest first without reading a version's source; `GET …/sessions/{session}/decisions` says `truncated`; a publish-time finding names at most 100 targets or proxies with their count and `<name>_truncated`, and a build's shortfall is one finding per rule naming each build; `policyctl versions` follows `next`, `policyctl explain -session` reports a cut answer (M26, M4, M21) |
 | 0036 | Bounded lists 8: the audit query | `GET …/audit/records`, `…/drift`, `…/algorithm-policy-unmet`, `…/gaps` and `…/certificates/{serial}/records` paged by recorded-at, stream and chain sequence in the query's direction, a limit above the maximum refused rather than clamped; `audit_records_order_idx` replacing the index on recorded-at alone (M26, M8, M21) |
 | 0037 | Bounded lists 9: the audit joins, negotiated sessions and per-session reads | `GET …/audit/blocked-commands` paged on the audit key; `GET …/audit/negotiated` gains `next`, paged by each session's latest matching record; `…/sessions/{session}/certificates` and `…/algorithms` say `truncated`; the enumerating test's pending list deleted, leaving every `GET` route paged, signal-only or exempt with its reason (M26, M8) |
-| 0038 | Host routes and the console in namespaces of their own | every way a host route can overlap a path Control serves, verified against the real route table and at the request level, with each guard proven by a mutation; then four namespaces on the north-bound listener, each under a prefix of its own — Control's API, a host's API of both classes, Control's console and a host's console screens — with no path in two, held pairwise by tests in both directions, both consoles reserved before either is built, no catch-all outside its own prefix, and start-up's refusal kept as defence in depth; a decision, a `### Breaking` release, and the sync `hoplock/enterprise` is owed (M15, M24, M18, M19, M20, M21, M23). Queued at the user's direction |
+| 0038 | Host routes and the console in namespaces of their own | every way a host route can overlap a path Control serves, verified against the real route table and at the request level, with each guard proven by a mutation; then four namespaces on the north-bound listener, each under a prefix of its own — Control's API, a host's API of both classes, Control's console and a host's console screens — with no path in two, held pairwise by tests in both directions, both consoles reserved before either is built, no catch-all outside its own prefix, and start-up's refusal kept as defence in depth; a decision (M27), a `### Breaking` release (`v0.25.0`), and the sync `hoplock/enterprise` is owed (M15, M24, M18, M19, M20, M21, M23). Queued at the user's direction |
 | 0039 | Inbound actions: the executor, a subject lock & a target quarantine | Control's `ext.ActionExecutor` (`internal/action`), executing every `ActionKind` through the service an operator's route calls: `kill_session` by session or by subject through the event stream (M9), `revoke_grant` through 0012's revocation (M10), and `lock_subject`, `unlock_subject` and `quarantine_target` through a subject lock and a target quarantine this phase adds. A lock and a quarantine are standing denials applied above the engine, so no policy rule can write around one; each is recorded with the decision it denied and explained (M3, M4, M17, M5), and an operator places and lifts each on north-bound routes of its own. The executor is idempotent per tenant on `ActionID`, with a different action under one id a conflict (M16's precedent). It refuses to lock a break-glass subject (M7) and shows the holder `ReasonText` once validated, or Control's own text. Every execution is recorded on the control stream with the handler as actor and the external reference. The registered `ext.ActionHandler` is started after the registry is sealed and before the listeners open, and stopped on shutdown, and a failed `Start` never stops Control. No `ext` signature changes. A new decision, and a MINOR release (M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; on one node it depends only on merged phases (0009, 0012, 0019) |
 | 0040 | Identity sync: Control's sync sink & de-provisioning | Control's `ext.SyncSink` (`internal/provision`) over its identity store, handed to the registered `ext.IdentitySync`, which is started after the registry is sealed and before the listeners open and stopped on shutdown, a failed `Start` never stopping Control: a provisioned subject joined on `ExternalID` by a link row and never on the username, its principals exactly the directory's username and unique in the tenant, every method idempotent on `ExternalID` and ordered by `UpdatedAt`, with a deactivation or a group tombstone kept for an id not yet linked (0017's precedent) and Control's clock ordering a re-activation; what the directory holds reaching policy only through the tenant's claim mapping (M7); the directory the only writer of what it provisions (`409 subject_directory_managed`); a connector's `directory_claim`, through which a login reaches the provisioned subject or is refused (`federation.not_provisioned`); a deactivation a standing denial of its own beside 0039's lock, read in the same round trip, denied as `subject_deactivated` and lifted only by the directory, revoking grants, pending requests, north-bound credentials, certificates and live sessions through the services an operator's levers call, with a retry that finishes it; every applied call recorded on the control stream with the sync as actor. No `ext` signature changes. 0039's decision extended, and a MINOR release (M7, M15, M9, M10, M5, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0039 and 0027, and on merged phases (0011, 0012, 0016, 0019) |
 | 0041 | Registered reports served | every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (a report is the audit store, summarised): `GET …/reports` lists each provider's `Reports(ctx, tenant)` with a provider that failed listed with its failure rather than dropped, and `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), checks it against the descriptor the provider listed for that tenant before `Generate` is called, and streams the body with the format's own media type, `nosniff` and `attachment`, never the provider's; a generation with its own bound (`north.report_timeout`) and a per-node ceiling (`north.max_concurrent_reports`, past it `503 report_generation_busy`) beside the decision path (M5), and a body that fails after its first byte aborts the response rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation; `ErrNotFound` `404`, `ErrInvalid` `400`, and every other failure `502 report_provider_failed` or `503 report_provider_unavailable`, never a `401` or a `403` of a provider's (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |

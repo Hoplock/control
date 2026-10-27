@@ -5,7 +5,10 @@
 - `docs/PLAN.md` — especially §2 (M2 — the console is a north-bound client and
   authenticates like one; **M20** — the design is specified, not improvised;
   **M21** — the console is localisable from its first screen and English is the
-  only locale that ships), §3 (`ui/`).
+  only locale that ships; **M27** — the four namespaces on the north-bound
+  listener, and where this console and a host's screens are served), §3 (`ui/`,
+  and `internal/httpapi/north` at "A host binary's routes (M15) enter **the
+  same table**").
 - **`ui/DESIGN.md` — in full, before writing any markup.** It is the design
   system this phase is built to: tokens, type scale, layout, status vocabulary,
   component inventory, state matrix, internationalisation, and the checks that
@@ -23,9 +26,12 @@
   console renders pages through the bounded-list shape 0028 decided (M26), and
   never assumes one answer holds the whole tenant. Open `0038` too: it
   reserved where this console is served, where a host's screens and assets go
-  and how a host's catalogue keys are namespaced, and it rewrote this prompt
-  to match. Build into those namespaces, and never serve a console path inside
-  the one reserved for a host. Open `0041` for the report routes the Reports
+  and how a host's catalogue keys are namespaced (M27), and it rewrote this
+  prompt to match. Build into those namespaces, and never serve a console path
+  inside the one reserved for a host. The code is
+  `internal/httpapi/north/console.go` (`Console`, the mount) and
+  `namespace.go` (the prefixes); the tests are
+  `namespace_internal_test.go`. Open `0041` for the report routes the Reports
   screen consumes (below).
 - `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
   algorithm bullet (the floor and the bans), and **M17**, for what
@@ -58,21 +64,42 @@ is written so that half can fail a review rather than merely disappoint one.
 - `ui/`: a single-page app served by `cmd/hoplock-control` from embedded assets
   (`embed.FS`), so a deployment is still one binary. No separate web server, no
   Node runtime in production.
-- **Served inside its own namespace, and nowhere else.** 0038 reserved four
-  prefixes on the north-bound listener: Control's API, a host's API, this
-  console and a host's console. It also built the tests that hold them apart.
-  - Every path this console serves is under its own prefix: the shell, every
-    asset, and every deep link and URL-serialisable filter it writes.
-  - Nothing is served at `/` but the redirect 0038 put there. The history
-    fallback, the index for a deep link the app does not know, answers only
-    inside the console prefix. An unknown path outside it is Control's `404`,
-    and a path under `/api/v1/` is never answered with the console's index.
-  - A host's screens and assets load from the host's console prefix, never
-    from inside this one, and none of this console's paths sits under the
-    host's. Catalogue keys are split the way 0038 decided (M21).
+- **Served inside its own namespace, and nowhere else (M27).** 0038 reserved
+  four prefixes on the north-bound listener, each a constant in
+  `internal/httpapi/north`, and built the tests that hold them apart:
+
+  | Namespace | Constant | Prefix |
+  | --- | --- | --- |
+  | Control's API | `ControlAPIPrefix` (less `HostAPIPrefix`) | `/api/v1/` |
+  | a host's API | `HostAPIRoot(provider)` | `/api/v1/hosts/<provider>/` |
+  | **this console** | `ConsolePrefix` | `/console/` |
+  | a host's console | `HostConsoleRoot(provider)` | `/host-console/<provider>/` |
+
+  - Mount the console through `north.Options.Consoles`, as one `north.Console`
+    with no `Provider`: its `Patterns` (the shell, `assets/`, the catalogue,
+    and the history fallback as a `{…...}` subtree), its `Catalogue` keys and
+    one `Handler`. The mount refuses at start-up any pattern outside
+    `/console/`, and `/` redirects to `/console/` only once it is mounted.
+    Wire it in `internal/daemon` where the north server is built.
+  - Every path this console serves is under `/console/`: the shell, every
+    asset, and every deep link and URL-serialisable filter it writes
+    (`/console/audit/records?subject=…`, never `/audit?…`). The app's router
+    base is `/console/`, and the build's asset base is `/console/assets/`.
+  - Nothing is served at `/` but that redirect. The history fallback answers
+    only inside `/console/`. An unknown path outside every prefix is
+    Control's `404` envelope, and a path under `/api/v1/` is never answered
+    with the console's index.
+  - A host's screens and assets load from `/host-console/<provider>/`, never
+    from inside `/console/`, and none of this console's paths sits under the
+    host's. This console's shell may load a host's screen modules from there;
+    a link from one console to the other names the other's prefix.
+  - Catalogue keys (M21): this console's carry no `:`; a host's are
+    `<provider>:<key>` (`hoplock/enterprise:approvals.title`), and one equal to
+    a key of this console's is refused when the host's catalogue is mounted.
+    Pass the console's real `en.json` keys as `Catalogue`, so the refusal is
+    judged against them.
   - If a screen needs a path outside these rules, the namespace is wrong.
-    Change 0038's decision in this PR and say why, rather than serving around
-    it.
+    Change M27 in this PR and say why, rather than serving around it.
 - **It is an API client and nothing more.** The console calls the north-bound
   API (0019) with the operator's own session; it never reaches into the database
   and never has a privileged path of its own. Any capability the console has,
@@ -192,8 +219,9 @@ is written so that half can fail a review rather than merely disappoint one.
      `POST …/reports/generate` and saves the file. The form is built from the
      descriptor: the period, each parameter (a closed set as a choice,
      required ones marked), and the formats it lists. A report is named
-     through the catalogue of the host that registered it, under the keys
-     0038 namespaced, and by its code where no catalogue names it (M21). A
+     through the catalogue of the host that registered it, under its
+     `<provider>:` keys (M27), and by its code where no catalogue names it
+     (M21). A
      provider listed with an error is shown as unavailable, never as having
      no packs. With no provider registered, the screen says that the audit
      view is the reporting available, which is the point's own answer (M15),
@@ -310,8 +338,11 @@ becomes a test that runs today.
 - Enterprise screens (approval inboxes, report schedules and history,
   recertification campaigns). Listing and generating a registered pack is the
   Reports screen above, and Control's. Enterprise adds its
-  own, served through the same shell under the paths 0038 reserved for a
-  host — define how in learnings so it can. They
+  own, served through the same shell from `/host-console/<provider>/` (M27):
+  this phase does not add the `server.Options` field a host hands its screens
+  through, and says in its learnings what that field must carry (its
+  patterns, its catalogue keys and one handler, as `north.Console` does) so
+  the phase that adds it can. They
   inherit these tokens and this component set; a second visual identity inside
   one console is the thing M20 exists to prevent.
 - Dashboards and charts beyond fleet health and simple audit counts. The two
@@ -329,13 +360,20 @@ becomes a test that runs today.
 
 **Function**
 - `make build` produces one binary serving the console with no Node present.
-- 0038's namespace tests pass with the real console mounted in place of its
-  stub:
-  - every path the console serves is under its own prefix, and none is under
-    `/api/v1/` or a host's prefix;
-  - an unknown API path answers the API's `404` envelope, never `index.html`;
-  - a deep link outside the console prefix does not load the console;
-  - a host screen's assets cannot shadow one of the console's.
+- 0038's namespace tests stay green, and pass with the real console mounted in
+  place of its stub (`internal/httpapi/north/namespace_internal_test.go`):
+  - `TestEveryPathIsInsideItsOwnNamespaceAndNoOther`: every path the console
+    serves is under `/console/`, and none is under `/api/v1/` or a host's
+    prefix;
+  - `TestEachNamespaceAnswersOnlyInsideItsOwnPrefix`: an unknown API path
+    answers the API's `404` envelope, never `index.html`; a deep link outside
+    `/console/` does not load the console; `/` redirects to `/console/` and
+    nothing else does;
+  - `TestAConsoleOutsideItsPrefixIsRefused`: a host screen's assets cannot
+    shadow one of the console's, and a host catalogue key equal to one of the
+    console's is refused;
+  - `TestEveryWayAHostCanOverlapControlIsRefusedOrAnswersNothingOfControls`
+    (`namespace_test.go`) and the route-listing tests, unchanged.
 - Every screen works against a seeded database; end-to-end tests drive the
   critical paths (explain, policy activate, grant create) headlessly.
 - An RBAC test: an auditor session sees read-only views and the API refuses the
