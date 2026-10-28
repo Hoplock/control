@@ -394,7 +394,7 @@ type ConnectorRepository interface {
 
 type connectorRepo struct{ s *Store }
 
-const connectorColumns = `connector, kind, display_name, enabled, config, created_at, updated_at`
+const connectorColumns = `connector, kind, display_name, enabled, config, directory_claim, created_at, updated_at`
 
 func (r connectorRepo) Get(ctx context.Context, tenant Tenant, name string) (Connector, error) {
 	const op = "store.Connectors.Get"
@@ -452,15 +452,16 @@ func (r connectorRepo) Upsert(ctx context.Context, tenant Tenant, c Connector) e
 	defer cancel()
 
 	_, err := r.s.db.Exec(ctx, `
-		INSERT INTO idp_connectors (tenant, connector, kind, display_name, enabled, config)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO idp_connectors (tenant, connector, kind, display_name, enabled, config, directory_claim)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (tenant, connector) DO UPDATE SET
-			kind         = EXCLUDED.kind,
-			display_name = EXCLUDED.display_name,
-			enabled      = EXCLUDED.enabled,
-			config       = EXCLUDED.config,
-			updated_at   = now()`,
-		tenant, c.Name, string(c.Kind), c.DisplayName, c.Enabled, nonNilJSON(c.Config))
+			kind            = EXCLUDED.kind,
+			display_name    = EXCLUDED.display_name,
+			enabled         = EXCLUDED.enabled,
+			config          = EXCLUDED.config,
+			directory_claim = EXCLUDED.directory_claim,
+			updated_at      = now()`,
+		tenant, c.Name, string(c.Kind), c.DisplayName, c.Enabled, nonNilJSON(c.Config), c.DirectoryClaim)
 	return wrap(op, err)
 }
 
@@ -839,6 +840,9 @@ type NorthPrincipalRepository interface {
 	// Revoke ends a credential. Absent is ErrNotFound; already revoked is
 	// not an error, because the caller's intent is satisfied.
 	Revoke(ctx context.Context, tenant Tenant, principalID string, at time.Time) error
+	// RevokeBySubject ends every live credential behind one subject, sessions
+	// and tokens alike, and returns how many: what a deactivation does (0040).
+	RevokeBySubject(ctx context.Context, tenant Tenant, subjectID string, at time.Time) (int64, error)
 	// List returns every principal in the tenant, newest first.
 	List(ctx context.Context, tenant Tenant) ([]NorthPrincipal, error)
 }
@@ -967,6 +971,29 @@ func (r northPrincipalRepo) Revoke(ctx context.Context, tenant Tenant, principal
 		return notFound(op)
 	}
 	return nil
+}
+
+func (r northPrincipalRepo) RevokeBySubject(ctx context.Context, tenant Tenant, subjectID string, at time.Time) (int64, error) {
+	const op = "store.NorthPrincipals.RevokeBySubject"
+	if err := checkTenant(op, tenant); err != nil {
+		return 0, err
+	}
+	if subjectID == "" {
+		// Every machine token has an empty subject: ending "the credentials
+		// of nobody" would end all of them.
+		return 0, invalid(op, "a subject id is required")
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	tag, err := r.s.db.Exec(ctx, `
+		UPDATE north_principals SET revoked_at = $3
+		WHERE tenant = $1 AND subject_id = $2 AND subject_id <> '' AND revoked_at IS NULL`,
+		tenant, subjectID, at)
+	if err != nil {
+		return 0, wrap(op, err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (r northPrincipalRepo) List(ctx context.Context, tenant Tenant) ([]NorthPrincipal, error) {
@@ -1163,6 +1190,9 @@ type SSHCertificateRepository interface {
 	// RevokeByCAKey revokes every outstanding certificate signed by one CA
 	// key and returns how many. This is the compromise-rotation path.
 	RevokeByCAKey(ctx context.Context, tenant Tenant, caKeyID string, at time.Time, reason string) (int64, error)
+	// RevokeBySubject revokes every outstanding certificate issued for one
+	// subject and returns how many: what a deactivation does (0040).
+	RevokeBySubject(ctx context.Context, tenant Tenant, subjectID string, at time.Time, reason string) (int64, error)
 }
 
 type sshCertificateRepo struct{ s *Store }
@@ -1325,6 +1355,27 @@ func (r sshCertificateRepo) RevokeByCAKey(ctx context.Context, tenant Tenant, ca
 		SET revoked_at = $4, revoked_reason = $5
 		WHERE tenant = $1 AND ca_key_id = $2 AND revoked_at IS NULL AND valid_before > $3`,
 		tenant, caKeyID, at, at, reason)
+	if err != nil {
+		return 0, wrap(op, err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (r sshCertificateRepo) RevokeBySubject(ctx context.Context, tenant Tenant, subjectID string, at time.Time, reason string) (int64, error) {
+	const op = "store.SSHCertificates.RevokeBySubject"
+	if err := checkTenant(op, tenant); err != nil {
+		return 0, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	// ssh_certificates_by_subject_idx serves the subject; what is outstanding
+	// is the rest of the predicate.
+	tag, err := r.s.db.Exec(ctx, `
+		UPDATE ssh_certificates
+		SET revoked_at = $3, revoked_reason = $4
+		WHERE tenant = $1 AND subject_id = $2 AND revoked_at IS NULL AND valid_before > $3`,
+		tenant, subjectID, at, reason)
 	if err != nil {
 		return 0, wrap(op, err)
 	}

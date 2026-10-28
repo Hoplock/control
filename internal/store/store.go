@@ -252,6 +252,13 @@ func (s *Store) TargetQuarantines() TargetQuarantineRepository { return targetQu
 // ActionExecutions returns the ledger of inbound actions (0039).
 func (s *Store) ActionExecutions() ActionExecutionRepository { return actionExecutionRepo{s} }
 
+// DirectoryLinks returns the identity sync's links and the deactivations on
+// them (0040).
+func (s *Store) DirectoryLinks() DirectoryLinkRepository { return directoryLinkRepo{s} }
+
+// DirectoryGroups returns the identity sync's groups (0040).
+func (s *Store) DirectoryGroups() DirectoryGroupRepository { return directoryGroupRepo{s} }
+
 // Proxies returns the proxy repository.
 func (s *Store) Proxies() ProxyRepository { return proxyRepo{s} }
 

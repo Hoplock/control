@@ -62,9 +62,9 @@ type TargetQuarantine struct {
 // there is one, and every standing denial on the id, in ONE round trip.
 //
 // A lock holds for an id with no row, so absence of the row is not absence of
-// the lock. A second standing denial on a subject (the directory's deactivation,
-// 0040) is another nullable join in the same statement and another field here;
-// it is not a second query.
+// the lock. The second standing denial on a subject, the directory's
+// deactivation (0040), is another nullable join in the same statement and
+// another field here, not a second query.
 type SubjectStanding struct {
 	// Subject is the row; the zero value when Known is false.
 	Subject Subject
@@ -72,7 +72,14 @@ type SubjectStanding struct {
 	Known bool
 	// Lock is the lock on the id, nil when none stands.
 	Lock *SubjectLock
+	// Directory is the directory's link, nil when the directory does not
+	// manage the id. Its deactivation, when one stands, is a standing denial
+	// of its own: the directory places and lifts it, never an operator.
+	Directory *SubjectDirectory
 }
+
+// Deactivated reports a standing deactivation on the id.
+func (s SubjectStanding) Deactivated() bool { return s.Directory != nil && s.Directory.Deactivated() }
 
 // TargetStanding is a target as the decision path reads it: the row and the
 // quarantine on it, in one round trip.
@@ -378,13 +385,17 @@ func (r subjectRepo) Standing(ctx context.Context, tenant Tenant, subjectID stri
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	// DECISION PATH (M5): the subject and its lock in one round trip. The id
-	// comes from a one-row derived table so that a lock for an id with no
-	// subject row still comes back, and each join is a primary-key hit.
+	// DECISION PATH (M5): the subject, its lock and the directory's link in
+	// one round trip. The id comes from a one-row derived table so that a
+	// lock or a deactivation for an id with no subject row still comes back,
+	// and each join is a hit on a unique key.
 	var (
-		out    SubjectStanding
-		locked bool
-		l      SubjectLock
+		out         SubjectStanding
+		locked      bool
+		l           SubjectLock
+		linked      bool
+		d           SubjectDirectory
+		deactivated *time.Time
 	)
 	err := r.s.db.QueryRow(ctx, `
 		SELECT s.subject_id IS NOT NULL,
@@ -395,10 +406,14 @@ func (r subjectRepo) Standing(ctx context.Context, tenant Tenant, subjectID stri
 			k.subject_id IS NOT NULL,
 			COALESCE(k.locked_at, 'epoch'), COALESCE(k.locked_by, ''), COALESCE(k.locked_by_principal, ''),
 			COALESCE(k.locked_by_break_glass, false), COALESCE(k.reason_code, ''), COALESCE(k.reason, ''),
-			COALESCE(k.external_ref, ''), COALESCE(k.action_id, '')
+			COALESCE(k.external_ref, ''), COALESCE(k.action_id, ''),
+			d.subject_id IS NOT NULL,
+			COALESCE(d.provider, ''), COALESCE(d.external_id, ''),
+			d.deactivated_at, COALESCE(d.deactivation_reason, '')
 		FROM (SELECT $1::text AS tenant, $2::text AS subject_id) q
 		LEFT JOIN subjects s ON s.tenant = q.tenant AND s.subject_id = q.subject_id
-		LEFT JOIN subject_locks k ON k.tenant = q.tenant AND k.subject_id = q.subject_id`,
+		LEFT JOIN subject_locks k ON k.tenant = q.tenant AND k.subject_id = q.subject_id
+		LEFT JOIN directory_links d ON d.tenant = q.tenant AND d.subject_id = q.subject_id`,
 		tenant, subjectID).Scan(
 		&out.Known,
 		&out.Subject.Source, &out.Subject.DisplayName,
@@ -408,7 +423,10 @@ func (r subjectRepo) Standing(ctx context.Context, tenant Tenant, subjectID stri
 		&locked,
 		&l.LockedAt, &l.LockedBy.Subject, &l.LockedBy.Principal,
 		&l.LockedBy.BreakGlass, &l.ReasonCode, &l.Reason,
-		&l.ExternalRef, &l.ActionID)
+		&l.ExternalRef, &l.ActionID,
+		&linked,
+		&d.Provider, &d.ExternalID,
+		&deactivated, &d.DeactivationReason)
 	if err != nil {
 		return SubjectStanding{}, wrap(op, err)
 	}
@@ -420,7 +438,37 @@ func (r subjectRepo) Standing(ctx context.Context, tenant Tenant, subjectID stri
 		l.LockedAt = l.LockedAt.UTC()
 		out.Lock = &l
 	}
+	if linked {
+		d.DeactivatedAt = utcOrZero(deactivated)
+		out.Directory = &d
+	}
 	return out, nil
+}
+
+// LockPrincipal serialises every write that gives a subject this login name
+// for the rest of the transaction (0040).
+func (r subjectRepo) LockPrincipal(ctx context.Context, tenant Tenant, principal string) error {
+	return r.s.lockKey(ctx, "store.Subjects.LockPrincipal", "principal", tenant, principal, false)
+}
+
+// PresentedByAnother returns a subject other than except that presents a login
+// name. Absent is ErrNotFound.
+func (r subjectRepo) PresentedByAnother(ctx context.Context, tenant Tenant, principal, except string) (Subject, error) {
+	const op = "store.Subjects.PresentedByAnother"
+	if err := checkTenant(op, tenant); err != nil {
+		return Subject{}, err
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	row := r.s.db.QueryRow(ctx, `
+		SELECT `+subjectColumns+`
+		FROM subjects
+		WHERE tenant = $1 AND $2 = ANY(principals) AND subject_id <> $3
+		ORDER BY subject_id
+		LIMIT 1`, tenant, principal, except)
+	return scanSubject(op, row)
 }
 
 // StandingByHostname is the decision path's target lookup: the row by hostname

@@ -69,6 +69,15 @@ const (
 	AttributeReserved = "reserved"
 )
 
+// ReservedName reports a name this server sets for itself: [ClaimChainHop],
+// and anything under the reserved prefix. No mapping may produce one, and a
+// directory's attribute of that name is dropped before the mapping is offered
+// it (0040), so it is stored nowhere: a directory administrator must not be
+// able to assert the identity of the infrastructure either.
+func ReservedName(name string) bool {
+	return slices.Contains(reservedAttributes, name) || strings.HasPrefix(name, reservedPrefix)
+}
+
 // AttributeProblem says why name cannot be a subject's attribute: "" when it
 // can, AttributeInvalid, or AttributeReserved. It is the one rule for every
 // door an attribute comes through — a mapped claim, and a claim an operator
@@ -77,7 +86,7 @@ func AttributeProblem(name string) string {
 	switch {
 	case !attributeNamePattern.MatchString(name):
 		return AttributeInvalid
-	case slices.Contains(reservedAttributes, name) || strings.HasPrefix(name, reservedPrefix):
+	case ReservedName(name):
 		return AttributeReserved
 	}
 	return ""
@@ -391,10 +400,10 @@ type Attributes struct {
 // pass-through namespace, and no "unknown claims go here" bucket: a bucket is
 // an allow-list with the lid off.
 func (m *Mapping) Apply(a Assertion) Attributes {
-	out := Attributes{Claims: map[string]string{}, MappingVersion: m.Version}
 	if m == nil {
-		return out
+		return Attributes{Claims: map[string]string{}}
 	}
+	out := Attributes{Claims: map[string]string{}, MappingVersion: m.Version}
 
 	for _, rule := range m.claims {
 		value, ok := m.claimValue(a, rule.claim)
@@ -417,6 +426,37 @@ func (m *Mapping) Apply(a Assertion) Attributes {
 		out.Groups = slices.Compact(out.Groups)
 	}
 	return out
+}
+
+// ClaimEmail is the claim a directory's email address is offered to the
+// mapping under (0040), the name both brokers read an address from.
+const ClaimEmail = "email"
+
+// ApplyDirectory turns what a directory holds for a subject into attributes,
+// through the same allow-list a login goes through (M7, 0040): the directory is
+// a second door, and the mapping governs it too.
+//
+// The directory's attributes are offered as claims, its email as the claim
+// [ClaimEmail], and the names of its groups under the claim the mapping's
+// `groups.claim` names, so one `groups.map` serves a login and the directory
+// alike. The group claim is always set, empty when the subject is in no group
+// the directory has named, so an attribute that happens to share its name can
+// never be read as a group list.
+func (m *Mapping) ApplyDirectory(attributes map[string]string, email string, groupNames []string) Attributes {
+	a := Assertion{Claims: map[string]string{}, MultiClaims: map[string][]string{}}
+	for code, value := range attributes {
+		if ReservedName(code) {
+			continue
+		}
+		a.Claims[code] = value
+	}
+	if email != "" {
+		a.Claims[ClaimEmail] = email
+	}
+	if m != nil && m.groupFrom != "" {
+		a.MultiClaims[m.groupFrom] = append([]string{}, groupNames...)
+	}
+	return m.Apply(a)
 }
 
 // claimValue reads a single-valued claim. A multi-valued claim is NOT

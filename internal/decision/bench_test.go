@@ -141,6 +141,22 @@ func benchHarness(tb testing.TB) *harness {
 		}
 	}
 
+	// A directory that provisions the rest of the estate (0040): the subject
+	// read joins the directory's links, so the table it joins is populated,
+	// with deactivations standing among them.
+	for i := range benchTargets {
+		l := store.DirectoryLink{
+			ExternalID: fmt.Sprintf("bench-ext-%d", i), SubjectID: fmt.Sprintf("bench-person-%d", i),
+			Provider: "hoplock/scim", LinkedAt: h.clock, Provisioned: true,
+		}
+		if i%10 == 0 {
+			l.DeactivatedAt, l.DeactivationReason = h.clock, "terminated"
+		}
+		if err := h.store.DirectoryLinks().Put(ctx, testTenant, l); err != nil {
+			tb.Fatalf("seed directory link: %v", err)
+		}
+	}
+
 	h.activate(tb, realisticBundle(benchRules))
 	return h
 }

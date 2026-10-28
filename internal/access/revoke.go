@@ -26,6 +26,13 @@ const DefaultRevokeReason = "Your temporary access grant was revoked by an admin
 // disclosure rule), and the references it does not name are in the record.
 const ExternalEndReason = "The access window this session depended on has ended."
 
+// DeactivatedByDirectoryReason is what the holder is shown when their
+// organisation's directory deactivated them (0040): the grants and the sessions
+// a deactivation ends are ended with it. It is Control's text, never the
+// directory's reason code, which is a code and is recorded, and never
+// DefaultRevokeReason, which says "by an administrator" and would be false.
+const DeactivatedByDirectoryReason = "Your account was deactivated by your organisation's directory."
+
 // settlePassTimeout bounds the second pass, which runs whether or not the
 // caller is still waiting: a revocation half-delivered because a client hung up
 // is the failure the pass exists to prevent.

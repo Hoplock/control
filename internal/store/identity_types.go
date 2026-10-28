@@ -77,6 +77,12 @@ type Connector struct {
 	Enabled bool
 	// Config is the broker's own configuration document.
 	Config json.RawMessage
+	// DirectoryClaim is the claim in this connector's assertions that carries
+	// the directory's ExternalID for the same person (0040). A login through
+	// a connector that names one reaches the subject the registered identity
+	// sync provisioned, or is refused; it never creates a subject of its own.
+	// Empty is a connector that federates as it always did.
+	DirectoryClaim string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

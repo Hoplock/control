@@ -52,10 +52,11 @@ type extensionPointView struct {
 	// registered.
 	Lag *feedLagView `json:"lag,omitempty"`
 	// Started and StartError are on the action handler's row while one is
-	// registered (0039): whether its Start succeeded and, when it did not, the
-	// kind of the error. A handler whose Start failed is registered and not
-	// started, and Control serves without it. The listing stays one object per
-	// row (M26), so this is two fields on the row and not a list.
+	// registered (0039), and on the identity sync's (0040): whether its Start
+	// succeeded and, when it did not, the kind of the error. One whose Start
+	// failed is registered and not started, and Control serves without it.
+	// The listing stays one object per row (M26), so this is two fields on the
+	// row and not a list.
 	Started    *bool  `json:"started,omitempty"`
 	StartError string `json:"start_error,omitempty"`
 }
@@ -129,6 +130,10 @@ func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
 		}
 		if st.Info.Point == ext.PointActionHandler && st.Registered() && s.actions != nil {
 			started, kind := s.actions.Started()
+			v.Started, v.StartError = &started, kind
+		}
+		if st.Info.Point == ext.PointIdentitySync && st.Registered() && s.sync != nil {
+			started, kind := s.sync.Started()
 			v.Started, v.StartError = &started, kind
 		}
 		out = append(out, v)

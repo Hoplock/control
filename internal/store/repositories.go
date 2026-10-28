@@ -45,9 +45,64 @@ type SubjectRepository interface {
 	// serialises nothing.
 	Lock(ctx context.Context, tenant Tenant) error
 	// Standing is the decision path's read (M5, M28): the row, if there is
-	// one, and the lock on the id, if one stands, in ONE round trip. An id
-	// with neither is a SubjectStanding with Known false, not an error.
+	// one, the lock on the id, if one stands, and the directory's link with
+	// its deactivation, if the directory manages the id (0040), in ONE round
+	// trip. An id with none of them is a SubjectStanding with Known false,
+	// not an error.
 	Standing(ctx context.Context, tenant Tenant, subjectID string) (SubjectStanding, error)
+	// LockPrincipal serialises, for the rest of the transaction, every write
+	// that gives a subject this login name, so two writers cannot both find
+	// the name free and both take it (0040). Outside a transaction it is
+	// refused.
+	LockPrincipal(ctx context.Context, tenant Tenant, principal string) error
+	// PresentedByAnother returns a subject other than except that presents a
+	// login name. Absent is ErrNotFound.
+	PresentedByAnother(ctx context.Context, tenant Tenant, principal, except string) (Subject, error)
+}
+
+// DirectoryLinkRepository stores the links a registered identity sync makes
+// between the directory's ids and Control's subjects, with the deactivation the
+// directory places (0040, M28). A link never moves to another subject.
+type DirectoryLinkRepository interface {
+	// Lock serialises everything done under one external id for the rest of
+	// the transaction. Outside a transaction it is refused.
+	Lock(ctx context.Context, tenant Tenant, externalID string) error
+	// Get returns the link of an external id. Absent is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, externalID string) (DirectoryLink, error)
+	// BySubject returns the link of a subject. Absent is ErrNotFound, and
+	// means the directory does not manage the subject.
+	BySubject(ctx context.Context, tenant Tenant, subjectID string) (DirectoryLink, error)
+	// ByPrincipal returns the link of a directory-managed subject, other
+	// than except, that presents a login name. Absent is ErrNotFound.
+	ByPrincipal(ctx context.Context, tenant Tenant, principal, except string) (DirectoryLink, error)
+	// Put writes a link whole. A link re-pointed at another subject is
+	// ErrConflict.
+	Put(ctx context.Context, tenant Tenant, l DirectoryLink) error
+	// Settle clears what a link owes the revocation stream once delivered.
+	Settle(ctx context.Context, tenant Tenant, externalID string, invalidate, deactivation bool) error
+	// Members returns the provisioned links that name a directory group.
+	Members(ctx context.Context, tenant Tenant, groupExternalID string) ([]DirectoryLink, error)
+	// For returns the links of these subjects, by subject id, for a page of
+	// the subject list. It names at most a page's worth of ids.
+	For(ctx context.Context, tenant Tenant, subjectIDs []string) (map[string]DirectoryLink, error)
+}
+
+// DirectoryGroupRepository stores the directory's groups, in its own
+// vocabulary, with the tombstone a delete leaves (0040).
+type DirectoryGroupRepository interface {
+	// Lock takes the tenant's directory-groups lock exclusively for the rest
+	// of the transaction: a group change re-derives its members with no
+	// subject write in flight. Outside a transaction it is refused.
+	Lock(ctx context.Context, tenant Tenant) error
+	// Share takes the same lock shared: subject writes run beside each other
+	// and never beside a group change. Outside a transaction it is refused.
+	Share(ctx context.Context, tenant Tenant) error
+	// Get returns a group. Absent is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, externalID string) (DirectoryGroup, error)
+	// Put writes a group whole.
+	Put(ctx context.Context, tenant Tenant, g DirectoryGroup) error
+	// Names resolves group ids to the names of the live groups among them.
+	Names(ctx context.Context, tenant Tenant, externalIDs []string) (map[string]string, error)
 }
 
 // SubjectLockRepository stores the standing denials on subjects (0039, M28).

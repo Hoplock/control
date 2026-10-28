@@ -294,12 +294,23 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
+	// Identity provisioning (0040): with a sync registered, the sink it
+	// applies what it learns through and the lifecycle that starts it. Nil
+	// with none.
+	syncer, err := buildIdentitySync(cfg, st, extensions, grants, revocations, emitter, log)
+	if err != nil {
+		return err
+	}
+
 	deps := northDeps{
 		st: st, ca: ca, emitter: emitter, grants: grants, pushes: pushes,
 		fleet: registry, revocations: revocations, standing: denials, extensions: extensions,
 	}
 	if actions != nil {
 		deps.actions = actions
+	}
+	if syncer != nil {
+		deps.sync = syncer
 	}
 	if feed != nil {
 		deps.archive = feed
@@ -325,6 +336,21 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 			defer cancel()
 			if err := actions.Stop(stopCtx); err != nil {
 				log.Warn("the action handler did not stop cleanly", "provider", actions.Provider(), "error", err)
+			}
+		}()
+	}
+
+	// The registered identity sync starts the same way and for the same
+	// reason (0040): after the registry was sealed, before either listener
+	// opens, for the server's lifetime, and a Start that fails leaves Control
+	// serving with identities arriving at login.
+	if syncer != nil {
+		syncer.Start(ctx)
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
+			defer cancel()
+			if err := syncer.Stop(stopCtx); err != nil {
+				log.Warn("the identity sync did not stop cleanly", "provider", syncer.Provider(), "error", err)
 			}
 		}()
 	}
@@ -403,6 +429,13 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	if actions != nil {
 		if err := actions.Stop(shutdownCtx); err != nil {
 			log.Warn("the action handler did not stop inside the shutdown grace", "provider", actions.Provider(), "error", err)
+		}
+	}
+	// So does the identity sync: a sink call that arrives once this has begun
+	// is KindUnavailable.
+	if syncer != nil {
+		if err := syncer.Stop(shutdownCtx); err != nil {
+			log.Warn("the identity sync did not stop inside the shutdown grace", "provider", syncer.Provider(), "error", err)
 		}
 	}
 
