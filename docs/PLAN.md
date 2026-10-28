@@ -123,7 +123,7 @@ decision.
 | **M25** | the event stream's state is in the store, and the cluster bus only wakes nodes | live | §3, §4, §5, §10, §11 |
 | **M26** | every north-bound list is bounded by its caller and says where it stopped | live | §3, §7, §10 |
 | **M27** | the north-bound listener is four namespaces — Control's API, a host's API, Control's console, a host's console — and no path is in two | live | §3, §10 |
-| **M28** | a lock and a quarantine are standing denials applied above the engine, and an inbound action pulls only levers an operator can pull | live | §3, §5, §6, §7, §10 |
+| **M28** | a lock, a quarantine and the directory's deactivation are standing denials applied above the engine; an inbound action pulls only levers an operator can pull | live | §3, §5, §6, §7, §10 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -271,7 +271,10 @@ decision.
   here; the proxy never talks to an IdP (proxy D4 makes it identity-shaped
   precisely so that this can be added without touching it). IdP claims and
   groups map into policy attributes through an explicit, versioned mapping —
-  never by trusting a raw claim name straight from a token. Local credentials
+  never by trusting a raw claim name straight from a token. A directory that a
+  registered identity sync provisions from is a second door, and the same
+  mapping governs it: what the directory holds is offered to the mapping as
+  claims, and only what it names reaches policy (0040, §6). Local credentials
   exist for development and for break-glass only, are flagged as such in the
   audit record, and are never the production path.
 - **M8 — Audit is append-only and tamper-evident.** Records are immutable, hash
@@ -514,7 +517,10 @@ decision.
      capability Control never claimed — a long-term archive, directory
      provisioning, somebody else's automation pulling a lever an operator can
      already pull — and says so out loud. (For the action point that sentence is
-     true of every `ActionKind` since 0039: M28.) A point that supplies nothing from
+     true of every `ActionKind` since 0039: M28. For the identity sync it is
+     true since 0040: a registered sync provisions and de-provisions through
+     Control's `ext.SyncSink`, and a deactivation takes effect when the
+     directory says so.) A point that supplies nothing from
      Control and is not the third case fails the build, which is what stops
      "ships a real default" from decaying into a promise.
 
@@ -1396,14 +1402,17 @@ decision.
      a method beside one, a literal under one of its wildcards, a mux
      conflict — stays as defence in depth, held by a test of its own.
 
-- **M28 — A lock and a quarantine are standing denials applied above the engine,
-  and an inbound action pulls only levers an operator can pull (new; completes
-  M15's *disabled* form for the action point).** A **subject lock** and a
+- **M28 — A lock, a quarantine and the directory's deactivation are standing
+  denials applied above the engine, and an inbound action pulls only levers an
+  operator can pull (new; completes M15's *disabled* form for the action point;
+  0040 adds the deactivation, the third denial).** A **subject lock** and a
   **target quarantine** are standing denials an operator places and lifts on
   the north-bound API and that a registered `ext.ActionHandler` places through
   the same code. While one stands, every authorize call it covers is a deny —
   `EffectDeny`, never an outage (M11), with the reason code `subject_locked` or
-  `target_quarantined` — whatever policy, grants or external windows say.
+  `target_quarantined` — whatever policy, grants or external windows say. The
+  **directory's deactivation** of a subject (0040) is the third, below, with
+  the reason code `subject_deactivated`.
 
   **They are not policy inputs.** A rule can match an input or ignore it, and a
   lock a policy author can write around is not a lock. M3 keeps the engine's
@@ -1416,10 +1425,10 @@ decision.
   **They cost the decision path nothing (M5).** A lock is read in the statement
   that reads the subject, and a quarantine in the one that reads the target,
   each a primary-key join: the path sends the statements it sent before, and
-  `TestStandingDenialsCostTheDecisionPathNoRoundTrip` counts them. A second
-  standing denial on a subject, such as the directory's deactivation (0040),
-  is another nullable join in the same statement, not another query. Each has a
-  table of its own and no foreign key, so a login's upsert or `PUT
+  `TestStandingDenialsCostTheDecisionPathNoRoundTrip` counts them. The
+  directory's deactivation is a third nullable join in the subject's statement,
+  on `directory_links`' unique `(tenant, subject_id)` key, not another query.
+  Each has a table of its own and no foreign key, so a login's upsert or `PUT
   …/subjects/{subject}` never clears a lock, a lock outlives a deleted subject
   row and holds for an id with no row at all, and deleting then re-creating a
   subject leaves it locked. A quarantine guards its target instead:
@@ -1482,6 +1491,36 @@ decision.
   error's kind, the extension listing shows the handler registered and not
   started, and Control serves.
 
+  **The directory's deactivation is a standing denial of its own (0040).** A
+  registered `ext.IdentitySync` places it through Control's `ext.SyncSink`
+  (`internal/provision`) — `DeactivateSubject`, or an upsert with `Active:
+  false` — and only the directory lifts it, by an upsert with `Active: true`
+  whose time is later than both the last applied write and the instant Control
+  applied the deactivation, so a directory clock behind Control's delays a
+  re-activation and never shortens one. It is not the lock, because the two are
+  placed and lifted by different parties: an operator's unlock must not
+  re-admit a person the directory de-provisioned, and the directory's
+  re-activation must not lift a SOC's lock. Both can stand at once, and the
+  record holds both, the lock first. It is stored on the directory's link row
+  (`directory_links`), never on `subjects`, so a login's upsert cannot clear it,
+  and a deactivation that arrives before the directory's create is kept there
+  and the create provisions the subject already deactivated. The record names
+  it whole: `placed_by` the sync (`identity-sync:<provider>`, no person), the
+  directory's reason code, the directory's id for the person as its external
+  reference, and the text the holder was shown. Once it commits, everything the
+  subject holds is revoked through the services an operator's levers call,
+  with the sync as the actor: its north-bound sessions, API tokens and
+  outstanding certificates in the same transaction, then every live or
+  scheduled grant (`access.Service.Revoke`, which ends the sessions each
+  backed), every pending grant request (the cancel path), and its cached
+  decisions and sessions (`cache_invalidate`, then `session_kill`, twice, the
+  second pass one decision budget later). The holder sees Control's text, never
+  the directory's code. A failure after the commit is `KindUnavailable` or
+  `KindInternal`, the deny stands, and the same call finishes the rest; a
+  re-activation restores nothing that was revoked (M10). A provisioned
+  subject's login through any door is refused while it stands, and a
+  north-bound credential of the subject stops authenticating (§6).
+
 ---
 
 ## 3. Architecture & repository layout
@@ -1513,6 +1552,7 @@ control/
 │   ├── access/             # time-boxed grants, workflow requests, revocation (M10)
 │   ├── standing/           # the subject lock and the target quarantine: placed, lifted, published (M28)
 │   ├── action/             # the ext.ActionExecutor and the registered handler's lifecycle (M15, M28)
+│   ├── provision/          # the ext.SyncSink and the registered identity sync's lifecycle (M15, M7, M28)
 │   ├── accessctx/          # external access context: bindings, push, probe; declarative/ (M16)
 │   ├── notify/             # operator notifications: the webhook, registered notifiers (M15)
 │   ├── extdefault/         # Control's own implementations behind the ext/ seam (M15)
@@ -1570,8 +1610,9 @@ for nothing.
   this server cannot explain afterwards is one it does not serve, on the allow
   path and the deny path alike (M4). A **standing denial** (M28) is read in
   the statements that read the subject and the target, and decides before the
-  engine is asked: the call is a deny with `subject_locked` or
-  `target_quarantined`, recorded with the lock or quarantine whole. The same
+  engine is asked: the call is a deny with `subject_locked`,
+  `subject_deactivated` or `target_quarantined`, recorded with the lock, the
+  directory's deactivation or the quarantine whole. The same
   package reads those records back: **replay** evaluates a candidate program over a window of them, pure
   and total — no clock, no store, no provider, every input taken from the
   record — and **explain** turns one into its story, refusing a record it
@@ -1642,7 +1683,10 @@ for nothing.
   carries a code and a message safe to render, and everything else is an outage.
 
   `Mapping` is the one place an IdP's vocabulary becomes this server's, and it
-  is an allow-list (§6). `Role`, `Permission` and `RoleSet` are the whole of
+  is an allow-list (§6). A directory's vocabulary goes through the same
+  function (`Mapping.ApplyDirectory`, 0040), and a login through a connector
+  tied to the directory (`directory_claim`) reaches the subject the directory
+  provisioned, rewrites nothing on it, or is refused. `Role`, `Permission` and `RoleSet` are the whole of
   RBAC's vocabulary, as constants rather than rows. `Principal` is what the
   north-bound middleware puts on a request: its scope map is **unexported**, so
   the questions a handler can ask are "may this principal act in tenant T" and
@@ -1692,8 +1736,11 @@ for nothing.
   correlation id (M21), which is also why it owns its own 404 and 405 rather than
   letting `http.ServeMux` answer them in prose. Its subject and target views
   show a lock or a quarantine and its facts (`locked`, `lock`, `quarantined`,
-  `quarantine`), read for a page's own rows (M26), and its extension listing
-  shows whether the registered action handler started.
+  `quarantine`), and a subject the directory manages and any deactivation
+  (`directory_managed`, `directory`, `deactivated`, `deactivation`), read for a
+  page's own rows (M26); `PUT` and `DELETE` of a directory-managed subject are
+  `409 subject_directory_managed`; and its extension listing shows whether the
+  registered action handler and the registered identity sync started.
 
   Every list it answers is bounded by its caller and says where it stopped
   (M26). `readPage` (`page.go`) reads `limit` and `after` against the list's
@@ -1852,6 +1899,19 @@ for nothing.
   per tenant on `ActionID` through a ledger written in the act's transaction;
   `Runner` calls the one registered `ext.ActionHandler`'s `Start` and `Stop` and
   reports whether it is running. With no handler registered neither exists.
+- **`internal/provision`** — Control's side of identity provisioning (M15, M7,
+  M28, 0040): `Sink` implements `ext.SyncSink` over the identity store, per
+  tenant, joined on the directory's `ExternalID` by a link row
+  (`directory_links`) and never on the username, every call idempotent on that
+  id and ordered by `UpdatedAt` (Control's clock for a deactivation), with what
+  the directory holds reaching `subjects` only through the tenant's claim
+  mapping. It is the only writer of a provisioned subject, of the directory's
+  links and groups (`directory_groups`), and of the deactivation, which it
+  places as a standing denial and follows with every revocation an operator's
+  levers make. Every applied call is recorded (`identity_sync.*`) with the sync
+  as the actor. `Runner` calls the one registered `ext.IdentitySync`'s `Start`
+  and `Stop` and reports whether it is running. With no sync registered neither
+  exists.
 - **`internal/accessctx`** — external access context (M16): the provider set
   keyed by external system, the per-tenant scope bindings and their internal
   API, the push receiver that admits a window through its binding and creates
@@ -1900,13 +1960,16 @@ for nothing.
   module's, and `ext` imports nothing from it: three import-graph tests.
 - **`internal/daemon`** — the command line and the bring-up behind `server`:
   subcommand dispatch, both listeners, and the wiring of every service,
-  including starting the registered action handler after the registry is sealed
-  and before either listener opens, and stopping it before they drain. Every
+  including starting the registered action handler and the registered
+  identity sync after the registry is sealed and before either listener opens,
+  and stopping them before they drain. Every
   way a host can be wrong is refused before the configuration file is read, a
   database opened or a port bound. A host's configuration sections are accepted
-  by every subcommand and handed to the host by the daemon alone, before the
-  registry is sealed, so an extension a host builds from its section can still
-  be registered.
+  by every subcommand, and handed to the host, before the registry is sealed,
+  by the daemon and by the subcommands that need what a host registers — the
+  retention commands, and `identity connector-put --directory-claim`, which is
+  refused while no identity sync is registered — so an extension a host builds
+  from its section can still be registered.
 - **`internal/instance`** — this deployment's own identity and version, and the
   outbound registration client that makes it supervisable (M19). It is a
   *client* of something above it, which makes it the only package here that
@@ -2729,8 +2792,9 @@ inputs that made it match, and the obligations emitted.
 says, and the decision service applies two things on top of the answer. M17's
 capability constraint turns an allow the estate cannot serve into an outage. A
 **standing denial** (M28) decides before the engine is asked: a lock on the
-subject or a quarantine on the target makes the call a deny whatever any rule,
-grant or window says, so no policy can be written around one. It is a deny, not
+subject, the directory's deactivation of the subject, or a quarantine on the
+target makes the call a deny whatever any rule, grant or window says, so no
+policy can be written around one. It is a deny, not
 an outage (M11); its record has `basis: standing`, no rule, and the denials
 whole in `inputs.standing`; and replay reproduces it from the record.
 
@@ -3000,7 +3064,8 @@ not say why, and a grant the explanation names that the inputs do not hold.
   languages are deliberately absent: a mapping language is a policy language,
   and this product already has one. Multi-IdP federation, complex
   claim-transformation rules and SCIM provisioning are Enterprise's, behind
-  `ext.IdentitySync`.
+  `ext.IdentitySync`; what a registered sync applies, and how, is Control's
+  (the directory door, below).
 
   **A flow is a row, not process memory**, and single use — the same two rules
   the MFA challenges below live by, for the same two reasons: nothing makes a
@@ -3013,6 +3078,48 @@ not say why, and a grant the explanation names that the inputs do not hold.
   parses is an **outage**, never an empty mapping — falling back would silently
   strip every attribute in the tenant, which reads as a permissions bug and
   would be debugged as one.
+
+- **The directory door (M7, M15, M28, 0040).** A registered `ext.IdentitySync`
+  provisions subjects ahead of their first login through Control's
+  `ext.SyncSink` (`internal/provision`). Control allocates the subject id when
+  it first links the directory's `ExternalID` (`dir-…`, which has no `:` and so
+  is never spelled like a federated `<connector>:<subject>`), and the link row
+  is the join, never the username.
+
+  **The directory is the only writer of what it provisions.** A provisioned
+  subject's groups, attributes and login name come from the directory: its
+  attributes and email are offered to the tenant's claim mapping as claims, its
+  groups resolved from id to the directory's group name and offered under the
+  claim `groups.claim` names, and only what the mapping names becomes an
+  attribute or a group, with the mapping's version on the row (M4). So one
+  `groups.map` serves login and directory alike, a renamed group maps nothing
+  until the mapping names the new name, and a new mapping version reaches a
+  provisioned subject at its next applied write. Its login names are exactly the
+  directory's username, replaced on each write; one another subject presents is
+  `KindConflict`, and an existing subject is never adopted or merged. An
+  operator's `PUT` or `DELETE` of it is `409 subject_directory_managed`; the
+  lock, role bindings and local group membership remain an operator's, and
+  local membership merges into its groups as it does for a federated subject.
+
+  **A connector may be tied to the directory.** Its `directory_claim` names the
+  claim in its assertions that carries the directory's `ExternalID`; it is
+  validated when the connector is written (`identity connector-put
+  --directory-claim`), refused while no sync is registered, and shown on the
+  sign-in methods. A login through such a connector reaches the subject the
+  directory provisioned, links the federated identity to it and rewrites none
+  of it; with no provisioned match it is refused (`federation.not_provisioned`)
+  and nothing is created, because a subject made at login beside the
+  directory's would be the second identity de-provisioning never reaches. A
+  login through a connector not tied to the directory that resolves to a
+  directory subject authenticates it the same way, and one that would add a
+  login name a directory subject presents is refused
+  (`federation.login_refused`).
+
+  **A deactivation takes effect when the directory says so** (M28). A login
+  that resolves to a deactivated subject, through any connector or the local
+  path, is refused (`federation.subject_deactivated`) and recorded, and a
+  north-bound credential of the subject stops authenticating, so one minted the
+  instant before the deactivation committed is no way back in.
 
 - **Users, groups, roles and RBAC (M7, M18).** Local users and groups are
   first-class records, so a deployment works before any IdP is connected and
@@ -3590,6 +3697,22 @@ not say why, and a grant the explanation names that the inputs do not hold.
   A repeat of an action writes nothing. The decision a standing denial made is
   a decision record like any other (§5.3).
 
+- **Identity provisioning is audited on this server's own chain** (0040).
+  Every applied call of the registered identity sync is recorded on the
+  tenant's control stream, in the transaction that makes the change, with the
+  sync as the actor (`identity-sync:<provider>`, no person) and the
+  `provider` and `external_id` on every record:
+  `identity_sync.subject_provisioned` and `identity_sync.subject_updated`, with
+  the before and after of groups, claims and login names and the mapping
+  version; `identity_sync.subject_deactivated`, with the reason code and the
+  credentials and certificates it revoked, and
+  `identity_sync.subject_reactivated`; `identity_sync.group_upserted` and
+  `identity_sync.group_deleted`, with the members re-derived; and
+  `identity_sync.refused`, with the field or the conflicting subject. The
+  revocations a deactivation makes write the records their own services write
+  (`grant.revoked`, `grant.request_closed`, `operator.revocation.published`),
+  with the sync as the actor. A replay or a stale write writes nothing.
+
 ---
 
 ## 8. Cross-cutting conventions
@@ -3703,7 +3826,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0037 | Bounded lists 9: the audit joins, negotiated sessions and per-session reads | `GET …/audit/blocked-commands` paged on the audit key; `GET …/audit/negotiated` gains `next`, paged by each session's latest matching record; `…/sessions/{session}/certificates` and `…/algorithms` say `truncated`; the enumerating test's pending list deleted, leaving every `GET` route paged, signal-only or exempt with its reason (M26, M8) |
 | 0038 | Host routes and the console in namespaces of their own | every way a host route can overlap a path Control serves, verified against the real route table and at the request level, with each guard proven by a mutation; then four namespaces on the north-bound listener, each under a prefix of its own — Control's API, a host's API of both classes, Control's console and a host's console screens — with no path in two, held pairwise by tests in both directions, both consoles reserved before either is built, no catch-all outside its own prefix, and start-up's refusal kept as defence in depth; a decision (M27), a `### Breaking` release (`v0.25.0`), and the sync `hoplock/enterprise` is owed (M15, M24, M18, M19, M20, M21, M23). Queued at the user's direction |
 | 0039 | Inbound actions: the executor, a subject lock & a target quarantine | **M28.** Control's `ext.ActionExecutor` (`internal/action`), executing every `ActionKind` through the service an operator's route calls: `kill_session` by exactly one of a session or a subject through the event stream (M9), `revoke_grant` through 0012's revocation (M10, split into `RevokeWithin` and `Finish` so the ledger row commits with it), and `lock_subject`, `unlock_subject` and `quarantine_target` through a subject lock and a target quarantine (`internal/standing`; migration `0020`: `subject_locks`, `target_quarantines`, `action_executions`). A lock and a quarantine are standing denials applied above the engine — `subject_locked` and `target_quarantined`, a deny and never an outage — read in the statement that reads the subject and the target (no round trip added, counted by a test), holding for an id with no row, surviving an upsert, a delete and a re-create, recorded whole in `inputs.standing`, explained, and reproduced by replay. An operator places and lifts each on `POST …/subjects/{subject}/lock` / `unlock` and `POST …/targets/{target}/quarantine` / `release` under `session:revoke`; `GET` shows them, and `DELETE` of a quarantined target is `409 target_quarantined`. The executor is idempotent per tenant on `ActionID` (a different action under one id is `KindConflict`; a repeat returns the first result and sends again what it owed the stream), refuses to lock a break-glass subject (`KindDenied`, `break_glass_subject`), shows the holder `ReasonText` once validated or Control's own text, and records every execution with the handler as actor (`action-handler:<provider>`): the act's record, `action.unchanged`, or `action.refused`. The registered `ext.ActionHandler` is started after the registry is sealed and before the listeners open, stopped before they drain, and a `Start` that fails, panics or never returns is logged and shown on `GET …/extensions` (`started`, `start_error`) and never stops Control. No `ext` signature changes; `v0.26.0` (M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; on one node it depends only on merged phases (0009, 0012, 0019) |
-| 0040 | Identity sync: Control's sync sink & de-provisioning | Control's `ext.SyncSink` (`internal/provision`) over its identity store, handed to the registered `ext.IdentitySync`, which is started after the registry is sealed and before the listeners open and stopped on shutdown, a failed `Start` never stopping Control: a provisioned subject joined on `ExternalID` by a link row and never on the username, its principals exactly the directory's username and unique in the tenant, every method idempotent on `ExternalID` and ordered by `UpdatedAt`, with a deactivation or a group tombstone kept for an id not yet linked (0017's precedent) and Control's clock ordering a re-activation; what the directory holds reaching policy only through the tenant's claim mapping (M7); the directory the only writer of what it provisions (`409 subject_directory_managed`); a connector's `directory_claim`, through which a login reaches the provisioned subject or is refused (`federation.not_provisioned`); a deactivation a standing denial of its own beside 0039's lock, read in the same round trip, denied as `subject_deactivated` and lifted only by the directory, revoking grants, pending requests, north-bound credentials, certificates and live sessions through the services an operator's levers call, with a retry that finishes it; every applied call recorded on the control stream with the sync as actor. No `ext` signature changes. 0039's decision extended, and a MINOR release (M7, M15, M9, M10, M5, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0039 and 0027, and on merged phases (0011, 0012, 0016, 0019) |
+| 0040 | Identity sync: Control's sync sink & de-provisioning | **M28 extended.** Control's `ext.SyncSink` (`internal/provision`) over its identity store, handed to the registered `ext.IdentitySync`, which is started once after the registry is sealed and before the listeners open and stopped before they drain, a `Start` that fails, panics or never returns logged and shown on `GET …/extensions` (`started`, `start_error`) and never stopping Control. A provisioned subject is joined on `ExternalID` by a link row and never on the username (migration `0021`: `directory_links`, `directory_groups`, `idp_connectors.directory_claim`), its id allocated by Control (`dir-…`), its one login name the directory's username and unique in the tenant (`KindConflict`, never adopted); every method idempotent on `ExternalID` and ordered by `UpdatedAt`, with a deactivation or a group tombstone kept for an id not yet seen (0017's precedent) and Control's clock ordering a re-activation; what the directory holds reaching policy only through the tenant's claim mapping (`Mapping.ApplyDirectory`, M7), a renamed or deleted group re-deriving its members in the same transaction; the directory the only writer of what it provisions (`409 subject_directory_managed`); a connector's `directory_claim`, through which a login reaches the provisioned subject or is refused (`federation.not_provisioned`); a deactivation a standing denial of its own beside 0039's lock (`subject_deactivated`), read as a third join in the subject's statement (no round trip added, counted by a test), lifted only by the directory, refusing every login (`federation.subject_deactivated`) and every north-bound credential, and revoking credentials, certificates, grants, pending requests and live sessions through the services an operator's levers call, with a retry that finishes it; every applied call recorded on the control stream (`identity_sync.*`) with the sync as actor. No `ext` signature changes; `v0.27.0` (M7, M15, M9, M10, M5, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0039 and 0027, and on merged phases (0011, 0012, 0016, 0019) |
 | 0041 | Registered reports served | every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (a report is the audit store, summarised): `GET …/reports` lists each provider's `Reports(ctx, tenant)` with a provider that failed listed with its failure rather than dropped, and `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), checks it against the descriptor the provider listed for that tenant before `Generate` is called, and streams the body with the format's own media type, `nosniff` and `attachment`, never the provider's; a generation with its own bound (`north.report_timeout`) and a per-node ceiling (`north.max_concurrent_reports`, past it `503 report_generation_busy`) beside the decision path (M5), and a body that fails after its first byte aborts the response rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation; `ErrNotFound` `404`, `ErrInvalid` `400`, and every other failure `502 report_provider_failed` or `503 report_provider_unavailable`, never a `401` or a `403` of a provider's (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
 | 0042 | North-bound answer names | every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, which rendered store and fleet structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0043 makes the names a compatibility promise (M19, M26, M17, M23) |
 | 0043 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |

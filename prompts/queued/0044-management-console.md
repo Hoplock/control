@@ -42,6 +42,16 @@
   `quarantined` and `quarantine`. The error codes are `target_quarantined` and
   `standing_denial_undelivered`. Enterprise's inbound action channel relies on
   an operator being able to release a lockout here.
+- **`docs/PLAN.md` §6 at "The directory door", M28's paragraph on the
+  directory's deactivation, and `docs/learnings/0040-identity-sync-and-deprovisioning-learnings.md`
+  (its summary), for a subject a registered identity sync provisions, which
+  this console shows and does not let an operator edit (below).** `GET
+  …/subjects` and `GET …/subjects/{subject}` carry `directory_managed`,
+  `directory` (`provider`, `external_id`), `deactivated` and `deactivation`
+  (`deactivated_at`, `reason_code`); `PUT` and `DELETE` of such a subject are
+  `409 subject_directory_managed`. `GET /api/v1/session/methods` carries a
+  connector's `directory_claim`, and the identity sync's row of `GET
+  …/extensions` carries `started` and `start_error`.
 - `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
   algorithm bullet (the floor and the bans), and **M17**, for what
   `Hoplock/proxy#69` added and 0019 serves: the impact preview, the fleet
@@ -213,6 +223,22 @@ is written so that half can fail a review rather than merely disappoint one.
      delivered" with a retry that asks again, never as a failure to lock.
      Deleting a quarantined target is refused (`target_quarantined`), and the
      console says release it first.
+     **A subject the directory manages says so wherever it is shown** (0040):
+     whose it is (the sync's provider and the directory's id for the person),
+     and a **deactivation** as a state of its own — when the directory applied
+     it and its reason code — distinct from a lock, with a deny's colour and
+     words. A subject both locked and deactivated shows both, and the console
+     never suggests that unlocking re-admits a deactivated person: only the
+     directory lifts a deactivation, and the console offers no control that
+     claims to. It **offers no edit and no delete of a directory-managed
+     subject** (the API refuses both with `409 subject_directory_managed`,
+     rendered as "managed by your directory; change it there"); the lock,
+     role bindings and local group membership stay offered. A subject the
+     directory deactivated before it created it is listed with
+     `record_missing`, as a deleted locked subject is. The sign-in page and the
+     identity screens show a connector's `directory_claim`, so an operator can
+     tell a connector that reaches only provisioned people from one that
+     creates subjects at login.
   6. **Extensions** — which `ext` points have an implementation registered
      (0004). An operator debugging behaviour must be able to see that Enterprise
      is in play. **Each registered sink shows its delivery lag** for the tenant

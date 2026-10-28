@@ -10,8 +10,10 @@
 - `docs/learnings/` — read every summary; open the ones whose setup you must
   wire (esp. `0002` conformance, `0006` fleet enrollment, `0008` authorize,
   `0009` events, `0010` audit assertions, `0012` grants, and
-  `0039` — the inbound action executor and the lock, for the scenario below).
-  `docs/PLAN.md` **M28** says what a lock is and what it owes the stream.
+  `0039` — the inbound action executor and the lock, and `0040` — the
+  identity sync's sink and de-provisioning, for the scenarios below).
+  `docs/PLAN.md` **M28** says what a lock and a deactivation are and what each
+  owes the stream, and §6 at "The directory door" what a deactivation refuses.
 - In the **Hoplock Proxy repository**: its `deploy/` topology and its own e2e phase.
   You are extending that idea across the repository boundary, not rebuilding it.
 
@@ -82,6 +84,22 @@ Each scenario is a product claim, proven across both components:
   audit store holds each act's record with the handler as actor and the action
   id, and `audit-verify` passes. A scenario that only checks the executor's
   return value passes on a server whose proxy never stopped the session.
+- **The directory de-provisions a person with a live session** (0040, M28). A
+  test host binary registers an `ext.IdentitySync` through
+  `server.Options.Registry`, a fake whose only job is to call the sink it was
+  handed. Have it provision a person (`UpsertSubject`, in a group the claim
+  mapping names), open a real session as that person through the real proxy,
+  and sign them in to the console. Then have it call `DeactivateSubject`: the
+  proxy ends the session and the **user is told Control's text** ("Your
+  account was deactivated by your organisation's directory."), never the
+  directory's reason code; a new connection by that person is denied with the
+  deliberately vague message, and `explain` on its session id names
+  `subject_deactivated` and the sync as who placed it
+  (`identity-sync:<provider>`); the console session stops authenticating and a
+  console login through a connector tied to the directory is refused
+  (`federation.subject_deactivated`). The audit store holds
+  `identity_sync.subject_deactivated` and the revocations with the sync as
+  actor, and `audit-verify` passes.
 - **The three policy axes**: `sftp` denied while `shell` succeeds; a tunnel to
   the permitted host:port succeeds while another is refused; `tcpip-forward`
   refused with no listener created.

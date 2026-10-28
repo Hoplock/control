@@ -26,6 +26,87 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.27.0
+
+Phase 0040, identity sync: Control's sync sink and de-provisioning that takes
+effect. Control implements `ext.SyncSink` and starts the registered
+`ext.IdentitySync`, a directory's deactivation is a standing denial only the
+directory lifts (decision M28, extended, `docs/PLAN.md` §2 and §6), and a login
+through a connector tied to the directory reaches the subject the directory
+provisioned. Raised by `Hoplock/enterprise#26`. With no sync registered nothing
+runs that did not before. **Run `hoplock-control migrate`:** migration `0021`
+adds `directory_links`, `directory_groups`, `idp_connectors.directory_claim` and
+an index on `north_principals`.
+
+No `ext` identifier is added, removed or changed, so `make release-check` sees
+none of this. The doc comments of `ext.SyncedSubject`, `ext.SyncedGroup`,
+`ext.SyncSink` and `ext.IdentitySync` say what is now true, and `SyncSink`
+carries a **concurrency contract it did not have**: Control's sink is safe for
+concurrent use, two calls on one `ExternalID` are serialised, and calls on
+different ids run concurrently. Read them before you build a sync on them.
+
+- **A registered `ext.IdentitySync` is started.** `Start(ctx, sink)` is called
+  once, after the registry is sealed and before either listener opens, with
+  the server's lifetime as the context; `Stop` on shutdown, before the
+  listeners drain, bounded by the shutdown deadline. A `Start` that returns an
+  error, panics or does not return in 30 seconds is logged at `ERROR` with the
+  provider and the error's kind, and Control serves. A directory that is
+  merely unreachable is not a `Start` error. A sink call once `Stop` began is
+  `KindUnavailable`.
+- **`UpsertSubject` provisions a subject joined on `ExternalID`, never on the
+  username.** Control allocates the subject id (`dir-…`). The subject's one
+  login name is the directory's `Username`, replaced on each write; a name
+  another subject in the tenant presents is `KindConflict`, and an existing
+  subject is never adopted. Its groups and attributes reach policy only
+  through the tenant's claim mapping: attributes and `Email` (as `email`) are
+  offered as claims, `Groups` (group `ExternalID`s) resolved to the names
+  `UpsertGroup` gave and offered under the mapping's `groups.claim`. An
+  attribute named `chain_hop_proxy_id` or under `hoplock.` is dropped.
+  `UpdatedAt` is required; an upsert not later than the last applied one
+  changes nothing and writes nothing.
+- **`DeactivateSubject`, or an upsert with `Active: false`, is a standing
+  denial.** Every authorize for the subject is a deny with
+  `subject_deactivated` whatever policy, grants or windows say, and only the
+  directory lifts it: an upsert with `Active: true` whose `UpdatedAt` is later
+  than both the last applied one and the instant Control applied the
+  deactivation. It revokes the subject's north-bound sessions, API tokens and
+  outstanding certificates, every live or scheduled grant, every pending grant
+  request, and its live sessions, which are told "Your account was deactivated
+  by your organisation's directory." A deactivation for an unknown id is kept,
+  and the create that follows provisions the subject deactivated. A repeat
+  writes no second record and finishes what the first could not.
+- **`UpsertGroup` and `DeleteGroup`.** A group's `Name` is what the claim
+  mapping matches. A group named anew, renamed, deleted or re-created
+  re-derives every member in one transaction and drops their cached
+  decisions. A delete keeps a tombstone, and an older upsert after it changes
+  nothing.
+- **Errors**: `KindInvalid` names the field and changes nothing; `KindConflict`
+  is the username; `KindUnavailable` is a change that stands whose revocations
+  or publications could not be finished, safe to retry with the same call;
+  `KindInternal` is a store failure, safe to retry.
+- **A connector may name a `directory_claim`**: `hoplock-control identity
+  connector-put --directory-claim <claim>`, refused while no identity sync is
+  registered. A login through it reaches the provisioned subject and rewrites
+  nothing on it, or is refused with `federation.not_provisioned` and creates
+  nothing. `GET /api/v1/session/methods` shows the claim.
+- **A deactivated subject's login is refused through every door**
+  (`federation.subject_deactivated`), and a north-bound credential of the
+  subject stops authenticating. A federated login that would add a login name
+  a directory-managed subject presents is refused (`federation.login_refused`).
+- **`GET …/subjects` and `…/subjects/{subject}` gain `directory_managed`,
+  `directory` (`provider`, `external_id`), `deactivated` and `deactivation`
+  (`deactivated_at`, `reason_code`).** `PUT` and `DELETE` of a
+  directory-managed subject are `409 subject_directory_managed` (a new code).
+- **`GET …/extensions` shows whether the identity sync started**, on its row,
+  as `started` and `start_error`, the action handler's shape.
+- **New records on the control stream**, with the sync as actor
+  (`identity-sync:<provider>`): `identity_sync.subject_provisioned`,
+  `identity_sync.subject_updated`, `identity_sync.subject_deactivated`,
+  `identity_sync.subject_reactivated`, `identity_sync.group_upserted`,
+  `identity_sync.group_deleted` and `identity_sync.refused`; a deactivation's
+  revocations write `grant.revoked`, `grant.request_closed` and
+  `operator.revocation.published`.
+
 ## v0.26.0
 
 Phase 0039, inbound actions: the executor, a subject lock and a target
