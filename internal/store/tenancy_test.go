@@ -80,6 +80,9 @@ var repositoryInterfaces = map[string]reflect.Type{
 	"SubjectLockRepository":      reflect.TypeOf((*SubjectLockRepository)(nil)).Elem(),
 	"TargetQuarantineRepository": reflect.TypeOf((*TargetQuarantineRepository)(nil)).Elem(),
 	"ActionExecutionRepository":  reflect.TypeOf((*ActionExecutionRepository)(nil)).Elem(),
+	// Directory provisioning (0040).
+	"DirectoryLinkRepository":  reflect.TypeOf((*DirectoryLinkRepository)(nil)).Elem(),
+	"DirectoryGroupRepository": reflect.TypeOf((*DirectoryGroupRepository)(nil)).Elem(),
 }
 
 // Tenancy is unforgeable at the repository boundary (M18).
@@ -181,6 +184,9 @@ func TestStoreExposesEveryRepository(t *testing.T) {
 		"SubjectLockRepository":      s.SubjectLocks(),
 		"TargetQuarantineRepository": s.TargetQuarantines(),
 		"ActionExecutionRepository":  s.ActionExecutions(),
+
+		"DirectoryLinkRepository":  s.DirectoryLinks(),
+		"DirectoryGroupRepository": s.DirectoryGroups(),
 	}
 
 	if len(got) != len(repositoryInterfaces) {
@@ -282,7 +288,49 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"ActionExecutions.MarkRecorded": func() error {
 			return s.ActionExecutions().MarkRecorded(ctx, "", "a", nowForTest())
 		},
-		"Subjects.Lock":      func() error { return s.Subjects().Lock(ctx, "") },
+		"Subjects.Lock":          func() error { return s.Subjects().Lock(ctx, "") },
+		"Subjects.LockPrincipal": func() error { return s.Subjects().LockPrincipal(ctx, "", "alice") },
+		"DirectoryLinks.Lock":    func() error { return s.DirectoryLinks().Lock(ctx, "", "e") },
+		"DirectoryLinks.Get":     func() error { _, err := s.DirectoryLinks().Get(ctx, "", "e"); return err },
+		"DirectoryLinks.BySubject": func() error {
+			_, err := s.DirectoryLinks().BySubject(ctx, "", "s")
+			return err
+		},
+		"DirectoryLinks.ByPrincipal": func() error {
+			_, err := s.DirectoryLinks().ByPrincipal(ctx, "", "alice", "")
+			return err
+		},
+		"DirectoryLinks.Put": func() error {
+			return s.DirectoryLinks().Put(ctx, "", DirectoryLink{ExternalID: "e", SubjectID: "s", Provider: "p", LinkedAt: nowForTest()})
+		},
+		"DirectoryLinks.Settle":  func() error { return s.DirectoryLinks().Settle(ctx, "", "e", true, true) },
+		"DirectoryLinks.Members": func() error { _, err := s.DirectoryLinks().Members(ctx, "", "g"); return err },
+		"DirectoryLinks.For": func() error {
+			_, err := s.DirectoryLinks().For(ctx, "", []string{"s"})
+			return err
+		},
+		"DirectoryGroups.Lock":  func() error { return s.DirectoryGroups().Lock(ctx, "") },
+		"DirectoryGroups.Share": func() error { return s.DirectoryGroups().Share(ctx, "") },
+		"Subjects.PresentedByAnother": func() error {
+			_, err := s.Subjects().PresentedByAnother(ctx, "", "alice", "s")
+			return err
+		},
+		"DirectoryGroups.Get": func() error { _, err := s.DirectoryGroups().Get(ctx, "", "g"); return err },
+		"DirectoryGroups.Put": func() error {
+			return s.DirectoryGroups().Put(ctx, "", DirectoryGroup{ExternalID: "g", Provider: "p"})
+		},
+		"DirectoryGroups.Names": func() error {
+			_, err := s.DirectoryGroups().Names(ctx, "", []string{"g"})
+			return err
+		},
+		"NorthPrincipals.RevokeBySubject": func() error {
+			_, err := s.NorthPrincipals().RevokeBySubject(ctx, "", "s", nowForTest())
+			return err
+		},
+		"SSHCertificates.RevokeBySubject": func() error {
+			_, err := s.SSHCertificates().RevokeBySubject(ctx, "", "s", nowForTest(), "r")
+			return err
+		},
 		"ClaimMappings.Lock": func() error { return s.ClaimMappings().Lock(ctx, "") },
 		"Decisions.Insert": func() error {
 			return s.Decisions().Insert(ctx, "", Decision{ID: "d", InputsDigest: "x"})

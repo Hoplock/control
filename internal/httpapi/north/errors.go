@@ -184,6 +184,12 @@ const (
 	// recorded, whose cached-decision invalidation or session kill could not
 	// be published. Asking for it again re-sends.
 	CodeDenialUndelivered = "standing_denial_undelivered"
+
+	// CodeSubjectDirectoryManaged is a `PUT` or `DELETE` of a subject a
+	// registered identity sync provisioned (0040): the directory is the only
+	// writer of what it provisions, so it is refused, answered 409, and
+	// changed in the directory instead.
+	CodeSubjectDirectoryManaged = "subject_directory_managed"
 )
 
 // AllCodes is every code this surface defines, so a test can assert that adding
@@ -201,7 +207,7 @@ var AllCodes = []string{
 	CodeWindowClosed, CodePayloadTooLarge,
 	CodePolicyInvalid, CodeFindingsNotAccepted, CodePolicyBlocked, CodeDecisionUnexplainable,
 	CodeConfigKeyNotFleetOwned, CodeConfigValueInvalid, CodeHostKeyUnresolved, CodeUnavailable,
-	CodeTargetQuarantined, CodeDenialUndelivered,
+	CodeTargetQuarantined, CodeDenialUndelivered, CodeSubjectDirectoryManaged,
 }
 
 // writeJSON is the only writer in this package, so the content type cannot

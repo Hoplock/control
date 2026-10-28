@@ -61,6 +61,7 @@ type Server struct {
 	archive     ArchiveFeed
 	sinks       SinkDelivery
 	actions     ActionHandlerState
+	sync        IdentitySyncState
 	mapping     decision.ActiveMapping
 
 	maxBodyBytes   int64
@@ -103,6 +104,11 @@ type SinkDelivery interface {
 type ActionHandlerState interface {
 	Started() (started bool, errorKind string)
 }
+
+// IdentitySyncState is the same of the registered ext.IdentitySync (0040),
+// shown on its row in the same shape: registered and not started is a sync
+// whose Start failed, and Control serving without it.
+type IdentitySyncState = ActionHandlerState
 
 // Options configures a Server.
 type Options struct {
@@ -161,6 +167,9 @@ type Options struct {
 	// Actions is the registered action handler's state (0039), shown on its
 	// row of the extension listing. Nil when none is registered.
 	Actions ActionHandlerState
+	// IdentitySync is the registered identity sync's state (0040), shown on
+	// its row of the extension listing. Nil when none is registered.
+	IdentitySync IdentitySyncState
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -253,6 +262,7 @@ func New(o Options) (*Server, error) {
 		archive:        o.Archive,
 		sinks:          o.Sinks,
 		actions:        o.Actions,
+		sync:           o.IdentitySync,
 		mapping:        decision.StoredActiveMapping(o.Store),
 	}
 	if s.reader == nil {

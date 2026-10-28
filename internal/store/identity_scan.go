@@ -33,7 +33,7 @@ func scanConnector(op string, row rowScanner) (Connector, error) {
 		c    Connector
 		kind string
 	)
-	err := row.Scan(&c.Name, &kind, &c.DisplayName, &c.Enabled, &c.Config, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.Name, &kind, &c.DisplayName, &c.Enabled, &c.Config, &c.DirectoryClaim, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return Connector{}, wrap(op, err)
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/store"
 )
@@ -435,9 +436,111 @@ func TestStandingDenialsCostTheDecisionPathNoRoundTrip(t *testing.T) {
 		t.Fatalf("lift: %v", err)
 	}
 
+	// The directory's deactivation is a third nullable join in the subject's
+	// statement (0040): one standing elsewhere costs nothing, and one on the
+	// subject sends fewer statements, never more.
+	h.deactivate(t, "someone-else@example.com")
+	if got := countOf(plain); got != baseline {
+		t.Errorf("a call that meets no deactivation sends %d statements with one standing elsewhere, want %d", got, baseline)
+	}
+	h.deactivate(t, bob)
+	if got := countOf(ask("edge-host.example.com", decision.CodeSubjectDeactivated)); got != baseline-1 {
+		t.Errorf("a deactivated call sends %d statements, want %d", got, baseline-1)
+	}
+	if _, err := h.store.Pool().Exec(t.Context(), `DELETE FROM directory_links`); err != nil {
+		t.Fatal(err)
+	}
+
 	// A call that meets a quarantine skips the grants as well.
 	h.quarantine(t, "t-edge")
 	if got := countOf(ask("edge-host.example.com", decision.CodeTargetQuarantined)); got != baseline-1 {
 		t.Errorf("a quarantined call sends %d statements, want %d", got, baseline-1)
+	}
+}
+
+// deactivate places the directory's deactivation on a subject id, as the
+// identity sync leaves it.
+func (h *harness) deactivate(t testing.TB, subject string) store.DirectoryLink {
+	t.Helper()
+	l := store.DirectoryLink{
+		ExternalID: "ext-" + subject, SubjectID: subject, Provider: "hoplock/scim", LinkedAt: h.clock.Add(-time.Hour),
+		Provisioned: true, DeactivatedAt: h.clock.Add(-time.Minute).Truncate(time.Second), DeactivationReason: "terminated",
+	}
+	if err := h.store.DirectoryLinks().Put(t.Context(), testTenant, l); err != nil {
+		t.Fatalf("deactivate %s: %v", subject, err)
+	}
+	return l
+}
+
+// A deactivated subject is a deny with `subject_deactivated`, whatever policy
+// and grants say, recorded whole as the sync's, explained, and reproduced by
+// replay; a subject both locked and deactivated is recorded with both (0040).
+func TestADeactivatedSubjectIsDeniedRecordedExplainedAndReplayed(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.mustAllow(t, request("edge-host.example.com", "proxy-1"))
+
+	l := h.deactivate(t, alice)
+	out, err := h.authorize(t, request("edge-host.example.com", "proxy-1"))
+	if err != nil {
+		t.Fatalf("authorize while deactivated: %v: a deactivation is a deny made on purpose, never an outage (M11)", err)
+	}
+	if out.Deny == nil || out.Deny.Reason != decision.CodeSubjectDeactivated || out.Deny.Rule != "" {
+		t.Fatalf("authorize while deactivated = %+v", out)
+	}
+	story, err := decision.Explain(t.Context(), h.store, nil, testTenant, out.Deny.DecisionID)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	var standing []struct {
+		Code        string `json:"code"`
+		SubjectID   string `json:"subject_id"`
+		PlacedAt    string `json:"placed_at"`
+		ReasonCode  string `json:"reason_code"`
+		Reason      string `json:"reason"`
+		ExternalRef string `json:"external_ref"`
+		PlacedBy    struct {
+			Principal string `json:"principal"`
+			Subject   string `json:"subject"`
+		} `json:"placed_by"`
+	}
+	if err := json.Unmarshal(story.Standing, &standing); err != nil || len(standing) != 1 {
+		t.Fatalf("explain carries standing %s (%v), want exactly the deactivation", story.Standing, err)
+	}
+	if got := standing[0]; got.Code != "subject_deactivated" || got.SubjectID != alice || got.ReasonCode != "terminated" ||
+		got.ExternalRef != "ext-"+alice || got.PlacedBy.Principal != "identity-sync:hoplock/scim" || got.PlacedBy.Subject != "" ||
+		got.PlacedAt != l.DeactivatedAt.UTC().Format(time.RFC3339) || got.Reason != access.DeactivatedByDirectoryReason {
+		t.Errorf("the recorded deactivation is %+v", got)
+	}
+	deactivatedSession := h.recordSession(t, "edge-host.example.com", "sess-deactivated")
+
+	// Locked as well: both are named, the lock first.
+	h.lock(t, alice)
+	out, err = h.authorize(t, request("edge-host.example.com", "proxy-1"))
+	if err != nil || out.Deny == nil {
+		t.Fatalf("authorize while locked and deactivated = %+v, %v", out, err)
+	}
+	story, err = decision.Explain(t.Context(), h.store, nil, testTenant, out.Deny.DecisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(story.Standing), `"subject_locked"`) || !strings.Contains(string(story.Standing), `"subject_deactivated"`) {
+		t.Errorf("a locked and deactivated call records %s", story.Standing)
+	}
+
+	// The fixture bundle allows alice; the deactivated call still replays as
+	// the deny it was.
+	rep, err := decision.Replay(t.Context(), h.store.Decisions(), testTenant, compileSource(t, testBundle), decision.ReplayQuery{
+		From: h.clock.Add(-time.Minute), To: h.clock.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	for _, flips := range rep.DenyToAllow {
+		for _, f := range flips.Flips {
+			if f.DecisionID == deactivatedSession {
+				t.Errorf("replay reports the deactivated call %s flipping to an allow", deactivatedSession)
+			}
+		}
 	}
 }

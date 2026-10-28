@@ -99,6 +99,9 @@ const (
 	// CodeTargetQuarantined is a deny because a quarantine stands on the
 	// target.
 	CodeTargetQuarantined = "target_quarantined"
+	// CodeSubjectDeactivated is a deny because the directory deactivated the
+	// subject (0040). Only the directory lifts it.
+	CodeSubjectDeactivated = "subject_deactivated"
 )
 
 // standingDenial is one standing denial as the decision recorded it.
@@ -118,6 +121,17 @@ func lockedDenial(l store.SubjectLock) standingDenial {
 	return standingDenial{
 		code: CodeSubjectLocked, subjectID: l.SubjectID, placedAt: l.LockedAt, placedBy: l.LockedBy,
 		reasonCode: l.ReasonCode, reason: l.Reason, externalRef: l.ExternalRef, actionID: l.ActionID,
+	}
+}
+
+// deactivatedDenial is the directory's deactivation as the decision records it:
+// placed by the sync, with the directory's reason code, and the directory's id
+// for the person as the external reference that ties the denial to its cause.
+func deactivatedDenial(subjectID string, d store.SubjectDirectory) standingDenial {
+	return standingDenial{
+		code: CodeSubjectDeactivated, subjectID: subjectID, placedAt: d.DeactivatedAt,
+		placedBy:   d.DeactivatedBy(),
+		reasonCode: d.DeactivationReason, reason: access.DeactivatedByDirectoryReason, externalRef: d.ExternalID,
 	}
 }
 
@@ -162,7 +176,8 @@ func (s *Service) assemble(ctx context.Context, tenant store.Tenant, req *contra
 		trail: append([]string(nil), req.Conn.HopTrail...),
 	}
 
-	// The subject's row and the lock on the id, in ONE round trip (M5, M28).
+	// The subject's row, the lock on the id and the directory's deactivation,
+	// in ONE round trip (M5, M28).
 	standing, err := s.subjects.SubjectStanding(ctx, tenant, req.Identity.Subject)
 	if err != nil {
 		return assembled{}, err
@@ -188,6 +203,12 @@ func (s *Service) assemble(ctx context.Context, tenant store.Tenant, req *contra
 	}
 	if standing.Lock != nil {
 		out.standing = append(out.standing, lockedDenial(*standing.Lock))
+	}
+	if standing.Deactivated() {
+		// A second standing denial of its own: the directory placed it and
+		// only the directory lifts it, so an operator's unlock does not
+		// re-admit the person and a re-activation does not lift a lock.
+		out.standing = append(out.standing, deactivatedDenial(req.Identity.Subject, *standing.Directory))
 	}
 
 	// The target's row and the quarantine on it, likewise in one round trip.

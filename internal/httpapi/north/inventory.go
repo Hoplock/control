@@ -467,10 +467,49 @@ type subjectView struct {
 	// is a deny, whatever policy says (M28). Lock holds its facts.
 	Locked bool      `json:"locked"`
 	Lock   *lockView `json:"lock,omitempty"`
-	// RecordMissing is set only on a subject this server holds a lock for and
-	// no row: the lock outlives a deleted subject, and an operator must still
-	// be able to read it.
+	// DirectoryManaged reports a subject a registered identity sync
+	// provisioned (0040): the directory is the only writer of its groups,
+	// attributes and login names, so `PUT` and `DELETE` refuse it. Directory
+	// says whose and under which id.
+	DirectoryManaged bool           `json:"directory_managed"`
+	Directory        *directoryView `json:"directory,omitempty"`
+	// Deactivated reports the directory's standing deactivation: every
+	// authorize for the subject is a deny, and only the directory lifts it.
+	// Deactivation holds its facts.
+	Deactivated  bool              `json:"deactivated"`
+	Deactivation *deactivationView `json:"deactivation,omitempty"`
+	// RecordMissing is set only on a subject this server holds a lock or a
+	// deactivation for and no row: the lock outlives a deleted subject, a
+	// deactivation can arrive before the directory's create, and an operator
+	// must still be able to read either.
 	RecordMissing bool `json:"record_missing,omitempty"`
+}
+
+// directoryView is whose a directory-managed subject is.
+type directoryView struct {
+	Provider   string `json:"provider"`
+	ExternalID string `json:"external_id"`
+}
+
+// deactivationView is the directory's deactivation as an operator reads it.
+type deactivationView struct {
+	DeactivatedAt time.Time `json:"deactivated_at"`
+	ReasonCode    string    `json:"reason_code,omitempty"`
+}
+
+// withDirectory adds what the directory says of the subject, when it manages
+// it.
+func (v subjectView) withDirectory(d *store.SubjectDirectory) subjectView {
+	if d == nil {
+		return v
+	}
+	v.DirectoryManaged = true
+	v.Directory = &directoryView{Provider: d.Provider, ExternalID: d.ExternalID}
+	if d.Deactivated() {
+		v.Deactivated = true
+		v.Deactivation = &deactivationView{DeactivatedAt: d.DeactivatedAt.UTC(), ReasonCode: d.DeactivationReason}
+	}
+	return v
 }
 
 func viewSubject(sub store.Subject) subjectView {
@@ -525,6 +564,11 @@ func (s *Server) handleSubjectList(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "list locks", err)
 		return
 	}
+	links, err := s.st.DirectoryLinks().For(r.Context(), tenant, ids)
+	if err != nil {
+		s.fail(w, r, "list directory links", err)
+		return
+	}
 	out := make([]subjectView, 0, len(page.Rows))
 	var last []any
 	for _, sub := range page.Rows {
@@ -532,7 +576,11 @@ func (s *Server) handleSubjectList(w http.ResponseWriter, r *http.Request) {
 		if found, ok := locks[sub.ID]; ok {
 			l = &found
 		}
-		out = append(out, viewSubjectWith(sub, l))
+		v := viewSubjectWith(sub, l)
+		if link, ok := links[sub.ID]; ok {
+			v = v.withDirectory(link.SubjectDirectory())
+		}
+		out = append(out, v)
 	}
 	if n := len(page.Rows); n > 0 {
 		last = []any{page.Rows[n-1].ID}
@@ -554,11 +602,11 @@ func (s *Server) handleSubjectGet(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "read subject", err)
 		return
 	}
-	if !standing.Known && standing.Lock == nil {
+	if !standing.Known && standing.Lock == nil && !standing.Deactivated() {
 		s.inventoryFailure(w, r, "read subject", &store.Error{Op: "north.handleSubjectGet", Kind: store.KindNotFound})
 		return
 	}
-	v := viewSubjectWith(standing.Subject, standing.Lock)
+	v := viewSubjectWith(standing.Subject, standing.Lock).withDirectory(standing.Directory)
 	if !standing.Known {
 		v.ID, v.RecordMissing = id, true
 	}
@@ -600,6 +648,9 @@ func (s *Server) handleSubjectPut(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Subjects().Lock(ctx, tenant); err != nil {
 			return err
 		}
+		if err := refuseDirectoryManaged(ctx, tx, tenant, id); err != nil {
+			return err
+		}
 		before, err := tx.Subjects().Get(ctx, tenant, id)
 		existed := err == nil
 		if err != nil && !store.IsNotFound(err) {
@@ -629,6 +680,10 @@ func (s *Server) handleSubjectPut(w http.ResponseWriter, r *http.Request) {
 		}
 		return s.emitter.OperatorEvent(ctx, tx, tenant, act)
 	})
+	if errors.Is(err, errDirectoryManaged) {
+		s.directoryManaged(w, r, id)
+		return
+	}
 	if err != nil {
 		s.inventoryFailure(w, r, "write subject", err)
 		return
@@ -655,6 +710,9 @@ func (s *Server) handleSubjectDelete(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Subjects().Lock(ctx, tenant); err != nil {
 			return err
 		}
+		if err := refuseDirectoryManaged(ctx, tx, tenant, id); err != nil {
+			return err
+		}
 		before, err := tx.Subjects().Get(ctx, tenant, id)
 		if err != nil {
 			return err
@@ -667,11 +725,44 @@ func (s *Server) handleSubjectDelete(w http.ResponseWriter, r *http.Request) {
 			Before: strings.Join(before.Groups, ","), Message: "subject " + id + " deleted",
 		})
 	})
+	if errors.Is(err, errDirectoryManaged) {
+		s.directoryManaged(w, r, id)
+		return
+	}
 	if err != nil {
 		s.inventoryFailure(w, r, "delete subject", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// errDirectoryManaged is a write of a subject the directory manages, refused.
+var errDirectoryManaged = errors.New("north: the subject is managed by the directory")
+
+// refuseDirectoryManaged refuses a write of a subject a registered identity
+// sync provisioned, or linked ahead of its create (0040). The directory is the
+// only writer of what it provisions: if an operator's write also landed,
+// whichever wrote last would decide access, and a group the directory removed
+// would come back. The lock, role bindings and local membership are still an
+// operator's.
+func refuseDirectoryManaged(ctx context.Context, tx *store.Store, tenant store.Tenant, subjectID string) error {
+	_, err := tx.DirectoryLinks().BySubject(ctx, tenant, subjectID)
+	switch {
+	case err == nil:
+		return errDirectoryManaged
+	case store.IsNotFound(err):
+		return nil
+	default:
+		return err
+	}
+}
+
+func (s *Server) directoryManaged(w http.ResponseWriter, r *http.Request, subjectID string) {
+	writeError(w, http.StatusConflict, Error{
+		Code: CodeSubjectDirectoryManaged, CorrelationID: CorrelationIDFrom(r.Context()),
+		Parameters: map[string]any{"subject": subjectID},
+		Message:    "this subject is provisioned by the organisation's directory, which is the only writer of it; change it there",
+	})
 }
 
 type roleBindingView struct {

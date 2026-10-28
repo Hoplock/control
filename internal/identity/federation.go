@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hoplock/control/internal/store"
 )
@@ -183,6 +184,29 @@ type ConnectorSummary struct {
 	Name        string              `json:"name"`
 	Kind        store.ConnectorKind `json:"kind"`
 	DisplayName string              `json:"display_name"`
+	// DirectoryClaim is the claim that ties a login through this connector to
+	// the subject the directory provisioned (0040), empty for a connector that
+	// federates on its own. A claim name is configuration, not a secret, and
+	// it tells a login page that this way in reaches a directory account.
+	DirectoryClaim string `json:"directory_claim,omitempty"`
+}
+
+// MaxDirectoryClaimLen bounds a connector's directory claim.
+const MaxDirectoryClaimLen = 256
+
+// DirectoryClaimProblem says why a claim name cannot be a connector's
+// directory_claim: "" when it can. A claim name is one token of printable,
+// non-space characters: `sub`, `oid`, or a SAML attribute's URI.
+func DirectoryClaimProblem(claim string) string {
+	switch {
+	case claim == "":
+		return "it is empty"
+	case len(claim) > MaxDirectoryClaimLen:
+		return fmt.Sprintf("it is longer than %d bytes", MaxDirectoryClaimLen)
+	case strings.ContainsFunc(claim, func(r rune) bool { return r <= ' ' || r == 0x7f || r > unicode.MaxASCII }):
+		return "it is not one token of printable ASCII"
+	}
+	return ""
 }
 
 // Connectors lists a tenant's enabled connectors.
@@ -196,7 +220,7 @@ func (f *Federation) Connectors(ctx context.Context, tenant store.Tenant) ([]Con
 		if !c.Enabled {
 			continue
 		}
-		out = append(out, ConnectorSummary{Name: c.Name, Kind: c.Kind, DisplayName: c.DisplayName})
+		out = append(out, ConnectorSummary{Name: c.Name, Kind: c.Kind, DisplayName: c.DisplayName, DirectoryClaim: c.DirectoryClaim})
 	}
 	return out, nil
 }
@@ -290,7 +314,7 @@ func (f *Federation) Complete(ctx context.Context, tenant store.Tenant, connecto
 			"this login took too long; please try again", "the flow expired")
 	}
 
-	broker, err := f.broker(ctx, tenant, connector)
+	row, broker, err := f.connector(ctx, tenant, connector)
 	if err != nil {
 		return Session{}, err
 	}
@@ -301,14 +325,26 @@ func (f *Federation) Complete(ctx context.Context, tenant store.Tenant, connecto
 		return Session{}, err
 	}
 
-	mapping, err := f.ActiveMapping(ctx, tenant)
-	if err != nil {
-		return Session{}, err
+	var (
+		subject    store.Subject
+		attributes Attributes
+	)
+	if row.DirectoryClaim != "" {
+		// A connector tied to the directory reaches the subject the
+		// directory provisioned, or nobody (0040).
+		subject, err = f.linked(ctx, tenant, row, assertion)
+		attributes = attributesOf(subject)
+	} else {
+		var mapping *Mapping
+		if mapping, err = f.ActiveMapping(ctx, tenant); err != nil {
+			return Session{}, err
+		}
+		subject, attributes, err = f.provision(ctx, tenant, assertion, mapping.Apply(assertion))
 	}
-	attributes := mapping.Apply(assertion)
-
-	subject, err := f.provision(ctx, tenant, assertion, attributes)
 	if err != nil {
+		if IsBrokerRefusal(err) {
+			f.recordDenial(ctx, tenant, connector, assertion.Subject, err, correlationID)
+		}
 		return Session{}, err
 	}
 
@@ -349,7 +385,14 @@ func (f *Federation) Metadata(ctx context.Context, tenant store.Tenant, connecto
 // until a mapping exists would be a hole that closes only when somebody
 // remembers.
 func (f *Federation) ActiveMapping(ctx context.Context, tenant store.Tenant) (*Mapping, error) {
-	row, err := f.st.ClaimMappings().Active(ctx, tenant)
+	return ActiveMapping(ctx, f.st, tenant)
+}
+
+// ActiveMapping is [Federation.ActiveMapping] over any store, a transaction
+// included: what the identity sync applies a directory's data through (0040),
+// under the same rules as a login.
+func ActiveMapping(ctx context.Context, st *store.Store, tenant store.Tenant) (*Mapping, error) {
+	row, err := st.ClaimMappings().Active(ctx, tenant)
 	if store.IsNotFound(err) {
 		return EmptyMapping(), nil
 	}
@@ -418,62 +461,167 @@ func (f *Federation) PutMapping(ctx context.Context, tenant store.Tenant, docume
 	return parsed, nil
 }
 
-// provision creates or updates the local subject behind an assertion.
+// provision creates or updates the local subject behind an assertion, and
+// returns it with the attributes it carries.
 //
 // The join key is the IdP's own stable identifier, never the username: a
 // username is a thing an IdP administrator can change, and a join on one turns
 // a rename into an account takeover the next time somebody else takes the old
 // name.
-func (f *Federation) provision(ctx context.Context, tenant store.Tenant, a Assertion, attrs Attributes) (store.Subject, error) {
-	link, err := f.st.FederatedIdentities().Resolve(ctx, tenant, a.Connector, a.Subject)
-	subjectID := ""
-	switch {
-	case err == nil:
-		subjectID = link.SubjectID
-	case store.IsNotFound(err):
-		// A subject id derived from the connector and the external
-		// subject, so that two tenants whose IdPs both call somebody
-		// `00u1` never collide — and neither do two connectors within
-		// one tenant.
-		subjectID = a.Connector + ":" + a.Subject
-	default:
-		return store.Subject{}, err
-	}
+//
+// A subject the directory manages is the directory's to write (0040): a login
+// that resolves to one authenticates it and rewrites none of its groups,
+// attributes or login names, and a login that would add a name such a subject
+// presents is refused, so a directory rename that hands that name to someone
+// cannot hand them this access, nor this login theirs.
+func (f *Federation) provision(ctx context.Context, tenant store.Tenant, a Assertion, attrs Attributes) (store.Subject, Attributes, error) {
+	var subject store.Subject
+	out := attrs
+	err := f.st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		if a.Login != "" {
+			// Every writer that gives a subject this name holds its lock,
+			// the identity sync included, so two cannot both find it free.
+			if err := tx.Subjects().LockPrincipal(ctx, tenant, a.Login); err != nil {
+				return err
+			}
+		}
+		link, err := tx.FederatedIdentities().Resolve(ctx, tenant, a.Connector, a.Subject)
+		subjectID := ""
+		switch {
+		case err == nil:
+			subjectID = link.SubjectID
+		case store.IsNotFound(err):
+			// A subject id derived from the connector and the external
+			// subject, so that two tenants whose IdPs both call somebody
+			// `00u1` never collide — and neither do two connectors within
+			// one tenant.
+			subjectID = a.Connector + ":" + a.Subject
+		default:
+			return err
+		}
 
-	existing, err := f.st.Subjects().Get(ctx, tenant, subjectID)
-	if err != nil && !store.IsNotFound(err) {
-		return store.Subject{}, err
-	}
+		switch managed, err := tx.DirectoryLinks().BySubject(ctx, tenant, subjectID); {
+		case err == nil:
+			// Linked earlier through a connector tied to the directory.
+			if subject, err = directorySubject(ctx, tx, tenant, managed); err != nil {
+				return err
+			}
+			out = attributesOf(subject)
+			return linkIdentity(ctx, tx, tenant, a, subjectID)
+		case !store.IsNotFound(err):
+			return err
+		}
+		if a.Login != "" {
+			switch _, err := tx.DirectoryLinks().ByPrincipal(ctx, tenant, a.Login, subjectID); {
+			case err == nil:
+				return refuse(RejectFederationNotAllowed,
+					"this identity cannot be used to sign in here",
+					"the asserted login is presented by a subject the directory manages")
+			case !store.IsNotFound(err):
+				return err
+			}
+		}
 
-	local, err := f.st.Groups().GroupsOf(ctx, tenant, subjectID)
+		existing, err := tx.Subjects().Get(ctx, tenant, subjectID)
+		if err != nil && !store.IsNotFound(err) {
+			return err
+		}
+
+		local, err := tx.Groups().GroupsOf(ctx, tenant, subjectID)
+		if err != nil {
+			return err
+		}
+
+		subject = store.Subject{
+			ID:          subjectID,
+			Source:      a.Connector,
+			DisplayName: firstNonEmpty(a.DisplayName, existing.DisplayName, subjectID),
+			Principals:  principalsFor(a, existing),
+			// A rule must not care where a group came from (M7), so the two
+			// sources are merged into one sorted list here and nothing
+			// downstream can tell them apart.
+			Groups: mergeGroups(local, attrs.Groups),
+			Claims: attrs.Claims,
+			// A federated subject is never break-glass. The flag stays as it
+			// was on an existing row so that an operator who marked a local
+			// account break-glass does not have it cleared by a login.
+			BreakGlass: existing.BreakGlass,
+			// The version that produced Claims and the mapped half of
+			// Groups. The decision record names it (M4, M7), and it is
+			// written here because this is the only place the two are
+			// produced together.
+			MappingVersion: attrs.MappingVersion,
+		}
+		if err := tx.Subjects().Upsert(ctx, tenant, subject); err != nil {
+			return err
+		}
+		return linkIdentity(ctx, tx, tenant, a, subjectID)
+	})
+	if err != nil {
+		return store.Subject{}, Attributes{}, err
+	}
+	return subject, out, nil
+}
+
+// linked resolves a login through a connector tied to the directory: the claim
+// the connector names carries the directory's id for the person, and the login
+// reaches the subject the directory provisioned under it, or nobody. Nothing is
+// created and nothing on the subject is rewritten; the federated identity is
+// linked to it, so the person's next login resolves the same way.
+func (f *Federation) linked(ctx context.Context, tenant store.Tenant, c store.Connector, a Assertion) (store.Subject, error) {
+	externalID := strings.TrimSpace(a.Claims[c.DirectoryClaim])
+	if externalID == "" {
+		return store.Subject{}, refuse(RejectFederationNotProvisioned,
+			"this account has not been set up here yet",
+			"the assertion carried no "+c.DirectoryClaim+" claim")
+	}
+	var subject store.Subject
+	err := f.st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
+		link, err := tx.DirectoryLinks().Get(ctx, tenant, externalID)
+		if store.IsNotFound(err) {
+			return refuse(RejectFederationNotProvisioned,
+				"this account has not been set up here yet",
+				"the directory has provisioned no subject under this "+c.DirectoryClaim)
+		}
+		if err != nil {
+			return err
+		}
+		if subject, err = directorySubject(ctx, tx, tenant, link); err != nil {
+			return err
+		}
+		return linkIdentity(ctx, tx, tenant, a, subject.ID)
+	})
 	if err != nil {
 		return store.Subject{}, err
 	}
+	return subject, nil
+}
 
-	subject := store.Subject{
-		ID:          subjectID,
-		Source:      a.Connector,
-		DisplayName: firstNonEmpty(a.DisplayName, existing.DisplayName, subjectID),
-		Principals:  principalsFor(a, existing),
-		// A rule must not care where a group came from (M7), so the two
-		// sources are merged into one sorted list here and nothing
-		// downstream can tell them apart.
-		Groups: mergeGroups(local, attrs.Groups),
-		Claims: attrs.Claims,
-		// A federated subject is never break-glass. The flag stays as it
-		// was on an existing row so that an operator who marked a local
-		// account break-glass does not have it cleared by a login.
-		BreakGlass: existing.BreakGlass,
-		// The version that produced Claims and the mapped half of
-		// Groups. The decision record names it (M4, M7), and it is
-		// written here because this is the only place the two are
-		// produced together.
-		MappingVersion: attrs.MappingVersion,
+// directorySubject returns the subject a directory link stands for, refusing a
+// deactivated one and one never provisioned.
+func directorySubject(ctx context.Context, tx *store.Store, tenant store.Tenant, link store.DirectoryLink) (store.Subject, error) {
+	if link.Deactivated() {
+		return store.Subject{}, refuse(RejectFederationSubjectDeactivated,
+			"this account has been deactivated",
+			"the directory deactivated subject "+link.SubjectID)
 	}
-	if err := f.st.Subjects().Upsert(ctx, tenant, subject); err != nil {
-		return store.Subject{}, err
+	if !link.Provisioned {
+		return store.Subject{}, refuse(RejectFederationNotProvisioned,
+			"this account has not been set up here yet",
+			"the directory has linked subject "+link.SubjectID+" and not yet provisioned it")
 	}
-	if err := f.st.FederatedIdentities().Link(ctx, tenant, store.FederatedIdentity{
+	subject, err := tx.Subjects().Get(ctx, tenant, link.SubjectID)
+	if store.IsNotFound(err) {
+		return store.Subject{}, refuse(RejectFederationNotProvisioned,
+			"this account has not been set up here yet",
+			"subject "+link.SubjectID+" has no row")
+	}
+	return subject, err
+}
+
+// linkIdentity records the join of an external subject to a local one.
+func linkIdentity(ctx context.Context, tx *store.Store, tenant store.Tenant, a Assertion, subjectID string) error {
+	if err := tx.FederatedIdentities().Link(ctx, tenant, store.FederatedIdentity{
 		Connector:       a.Connector,
 		ExternalSubject: a.Subject,
 		SubjectID:       subjectID,
@@ -482,13 +630,19 @@ func (f *Federation) provision(ctx context.Context, tenant store.Tenant, a Asser
 			// This external subject is already somebody else here.
 			// Refusing is the only safe answer: re-pointing it would
 			// be an account takeover in one UPDATE.
-			return store.Subject{}, refuse(RejectFederationNotAllowed,
+			return refuse(RejectFederationNotAllowed,
 				"this identity cannot be used to sign in here",
 				"the external subject is linked to a different local subject")
 		}
-		return store.Subject{}, err
+		return err
 	}
-	return subject, nil
+	return nil
+}
+
+// attributesOf is what a subject already carries, for a login that rewrites
+// nothing: the directory's subject keeps what the directory gave it.
+func attributesOf(s store.Subject) Attributes {
+	return Attributes{Claims: s.Claims, Groups: slices.Clone(s.Groups), MappingVersion: s.MappingVersion}
 }
 
 // principalsFor decides which logins a federated subject may present.
@@ -575,6 +729,18 @@ func (f *Federation) LocalLogin(ctx context.Context, tenant store.Tenant, login,
 			"that login or password is not right", "no local subject presents this login")
 	}
 	if err != nil {
+		return Session{}, err
+	}
+	switch link, err := f.st.DirectoryLinks().BySubject(ctx, tenant, subject.ID); {
+	case err == nil && link.Deactivated():
+		// The break-glass path is not a way around the directory (0040).
+		f.record(ctx, tenant, AuthEvent{
+			Event: "login_denied", Subject: subject.ID, Login: login, Source: SourceLocal,
+			BreakGlass: true, Reason: RejectFederationSubjectDeactivated, CorrelationID: correlationID,
+		})
+		return Session{}, refuse(RejectFederationSubjectDeactivated,
+			"this account has been deactivated", "the directory deactivated the subject")
+	case err != nil && !store.IsNotFound(err):
 		return Session{}, err
 	}
 
@@ -712,12 +878,20 @@ func (f *Federation) Authenticate(ctx context.Context, presented string) (*Princ
 	if p.Subject != "" {
 		// Groups and attributes come from THIS server's store, never
 		// from the credential: the same rule 0008 applies to a subject's
-		// groups on the decision path.
-		if s, serr := f.st.Subjects().Get(ctx, cred.Tenant, p.Subject); serr == nil {
-			p.Groups = slices.Clone(s.Groups)
-			p.Attributes = s.Claims
-		} else if !store.IsNotFound(serr) {
+		// groups on the decision path. The same read carries the
+		// directory's deactivation, and a credential of a deactivated
+		// subject is no credential: one minted the instant before the
+		// deactivation committed is no way back in (0040).
+		standing, serr := f.st.Subjects().Standing(ctx, cred.Tenant, p.Subject)
+		if serr != nil {
 			return nil, false, serr
+		}
+		if standing.Deactivated() {
+			return nil, false, nil
+		}
+		if standing.Known {
+			p.Groups = slices.Clone(standing.Subject.Groups)
+			p.Attributes = standing.Subject.Claims
 		}
 	}
 	return p, true, nil
@@ -803,19 +977,27 @@ func (f *Federation) IssueToken(ctx context.Context, tenant store.Tenant, req To
 // broker resolves a connector into a broker, refusing an unknown or disabled
 // one.
 func (f *Federation) broker(ctx context.Context, tenant store.Tenant, connector string) (Broker, error) {
+	_, b, err := f.connector(ctx, tenant, connector)
+	return b, err
+}
+
+// connector is broker with the connector's row, which says whether the
+// connector is tied to the directory.
+func (f *Federation) connector(ctx context.Context, tenant store.Tenant, connector string) (store.Connector, Broker, error) {
 	row, err := f.st.Connectors().Get(ctx, tenant, connector)
 	if store.IsNotFound(err) {
-		return nil, refuse(RejectFederationNoSuchOne,
+		return store.Connector{}, nil, refuse(RejectFederationNoSuchOne,
 			"there is no such sign-in method", "connector "+connector+" is not configured for this tenant")
 	}
 	if err != nil {
-		return nil, err
+		return store.Connector{}, nil, err
 	}
 	if !row.Enabled {
-		return nil, refuse(RejectFederationDisabled,
+		return store.Connector{}, nil, refuse(RejectFederationDisabled,
 			"that sign-in method is not available", "connector "+connector+" is disabled")
 	}
-	return f.brokers.Broker(ctx, tenant, row)
+	b, err := f.brokers.Broker(ctx, tenant, row)
+	return row, b, err
 }
 
 // record writes an audit record, best effort.

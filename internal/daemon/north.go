@@ -53,6 +53,9 @@ type northDeps struct {
 	// actions is the registered action handler's lifecycle (0039), nil when
 	// none is registered, likewise.
 	actions north.ActionHandlerState
+	// sync is the registered identity sync's lifecycle (0040), nil when none
+	// is registered, likewise.
+	sync north.IdentitySyncState
 }
 
 // buildNorth assembles the federation service, the policy lifecycle and the
@@ -93,6 +96,7 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 		Archive:         d.archive,
 		Sinks:           d.sinks,
 		Actions:         d.actions,
+		IdentitySync:    d.sync,
 		MaxPushBytes:    cfg.AccessContext.MaxPushBytes,
 		Logger:          log,
 		MaxBodyBytes:    cfg.North.MaxBodyBytes,

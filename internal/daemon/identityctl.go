@@ -342,6 +342,9 @@ func runConnectorPut(ctx context.Context, h Host, args []string, stdout, stderr 
 	display := fs.String("display-name", "", "what a login page shows")
 	file := fs.String("file", "", "path to the connector's JSON configuration (required)")
 	disabled := fs.Bool("disabled", false, "write the connector but do not accept logins through it")
+	directoryClaim := fs.String("directory-claim", "",
+		"the claim in this connector's assertions that carries the directory's id for the person; "+
+			"a login then reaches the subject the registered identity sync provisioned, or is refused")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -365,19 +368,39 @@ func runConnectorPut(ctx context.Context, h Host, args []string, stdout, stderr 
 	// entry that fails at the worst moment, and the error here names the field
 	// rather than the connector.
 	row := store.Connector{
-		Name:        *name,
-		Kind:        connectorKind,
-		DisplayName: *display,
-		Enabled:     !*disabled,
-		Config:      document,
+		Name:           *name,
+		Kind:           connectorKind,
+		DisplayName:    *display,
+		Enabled:        !*disabled,
+		Config:         document,
+		DirectoryClaim: *directoryClaim,
+	}
+	if row.DirectoryClaim != "" {
+		if problem := identity.DirectoryClaimProblem(row.DirectoryClaim); problem != "" {
+			return fmt.Errorf("identity connector-put: --directory-claim: %s", problem)
+		}
 	}
 	if _, err := (identity.DefaultBrokerFactory{}).Broker(ctx, "", row); err != nil {
 		return err
 	}
 
-	cfg, st, closeStore, err := openForIdentity(ctx, h, *configPath)
-	if err != nil {
-		return err
+	var (
+		cfg        *config.Config
+		st         *store.Store
+		closeStore func()
+	)
+	if row.DirectoryClaim == "" {
+		if cfg, st, closeStore, err = openForIdentity(ctx, h, *configPath); err != nil {
+			return err
+		}
+	} else {
+		// A claim no identity sync could ever match would refuse every
+		// login through the connector, so it is refused here instead
+		// (0040). Whether one is registered is the host's registry, read
+		// the way the daemon reads it.
+		if cfg, st, closeStore, err = openWithSync(ctx, h, *configPath); err != nil {
+			return err
+		}
 	}
 	defer closeStore()
 
@@ -390,7 +413,34 @@ func runConnectorPut(ctx context.Context, h Host, args []string, stdout, stderr 
 	}
 	_, _ = fmt.Fprintf(stdout, "connector %s (%s) written for tenant %s, enabled=%t\n",
 		*name, *kind, tenant, row.Enabled)
+	if row.DirectoryClaim != "" {
+		_, _ = fmt.Fprintf(stdout, "  directory_claim: %s (a login reaches the subject the identity sync provisioned, or is refused)\n",
+			row.DirectoryClaim)
+	}
 	return nil
+}
+
+// openWithSync opens the store for a write that needs a registered identity
+// sync, refusing when the host registered none. The host's sections are handed
+// to it first, because a host may register its sync from its own configuration.
+func openWithSync(ctx context.Context, h Host, configPath string) (*config.Config, *store.Store, func(), error) {
+	cfg, sections, err := config.LoadHost(configPath, h.Sections)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	extensions, err := prepareExtensions(cfg, sections, h)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if _, ok := extensions.IdentitySync(); !ok {
+		return nil, nil, nil, fmt.Errorf("identity connector-put: --directory-claim is refused because no identity sync is registered: " +
+			"a claim no sync provisions a subject under would refuse every login through the connector")
+	}
+	st, err := store.Open(ctx, cfg.Database.DSN)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return cfg, st, st.Close, nil
 }
 
 // runCA dispatches the `ca` subcommands.

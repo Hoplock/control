@@ -130,6 +130,16 @@ const (
 	RejectFederationDisabled   = "federation.connector_disabled"
 	RejectFederationNoSuchOne  = "federation.connector_unknown"
 	RejectFederationNotAllowed = "federation.login_refused"
+	// RejectFederationNotProvisioned is a login through a connector tied to
+	// the directory (its directory_claim) that matches no subject the
+	// directory provisioned. Nothing is created: a subject made at login
+	// beside the directory's would be the second identity de-provisioning
+	// never reaches (0040).
+	RejectFederationNotProvisioned = "federation.not_provisioned"
+	// RejectFederationSubjectDeactivated is a login that resolves to a
+	// subject the directory deactivated, through any connector or the local
+	// path (0040). Only the directory lifts it.
+	RejectFederationSubjectDeactivated = "federation.subject_deactivated"
 )
 
 func refuse(code, message, detail string) error {
