@@ -106,7 +106,7 @@ package sees it. Use space-free substrings.
 
 **Everything the suite knows about a server is in this file.** No login, target,
 fingerprint, token, or URL appears in any Go source file here. That is the
-property phase 0045 needs: pointing the suite at the real server is a new
+property phase 0046 needs: pointing the suite at the real server is a new
 expectation file and no code change at all.
 
 It is decoded **strictly** — an unknown key is an error — and validated for the
