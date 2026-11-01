@@ -103,7 +103,7 @@ func actionRow(t *testing.T, base, token string) (registered bool, started *bool
 }
 
 func TestTheDaemonStartsTheActionHandlerOnceBeforeAnyListenerAcceptsAndStopsItOnShutdown(t *testing.T) {
-	south, north := freeAddr(t), freeAddr(t)
+	south, north := freeAddrs(t)
 	handler := &actionHandler{probe: []string{south, north}, stoppedDone: make(chan struct{})}
 	stopped := handler.stoppedDone
 	// Registered before the host runs, so it runs after the host has stopped.

@@ -48,7 +48,8 @@ func (a *recordingArchive) held() []ext.AuditRecord {
 // registry and extra configuration, until the test ends.
 func runHost(t *testing.T, registry *ext.Registry, extra string) (base string, st *store.Store, logs *lockedBuffer) {
 	t.Helper()
-	return runHostAt(t, registry, extra, freeAddr(t), freeAddr(t))
+	south, north := freeAddrs(t)
+	return runHostAt(t, registry, extra, south, north)
 }
 
 // runHostAt is runHost on addresses the caller chose, for a test whose
