@@ -92,7 +92,7 @@ func TestRegisterFillsInANodeIdentityWhenNothingSuppliesOne(t *testing.T) {
 		t.Fatalf("Node: %v", err)
 	}
 	if node.ID == "" {
-		t.Error("the default coordinator reported an empty node id; a deployment must start before phase 0045 gives it a real identity")
+		t.Error("the default coordinator reported an empty node id; a deployment must start before phase 0046 gives it a real identity")
 	}
 }
 
