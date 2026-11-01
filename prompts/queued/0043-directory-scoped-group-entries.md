@@ -32,7 +32,9 @@
       decision path's budget), **M28**'s cost paragraph (the decision path
       reaches the directory's link row by a join in the subject's statement,
       which this phase reads one more column from, and adds no join to),
-      **M11** (an unreadable mapping is an outage, never an empty one),
+      **M9** (what a published `cache_invalidate` does, which item 8's
+      recalculation publishes as a group change does), **M11** (an
+      unreadable mapping is an outage, never an empty one),
       **M21** (rejection codes are stable and rendered by the console),
       **M23** (every phase is a release), and **M12** and **M18** (a mapping
       is per tenant).
@@ -49,14 +51,25 @@
   and never copies. Open the claim-mapping part of
   **`0011-identity-federation-and-credentials-learnings.md`**, and the Details
   of **`0040-identity-sync-and-deprovisioning-learnings.md`** on how a
-  provisioned subject is derived through the mapping.
+  provisioned subject is derived through the mapping, how the locks are
+  ordered, and why a group change re-derives its members.
 - Code. Read it before designing anything:
   - `internal/identity/mapping.go` whole: `mappingDocument`,
     `mappingGroupsEntry`, `mappingGroupEntry`, `ParseMapping`, the
     `RejectMapping*` codes, `MaxMappingEntries`, `Apply`, `ApplyDirectory`,
     `MappedGroupNames`; and `mapping_test.go`;
   - `internal/provision/subject.go`: `derive`, the one caller of
-    `ApplyDirectory`;
+    `ApplyDirectory`; `upsertSubject`, for the replay check and the lock
+    order (the tenant's directory-groups lock shared, then the identity's
+    own); `changed`;
+  - `internal/provision/group.go`: `rederive`, the recalculation a group
+    change already runs, which item 8 extends to a mapping write;
+    `internal/provision/deliver.go`: `deliverGroup` and
+    `maxSubjectInvalidations`;
+  - `internal/daemon/provision.go`, where the sink is built only when a sync
+    is registered, and `internal/daemon/serve.go`, where `grants.Watch` is
+    started; `internal/access/workflow.go`: `Watch`, the precedent for a
+    sweep;
   - `internal/identity/federation.go`: `ActiveMapping` and `PutMapping`;
   - `internal/daemon/identityctl.go`: `runMappingPut`, `runMappingShow`,
     `printMapping`;
@@ -76,18 +89,23 @@
 
 ## Context estimate
 - **Reads:** this prompt, M7, M28's cost paragraph, §6's two identity
-  sections, the summaries, 0042's learnings, and the code above (~1 200
-  lines, `mapping.go` half of it).
+  sections, the summaries, 0042's learnings, and the code above (~1 800
+  lines, `mapping.go` and the sink's recalculation and delivery most of it).
 - **Changes:** `internal/identity/mapping.go` (two keys, matching, three
-  rejection codes, one accessor) and its tests; `internal/provision` (one
-  argument); `internal/decision` (one member on the record's subject, and
-  `explain`); `internal/httpapi/north` (two members on the mapping read);
-  `internal/daemon` (the mapping commands' output); PLAN M7, §3, §6 and §10's
-  row; three queued prompts; `CHANGELOG.md`.
-- **Why it fits:** no route, no migration, no `ext` change, no new decision,
-  and nothing added to the decision path but one column of a row it already
-  reads. The matching rule is a lookup in a map keyed one way more than
-  today's.
+  rejection codes, one accessor) and its tests; `internal/provision` (the
+  source passed to the mapping, and the recalculation of item 8);
+  `internal/store` (the stale reads, and at most one migration, for an
+  index); `internal/decision` (one member on the record's subject, and
+  `explain`); `internal/httpapi/north` (three members on the mapping read,
+  and the recalculation started after a write); `internal/daemon` (the sweep,
+  and the mapping commands' output); `internal/audit` (one record kind); PLAN
+  M7, §3, §6 and §10's row; three queued prompts; `CHANGELOG.md`.
+- **Why it fits:** no route, no `ext` change, no new decision, and nothing
+  added to the decision path but one column of a row it already reads. The
+  matching rule is a lookup in a map keyed one way more than today's. The
+  recalculation is new machinery, but every part of it already exists for a
+  group change: `derive`, the lock order, the owed invalidation and its
+  delivery. What is new is the loop that finds stale subjects and runs them.
 
 ## Objective
 Let a `groups.map` entry in a tenant's claim mapping list the directories it
@@ -250,17 +268,77 @@ left to Control, settled:
    rest. `require_directories` with no scoped entries is accepted: every
    directory group then maps nothing, which is a legitimate step while
    entries are written, and the safe direction.
-8. **A mapping still reaches a provisioned subject at its next applied
-   write**, as §6 says, scoped or not. So a mapping that adds scoping, or sets
-   `require_directories`, takes nothing back from a directory subject until
-   the directory next writes that subject, exactly as removing an entry does
-   today. This phase does not re-derive a tenant's directory subjects when a
-   mapping is written. That would make every mapping write, scoped or not, a
-   write to every directory subject in the tenant under the mapping's lock,
-   and nobody asked for it. `identity mapping-put` says so in its output when
-   the document names any directory, the changelog says so, and Enterprise's
-   sync is told (Cross-repo impact): the directory's next full push is what
-   applies a tightened mapping to everyone.
+8. **A new mapping reaches every directory subject by itself, soon after it
+   is written.** This replaces §6's rule that a new mapping reaches a
+   provisioned subject "at its next applied write". It is the one place this
+   phase goes well past the ask.
+
+   That rule left the gap open with no end date. Control treats an upsert
+   whose `UpdatedAt` is not later than the last applied one as a replay that
+   writes nothing (`internal/provision/subject.go`, `group.go`), so a
+   directory re-pushing unchanged data changes nothing. A tied login rewrites
+   nothing either. So a person who never changes in the IdP keeps whatever an
+   older mapping gave them, indefinitely, unless one of their groups is
+   renamed or deleted. Scoping exists to take access away, so that cannot
+   stand. The gap is 0040's as much as this phase's: removing an entry has
+   had it since 0040. This closes it for every mapping write, scoped or not.
+
+   The rule:
+   - **Stale.** A directory subject is stale when its row names a mapping
+     version other than the tenant's active one. Only provisioned links
+     count: a deactivation kept for an id never provisioned has no subject.
+     A deactivated subject counts, so that a re-activation starts from the
+     active mapping.
+   - **Recalculated as a sink write recalculates.** Control recalculates a
+     tenant's stale directory subjects in batches of at most 200, ordered by
+     subject id. Each batch is its own transaction, and batches run until
+     nothing is stale. Each subject is handled exactly as a sink write
+     handles it:
+     - the tenant's directory-groups lock shared, then that identity's own
+       lock, in 0040's order;
+     - `derive` with the mapping active when the batch runs;
+     - the row written, and the link marked as owing a cache invalidation
+       when what a decision reads changed (`changed`).
+   - **Delivered as a group change delivers.** After each batch commits, the
+     owed invalidations go out as `deliverGroup` sends them: one
+     `cache_invalidate` per subject up to `maxSubjectInvalidations`, and past
+     it one for the tenant. That is what a renamed or deleted directory group
+     already does to its members. Cached decisions drop, and live sessions
+     are not ended, as 0040 settled for a group change.
+   - **The write never waits.** `PUT …/identity/claim-mapping` answers once
+     the mapping is stored and active, as now, and its transaction writes no
+     subject. The recalculation never takes the mapping's lock.
+   - **It runs on the server, never in the CLI.** A write through the API
+     starts it at once on the node that took the write. A sweep on every node,
+     once a minute, finds each tenant with a stale directory subject and runs
+     it there. The sweep covers a mapping written by `identity mapping-put`
+     straight to the database, a node that stopped mid-run, and a restart.
+     Progress is never stored: staleness is read from the rows, so a run
+     resumes by asking again.
+   - **Overlap is safe.** Two runs may overlap, on two nodes or after a second
+     mapping write. Each subject is recalculated under its own lock and
+     skipped if, once the lock is held, its row already names the active
+     version, so an overlap costs only reads. A subject finished under an
+     older version is stale again and picked up, and a run ends only when
+     nothing is stale, so a tenant always ends on its newest mapping. No
+     leader election is needed.
+   - **No sync is needed.** It runs whether or not an identity sync is
+     registered or started, and takes each subject's provider from its link
+     row, never from a registered sync. A lapsed sync must not freeze an older
+     mapping's groups in place. That lapse is one Enterprise's 0004 already
+     plans for (E4).
+   - **Recorded as a count.** Each run that recalculated anything records
+     `operator.claim_mapping.applied` when it ends or stops: the version it
+     applied, how many subjects it recalculated, how many changed, and
+     whether it left the tenant with nothing stale. The actor is the author
+     stored with that version, because this finishes their act. Like a group
+     change's `members_rederived`, it is a count rather than a record per
+     person, and each subject row names its version. Two overlapping runs
+     record two partial counts.
+
+   Federated and local subjects are unchanged: a login re-applies the
+   mapping, and M7's credentials are short-lived, so a login is never far
+   away.
 9. **The decision record names the directory a subject's groups came from
    (M4).** With scoped entries, "why is Alice in `corp-admins`" depends on
    two things: the mapping version, which the record names, and the
@@ -277,10 +355,17 @@ left to Control, settled:
    `explain` shows it beside the mapping version.
 10. **What the mapping read shows.** `GET …/identity/claim-mapping` gains
     `directories`, the sorted sources the active mapping names, empty when it
-    names none, and `require_directories`. `groups`, the local groups the
-    mapping can produce, includes those of scoped entries. The `PUT`'s answer
-    is unchanged. `identity mapping-put`, `--dry-run` included, and
-    `identity mapping-show` print both.
+    names none, and `require_directories`. It also gains
+    `stale_directory_subjects`, how many directory subjects do not yet name
+    the active version (item 8), so an operator can see a tightened mapping
+    finish taking effect. `groups`, the local groups the mapping can produce,
+    includes those of scoped entries. The `PUT`'s answer is unchanged.
+    `identity mapping-put`, `--dry-run` included, and `identity
+    mapping-show` print the first two, and `mapping-show` prints the count.
+    `mapping-put` without `--dry-run` says that the server recalculates the
+    tenant's directory subjects in the background, within a minute when the
+    write did not come through the API, and that `mapping-show` shows how
+    many remain.
 
     `mapping-put` without `--dry-run` also names every listed source that
     nothing in the tenant has written yet, using 0042's read of the tenant's
@@ -293,9 +378,11 @@ left to Control, settled:
     a scoped entry for one maps nothing until the directory writes. Validation
     itself stays pure, so `--dry-run` needs no database.
 11. **Nothing else changes.** No `ext` signature: `ApplyDirectory` is
-    internal, and the sync never sees the mapping. No route, no migration
-    (the document is stored as it was written), no record kind, and no new
-    decision: M7 is revised in place, so the register is unchanged.
+    internal, and the sync never sees the mapping. No route. One record kind
+    (item 8). At most one migration, an index for item 8's stale reads, and
+    only if `EXPLAIN` shows they need one: the document itself is stored as
+    it was written. No new decision: M7 is revised in place, so the register
+    is unchanged.
 
 ## In scope
 
@@ -317,9 +404,32 @@ left to Control, settled:
   and not transformation. `ApplyDirectory`'s doc comment states item 2's rule
   and item 3's "instead of".
 
-### 2. `internal/provision`
-`derive` passes the link's source to `ApplyDirectory`. Nothing else in the
-sink changes. In particular, a mapping write still re-derives nobody (item 8).
+### 2. `internal/provision` and `internal/store`: the source, and the recalculation
+- `derive` passes the link's source to `ApplyDirectory`, and takes the
+  subject's provider from the link row rather than from the sink. For a sink
+  write the two are the same.
+- The recalculation of item 8, in a type of its own built from the store and
+  the revocation publisher alone. It is never built from a registered sync:
+  `internal/daemon/provision.go` builds the sink only when a sync is
+  registered, and the recalculation must run without one. It offers:
+  - one call that recalculates a tenant until nothing is stale, batch by
+    batch, delivering each batch's owed invalidations after its commit;
+  - a sweep that runs that call for every tenant with a stale directory
+    subject, once a minute, until its context ends.
+
+  Share `derive`, the lock order and the delivery with the sink rather than
+  copying them. `rederive` and the recalculation are two callers of one way
+  of recalculating a subject.
+- Store reads, each one statement:
+  - the stale directory subjects of a tenant after a subject id, bounded by
+    the batch;
+  - the tenants with any stale directory subject;
+  - the count item 10 shows.
+
+  Show with `EXPLAIN`, in a test or in your learnings, that each is served by
+  an index. Add one forward-only migration for an index only if one is not.
+- `operator.claim_mapping.applied` in `internal/audit`, with its fields
+  (item 8).
 
 ### 3. `internal/decision`: the record's subject
 `recordedSubject` gains `DirectorySource` (`directory_source`, `omitempty`),
@@ -327,12 +437,19 @@ filled from the link row the standing read already returns (item 9).
 `explain` renders it beside the mapping version, and its refusals are
 unchanged.
 
-### 4. `internal/httpapi/north` and `internal/daemon`: the mapping read
-- `claimMappingResponse` gains `Directories` (`directories`) and
-  `RequireDirectories` (`require_directories`) (item 10).
-- `printMapping` prints both. `runMappingPut` names the listed sources the
-  tenant has not seen yet, and says that a new mapping reaches a directory
-  subject at the directory's next write (items 8 and 10).
+### 4. `internal/httpapi/north` and `internal/daemon`: the mapping read, and starting the recalculation
+- `claimMappingResponse` gains `Directories` (`directories`),
+  `RequireDirectories` (`require_directories`) and `StaleDirectorySubjects`
+  (`stale_directory_subjects`) (item 10).
+- `handleClaimMappingPut` starts the tenant's recalculation once the write
+  has committed, under the server's lifetime rather than the request's, and
+  answers without waiting for it (item 8).
+- `serve.go` starts the sweep beside `grants.Watch`, whether or not a sync is
+  registered, and stops it before the listeners drain.
+- `printMapping` prints `directories` and `require_directories`, and
+  `runMappingShow` prints the count. `runMappingPut` names the listed sources
+  the tenant has not seen yet, and says how the recalculation reaches its
+  directory subjects (items 8 and 10).
 
 ### 5. The plan, revised in place
 - **M7:** where it says one mapping governs the directory door, say that a
@@ -341,9 +458,14 @@ unchanged.
 - **§6, "Federation":** the allow-list paragraph names `directories` as an
   exact key, and keeps "no prefix rule and no pattern" true.
 - **§6, "The directory door":** "one `groups.map` serves login and directory
-  alike" becomes item 2's rule. Add items 3, 7 and 8 in a sentence each.
+  alike" becomes item 2's rule, and "a new mapping version reaches a
+  provisioned subject at its next applied write" becomes item 8's. Add items
+  3 and 7 in a sentence each, and item 8 in a short paragraph: what is stale,
+  that a write never waits, the sweep, that no sync is needed, and what is
+  published.
 - **§5.6, at "Explain":** the directory source, beside the mapping version.
-- **§3:** `internal/identity`'s entry, if it describes the mapping's shape.
+- **§3:** `internal/provision`'s entry names the recalculation, and
+  `internal/identity`'s describes the mapping's shape if it does so now.
 - **§10:** this phase's row, revised to say what was built.
 - No decision is added or amended, so the register's rows stay as they are.
 
@@ -351,24 +473,33 @@ unchanged.
 Each obligation goes in the prompt that will implement it, not only in the
 plan:
 - **instance identity (0046):** its north-bound compatibility promise covers
-  `directories` and `require_directories` on the claim-mapping read, and
-  `directory_source` on a decision record's subject. Add `0043` beside `0042`
-  where its "Read first" lists the learnings whose fields the promise covers.
+  `directories`, `require_directories` and `stale_directory_subjects` on the
+  claim-mapping read, and `directory_source` on a decision record's subject.
+  Add `0043` beside `0042` where its "Read first" lists the learnings whose
+  fields the promise covers.
 - **the console (0047):** where it shows the claim mapping, it shows each
-  group entry's directories and the tenant's `require_directories`, and
-  renders the three new rejection codes. Its explain view shows the subject's
-  directory source beside the mapping version.
+  group entry's directories, the tenant's `require_directories`, and while
+  it is not zero, how many directory subjects are still being recalculated.
+  It renders the three new rejection codes. Its explain view shows the
+  subject's directory source beside the mapping version.
 - **the E2E topology (0048):** the two-directory scenario 0042 adds gains a
   group name both directories hold, mapped differently per directory, and an
   entry listing both. It shows that each subject gets its own directory's
-  mapping, and the shared one.
+  mapping, and the shared one. It then writes a mapping that scopes an entry
+  both directories had reached, with no directory call, and shows that the
+  access it took away is refused once the recalculation finishes.
 
 ### 7. `CHANGELOG.md`
-The release's section (M23): the two keys, the three codes, the two members
-on the mapping read, `directory_source` on the decision record, and two
-operator notes. A mapping that scopes is unreadable to an older build, so
-finish a rolling upgrade first (item 1). A new mapping reaches a directory
-subject at the directory's next write (item 8).
+The release's section (M23): the two keys, the three codes, the three members
+on the mapping read, `directory_source` on the decision record, the
+`operator.claim_mapping.applied` record, and two operator notes:
+- a mapping that scopes is unreadable to an older build, so finish a rolling
+  upgrade first (item 1);
+- every mapping write, scoped or not, now reaches every directory subject by
+  itself: at once when written through the API, and within a minute when
+  written by `identity mapping-put`. `stale_directory_subjects` shows how
+  many remain (item 8). Until this release, a new mapping reached a directory
+  subject only when the directory changed that person.
 
 ## Out of scope
 - **Scoping attributes** (`claims` entries). Not asked: Enterprise's 0004
@@ -378,9 +509,10 @@ subject at the directory's next write (item 8).
   `connectors` key would sit beside `directories` without disturbing it. Do
   not add one here, and do not build toward it.
 - **A wildcard** in `directories` (item 6).
-- **Re-deriving directory subjects when a mapping is written** (item 8). If
-  that is wanted, it is a phase of its own, and it changes every mapping
-  write, scoped or not.
+- **Ending live sessions when a recalculation removes a group.** A group
+  change does not end them today (0040), and item 8 does what a group change
+  does. An operator who wants them ended has `POST …/revocations`.
+- **Recalculating federated or local subjects** on a mapping write (item 8).
 - **Which directory may write which tenant.** That is Enterprise's
   governance (E11), built on M18.
 - **The decision path beyond the one column** (M5).
@@ -413,9 +545,25 @@ subject at the directory's next write (item 8).
   `external` are accepted.
 - **The bound.** A document of 300 entries that each list two directories is
   `mapping.too_large`. One of 512 unscoped entries is accepted, as now.
-- **No re-derivation.** Writing a mapping that scopes leaves a directory
-  subject's groups as they were. The directory's next applied write for that
-  subject applies it, and the subject row names the new version.
+- **The recalculation.**
+  - A `de` subject provisioned while an unscoped `admins → all-admins` was
+    the only entry loses `all-admins` and gets `de-admins` once a mapping
+    adding the scoped entry is written, with no call on the sink at all. Its
+    row names the new version, and a `cache_invalidate` for it is published.
+  - The `PUT` answers before the recalculation has finished, and its
+    transaction writes no subject.
+  - A second mapping written mid-run leaves every directory subject on the
+    second version.
+  - A run stopped after one batch is finished by the sweep.
+  - A mapping written by `identity mapping-put`, with no API call, is applied
+    by the sweep.
+  - It runs with no identity sync registered.
+  - A sink upsert for a subject during a run leaves it on the active version,
+    and the two never deadlock. Run them concurrently under `-race`.
+  - A batch that changes more than `maxSubjectInvalidations` subjects
+    publishes one tenant-wide invalidation.
+  - `stale_directory_subjects` falls to zero, and the run records
+    `operator.claim_mapping.applied` with its counts.
 - **The record.** A directory subject's decision record carries
   `directory_source`, and `explain` shows it. A federated or local subject's
   record has none. `TestStandingDenialsCostTheDecisionPathNoRoundTrip`
@@ -433,16 +581,24 @@ and `require_directories`, each through `Apply` and `ApplyDirectory`), and
 one for the rejections and the bound. Postgres-backed on 0042's harness:
 `TestADirectoryGroupReachesOnlyEntriesThatListItsSource`,
 `TestOneEntryMapsAGroupSeveralDirectoriesShare`,
-`TestRequiringScopingLeavesUnscopedEntriesToLogins` and
-`TestAMappingReachesADirectorySubjectAtItsNextWrite`, or names that say the
-same. `internal/decision` gains a record test for `directory_source`, and
-`internal/httpapi/north` one for the read's two members.
-`server/provision_test.go` gains one case that drives two sources and a
-scoped mapping through a registered sync.
+`TestRequiringScopingLeavesUnscopedEntriesToLogins`,
+`TestAMappingWriteReachesEveryDirectorySubject`,
+`TestARecalculationEndsOnTheNewestMapping`,
+`TestARecalculationResumesAfterItStops`,
+`TestARecalculationNeedsNoSync` and
+`TestSinkWritesAndARecalculationShareTheirLocks`, or names that say the
+same. `internal/store` gains tests for the three stale reads.
+`internal/decision` gains a record test for `directory_source`, and
+`internal/httpapi/north` one for the read's three members and for the `PUT`
+starting a recalculation. `server/provision_test.go` gains one case that
+drives two sources and a scoped mapping through a registered sync, then
+tightens the mapping and sees it applied with no further sync call.
 
 ## Release (M23)
 The next MINOR after the latest tag. Nothing breaks: the mapping keys, the
-read's members and the record's member all only add.
+read's members, the record's member and the record kind all only add. The
+recalculation changes behaviour, not an interface, and goes under the
+release's changes with its operator note.
 
 ## Cross-repo impact
 This phase answers an upstream request and changes what Control's claim
@@ -468,13 +624,19 @@ State at least these obligations:
      example: one group mapped per directory, one shared group mapped once
      from the directories listed, and a directory it does not list getting
      nothing.
-2. **What Control decided that it did not ask for**: item 3's "instead of";
-   item 7's rejection of the alternative; item 8's rule that a new mapping
-   reaches a directory subject only at its next write, so 0004's
-   reconciliation is what applies a tightened mapping to everyone; item 9's
-   `directory_source` on the decision record, which bears on 0004's
-   `explain` criterion; and item 1's note that an older build refuses a
-   scoped mapping.
+2. **What Control decided that it did not ask for**:
+   - item 3's "instead of";
+   - item 7's rejection of the alternative;
+   - item 8's recalculation. A new mapping reaches every directory subject by
+     itself, whether or not the sync is running, so 0004 needs neither a
+     re-push nor its reconciliation to apply one. A re-push of unchanged data
+     would change nothing anyway, because Control treats it as a replay.
+     0004's "When the sync is not running" gains that a mapping change still
+     reaches directory subjects while no sync applies anything. Its criteria
+     can watch `stale_directory_subjects` fall to zero;
+   - item 9's `directory_source` on the decision record, which bears on
+     0004's `explain` criterion;
+   - item 1's note that an older build refuses a scoped mapping.
 3. **Its plan.** §4's `IdentitySync` bullet, where it says that group names
    reach the mapping with nothing saying which directory they came from, and
    points at the request.
@@ -503,7 +665,9 @@ Enterprise's sync is written from its summary block, which MUST give:
 - the two keys, and the matching rule with its "instead of";
 - the three rejection codes and how the bound counts a scoped entry;
 - that logins match unscoped entries only;
-- that a new mapping reaches a directory subject at its next write;
-- `directories` and `require_directories` on the mapping read, and
-  `directory_source` on the decision record;
+- the recalculation: that every mapping write reaches every directory
+  subject by itself, with no sync, how soon, and what it publishes;
+- `directories`, `require_directories` and `stale_directory_subjects` on the
+  mapping read, `directory_source` on the decision record, and
+  `operator.claim_mapping.applied`;
 - the release, by version.

@@ -71,12 +71,21 @@ external still mapping.group_duplicate; a scoped entry counted once per
 directory it lists against the mapping's 512-entry bound; schema_version
 still 1, and a build without 0043 refusing a scoped mapping as an outage,
 never applying it unscoped, so a rolling upgrade finishes before one is
-written; a new mapping still reaching a directory subject only at the
-directory's next applied write for it, with nothing re-derived when a
-mapping is written, so 0004's reconciliation is what applies a tightened
-mapping to everyone; directories and require_directories on GET
-…/identity/claim-mapping; and directory_source on a decision record's
-subject, which bears on 0004's explain criterion. Do not describe any of it
+written; every mapping write, scoped or not, reaching every directory
+subject by itself — subjects whose row names another mapping version
+recalculated by the server after the write commits, in batches under the
+sink's own lock order, at once on the node that took an API write and by a
+once-a-minute sweep otherwise, whether or not a sync is registered or
+started, their cached decisions dropped as a group change drops them (live
+sessions are not ended), each run recorded as
+operator.claim_mapping.applied — so 0004 needs neither a re-push nor its
+reconciliation to apply a mapping (a re-push of unchanged data is a replay
+Control writes nothing for), and its "When the sync is not running" gains
+that a mapping change still reaches directory subjects while no sync
+applies anything; directories, require_directories and
+stale_directory_subjects on GET …/identity/claim-mapping; and
+directory_source on a decision record's subject, which bears on 0004's
+explain criterion. Do not describe any of it
 as existing (§2): 0004 keeps feeding a tenant from one directory, keeps
 refusing a second one naming both requests, and keeps the criteria for two
 directories in one tenant skipped, until its pin carries both 0042 and 0043.
