@@ -7,14 +7,16 @@
 > answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2). The same PR's
 > item 2, claim-mapping group entries scoped to directories
 > (`enterprise-PR#51-directory-group-scope.md`), depends on this one and is a
-> request of its own, answered by a session of its own. It is **not** this
-> phase (Out of scope).
+> request of its own, answered by a phase of its own: 0043, directory-scoped
+> group entries, which runs right after this one. It is **not** this phase
+> (Out of scope).
 >
 > **Where it sits.** Right after the confined inbound action (0041), and
-> before reports (0043) and everything after them. It extends identity sync
-> (0040), which is merged, and depends on nothing queued. The
-> directory-source renumbering note in `docs/PLAN.md` §10 gives one line of
-> reasons for each neighbour.
+> before directory-scoped group entries (0043), reports (0044) and everything
+> after them. It extends identity sync (0040), which is merged, and depends on
+> nothing queued. The directory-source renumbering note in `docs/PLAN.md` §10
+> gives one line of reasons for each neighbour, and the group-scope note says
+> why 0043 runs after this phase.
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow. Read §3 for `ext/` and `server/` as
@@ -375,13 +377,13 @@ says what the top-level member is and that it is not the directory's source
 ### 8. The queued prompts this phase changes
 Each obligation goes in the prompt that will implement it, not only in the
 plan:
-- **instance identity (0045):** its north-bound compatibility promise covers
+- **instance identity (0046):** its north-bound compatibility promise covers
   `directory.source` on the subject reads and `directory_source` on the
   sign-in methods. Add `0042` beside `0040` where its "Read first" lists the
   learnings whose fields the promise covers.
-- **the console (0046):** it shows a directory subject's source where it
+- **the console (0047):** it shows a directory subject's source where it
   shows the directory's id, and a tied connector's source beside its claim.
-- **the E2E topology (0047):** the de-provisioning scenario names a source,
+- **the E2E topology (0048):** the de-provisioning scenario names a source,
   and a second scenario provisions two directories into one tenant with one
   id in common and shows that they are two subjects, and that each tied
   connector's login reaches its own.
@@ -394,9 +396,9 @@ connector's flag and member, the read's member and the record attribute.
 
 ## Out of scope
 - **Group entries scoped to directories:** enterprise#51's item 2, a request
-  of its own, still queued in `hoplock/enterprise` as
-  `prompts/upstream/queued/enterprise-PR#51-directory-group-scope.md`. This
-  phase changes nothing in the claim mapping. A directory group still reaches
+  of its own (`enterprise-PR#51-directory-group-scope.md` in
+  `hoplock/enterprise`), answered by the next phase, 0043, directory-scoped
+  group entries. This phase changes nothing in the claim mapping. A directory group still reaches
   policy by its `Name` through the tenant's one `groups.map` (M7), and
   `ApplyDirectory` is unchanged. Do not add `directories` to a mapping entry
   here, and do not build toward it. A group's source is on its row, which is
@@ -491,10 +493,12 @@ State at least these obligations:
    - its sync names each directory as `Source`, sends each IdP's ids as the
      IdP holds them, and calls `DeactivateSubject` and `DeleteGroup` with a
      `DirectoryRef`;
-   - a tenant may be fed by several directories, so the refusal of a second
-     one goes, and so does the skip on the criteria for two directories in
-     one tenant, **except** where they also need the group-scope request,
-     which is still its own;
+   - a tenant may be fed by several directories as far as the sink is
+     concerned. Its 0004 refuses a second directory until its pin carries
+     both requests, though, and group scope is Control's 0043, which runs
+     after this phase. So the refusal and the skip on the criteria for two
+     directories in one tenant go only where nothing in them waits on 0043;
+     say whether 0043 has merged, and by which release, when you write this;
    - a tied connector names its source (`--directory-source`), and a tie is
      made after the directory has provisioned.
 2. **What Control decided that it did not ask for**: item 6's refusal of a
