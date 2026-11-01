@@ -104,7 +104,7 @@ func syncRow(t *testing.T, base, token string) (registered bool, started *bool, 
 }
 
 func TestTheDaemonStartsTheIdentitySyncOnceBeforeAnyListenerAcceptsAndStopsItOnShutdown(t *testing.T) {
-	south, north := freeAddr(t), freeAddr(t)
+	south, north := freeAddrs(t)
 	sync := &identitySync{probe: []string{south, north}, stoppedDone: make(chan struct{})}
 	stopped := sync.stoppedDone
 	// Registered before the host runs, so it runs after the host has stopped.
@@ -240,7 +240,8 @@ func TestControlWithNoIdentitySyncBuildsNoSink(t *testing.T) {
 // no sync could ever match would refuse every login through the connector.
 func TestADirectoryClaimNeedsARegisteredSync(t *testing.T) {
 	dsn := testDatabase(t)
-	path := writeFile(t, configDoc(freeAddr(t), freeAddr(t), dsn)+hostSection)
+	south, north := freeAddrs(t)
+	path := writeFile(t, configDoc(south, north, dsn)+hostSection)
 	connector := writeFile(t, `{"issuer":"https://idp.example.com","client_id":"control","redirect_uri":"https://control.example.com/cb"}`)
 
 	migrate(t, path, hostOptions(&sectionRecorder{}, ext.NewRegistry()))

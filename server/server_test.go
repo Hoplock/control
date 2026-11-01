@@ -62,18 +62,38 @@ func (l *lockedBuffer) String() string {
 	return l.buf.String()
 }
 
-// freeAddr returns a loopback address nothing is listening on.
-func freeAddr(t *testing.T) string {
+// freeAddrs returns two loopback addresses, one for each listener, that
+// nothing is listening on and that are never the same port.
+//
+// Both listeners are held open until both ports are known, and only then
+// closed. Closing one before opening the next lets the kernel hand the
+// just-released port straight back, and two equal addresses are refused by
+// the config loader ("listeners.north: must differ from listeners.south") —
+// a test failure that has nothing to do with the test. Measured on a quiet
+// machine, closing in between collided once in 5 000 pairs; holding both
+// cannot collide, because two open sockets never share a port. So there is
+// no single-address helper to call twice.
+//
+// A port is still free only until it is closed here, so another process could
+// take one before Control binds it. That is far rarer, and closing it would
+// mean handing Control listeners rather than addresses.
+func freeAddrs(t *testing.T) (south, north string) {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
+	listeners := make([]net.Listener, 0, 2)
+	for range 2 {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		listeners = append(listeners, l)
 	}
-	addr := l.Addr().String()
-	if err := l.Close(); err != nil {
-		t.Fatalf("close: %v", err)
+	south, north = listeners[0].Addr().String(), listeners[1].Addr().String()
+	for _, l := range listeners {
+		if err := l.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
 	}
-	return addr
+	return south, north
 }
 
 func configDoc(south, north, dsn string) string {
@@ -213,7 +233,7 @@ func migrate(t *testing.T, path string, o server.Options) {
 
 func TestAHostStartsWithItsExtensionItsSectionAndItsRoutes(t *testing.T) {
 	dsn := testDatabase(t)
-	south, north := freeAddr(t), freeAddr(t)
+	south, north := freeAddrs(t)
 	path := writeFile(t, configDoc(south, north, dsn)+hostSection)
 
 	rec := &sectionRecorder{}
@@ -355,7 +375,7 @@ func TestMigrateAcceptsAHostSectionAndStillRefusesAnUndeclaredKey(t *testing.T) 
 var errLicence = errors.New("the licence file names no seats")
 
 func TestAHostConfigErrorFailsRunBeforeAnyListenerBinds(t *testing.T) {
-	south, north := freeAddr(t), freeAddr(t)
+	south, north := freeAddrs(t)
 	// The database is unreachable on purpose: reaching for it would fail
 	// differently, so the error proves the host's refusal came first.
 	doc := configDoc(south, north, "postgres://nobody@127.0.0.1:1/none?sslmode=disable") + hostSection
@@ -480,7 +500,7 @@ func startHost(t *testing.T) (string, *identity.Federation) {
 func startHostWith(t *testing.T, o server.Options) (string, *identity.Federation, *lockedBuffer) {
 	t.Helper()
 	dsn := testDatabase(t)
-	south, north := freeAddr(t), freeAddr(t)
+	south, north := freeAddrs(t)
 	path := writeFile(t, configDoc(south, north, dsn)+hostSection)
 	migrate(t, path, o)
 
@@ -617,7 +637,7 @@ func TestAHostRouteThatIsNeitherClassOrACrossTenantWriteIsRefusedWithBothPortsFr
 		"a cross-tenant pattern naming it":   route("{tenant}/everything", "audit:read", server.AccessCrossTenant),
 	} {
 		t.Run(name, func(t *testing.T) {
-			south, north := freeAddr(t), freeAddr(t)
+			south, north := freeAddrs(t)
 			doc := configDoc(south, north, "postgres://nobody@127.0.0.1:1/none?sslmode=disable") + hostSection
 			o := hostOptions(&sectionRecorder{}, nil)
 			o.Routes = append(o.Routes, r)
