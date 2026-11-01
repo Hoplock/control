@@ -12,7 +12,7 @@ import (
 
 // A CONSOLE IS MOUNTED INSIDE ITS OWN PREFIX AND NOWHERE ELSE (M27, M20, M21).
 //
-// Control's console (0044) and a host's screens are served from this listener,
+// Control's console (0045) and a host's screens are served from this listener,
 // and each is a single-page app whose history fallback answers a deep link it
 // does not know with its index. Served at "/", that fallback would be a
 // catch-all over the whole listener, and an API typo would come back as HTML.

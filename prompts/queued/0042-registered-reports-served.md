@@ -1,4 +1,4 @@
-# 0041 — Registered reports served: Control lists and generates every registered report pack
+# 0042 — Registered reports served: Control lists and generates every registered report pack
 
 > Raised upstream by `hoplock/enterprise` in
 > https://github.com/Hoplock/enterprise/pull/26, under `## Upstream request`,
@@ -6,15 +6,17 @@
 > `prompts/upstream/queued/enterprise-PR#26-report-provider-routes.md`, and
 > answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2).
 >
-> **Where it sits.** After identity sync (0040) and the action executor
-> (0039), and after everything they run after: the shared event plane (0027),
-> bounded lists (0028) with every chunk it queues, and host namespaces (0038).
-> Before instance identity (0043), the console (0044) and the E2E topology
-> (0045). The report-provider renumbering note in `docs/PLAN.md` §10 gives one
-> line of reasons for each. It needs M26's list shape and 0038's namespaces.
-> It needs nothing of 0039's or 0040's, which run first because each closes a
-> gap Enterprise cannot route around and this one does not. 0028's chunks (0029–0037) renumbered
-> it, and the order holds, because it runs after all of them.
+> **Where it sits.** After the confined inbound action (0041), identity sync
+> (0040) and the action executor (0039), and after everything they run after:
+> the shared event plane (0027), bounded lists (0028) with every chunk it
+> queues, and host namespaces (0038). Before instance identity (0044), the
+> console (0045) and the E2E topology (0046). The report-provider renumbering
+> note in `docs/PLAN.md` §10 gives one line of reasons for each, and the
+> confined-action note gives 0041's. It needs M26's list shape and 0038's
+> namespaces. It needs nothing of 0039's, 0040's or 0041's, which run first
+> because each closes a gap Enterprise cannot route around and this one does
+> not. 0028's chunks (0029–0037) renumbered it, and so did 0041, and the order
+> holds, because it runs after all of them.
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow. Read §3 for `ext/` and `server/` as a
@@ -38,7 +40,7 @@
       and the catalogue that turns a `ReportID` into a name), **M20** (the
       console lists a pack), **M5** (a provider runs in the process that
       serves the decision path), **M24** (why this is a tenant route and
-      never a cross-tenant one), **M19** (0043 promises the surface this
+      never a cross-tenant one), **M19** (0044 promises the surface this
       phase adds to), and **M23** (the release).
     - **M26**, the bounded-list decision 0028 recorded and 0029–0037 built,
       and the namespace decision 0038 recorded. Find both in the register.
@@ -149,7 +151,7 @@ The request is **met as asked**, not answered "like this":
   routes;
 - `ErrNotFound` is `404`, `ErrInvalid` is `400`, and every other failure is
   an outage, never a `401` (M11);
-- the console lists and generates a pack (0044);
+- the console lists and generates a pack (0045);
 - the `reports` family is Control's. A host's own reporting surfaces —
   schedules, campaigns and the history of what was generated, under
   `report:write` and `audit:read` — stay the host's, in the host's namespace
@@ -395,7 +397,7 @@ the three new codes in `north.AllCodes`.
 
   §6 is unchanged: `audit:read` and `report:write` already say what they
   cover.
-- The console prompt (0044) already lists a Reports screen. Correct it if
+- The console prompt (0045) already lists a Reports screen. Correct it if
   what was built differs from what it expects.
 - `CHANGELOG.md`: the release this phase cuts, a MINOR with no
   `### Breaking` (M23). Its entry names the two routes, the two configuration
@@ -416,7 +418,7 @@ the three new codes in `north.AllCodes`.
   may serve one as a cross-tenant read.
 - **A record of a generation on the control stream** (item 7).
 - **Any new `ext` method, field or signature.**
-- **The console screens** (0044).
+- **The console screens** (0045).
 - **`contract/` (M1).** Nothing on the wire to a proxy changes.
 
 ## Acceptance criteria
@@ -551,7 +553,7 @@ Not you. This PR merges first, and the sync runs afterwards in its own session
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0041-registered-reports-served-learnings.md`.
+`docs/learnings/0042-registered-reports-served-learnings.md`.
 Enterprise's sync is written from its summary block, which MUST give:
 
 - the two routes, the body, the listing's entry shape, and whether the

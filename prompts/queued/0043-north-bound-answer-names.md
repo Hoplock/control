@@ -1,9 +1,9 @@
-# 0042 — North-bound answer names: every member named, before the API is a promise
+# 0043 — North-bound answer names: every member named, before the API is a promise
 
 ## Read first
 - `docs/PROTOCOL.md`: §1, §3, §4, §5.
 - `docs/PLAN.md`:
-  - §2: the register, then **M19** (point 2: 0043 makes the north-bound API
+  - §2: the register, then **M19** (point 2: 0044 makes the north-bound API
     a compatibility promise, which is why this runs first), **M26** (M26.2:
     a cursor holds nothing its caller was not handed; M26.3: a list is never
     `null`), **M17** (the capabilities a proxy's item carries), **M11** and
@@ -44,7 +44,7 @@ fleet structs that carry no `json` tags, so their members are Go field names.
 `MatchedRule`. A session's loss answers `Cause` and `Reports`. The fleet view
 answers `ProxyID`, `LastHeartbeatAt` (`0001-01-01T00:00:00Z` for a proxy
 that never reported) and a `liveness` of `HeartbeatTTL` in **nanoseconds**.
-So renaming a field inside Control changes the wire, and nothing fails. 0043
+So renaming a field inside Control changes the wire, and nothing fails. 0044
 makes the north-bound API a compatibility promise (M19). A rename after it
 costs a version of the API; a rename before it costs one MINOR with its
 `### Breaking`.
@@ -182,7 +182,7 @@ same interval under (`internal/config`, `capability_report_after`).
   snake_case. This phase renames nothing that is not in (1)–(4).
 - `ttl_seconds` beside the observation lists, which truncates a sub-second
   TTL to whole seconds rather than rounding up. Noticed here, not changed.
-- The north-bound API's version and its negotiation (0043, M19).
+- The north-bound API's version and its negotiation (0044, M19).
 - The error envelope (`Error`), which is already named.
 - Moving `fleet.ProxyHealth`, `store.BlockedCommand` or `store.GapLoss` out
   of their packages, or tagging them. They stay internal types, and the
@@ -233,6 +233,6 @@ and new members:
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `prompts/implemented/`, and add
-`docs/learnings/0042-north-bound-answer-names-learnings.md`. Its summary
+`docs/learnings/0043-north-bound-answer-names-learnings.md`. Its summary
 names the guard, and says that a type rendered without its names now fails
 the build.

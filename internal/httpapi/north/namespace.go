@@ -18,7 +18,7 @@ import (
 //     under its own provider ([HostAPIRoot]), with its class in the next
 //     segment — tenant routes under [HostTenantPrefix], cross-tenant reads
 //     under [HostCrossTenantPrefix].
-//   - Control's console, under [ConsolePrefix] (0044).
+//   - Control's console, under [ConsolePrefix] (0045).
 //   - A host's console, under [HostConsolePrefix]: a host's screens, under
 //     its own provider ([HostConsoleRoot]).
 //

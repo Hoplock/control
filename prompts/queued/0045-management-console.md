@@ -1,4 +1,4 @@
-# 0044 — Management console (web UI)
+# 0045 — Management console (web UI)
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -31,7 +31,7 @@
   inside the one reserved for a host. The code is
   `internal/httpapi/north/console.go` (`Console`, the mount) and
   `namespace.go` (the prefixes); the tests are
-  `namespace_internal_test.go`. Open `0041` for the report routes the Reports
+  `namespace_internal_test.go`. Open `0042` for the report routes the Reports
   screen consumes (below).
 - **`docs/PLAN.md` M28 and `docs/learnings/0039-action-executor-lock-and-quarantine-learnings.md`
   (open it in full), for the subject lock and the target quarantine, which
@@ -269,7 +269,7 @@ is written so that half can fail a review rather than merely disappoint one.
      the second step, because a ban that stops at activation reaches only new
      decisions.
   8. **Reports** — every registered report pack this tenant can generate, from
-     `GET …/reports` (0041), and a form that generates one through
+     `GET …/reports` (0042), and a form that generates one through
      `POST …/reports/generate` and saves the file. The form is built from the
      descriptor: the period, each parameter (a closed set as a choice,
      required ones marked), and the formats it lists. A report is named
@@ -293,7 +293,7 @@ is written so that half can fail a review rather than merely disappoint one.
 
 ### Deployment identity and tenant context (M18, M19)
 - The console always says **which deployment** this is: name, instance id,
-  version set, and health (0043). An operator with a staging and a production
+  version set, and health (0044). An operator with a staging and a production
   instance open in two tabs must never have to guess which is which, and the
   distinction has to survive a screenshot.
 - Where more than one tenant is in scope, the current tenant is visible in the
@@ -513,7 +513,7 @@ becomes a test that runs today.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0044-management-console-learnings.md`. Summary block MUST give
+`docs/learnings/0045-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it —
 which, per M20, includes how it inherits the tokens and the component set rather
