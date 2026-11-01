@@ -11,8 +11,10 @@
 >
 > **Where it sits.** Right after the action executor (0039) and identity sync
 > (0040). It extends 0039's executor, and every phase it depends on is merged.
-> It runs before reports (0042) and everything after it. The confined-action
-> renumbering note in `docs/PLAN.md` §10 gives one line of reasons for each.
+> It runs before the directory source (0042), reports (0043) and everything
+> after them. The confined-action renumbering note in `docs/PLAN.md` §10 gives
+> one line of reasons for each, and the directory-source note says why 0042
+> runs after this phase rather than before it.
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow. Read §3 for `ext/` as a compatibility
