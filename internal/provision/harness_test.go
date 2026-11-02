@@ -35,6 +35,10 @@ const (
 	tenant   = store.Tenant("acme")
 	other    = store.Tenant("globex")
 	provider = "hoplock/scim-test"
+	// source is the directory the harness's sync names (0042); sourceB is a
+	// second directory feeding the same tenant.
+	source  = "okta"
+	sourceB = "azure"
 )
 
 // bundle allows the sre group anywhere, and nobody else.
@@ -236,7 +240,7 @@ func (h *harness) tick() time.Time {
 // person is a directory record of a person, at the next directory instant.
 func (h *harness) person(externalID, username string, groups ...string) ext.SyncedSubject {
 	return ext.SyncedSubject{
-		Tenant: ext.Tenant(tenant), ExternalID: externalID, Username: username,
+		Tenant: ext.Tenant(tenant), Source: source, ExternalID: externalID, Username: username,
 		DisplayName: strings.ToUpper(username), Email: username + "@example.com",
 		Groups: groups, Active: true, UpdatedAt: h.tick(),
 	}
@@ -244,7 +248,12 @@ func (h *harness) person(externalID, username string, groups ...string) ext.Sync
 
 // group is a directory group, at the next directory instant.
 func (h *harness) group(externalID, name string) ext.SyncedGroup {
-	return ext.SyncedGroup{Tenant: ext.Tenant(tenant), ExternalID: externalID, Name: name, UpdatedAt: h.tick()}
+	return ext.SyncedGroup{Tenant: ext.Tenant(tenant), Source: source, ExternalID: externalID, Name: name, UpdatedAt: h.tick()}
+}
+
+// ref names an identity or a group of the harness's source in a tenant.
+func ref(t store.Tenant, externalID string) ext.DirectoryRef {
+	return ext.DirectoryRef{Tenant: ext.Tenant(t), Source: source, ExternalID: externalID}
 }
 
 func (h *harness) mustUpsert(s ext.SyncedSubject) {
@@ -261,12 +270,19 @@ func (h *harness) mustGroup(g ext.SyncedGroup) {
 	}
 }
 
-// link reads the link of an external id in the tenant.
+// link reads the link of an external id of the harness's source in the
+// tenant.
 func (h *harness) link(externalID string) store.DirectoryLink {
 	h.t.Helper()
-	l, err := h.store.DirectoryLinks().Get(h.t.Context(), tenant, externalID)
+	return h.linkIn(source, externalID)
+}
+
+// linkIn reads the link of an external id of a source in the tenant.
+func (h *harness) linkIn(src, externalID string) store.DirectoryLink {
+	h.t.Helper()
+	l, err := h.store.DirectoryLinks().Get(h.t.Context(), tenant, src, externalID)
 	if err != nil {
-		h.t.Fatalf("link %s: %v", externalID, err)
+		h.t.Fatalf("link %s/%s: %v", src, externalID, err)
 	}
 	return l
 }

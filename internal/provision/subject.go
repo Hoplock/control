@@ -32,8 +32,8 @@ type subjectOutcome struct {
 }
 
 // getLink reads a link, reporting absence as a bool rather than an error.
-func getLink(ctx context.Context, tx *store.Store, tenant store.Tenant, externalID string) (store.DirectoryLink, bool, error) {
-	link, err := tx.DirectoryLinks().Get(ctx, tenant, externalID)
+func getLink(ctx context.Context, tx *store.Store, tenant store.Tenant, source, externalID string) (store.DirectoryLink, bool, error) {
+	link, err := tx.DirectoryLinks().Get(ctx, tenant, source, externalID)
 	switch {
 	case err == nil:
 		return link, true, nil
@@ -57,16 +57,16 @@ func (s *Sink) upsertSubject(ctx context.Context, req subjectRequest) (subjectOu
 	var out subjectOutcome
 	err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
 		// Shared with every other subject write and exclusive of a group
-		// change, then this id's own lock: two calls on one id have one
-		// effect, and a group change never re-derives this subject from what
-		// this call is replacing.
+		// change, then this source's id's own lock: two calls on one id have
+		// one effect, and a group change never re-derives this subject from
+		// what this call is replacing.
 		if err := tx.DirectoryGroups().Share(ctx, req.tenant); err != nil {
 			return err
 		}
-		if err := tx.DirectoryLinks().Lock(ctx, req.tenant, req.externalID); err != nil {
+		if err := tx.DirectoryLinks().Lock(ctx, req.tenant, req.source, req.externalID); err != nil {
 			return err
 		}
-		link, found, err := getLink(ctx, tx, req.tenant, req.externalID)
+		link, found, err := getLink(ctx, tx, req.tenant, req.source, req.externalID)
 		if err != nil {
 			return err
 		}
@@ -84,11 +84,12 @@ func (s *Sink) upsertSubject(ctx context.Context, req subjectRequest) (subjectOu
 			if err != nil {
 				return err
 			}
-			link = store.DirectoryLink{ExternalID: req.externalID, SubjectID: id, Provider: s.provider, LinkedAt: now}
+			link = store.DirectoryLink{Source: req.source, ExternalID: req.externalID, SubjectID: id, Provider: s.provider, LinkedAt: now}
 		}
 
-		// Logins are unique to one subject (item 7). Every writer that gives
-		// a subject this name holds its lock, so two cannot both find it free.
+		// Logins are unique to one subject in the tenant, whatever source it
+		// comes from (0040's item 7, kept by 0042). Every writer that gives a
+		// subject this name holds its lock, so two cannot both find it free.
 		if req.username != "" {
 			if err := tx.Subjects().LockPrincipal(ctx, req.tenant, req.username); err != nil {
 				return err
@@ -171,8 +172,8 @@ func (s *Sink) upsertSubject(ctx context.Context, req subjectRequest) (subjectOu
 			event, verb = audit.EventSyncSubjectProvisioned, "provisioned"
 		}
 		if err := s.recorder.SyncEvent(ctx, tx, req.tenant, audit.SyncAct{
-			Event: event, Principal: s.principal, Provider: s.provider, ExternalID: link.ExternalID,
-			Subject: link.SubjectID, Fields: subjectFields(before, subject),
+			Event: event, Principal: s.principal, Provider: s.provider, Source: link.Source,
+			ExternalID: link.ExternalID, Subject: link.SubjectID, Fields: subjectFields(before, subject),
 			Message: "subject " + link.SubjectID + " " + verb + " by the directory",
 		}); err != nil {
 			return err
@@ -185,7 +186,7 @@ func (s *Sink) upsertSubject(ctx context.Context, req subjectRequest) (subjectOu
 		if reactivated != nil {
 			if err := s.recorder.SyncEvent(ctx, tx, req.tenant, audit.SyncAct{
 				Event: audit.EventSyncSubjectReactivated, Principal: s.principal, Provider: s.provider,
-				ExternalID: link.ExternalID, Subject: link.SubjectID, Severity: contract.SeverityWarn,
+				Source: link.Source, ExternalID: link.ExternalID, Subject: link.SubjectID, Severity: contract.SeverityWarn,
 				Fields: map[string]string{
 					"deactivated_at":       reactivated.DeactivatedAt.Format(time.RFC3339Nano),
 					"deactivation_code":    reactivated.DeactivationReason,
@@ -204,19 +205,19 @@ func (s *Sink) upsertSubject(ctx context.Context, req subjectRequest) (subjectOu
 
 // deactivate places the directory's standing deactivation, in one transaction
 // with its record and the revocation of the subject's north-bound credentials
-// and certificates. A deactivation for an id with no link is kept on a link of
-// its own, and the create that arrives later provisions the subject already
-// deactivated. One already standing writes no second record.
-func (s *Sink) deactivate(ctx context.Context, tenant store.Tenant, externalID, reasonCode string) (subjectOutcome, error) {
+// and certificates. A deactivation for a source's id with no link is kept on a
+// link of its own, and the create that arrives later provisions the subject
+// already deactivated. One already standing writes no second record.
+func (s *Sink) deactivate(ctx context.Context, tenant store.Tenant, source, externalID, reasonCode string) (subjectOutcome, error) {
 	out := subjectOutcome{deactivate: true}
 	err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
 		if err := tx.DirectoryGroups().Share(ctx, tenant); err != nil {
 			return err
 		}
-		if err := tx.DirectoryLinks().Lock(ctx, tenant, externalID); err != nil {
+		if err := tx.DirectoryLinks().Lock(ctx, tenant, source, externalID); err != nil {
 			return err
 		}
-		link, found, err := getLink(ctx, tx, tenant, externalID)
+		link, found, err := getLink(ctx, tx, tenant, source, externalID)
 		if err != nil {
 			return err
 		}
@@ -226,7 +227,7 @@ func (s *Sink) deactivate(ctx context.Context, tenant store.Tenant, externalID, 
 			if err != nil {
 				return err
 			}
-			link = store.DirectoryLink{ExternalID: externalID, SubjectID: id, Provider: s.provider, LinkedAt: now}
+			link = store.DirectoryLink{Source: source, ExternalID: externalID, SubjectID: id, Provider: s.provider, LinkedAt: now}
 		}
 		if !link.Deactivated() {
 			link.DeactivatedAt, link.DeactivationReason = now, reasonCode
@@ -281,7 +282,7 @@ func (s *Sink) revokeCredentials(ctx context.Context, tx *store.Store, tenant st
 func (s *Sink) recordDeactivated(ctx context.Context, tx *store.Store, tenant store.Tenant, link store.DirectoryLink, revoked credentialsRevoked) error {
 	return s.recorder.SyncEvent(ctx, tx, tenant, audit.SyncAct{
 		Event: audit.EventSyncSubjectDeactivated, Principal: s.principal, Provider: s.provider,
-		ExternalID: link.ExternalID, Subject: link.SubjectID, Severity: contract.SeverityWarn,
+		Source: link.Source, ExternalID: link.ExternalID, Subject: link.SubjectID, Severity: contract.SeverityWarn,
 		Fields: map[string]string{
 			"reason_code":          link.DeactivationReason,
 			"provisioned":          strconv.FormatBool(link.Provisioned),
@@ -295,12 +296,13 @@ func (s *Sink) recordDeactivated(ctx context.Context, tx *store.Store, tenant st
 
 // derive builds the subject row a link stands for, through the tenant's claim
 // mapping (item 3): the directory's attributes and email offered as claims, its
-// groups resolved to their names and offered under the mapping's group claim.
+// groups resolved to the names its own source gave them and offered under the
+// mapping's group claim.
 // Only what the mapping names becomes an attribute or a group, and the row
 // records the mapping's version (M4). Local membership merges in as it does for
 // a federated subject, and the principals are exactly the directory's username.
 func (s *Sink) derive(ctx context.Context, tx *store.Store, tenant store.Tenant, link store.DirectoryLink, mapping *identity.Mapping) (store.Subject, error) {
-	names, err := tx.DirectoryGroups().Names(ctx, tenant, link.GroupIDs)
+	names, err := tx.DirectoryGroups().Names(ctx, tenant, link.Source, link.GroupIDs)
 	if err != nil {
 		return store.Subject{}, err
 	}

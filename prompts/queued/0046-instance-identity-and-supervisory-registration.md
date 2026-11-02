@@ -23,7 +23,11 @@
   `0026` (each audit sink's lag on `GET …/extensions`, which the promise
   covers as well), `0040` (the directory-managed and deactivated fields
   on the subject reads, the `subject_directory_managed` refusal and the
-  identity sync's started state, which the promise covers too), and `0044`
+  identity sync's started state, which the promise covers too), `0042`
+  (`directory.source` on the subject reads and a tied connector's
+  `directory_source` on `GET /api/v1/session/methods`, which the promise
+  covers as well — the subject's top-level `source` is a different field and
+  keeps its meaning), and `0044`
   (the two report routes, the generate body, the listing's entries and the
   three `report_*` codes, which the promise covers as well).
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` **D11** and §6.1 —

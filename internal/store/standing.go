@@ -436,7 +436,7 @@ func (r subjectRepo) Standing(ctx context.Context, tenant Tenant, subjectID stri
 			COALESCE(k.locked_by_break_glass, false), COALESCE(k.reason_code, ''), COALESCE(k.reason, ''),
 			COALESCE(k.external_ref, ''), COALESCE(k.action_id, ''),
 			d.subject_id IS NOT NULL,
-			COALESCE(d.provider, ''), COALESCE(d.external_id, ''),
+			COALESCE(d.provider, ''), COALESCE(d.source, ''), COALESCE(d.external_id, ''),
 			d.deactivated_at, COALESCE(d.deactivation_reason, '')
 		FROM (SELECT $1::text AS tenant, $2::text AS subject_id) q
 		LEFT JOIN subjects s ON s.tenant = q.tenant AND s.subject_id = q.subject_id
@@ -453,7 +453,7 @@ func (r subjectRepo) Standing(ctx context.Context, tenant Tenant, subjectID stri
 		&l.LockedBy.BreakGlass, &l.ReasonCode, &l.Reason,
 		&l.ExternalRef, &l.ActionID,
 		&linked,
-		&d.Provider, &d.ExternalID,
+		&d.Provider, &d.Source, &d.ExternalID,
 		&deactivated, &d.DeactivationReason)
 	if err != nil {
 		return SubjectStanding{}, wrap(op, err)

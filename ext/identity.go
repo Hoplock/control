@@ -13,16 +13,19 @@ import (
 type SyncedSubject struct {
 	// Tenant is required.
 	Tenant Tenant
-	// ExternalID is the directory's stable identifier. It is the join key,
-	// and it must not change when a person's name or address does. It is
-	// unique per tenant across everything the one registered sync provisions:
-	// a sync that feeds several directories into one sink namespaces their ids
-	// itself, because two directories that both call someone `00u1` are two
-	// people here only if their ids differ.
+	// Source names the directory this identity comes from, as the sync names
+	// it: ^[a-z0-9][a-z0-9-]{0,62}$. Required. It is a label an operator
+	// chooses, and it is shown on the sign-in methods of a connector tied to
+	// it, so it names the directory rather than describing the organisation.
+	Source string
+	// ExternalID is the directory's stable identifier. With Source it is the
+	// join key, and it must not change when a person's name or address does.
+	// It is unique per (Tenant, Source), not per Tenant: two directories that
+	// both call someone `00u1` are two subjects, and neither id is rewritten.
 	ExternalID string
 	// Username is the login name, and the subject's only one: it replaces the
 	// name an earlier upsert gave, and a name another subject in the tenant
-	// already presents is refused (KindConflict). Optional.
+	// already presents, from any source, is refused (KindConflict). Optional.
 	Username string
 	// DisplayName and Email are what an operator recognises the person by.
 	// Email is also offered to the tenant's claim mapping as the claim
@@ -30,8 +33,9 @@ type SyncedSubject struct {
 	DisplayName string
 	Email       string
 	// Groups are the directory's group ExternalIDs, not names: each resolves
-	// to the Name its UpsertGroup gave, and a group the sink has no name for
-	// yet maps nothing until it does.
+	// to the Name the UpsertGroup of the same Source gave, and a group the
+	// sink has no name for yet maps nothing until it does. Another source's
+	// group with the same id is never this subject's group.
 	Groups []string
 	// Active reports whether the directory considers the identity live.
 	// De-provisioning sets this false rather than deleting, because a
@@ -53,8 +57,12 @@ type SyncedSubject struct {
 type SyncedGroup struct {
 	// Tenant is required.
 	Tenant Tenant
-	// ExternalID is the directory's stable identifier for the group: what
-	// SyncedSubject.Groups names.
+	// Source names the directory this group comes from, held to
+	// SyncedSubject.Source's pattern. Required. Only subjects of the same
+	// source are its members.
+	Source string
+	// ExternalID is the directory's stable identifier for the group, unique
+	// per (Tenant, Source): what SyncedSubject.Groups names.
 	ExternalID string
 	// Name is the group name, and what the tenant's claim mapping matches
 	// (`groups.map`), so one mapping serves a login and the directory alike.
@@ -65,29 +73,45 @@ type SyncedGroup struct {
 	UpdatedAt time.Time
 }
 
+// DirectoryRef names one identity or group in one directory.
+type DirectoryRef struct {
+	// Tenant is required.
+	Tenant Tenant
+	// Source names the directory, held to SyncedSubject.Source's pattern.
+	// Required.
+	Source string
+	// ExternalID is the directory's id for the identity or the group.
+	// Required.
+	ExternalID string
+}
+
 // SyncSink is Control's side of identity provisioning: what an IdentitySync
 // implementation calls to apply what it learned. The direction is inverted
 // on purpose. Provisioning is push-shaped — SCIM is a server the directory
 // calls — so the extension owns the listener and Control owns the effect, and
 // an implementation never writes to Control's storage itself.
 //
-// Every method is idempotent on ExternalID: a directory that replays is
-// normal, and a sink that doubles on replay is a bug in Control rather than in
-// the directory. Control's sink is safe for concurrent use: two calls on one
-// ExternalID are serialised, calls on different ids run concurrently, and a
-// group change waits for the subject writes in flight in its tenant.
+// Every method is idempotent on (Tenant, Source, ExternalID): a directory that
+// replays is normal, and a sink that doubles on replay is a bug in Control
+// rather than in the directory. One sync may feed several directories into
+// one tenant, each named by its Source and each keeping its own ids. Control's
+// sink is safe for concurrent use: two calls on one (Source, ExternalID) are
+// serialised, calls on different ones run concurrently, and a group change
+// waits for the subject writes in flight in its tenant.
 //
-// ORDER. An upsert is applied only when its UpdatedAt is later than the last
-// one applied for the id; one that is not changes nothing and writes no
-// record, which is what a replay or a stale write is. DeactivateSubject
-// carries no time, so Control's own clock orders it: an upsert with Active
-// true lifts a standing deactivation only when its UpdatedAt is later than
-// both the last applied one and the instant Control applied the
-// deactivation. A directory clock behind Control's delays a re-activation and
-// never shortens a deactivation. A deactivation for an ExternalID Control has
-// not seen is kept, and the create that arrives later provisions the subject
-// already deactivated; a DeleteGroup for an unknown id keeps a tombstone the
-// same way, and an UpsertGroup older than a tombstone changes nothing.
+// ORDER, per (Tenant, Source, ExternalID). An upsert is applied only when its
+// UpdatedAt is later than the last one applied for that key; one that is not
+// changes nothing and writes no record, which is what a replay or a stale
+// write is. DeactivateSubject carries no time, so Control's own clock orders
+// it: an upsert with Active true lifts a standing deactivation only when its
+// UpdatedAt is later than both the last applied one and the instant Control
+// applied the deactivation. A directory clock behind Control's delays a
+// re-activation and never shortens a deactivation. A deactivation for a key
+// Control has not seen is kept, and the create that arrives later provisions
+// the subject already deactivated; a DeleteGroup for an unknown key keeps a
+// tombstone the same way, and an UpsertGroup older than a tombstone changes
+// nothing. Another source's writes under the same ExternalID touch none of
+// this.
 //
 // The directory is the only writer of what it provisions. A provisioned
 // subject's groups, attributes and login name come from here, and an
@@ -95,32 +119,36 @@ type SyncedGroup struct {
 // policy only through the tenant's claim mapping (Control's decision M7):
 // attributes and the email are offered as claims and group names under the
 // mapping's group claim, and only what the mapping names counts. A connector
-// may name a `directory_claim`, the claim carrying this ExternalID, and a login
-// through it reaches the provisioned subject or is refused; it never creates a
-// subject of its own. An existing subject is never adopted or merged.
+// may name a `directory_claim`, the claim carrying this ExternalID, and the
+// `directory_source` that id is unique in; a login through it looks the
+// identity up by (Tenant, directory_source, claim value) and reaches the
+// provisioned subject or is refused; it never creates a subject of its own. An
+// existing subject is never adopted or merged, across sources as within one:
+// a person who moves from one directory to another is two subjects here, and
+// the second's login name is KindConflict while the first still presents it.
 //
 // Every applied call is recorded on the tenant's control stream with the sync
 // as the actor (`identity-sync:<provider>`, no person), and so is every
 // refusal.
 //
-// ERRORS. Every method returns an *Error, or nil for something done or found
-// to be already so:
-//   - KindInvalid: a field is malformed (the error names it); nothing was
-//     applied. Do not retry it unchanged.
-//   - KindConflict: the Username is one another subject in the tenant already
-//     presents; nothing was applied. Resolve it in the directory, or have an
-//     operator resolve it here.
+// ERRORS, per (Tenant, Source, ExternalID). Every method returns an *Error, or
+// nil for something done or found to be already so:
+//   - KindInvalid: a field is malformed or absent, Source included (the error
+//     names it); nothing was applied. Do not retry it unchanged.
+//   - KindConflict: the Username is one another subject in the tenant, of any
+//     source, already presents; nothing was applied. Resolve it in the
+//     directory, or have an operator resolve it here.
 //   - KindUnavailable: the change was applied and stands, and what it owes the
 //     revocation stream (a kill, an invalidation, a revocation) could not be
 //     delivered; or Control is stopping the sync. Safe to retry: the same call
 //     delivers the rest and writes no second record.
 //   - KindInternal: a store failure. Safe to retry.
 type SyncSink interface {
-	// UpsertSubject creates or updates an identity, joined on ExternalID and
-	// never on the username.
+	// UpsertSubject creates or updates an identity, joined on its Source and
+	// ExternalID and never on the username.
 	UpsertSubject(ctx context.Context, s SyncedSubject) error
-	// DeactivateSubject marks an identity as no longer live and revokes what
-	// it currently holds. It does not delete: the audit history stays
+	// DeactivateSubject marks the identity ref names as no longer live and
+	// revokes what it currently holds. It does not delete: the audit history stays
 	// attributable.
 	//
 	// From the instant it commits, every authorize for the subject is a deny
@@ -137,15 +165,15 @@ type SyncSink interface {
 	// and still revokes whatever remains and ends the sessions again, so a
 	// retry after KindUnavailable finishes it. A re-activation restores
 	// nothing that was revoked.
-	DeactivateSubject(ctx context.Context, tenant Tenant, externalID, reasonCode string) error
+	DeactivateSubject(ctx context.Context, ref DirectoryRef, reasonCode string) error
 	// UpsertGroup creates or updates a group. One that names a group anew,
 	// renames it, or re-creates it after a delete re-derives every subject
-	// the directory says is a member.
+	// of its Source the directory says is a member.
 	UpsertGroup(ctx context.Context, g SyncedGroup) error
-	// DeleteGroup removes a group. Membership derived from it stops
-	// applying, and its members' cached decisions are dropped; the subjects
-	// remain.
-	DeleteGroup(ctx context.Context, tenant Tenant, externalID string) error
+	// DeleteGroup removes the group ref names. Membership derived from it
+	// stops applying, and its members' cached decisions are dropped; the
+	// subjects remain.
+	DeleteGroup(ctx context.Context, ref DirectoryRef) error
 }
 
 // IdentitySync provisions and de-provisions identities ahead of login. What

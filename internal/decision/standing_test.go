@@ -463,7 +463,7 @@ func TestStandingDenialsCostTheDecisionPathNoRoundTrip(t *testing.T) {
 func (h *harness) deactivate(t testing.TB, subject string) store.DirectoryLink {
 	t.Helper()
 	l := store.DirectoryLink{
-		ExternalID: "ext-" + subject, SubjectID: subject, Provider: "hoplock/scim", LinkedAt: h.clock.Add(-time.Hour),
+		Source: "okta-a", ExternalID: "ext-" + subject, SubjectID: subject, Provider: "hoplock/scim", LinkedAt: h.clock.Add(-time.Hour),
 		Provisioned: true, DeactivatedAt: h.clock.Add(-time.Minute).Truncate(time.Second), DeactivationReason: "terminated",
 	}
 	if err := h.store.DirectoryLinks().Put(t.Context(), testTenant, l); err != nil {
@@ -499,6 +499,7 @@ func TestADeactivatedSubjectIsDeniedRecordedExplainedAndReplayed(t *testing.T) {
 		ReasonCode  string `json:"reason_code"`
 		Reason      string `json:"reason"`
 		ExternalRef string `json:"external_ref"`
+		Source      string `json:"source"`
 		PlacedBy    struct {
 			Principal string `json:"principal"`
 			Subject   string `json:"subject"`
@@ -508,7 +509,7 @@ func TestADeactivatedSubjectIsDeniedRecordedExplainedAndReplayed(t *testing.T) {
 		t.Fatalf("explain carries standing %s (%v), want exactly the deactivation", story.Standing, err)
 	}
 	if got := standing[0]; got.Code != "subject_deactivated" || got.SubjectID != alice || got.ReasonCode != "terminated" ||
-		got.ExternalRef != "ext-"+alice || got.PlacedBy.Principal != "identity-sync:hoplock/scim" || got.PlacedBy.Subject != "" ||
+		got.ExternalRef != "ext-"+alice || got.Source != "okta-a" || got.PlacedBy.Principal != "identity-sync:hoplock/scim" || got.PlacedBy.Subject != "" ||
 		got.PlacedAt != l.DeactivatedAt.UTC().Format(time.RFC3339) || got.Reason != access.DeactivatedByDirectoryReason {
 		t.Errorf("the recorded deactivation is %+v", got)
 	}
@@ -541,6 +542,46 @@ func TestADeactivatedSubjectIsDeniedRecordedExplainedAndReplayed(t *testing.T) {
 			if f.DecisionID == deactivatedSession {
 				t.Errorf("replay reports the deactivated call %s flipping to an allow", deactivatedSession)
 			}
+		}
+	}
+}
+
+// The deactivation's standing entry names the directory's source beside its
+// id, because one `00u1` is two people once two directories feed the tenant
+// (0042); a lock's and a quarantine's entries carry no source.
+func TestTheDeactivationsStandingEntryNamesItsSourceAndNoOtherEntryDoes(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.deactivate(t, alice)
+	h.lock(t, alice)
+	h.quarantine(t, "t-edge")
+
+	out, err := h.authorize(t, request("edge-host.example.com", "proxy-1"))
+	if err != nil || out.Deny == nil {
+		t.Fatalf("authorize = %+v, %v; want a standing deny", out, err)
+	}
+	story, err := decision.Explain(t.Context(), h.store, nil, testTenant, out.Deny.DecisionID)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(story.Standing, &entries); err != nil {
+		t.Fatal(err)
+	}
+	codes := map[string]map[string]any{}
+	for _, e := range entries {
+		code, _ := e["code"].(string)
+		codes[code] = e
+	}
+	if len(codes) != 3 {
+		t.Fatalf("explain carries %s, want the lock, the deactivation and the quarantine", story.Standing)
+	}
+	if d := codes["subject_deactivated"]; d["source"] != "okta-a" || d["external_ref"] != "ext-"+alice {
+		t.Errorf("the deactivation's entry is %v, want its source and external_ref", d)
+	}
+	for _, code := range []string{"subject_locked", "target_quarantined"} {
+		if _, ok := codes[code]["source"]; ok {
+			t.Errorf("the %s entry carries a source: %v", code, codes[code])
 		}
 	}
 }

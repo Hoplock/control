@@ -67,7 +67,7 @@ func (s *Sink) deliverSubject(ctx context.Context, op string, tenant store.Tenan
 		if err := s.publish(ctx, tenant, link.SubjectID, false, false); err != nil {
 			return s.unavailable(ctx, op, "dropping the subject's cached decisions", err)
 		}
-		if err := s.store.DirectoryLinks().Settle(ctx, tenant, link.ExternalID, true, false); err != nil {
+		if err := s.store.DirectoryLinks().Settle(ctx, tenant, link.Source, link.ExternalID, true, false); err != nil {
 			return s.internal(ctx, op, "record the invalidation as delivered", err)
 		}
 	}
@@ -103,7 +103,7 @@ func (s *Sink) cascade(ctx context.Context, op string, tenant store.Tenant, link
 	case failed != nil:
 		return s.internal(ctx, op, "finish revoking what the deactivated subject holds", failed)
 	}
-	if err := s.store.DirectoryLinks().Settle(ctx, tenant, link.ExternalID, true, true); err != nil {
+	if err := s.store.DirectoryLinks().Settle(ctx, tenant, link.Source, link.ExternalID, true, true); err != nil {
 		return s.internal(ctx, op, "record the deactivation as delivered", err)
 	}
 	return nil
@@ -276,12 +276,13 @@ func (s *Sink) recordPublication(ctx context.Context, tenant store.Tenant, kind,
 	return nil
 }
 
-// deliverGroup drops the cached decisions of the group's members whose groups
-// a group call changed: one event each, or one for the tenant past
-// maxSubjectInvalidations. It kills no session: a group change narrows or
-// widens what the next decision allows, and ending sessions is a deactivation's.
-func (s *Sink) deliverGroup(ctx context.Context, op string, tenant store.Tenant, groupExternalID string) error {
-	links, err := s.store.DirectoryLinks().Members(ctx, tenant, groupExternalID)
+// deliverGroup drops the cached decisions of the group's members, of its own
+// source, whose groups a group call changed: one event each, or one for the
+// tenant past maxSubjectInvalidations. It kills no session: a group change
+// narrows or widens what the next decision allows, and ending sessions is a
+// deactivation's.
+func (s *Sink) deliverGroup(ctx context.Context, op string, tenant store.Tenant, source, groupExternalID string) error {
+	links, err := s.store.DirectoryLinks().Members(ctx, tenant, source, groupExternalID)
 	if err != nil {
 		return s.internal(ctx, op, "read the group's members", err)
 	}
@@ -309,7 +310,7 @@ func (s *Sink) deliverGroup(ctx context.Context, op string, tenant store.Tenant,
 		}
 	}
 	for _, l := range owed {
-		if err := s.store.DirectoryLinks().Settle(ctx, tenant, l.ExternalID, true, false); err != nil {
+		if err := s.store.DirectoryLinks().Settle(ctx, tenant, l.Source, l.ExternalID, true, false); err != nil {
 			return s.internal(ctx, op, "record the invalidation as delivered", err)
 		}
 	}

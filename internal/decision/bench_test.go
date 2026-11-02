@@ -146,7 +146,7 @@ func benchHarness(tb testing.TB) *harness {
 	// with deactivations standing among them.
 	for i := range benchTargets {
 		l := store.DirectoryLink{
-			ExternalID: fmt.Sprintf("bench-ext-%d", i), SubjectID: fmt.Sprintf("bench-person-%d", i),
+			Source: "okta-a", ExternalID: fmt.Sprintf("bench-ext-%d", i), SubjectID: fmt.Sprintf("bench-person-%d", i),
 			Provider: "hoplock/scim", LinkedAt: h.clock, Provisioned: true,
 		}
 		if i%10 == 0 {

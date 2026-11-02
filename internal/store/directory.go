@@ -15,10 +15,18 @@ import (
 // allocated for them, and holds the deactivation the directory placed. A
 // directory group is the directory's name for a group id. Neither is a policy
 // input: only what the tenant's claim mapping makes of them reaches `subjects`.
+//
+// Both are keyed by (tenant, source, external id) (0042): the source names the
+// directory, as the sync names it, so two directories feeding one tenant keep
+// their own ids. A subject is still one identity in one directory: a link's
+// subject id is unique per tenant.
 
 // DirectoryLink is one directory identity and the subject it is linked to.
 type DirectoryLink struct {
-	// ExternalID is the directory's stable identifier: the join key.
+	// Source names the directory the identity comes from. With ExternalID it
+	// is the join key.
+	Source string
+	// ExternalID is the directory's stable identifier, unique per source.
 	ExternalID string
 	// SubjectID is the subject Control allocated when the id was first linked.
 	SubjectID string
@@ -54,6 +62,9 @@ func (l DirectoryLink) Deactivated() bool { return !l.DeactivatedAt.IsZero() }
 
 // DirectoryGroup is one group as the directory names it.
 type DirectoryGroup struct {
+	// Source names the directory the group comes from: only subjects of the
+	// same source are its members.
+	Source     string
 	ExternalID string
 	Provider   string
 	// Name is what the claim mapping's `groups.map` matches.
@@ -71,7 +82,11 @@ func (g DirectoryGroup) Deleted() bool { return !g.DeletedAt.IsZero() }
 // SubjectDirectory is what a subject read says of a subject the directory
 // manages: whose it is, and the standing deactivation, if one stands.
 type SubjectDirectory struct {
-	Provider   string
+	Provider string
+	// Source names the directory the identity comes from. It is not the
+	// subject's own Source, which names the connector or the sync that
+	// asserted the subject.
+	Source     string
 	ExternalID string
 	// DeactivatedAt is zero when the subject is active.
 	DeactivatedAt      time.Time
@@ -94,7 +109,7 @@ func (d SubjectDirectory) DeactivatedBy() StandingActor {
 // SubjectDirectory is what a subject read says of the link.
 func (l DirectoryLink) SubjectDirectory() *SubjectDirectory {
 	return &SubjectDirectory{
-		Provider: l.Provider, ExternalID: l.ExternalID,
+		Provider: l.Provider, Source: l.Source, ExternalID: l.ExternalID,
 		DeactivatedAt: l.DeactivatedAt, DeactivationReason: l.DeactivationReason,
 	}
 }
@@ -105,16 +120,21 @@ func (l DirectoryLink) SubjectDirectory() *SubjectDirectory {
 
 type directoryLinkRepo struct{ s *Store }
 
-const directoryLinkColumns = `external_id, subject_id, provider, linked_at, provisioned,
+const directoryLinkColumns = `source, external_id, subject_id, provider, linked_at, provisioned,
 	directory_updated_at, username, display_name, email, attributes, group_ids,
 	deactivated_at, deactivation_reason, invalidate_owed, deactivation_owed`
+
+// directoryLinkColumnsAs is directoryLinkColumns qualified by the alias d.
+const directoryLinkColumnsAs = `d.source, d.external_id, d.subject_id, d.provider, d.linked_at, d.provisioned,
+	d.directory_updated_at, d.username, d.display_name, d.email, d.attributes, d.group_ids,
+	d.deactivated_at, d.deactivation_reason, d.invalidate_owed, d.deactivation_owed`
 
 func scanDirectoryLink(op string, row rowScanner) (DirectoryLink, error) {
 	var (
 		l                    DirectoryLink
 		updated, deactivated *time.Time
 	)
-	err := row.Scan(&l.ExternalID, &l.SubjectID, &l.Provider, &l.LinkedAt, &l.Provisioned,
+	err := row.Scan(&l.Source, &l.ExternalID, &l.SubjectID, &l.Provider, &l.LinkedAt, &l.Provisioned,
 		&updated, &l.Username, &l.DisplayName, &l.Email, &l.Attributes, &l.GroupIDs,
 		&deactivated, &l.DeactivationReason, &l.InvalidateOwed, &l.DeactivationOwed)
 	if err != nil {
@@ -162,14 +182,19 @@ func (s *Store) lockKey(ctx context.Context, op, kind string, tenant Tenant, id 
 	return wrap(op, err)
 }
 
-// Lock serialises everything done under one external id for the rest of the
-// transaction, the way an access-context assertion id is serialised (0017).
-func (r directoryLinkRepo) Lock(ctx context.Context, tenant Tenant, externalID string) error {
-	return r.s.lockKey(ctx, "store.DirectoryLinks.Lock", "directory-subject", tenant, externalID, false)
+// Lock serialises everything done under one external id of one source for
+// the rest of the transaction, the way an access-context assertion id is
+// serialised (0017).
+func (r directoryLinkRepo) Lock(ctx context.Context, tenant Tenant, source, externalID string) error {
+	key := ""
+	if source != "" && externalID != "" {
+		key = source + directoryKeySeparator + externalID
+	}
+	return r.s.lockKey(ctx, "store.DirectoryLinks.Lock", "directory-subject", tenant, key, false)
 }
 
-// Get returns the link of an external id. Absent is ErrNotFound.
-func (r directoryLinkRepo) Get(ctx context.Context, tenant Tenant, externalID string) (DirectoryLink, error) {
+// Get returns the link of an external id in a source. Absent is ErrNotFound.
+func (r directoryLinkRepo) Get(ctx context.Context, tenant Tenant, source, externalID string) (DirectoryLink, error) {
 	const op = "store.DirectoryLinks.Get"
 	if err := checkTenant(op, tenant); err != nil {
 		return DirectoryLink{}, err
@@ -178,7 +203,7 @@ func (r directoryLinkRepo) Get(ctx context.Context, tenant Tenant, externalID st
 	defer cancel()
 	return scanDirectoryLink(op, r.s.db.QueryRow(ctx, `
 		SELECT `+directoryLinkColumns+` FROM directory_links
-		WHERE tenant = $1 AND external_id = $2`, tenant, externalID))
+		WHERE tenant = $1 AND source = $2 AND external_id = $3`, tenant, source, externalID))
 }
 
 // BySubject returns the link of a subject id. Absent is ErrNotFound, and means
@@ -205,9 +230,7 @@ func (r directoryLinkRepo) ByPrincipal(ctx context.Context, tenant Tenant, princ
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 	return scanDirectoryLink(op, r.s.db.QueryRow(ctx, `
-		SELECT d.external_id, d.subject_id, d.provider, d.linked_at, d.provisioned,
-			d.directory_updated_at, d.username, d.display_name, d.email, d.attributes, d.group_ids,
-			d.deactivated_at, d.deactivation_reason, d.invalidate_owed, d.deactivation_owed
+		SELECT `+directoryLinkColumnsAs+`
 		FROM subjects s
 		JOIN directory_links d ON d.tenant = s.tenant AND d.subject_id = s.subject_id
 		WHERE s.tenant = $1 AND $2 = ANY(s.principals) AND s.subject_id <> $3
@@ -221,17 +244,17 @@ func (r directoryLinkRepo) Put(ctx context.Context, tenant Tenant, l DirectoryLi
 	if err := checkTenant(op, tenant); err != nil {
 		return err
 	}
-	if l.ExternalID == "" || l.SubjectID == "" || l.Provider == "" || l.LinkedAt.IsZero() {
-		return invalid(op, "an external id, a subject id, a provider and the time it was linked are required")
+	if l.Source == "" || l.ExternalID == "" || l.SubjectID == "" || l.Provider == "" || l.LinkedAt.IsZero() {
+		return invalid(op, "a source, an external id, a subject id, a provider and the time it was linked are required")
 	}
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 	tag, err := r.s.db.Exec(ctx, `
-		INSERT INTO directory_links (tenant, external_id, subject_id, provider, linked_at, provisioned,
+		INSERT INTO directory_links (tenant, source, external_id, subject_id, provider, linked_at, provisioned,
 			directory_updated_at, username, display_name, email, attributes, group_ids,
 			deactivated_at, deactivation_reason, invalidate_owed, deactivation_owed)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-		ON CONFLICT (tenant, external_id) DO UPDATE SET
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		ON CONFLICT (tenant, source, external_id) DO UPDATE SET
 			provider             = EXCLUDED.provider,
 			provisioned          = EXCLUDED.provisioned,
 			directory_updated_at = EXCLUDED.directory_updated_at,
@@ -245,7 +268,7 @@ func (r directoryLinkRepo) Put(ctx context.Context, tenant Tenant, l DirectoryLi
 			invalidate_owed      = EXCLUDED.invalidate_owed,
 			deactivation_owed    = EXCLUDED.deactivation_owed
 		WHERE directory_links.subject_id = EXCLUDED.subject_id`,
-		tenant, l.ExternalID, l.SubjectID, l.Provider, l.LinkedAt.UTC(), l.Provisioned,
+		tenant, l.Source, l.ExternalID, l.SubjectID, l.Provider, l.LinkedAt.UTC(), l.Provisioned,
 		nullableTime(l.UpdatedAt), l.Username, l.DisplayName, l.Email, nonNilMap(l.Attributes),
 		nonNilStrings(l.GroupIDs), nullableTime(l.DeactivatedAt), l.DeactivationReason,
 		l.InvalidateOwed, l.DeactivationOwed)
@@ -255,13 +278,13 @@ func (r directoryLinkRepo) Put(ctx context.Context, tenant Tenant, l DirectoryLi
 	if tag.RowsAffected() == 0 {
 		// A link never moves to another subject: re-pointing one would be an
 		// account takeover in one UPDATE.
-		return conflict(op, "this external id is linked to a different subject")
+		return conflict(op, "this external id of this source is linked to a different subject")
 	}
 	return nil
 }
 
 // Settle clears what a link owes the stream once it has been delivered.
-func (r directoryLinkRepo) Settle(ctx context.Context, tenant Tenant, externalID string, invalidate, deactivation bool) error {
+func (r directoryLinkRepo) Settle(ctx context.Context, tenant Tenant, source, externalID string, invalidate, deactivation bool) error {
 	const op = "store.DirectoryLinks.Settle"
 	if err := checkTenant(op, tenant); err != nil {
 		return err
@@ -270,26 +293,32 @@ func (r directoryLinkRepo) Settle(ctx context.Context, tenant Tenant, externalID
 	defer cancel()
 	_, err := r.s.db.Exec(ctx, `
 		UPDATE directory_links SET
-			invalidate_owed   = invalidate_owed AND NOT $3,
-			deactivation_owed = deactivation_owed AND NOT $4
-		WHERE tenant = $1 AND external_id = $2`, tenant, externalID, invalidate, deactivation)
+			invalidate_owed   = invalidate_owed AND NOT $4,
+			deactivation_owed = deactivation_owed AND NOT $5
+		WHERE tenant = $1 AND source = $2 AND external_id = $3`, tenant, source, externalID, invalidate, deactivation)
 	return wrap(op, err)
 }
 
-// Members returns the provisioned links whose group ids include a directory
-// group's id, in subject order: the subjects a renamed or deleted group
-// re-derives.
-func (r directoryLinkRepo) Members(ctx context.Context, tenant Tenant, groupExternalID string) ([]DirectoryLink, error) {
+// directoryMembersSQL is the members read. Containment (`@>`) is what 0021's
+// GIN index on group_ids serves; the tenant and the source are checked on the
+// rows it returns.
+const directoryMembersSQL = `
+		SELECT ` + directoryLinkColumns + ` FROM directory_links
+		WHERE tenant = $1 AND source = $2 AND group_ids @> ARRAY[$3]::text[] AND provisioned
+		ORDER BY subject_id`
+
+// Members returns the provisioned links of a source whose group ids include
+// one of that source's group ids, in subject order: the subjects a renamed or
+// deleted group re-derives. A link of another source that names the same id
+// is not a member: its id names a group of its own directory.
+func (r directoryLinkRepo) Members(ctx context.Context, tenant Tenant, source, groupExternalID string) ([]DirectoryLink, error) {
 	const op = "store.DirectoryLinks.Members"
 	if err := checkTenant(op, tenant); err != nil {
 		return nil, err
 	}
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
-	rows, err := r.s.db.Query(ctx, `
-		SELECT `+directoryLinkColumns+` FROM directory_links
-		WHERE tenant = $1 AND group_ids @> ARRAY[$2]::text[] AND provisioned
-		ORDER BY subject_id`, tenant, groupExternalID)
+	rows, err := r.s.db.Query(ctx, directoryMembersSQL, tenant, source, groupExternalID)
 	if err != nil {
 		return nil, wrap(op, err)
 	}
@@ -338,20 +367,72 @@ func (r directoryLinkRepo) For(ctx context.Context, tenant Tenant, subjectIDs []
 	return out, wrap(op, rows.Err())
 }
 
+// MaxListedSources bounds the sources Sources returns: enough to name the
+// directories a tenant is fed by, and never a page of them.
+const MaxListedSources = 20
+
+// HasSource reports whether any link or group in the tenant comes from a
+// source: what a connector's tie to that source is checked against (0042).
+func (r directoryLinkRepo) HasSource(ctx context.Context, tenant Tenant, source string) (bool, error) {
+	const op = "store.DirectoryLinks.HasSource"
+	if err := checkTenant(op, tenant); err != nil {
+		return false, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	// Each half is a probe of a primary key's leading columns.
+	var found bool
+	err := r.s.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM directory_links WHERE tenant = $1 AND source = $2)
+			OR EXISTS (SELECT 1 FROM directory_groups WHERE tenant = $1 AND source = $2)`,
+		tenant, source).Scan(&found)
+	return found, wrap(op, err)
+}
+
+// Sources returns the sources the tenant's links and groups come from, in
+// order, at most MaxListedSources of them: what a refused tie names.
+func (r directoryLinkRepo) Sources(ctx context.Context, tenant Tenant) ([]string, error) {
+	const op = "store.DirectoryLinks.Sources"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	rows, err := r.s.db.Query(ctx, `
+		SELECT source FROM directory_links WHERE tenant = $1
+		UNION
+		SELECT source FROM directory_groups WHERE tenant = $1
+		ORDER BY source
+		LIMIT $2`, tenant, MaxListedSources)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var source string
+		if err := rows.Scan(&source); err != nil {
+			return nil, wrap(op, err)
+		}
+		out = append(out, source)
+	}
+	return out, wrap(op, rows.Err())
+}
+
 // ---------------------------------------------------------------------------
 // groups
 // ---------------------------------------------------------------------------
 
 type directoryGroupRepo struct{ s *Store }
 
-const directoryGroupColumns = `external_id, provider, name, directory_updated_at, deleted_at`
+const directoryGroupColumns = `source, external_id, provider, name, directory_updated_at, deleted_at`
 
 func scanDirectoryGroup(op string, row rowScanner) (DirectoryGroup, error) {
 	var (
 		g                DirectoryGroup
 		updated, deleted *time.Time
 	)
-	if err := row.Scan(&g.ExternalID, &g.Provider, &g.Name, &updated, &deleted); err != nil {
+	if err := row.Scan(&g.Source, &g.ExternalID, &g.Provider, &g.Name, &updated, &deleted); err != nil {
 		return DirectoryGroup{}, wrap(op, err)
 	}
 	g.UpdatedAt = utcOrZero(updated)
@@ -376,8 +457,8 @@ func (r directoryGroupRepo) Share(ctx context.Context, tenant Tenant) error {
 	return r.s.lockKey(ctx, "store.DirectoryGroups.Share", "directory", tenant, directoryGroupsKey, true)
 }
 
-// Get returns a group. Absent is ErrNotFound.
-func (r directoryGroupRepo) Get(ctx context.Context, tenant Tenant, externalID string) (DirectoryGroup, error) {
+// Get returns a group of a source. Absent is ErrNotFound.
+func (r directoryGroupRepo) Get(ctx context.Context, tenant Tenant, source, externalID string) (DirectoryGroup, error) {
 	const op = "store.DirectoryGroups.Get"
 	if err := checkTenant(op, tenant); err != nil {
 		return DirectoryGroup{}, err
@@ -386,7 +467,7 @@ func (r directoryGroupRepo) Get(ctx context.Context, tenant Tenant, externalID s
 	defer cancel()
 	return scanDirectoryGroup(op, r.s.db.QueryRow(ctx, `
 		SELECT `+directoryGroupColumns+` FROM directory_groups
-		WHERE tenant = $1 AND external_id = $2`, tenant, externalID))
+		WHERE tenant = $1 AND source = $2 AND external_id = $3`, tenant, source, externalID))
 }
 
 // Put writes a group whole.
@@ -395,26 +476,27 @@ func (r directoryGroupRepo) Put(ctx context.Context, tenant Tenant, g DirectoryG
 	if err := checkTenant(op, tenant); err != nil {
 		return err
 	}
-	if g.ExternalID == "" || g.Provider == "" {
-		return invalid(op, "an external id and a provider are required")
+	if g.Source == "" || g.ExternalID == "" || g.Provider == "" {
+		return invalid(op, "a source, an external id and a provider are required")
 	}
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 	_, err := r.s.db.Exec(ctx, `
-		INSERT INTO directory_groups (tenant, external_id, provider, name, directory_updated_at, deleted_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (tenant, external_id) DO UPDATE SET
+		INSERT INTO directory_groups (tenant, source, external_id, provider, name, directory_updated_at, deleted_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (tenant, source, external_id) DO UPDATE SET
 			provider             = EXCLUDED.provider,
 			name                 = EXCLUDED.name,
 			directory_updated_at = EXCLUDED.directory_updated_at,
 			deleted_at           = EXCLUDED.deleted_at`,
-		tenant, g.ExternalID, g.Provider, g.Name, nullableTime(g.UpdatedAt), nullableTime(g.DeletedAt))
+		tenant, g.Source, g.ExternalID, g.Provider, g.Name, nullableTime(g.UpdatedAt), nullableTime(g.DeletedAt))
 	return wrap(op, err)
 }
 
-// Names resolves group ids to the names of the live groups among them, by id.
-// An id with no group, a deleted group or one with no name is absent.
-func (r directoryGroupRepo) Names(ctx context.Context, tenant Tenant, externalIDs []string) (map[string]string, error) {
+// Names resolves group ids of one source to the names of the live groups among
+// them, by id. An id with no group in that source, a deleted group or one with
+// no name is absent: another directory's group of the same id is never one.
+func (r directoryGroupRepo) Names(ctx context.Context, tenant Tenant, source string, externalIDs []string) (map[string]string, error) {
 	const op = "store.DirectoryGroups.Names"
 	if err := checkTenant(op, tenant); err != nil {
 		return nil, err
@@ -427,8 +509,8 @@ func (r directoryGroupRepo) Names(ctx context.Context, tenant Tenant, externalID
 	defer cancel()
 	rows, err := r.s.db.Query(ctx, `
 		SELECT external_id, name FROM directory_groups
-		WHERE tenant = $1 AND external_id = ANY($2) AND deleted_at IS NULL AND name <> ''`,
-		tenant, externalIDs)
+		WHERE tenant = $1 AND source = $2 AND external_id = ANY($3) AND deleted_at IS NULL AND name <> ''`,
+		tenant, source, externalIDs)
 	if err != nil {
 		return nil, wrap(op, err)
 	}

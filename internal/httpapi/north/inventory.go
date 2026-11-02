@@ -455,7 +455,11 @@ func (s *Server) handleTargetRelabel(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type subjectView struct {
-	ID             string            `json:"id"`
+	ID string `json:"id"`
+	// Source is what asserted the subject: the connector it logged in
+	// through, `local`, or for a directory subject the identity sync's
+	// provider. It is not the directory's source, which is
+	// `directory.source`: the same word for a different thing.
 	Source         string            `json:"source"`
 	DisplayName    string            `json:"display_name"`
 	Principals     []string          `json:"principals"`
@@ -485,9 +489,12 @@ type subjectView struct {
 	RecordMissing bool `json:"record_missing,omitempty"`
 }
 
-// directoryView is whose a directory-managed subject is.
+// directoryView is whose a directory-managed subject is: the sync's provider,
+// the directory it comes from as the sync names it (0042), and that
+// directory's id for the person. It is not the subject's top-level `source`.
 type directoryView struct {
 	Provider   string `json:"provider"`
+	Source     string `json:"source"`
 	ExternalID string `json:"external_id"`
 }
 
@@ -504,7 +511,7 @@ func (v subjectView) withDirectory(d *store.SubjectDirectory) subjectView {
 		return v
 	}
 	v.DirectoryManaged = true
-	v.Directory = &directoryView{Provider: d.Provider, ExternalID: d.ExternalID}
+	v.Directory = &directoryView{Provider: d.Provider, Source: d.Source, ExternalID: d.ExternalID}
 	if d.Deactivated() {
 		v.Deactivated = true
 		v.Deactivation = &deactivationView{DeactivatedAt: d.DeactivatedAt.UTC(), ReasonCode: d.DeactivationReason}

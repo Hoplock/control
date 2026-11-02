@@ -26,6 +26,73 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.29.0
+
+Phase 0042, the directory source on the sync sink: every directory identity
+and group keyed by the directory it comes from, so two directories can feed
+one tenant, each keeping its own ids (decisions M7 and M28, `docs/PLAN.md`
+§2). Raised by `Hoplock/enterprise#51`, item 1. **Run `hoplock-control
+migrate`:** migration `0023` keys `directory_links` and `directory_groups` by
+`(tenant, source, external_id)` and adds `idp_connectors.directory_source`.
+
+### Breaking
+
+- **`ext.SyncSink.DeactivateSubject(ctx, ref ext.DirectoryRef, reasonCode
+  string)`**, where it took `(ctx, tenant, externalID, reasonCode)`, and
+  **`ext.SyncSink.DeleteGroup(ctx, ref ext.DirectoryRef)`**, where it took
+  `(ctx, tenant, externalID)`. Every implementation and every caller changes.
+- **`Source` is required on `ext.SyncedSubject`, `ext.SyncedGroup` and
+  `ext.DirectoryRef`**, and matches `^[a-z0-9][a-z0-9-]{0,62}$`. A caller
+  compiled against `v0.28.0`'s structs still builds, and every one of its
+  calls is then `KindInvalid` naming `source`, applies nothing, and is
+  recorded as `identity_sync.refused`. No API diff sees this.
+- **Rows written before this release are keyed under the source `default`**:
+  every link, every group and tombstone, and every connector with a
+  `directory_claim`. A sync rebuilt against this release that sends
+  `Source: "default"` carries on exactly as it was. One that sends another
+  name provisions new subjects, and each whose username an old subject still
+  presents is refused `KindConflict` rather than doubled.
+- **`identity connector-put --directory-claim` needs `--directory-source`**,
+  and the reverse; a tie to a source nothing in the tenant has written is
+  refused. A script that ties a connector with the claim alone fails.
+
+### Added and changed
+
+- **`ext.DirectoryRef`** (`Tenant`, `Source`, `ExternalID`) names one
+  identity or group in one directory. **`ext.SyncedSubject.Source`** and
+  **`ext.SyncedGroup.Source`** name the directory each comes from.
+- **Everything the sink keyed on an `ExternalID` is keyed on `(tenant,
+  source, ExternalID)`:** the link and the group, the ordering by
+  `UpdatedAt`, a deactivation kept for an id not yet seen, the group
+  tombstone, the delivery a retry owes, and the per-identity lock. Two
+  directories that both call somebody `00u1` provision two subjects, and a
+  deactivation, a stale write or a tombstone in one touches nothing in the
+  other. A subject's `Groups` resolve among the groups of its own source, and
+  a group change re-derives only that source's members. A login name is still
+  unique per tenant across sources (`KindConflict`), and a subject is never
+  adopted or merged, so a person who moves between directories is two
+  subjects.
+- **A tied connector names its source.** `identity connector-put
+  --directory-source <source>` beside `--directory-claim`: both or neither,
+  the source held to the pattern above, and refused while nothing in the
+  tenant comes from it (the error names the sources the tenant has, up to
+  twenty), so provision first, then tie. Writing a connector with neither
+  unties it. A login through it looks the link up by `(tenant,
+  directory_source, claim value)`. `GET /api/v1/session/methods` shows
+  `directory_source` beside `directory_claim`, both omitted when empty.
+- **The subject read's `directory` is `{provider, source, external_id}`.**
+  The top-level `source` is unchanged: what asserted the subject, for a
+  directory subject the sync's provider, not the directory's source.
+- **The decision record names the directory's source.** A deactivation's
+  standing entry carries `source` beside `external_ref`, and `explain` shows
+  it. A lock's and a quarantine's entries carry none, and records written
+  before this release have none.
+- **Every `identity_sync.*` record carries `source`** beside `provider` and
+  `external_id`, `identity_sync.refused` included whenever the refused call
+  named one.
+- The authorize path sends the statements it sent before: the link's `source`
+  is read in the join that already reads the deactivation.
+
 ## v0.28.0
 
 Phase 0041, confined inbound actions: an action held to its requester's scope,

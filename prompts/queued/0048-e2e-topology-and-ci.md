@@ -10,8 +10,10 @@
 - `docs/learnings/` — read every summary; open the ones whose setup you must
   wire (esp. `0002` conformance, `0006` fleet enrollment, `0008` authorize,
   `0009` events, `0010` audit assertions, `0012` grants, and
-  `0039` — the inbound action executor and the lock, and `0040` — the
-  identity sync's sink and de-provisioning, for the scenarios below).
+  `0039` — the inbound action executor and the lock, `0040` — the
+  identity sync's sink and de-provisioning, and `0042` — the directory
+  source every sink call and every tied connector names, for the scenarios
+  below).
   `docs/PLAN.md` **M28** says what a lock and a deactivation are and what each
   owes the stream, and §6 at "The directory door" what a deactivation refuses.
 - In the **Hoplock Proxy repository**: its `deploy/` topology and its own e2e phase.
@@ -87,9 +89,10 @@ Each scenario is a product claim, proven across both components:
 - **The directory de-provisions a person with a live session** (0040, M28). A
   test host binary registers an `ext.IdentitySync` through
   `server.Options.Registry`, a fake whose only job is to call the sink it was
-  handed. Have it provision a person (`UpsertSubject`, in a group the claim
-  mapping names), open a real session as that person through the real proxy,
-  and sign them in to the console. Then have it call `DeactivateSubject`: the
+  handed. Have it provision a person (`UpsertSubject` with a `Source`, in a
+  group of that source the claim mapping names), open a real session as that
+  person through the real proxy, and sign them in to the console. Then have it
+  call `DeactivateSubject` with an `ext.DirectoryRef` naming that source: the
   proxy ends the session and the **user is told Control's text** ("Your
   account was deactivated by your organisation's directory."), never the
   directory's reason code; a new connection by that person is denied with the
@@ -98,8 +101,17 @@ Each scenario is a product claim, proven across both components:
   (`identity-sync:<provider>`); the console session stops authenticating and a
   console login through a connector tied to the directory is refused
   (`federation.subject_deactivated`). The audit store holds
-  `identity_sync.subject_deactivated` and the revocations with the sync as
-  actor, and `audit-verify` passes.
+  `identity_sync.subject_deactivated` (carrying the `source`) and the
+  revocations with the sync as actor, and `audit-verify` passes.
+- **Two directories feed one tenant** (0042). The same fake sync provisions
+  two people from two sources with one `ExternalID` in common and different
+  usernames, and two connectors are tied with `identity connector-put
+  --directory-claim --directory-source`, one to each source. Show that they
+  are two subjects (two `dir-…` ids, each subject read showing its own
+  `directory.source`), that a console login through each tied connector,
+  carrying the shared id in its claim, reaches its own source's subject, and
+  that deactivating one through its `DirectoryRef` ends that person's session
+  through the real proxy and leaves the other's open and authorizing.
 - **The three policy axes**: `sftp` denied while `shell` succeeds; a tunnel to
   the permitted host:port succeeds while another is refused; `tcpip-forward`
   refused with no listener created.

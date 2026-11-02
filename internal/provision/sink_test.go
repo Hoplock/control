@@ -121,7 +121,7 @@ func TestAHundredConcurrentUpsertsAcrossFreshIDsEachApplyOnce(t *testing.T) {
 	errs := make(chan error, 2*n)
 	for i := range n {
 		s := ext.SyncedSubject{
-			Tenant: ext.Tenant(tenant), ExternalID: fmt.Sprintf("u-%03d", i), Username: fmt.Sprintf("user%03d", i),
+			Tenant: ext.Tenant(tenant), Source: source, ExternalID: fmt.Sprintf("u-%03d", i), Username: fmt.Sprintf("user%03d", i),
 			Active: true, UpdatedAt: at,
 		}
 		for range 2 {
@@ -246,7 +246,7 @@ func TestADeactivationRevokesEverythingTheSubjectHolds(t *testing.T) {
 		t.Fatalf("certificate: %v", err)
 	}
 
-	if err := h.sink.DeactivateSubject(ctx, ext.Tenant(tenant), "u-1", "terminated"); err != nil {
+	if err := h.sink.DeactivateSubject(ctx, ref(tenant, "u-1"), "terminated"); err != nil {
 		t.Fatalf("DeactivateSubject: %v", err)
 	}
 
@@ -318,7 +318,7 @@ func TestADeactivationTheStreamRefusedIsFinishedByTheSameCall(t *testing.T) {
 	id := h.link("u-1").SubjectID
 
 	h.revoker.fail.Store(true)
-	err := h.sink.DeactivateSubject(t.Context(), ext.Tenant(tenant), "u-1", "terminated")
+	err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "terminated")
 	if kindOf(err) != ext.KindUnavailable {
 		t.Fatalf("DeactivateSubject with the stream down: %v, want KindUnavailable", err)
 	}
@@ -330,7 +330,7 @@ func TestADeactivationTheStreamRefusedIsFinishedByTheSameCall(t *testing.T) {
 	}
 
 	h.revoker.fail.Store(false)
-	if err := h.sink.DeactivateSubject(t.Context(), ext.Tenant(tenant), "u-1", "terminated"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "terminated"); err != nil {
 		t.Fatalf("the retry: %v", err)
 	}
 	if !killedSubject(h, id) {
@@ -362,7 +362,7 @@ func TestOrderIsDecidedWithoutTrustingEitherClockToWidenAccess(t *testing.T) {
 	h.mustGroup(h.group("grp-1", "SRE Team"))
 
 	created := h.person("u-1", "alice", "grp-1") // written before the deactivation
-	if err := h.sink.DeactivateSubject(t.Context(), ext.Tenant(tenant), "u-1", "offboarded"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "offboarded"); err != nil {
 		t.Fatalf("deactivating an unknown id: %v", err)
 	}
 	link := h.link("u-1")
@@ -394,7 +394,7 @@ func TestOrderIsDecidedWithoutTrustingEitherClockToWidenAccess(t *testing.T) {
 
 	// A grant revoked by the deactivation stays revoked after a re-activation.
 	h.grantFor("g-1", id)
-	if err := h.sink.DeactivateSubject(t.Context(), ext.Tenant(tenant), "u-1", "offboarded"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "offboarded"); err != nil {
 		t.Fatalf("deactivating again: %v", err)
 	}
 	if got := len(h.records(tenant, audit.EventSyncSubjectDeactivated)); got != 1 {
@@ -455,7 +455,7 @@ func TestALockAndADeactivationAreTwoStandingDenials(t *testing.T) {
 	if _, err := h.standing.Lock(t.Context(), tenant, operator, standing.LockRequest{SubjectID: id, Reason: "Investigating."}); err != nil {
 		t.Fatalf("lock: %v", err)
 	}
-	if err := h.sink.DeactivateSubject(t.Context(), ext.Tenant(tenant), "u-1", "terminated"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "terminated"); err != nil {
 		t.Fatalf("deactivate: %v", err)
 	}
 	out := h.authorize(id, "sess-1")
@@ -505,7 +505,7 @@ func TestDeletingAGroupStopsItsMembershipApplying(t *testing.T) {
 	alice, bob := h.link("u-1").SubjectID, h.link("u-2").SubjectID
 	before := len(h.revoker.invalidated())
 
-	if err := h.sink.DeleteGroup(t.Context(), ext.Tenant(tenant), "grp-1"); err != nil {
+	if err := h.sink.DeleteGroup(t.Context(), ref(tenant, "grp-1")); err != nil {
 		t.Fatalf("DeleteGroup: %v", err)
 	}
 	for _, x := range []string{"u-1", "u-2"} {
@@ -534,7 +534,7 @@ func TestDeletingAGroupStopsItsMembershipApplying(t *testing.T) {
 		t.Errorf("%d group_upserted records, want only the first", got)
 	}
 	// A delete of a group already deleted changes nothing.
-	if err := h.sink.DeleteGroup(t.Context(), ext.Tenant(tenant), "grp-1"); err != nil {
+	if err := h.sink.DeleteGroup(t.Context(), ref(tenant, "grp-1")); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(h.records(tenant, audit.EventSyncGroupDeleted)); got != 1 {
@@ -543,11 +543,11 @@ func TestDeletingAGroupStopsItsMembershipApplying(t *testing.T) {
 	// Deleting an id never seen keeps a tombstone, and an older upsert of it
 	// changes nothing either.
 	unseen := h.group("grp-9", "DBAs")
-	if err := h.sink.DeleteGroup(t.Context(), ext.Tenant(tenant), "grp-9"); err != nil {
+	if err := h.sink.DeleteGroup(t.Context(), ref(tenant, "grp-9")); err != nil {
 		t.Fatal(err)
 	}
 	h.mustGroup(unseen)
-	if g, _ := h.store.DirectoryGroups().Get(t.Context(), tenant, "grp-9"); !g.Deleted() {
+	if g, _ := h.store.DirectoryGroups().Get(t.Context(), tenant, source, "grp-9"); !g.Deleted() {
 		t.Errorf("an upsert older than the tombstone lifted it: %+v", g)
 	}
 }
@@ -579,7 +579,7 @@ func TestAUsernameAnotherSubjectPresentsIsAConflict(t *testing.T) {
 	if strings.Contains(err.Error(), "alice@") || strings.Contains(err.Error(), "subject alice") {
 		t.Errorf("the error names the other subject: %v", err)
 	}
-	if _, err := h.store.DirectoryLinks().Get(t.Context(), tenant, "u-1"); !store.IsNotFound(err) {
+	if _, err := h.store.DirectoryLinks().Get(t.Context(), tenant, source, "u-1"); !store.IsNotFound(err) {
 		t.Errorf("a refused upsert left a link: %v", err)
 	}
 	recs := h.records(tenant, audit.EventSyncRefused)
@@ -618,10 +618,10 @@ func TestMalformedCallsAreInvalidRecordedAndHaveNoEffect(t *testing.T) {
 			return h.sink.UpsertSubject(t.Context(), s)
 		}, "attributes"},
 		{"a long reason code", func() error {
-			return h.sink.DeactivateSubject(t.Context(), ext.Tenant(tenant), "u-ok", strings.Repeat("r", 200))
+			return h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-ok"), strings.Repeat("r", 200))
 		}, "reason_code"},
 		{"a nameless group", func() error { g := h.group("grp-1", ""); return h.sink.UpsertGroup(t.Context(), g) }, "name"},
-		{"a group with no id", func() error { return h.sink.DeleteGroup(t.Context(), ext.Tenant(tenant), "") }, "external_id"},
+		{"a group with no id", func() error { return h.sink.DeleteGroup(t.Context(), ref(tenant, "")) }, "external_id"},
 	}
 	for _, c := range cases {
 		err := c.call()
@@ -652,11 +652,11 @@ func TestASyncCallInOneTenantReachesNothingInAnother(t *testing.T) {
 	}
 	// The same external id in this tenant is a different person.
 	h.mustUpsert(h.person("u-1", "alice", "grp-1"))
-	mine, err := h.store.DirectoryLinks().Get(t.Context(), tenant, "u-1")
+	mine, err := h.store.DirectoryLinks().Get(t.Context(), tenant, source, "u-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	yours, err := h.store.DirectoryLinks().Get(t.Context(), other, "u-1")
+	yours, err := h.store.DirectoryLinks().Get(t.Context(), other, source, "u-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,10 +667,10 @@ func TestASyncCallInOneTenantReachesNothingInAnother(t *testing.T) {
 	if s, _ := h.store.Subjects().Get(t.Context(), other, yours.SubjectID); len(s.Groups) != 0 {
 		t.Errorf("the other tenant's subject took this tenant's group: %v", s.Groups)
 	}
-	if err := h.sink.DeactivateSubject(t.Context(), ext.Tenant(tenant), "u-1", "terminated"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "terminated"); err != nil {
 		t.Fatal(err)
 	}
-	if l, _ := h.store.DirectoryLinks().Get(t.Context(), other, "u-1"); l.Deactivated() {
+	if l, _ := h.store.DirectoryLinks().Get(t.Context(), other, source, "u-1"); l.Deactivated() {
 		t.Error("a deactivation in one tenant deactivated the other's person")
 	}
 	if got := len(h.records(other, audit.EventSyncSubjectDeactivated)); got != 0 {

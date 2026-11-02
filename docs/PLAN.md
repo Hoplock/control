@@ -274,7 +274,10 @@ decision.
   never by trusting a raw claim name straight from a token. A directory that a
   registered identity sync provisions from is a second door, and the same
   mapping governs it: what the directory holds is offered to the mapping as
-  claims, and only what it names reaches policy (0040, §6). Local credentials
+  claims, and only what it names reaches policy (0040, §6). A person is
+  linked by the directory they come from (its source) and that directory's
+  id for them, so one sync may feed several directories into a tenant
+  (0042). Local credentials
   exist for development and for break-glass only, are flagged as such in the
   audit record, and are never the production path.
 - **M8 — Audit is append-only and tamper-evident.** Records are immutable, hash
@@ -1538,7 +1541,9 @@ decision.
   and the create provisions the subject already deactivated. The record names
   it whole: `placed_by` the sync (`identity-sync:<provider>`, no person), the
   directory's reason code, the directory's id for the person as its external
-  reference, and the text the holder was shown. Once it commits, everything the
+  reference and the directory's `source` beside it (0042: one `00u1` is two
+  people once two directories feed a tenant), and the text the holder was
+  shown. Once it commits, everything the
   subject holds is revoked through the services an operator's levers call,
   with the sync as the actor: its north-bound sessions, API tokens and
   outstanding certificates in the same transaction, then every live or
@@ -1716,8 +1721,9 @@ for nothing.
   `Mapping` is the one place an IdP's vocabulary becomes this server's, and it
   is an allow-list (§6). A directory's vocabulary goes through the same
   function (`Mapping.ApplyDirectory`, 0040), and a login through a connector
-  tied to the directory (`directory_claim`) reaches the subject the directory
-  provisioned, rewrites nothing on it, or is refused. `Role`, `Permission` and `RoleSet` are the whole of
+  tied to the directory (`directory_claim` and `directory_source`) reaches the
+  subject the directory provisioned under that source, rewrites nothing on
+  it, or is refused. `Role`, `Permission` and `RoleSet` are the whole of
   RBAC's vocabulary, as constants rather than rows. `Principal` is what the
   north-bound middleware puts on a request: its scope map is **unexported**, so
   the questions a handler can ask are "may this principal act in tenant T" and
@@ -1936,10 +1942,11 @@ for nothing.
   `Runner` calls the one registered `ext.ActionHandler`'s `Start` and `Stop` and
   reports whether it is running. With no handler registered neither exists.
 - **`internal/provision`** — Control's side of identity provisioning (M15, M7,
-  M28, 0040): `Sink` implements `ext.SyncSink` over the identity store, per
-  tenant, joined on the directory's `ExternalID` by a link row
+  M28, 0040, 0042): `Sink` implements `ext.SyncSink` over the identity store,
+  per tenant, joined on the directory's source and `ExternalID` by a link row
   (`directory_links`) and never on the username, every call idempotent on that
-  id and ordered by `UpdatedAt` (Control's clock for a deactivation), with what
+  key and ordered by `UpdatedAt` per key (Control's clock for a deactivation),
+  a subject's groups resolved within its own source, with what
   the directory holds reaching `subjects` only through the tenant's claim
   mapping. It is the only writer of a provisioned subject, of the directory's
   links and groups (`directory_groups`), and of the deactivation, which it
@@ -2003,8 +2010,9 @@ for nothing.
   database opened or a port bound. A host's configuration sections are accepted
   by every subcommand, and handed to the host, before the registry is sealed,
   by the daemon and by the subcommands that need what a host registers — the
-  retention commands, and `identity connector-put --directory-claim`, which is
-  refused while no identity sync is registered — so an extension a host builds
+  retention commands, and `identity connector-put --directory-claim
+  --directory-source`, which is refused while no identity sync is registered —
+  so an extension a host builds
   from its section can still be registered.
 - **`internal/instance`** — this deployment's own identity and version, and the
   outbound registration client that makes it supervisable (M19). It is a
@@ -3115,12 +3123,30 @@ not say why, and a grant the explanation names that the inputs do not hold.
   strip every attribute in the tenant, which reads as a permissions bug and
   would be debugged as one.
 
-- **The directory door (M7, M15, M28, 0040).** A registered `ext.IdentitySync`
-  provisions subjects ahead of their first login through Control's
-  `ext.SyncSink` (`internal/provision`). Control allocates the subject id when
-  it first links the directory's `ExternalID` (`dir-…`, which has no `:` and so
-  is never spelled like a federated `<connector>:<subject>`), and the link row
-  is the join, never the username.
+- **The directory door (M7, M15, M28, 0040, 0042).** A registered
+  `ext.IdentitySync` provisions subjects ahead of their first login through
+  Control's `ext.SyncSink` (`internal/provision`). Each identity and group
+  names the directory it comes from, its **source**
+  (`^[a-z0-9][a-z0-9-]{0,62}$`, required), and everything Control keeps about
+  it is keyed by `(tenant, source, ExternalID)`: the link and the group, the
+  ordering by `UpdatedAt`, a deactivation kept ahead of its create, a group's
+  tombstone, the delivery a retry owes, and the per-identity lock. So one sync
+  may feed several directories into a tenant, each keeping its own ids — two
+  that both call somebody `00u1` provision two subjects — and a subject's
+  groups resolve among the groups of its own source, never another's with the
+  same id. Control allocates the subject id when it first links a source's
+  `ExternalID` (`dir-…`, which has no `:` and so is never spelled like a
+  federated `<connector>:<subject>`), and the link row is the join, never the
+  username. A subject is still one identity in one directory: the link's
+  subject id is unique per tenant, which is the key the decision path joins
+  the deactivation by (M28).
+
+  The word "source" means two things on a directory subject's read, and each
+  is shown where it belongs: the subject's top-level `source` is what asserted
+  it (a connector, `local`, or for a directory subject the sync's provider),
+  unchanged since 0011; `directory.source` is the directory it comes from. Rows
+  written before the source existed are keyed under `default`, which a sync
+  rebuilt to send it carries on with.
 
   **The directory is the only writer of what it provisions.** A provisioned
   subject's groups, attributes and login name come from the directory: its
@@ -3131,19 +3157,28 @@ not say why, and a grant the explanation names that the inputs do not hold.
   `groups.map` serves login and directory alike, a renamed group maps nothing
   until the mapping names the new name, and a new mapping version reaches a
   provisioned subject at its next applied write. Its login names are exactly the
-  directory's username, replaced on each write; one another subject presents is
-  `KindConflict`, and an existing subject is never adopted or merged. An
+  directory's username, replaced on each write; one another subject in the
+  tenant presents, from any source, is `KindConflict`, and an existing subject
+  is never adopted or merged. So a person who moves from one directory to
+  another is two subjects, and the second's login name is refused while the
+  first still presents it. An
   operator's `PUT` or `DELETE` of it is `409 subject_directory_managed`; the
   lock, role bindings and local group membership remain an operator's, and
   local membership merges into its groups as it does for a federated subject.
 
   **A connector may be tied to the directory.** Its `directory_claim` names the
-  claim in its assertions that carries the directory's `ExternalID`; it is
-  validated when the connector is written (`identity connector-put
-  --directory-claim`), refused while no sync is registered, and shown on the
-  sign-in methods. A login through such a connector reaches the subject the
-  directory provisioned, links the federated identity to it and rewrites none
-  of it; with no provisioned match it is refused (`federation.not_provisioned`)
+  claim in its assertions that carries the directory's `ExternalID`, and its
+  `directory_source` the source that id is unique in; it names both or
+  neither. Both are validated when the connector is written (`identity
+  connector-put --directory-claim --directory-source`), refused while no sync
+  is registered, the source refused too while nothing in the tenant comes from
+  it (the error names the sources the tenant has, so a misspelt source is
+  caught then rather than at somebody's sign-in: provision first, then tie),
+  and both are shown on the sign-in methods. A login through such a connector
+  looks the link up by `(tenant, directory_source, claim value)`, reaches the
+  subject the directory provisioned, links the federated identity to it and
+  rewrites none of it; with no provisioned match it is refused
+  (`federation.not_provisioned`)
   and nothing is created, because a subject made at login beside the
   directory's would be the second identity de-provisioning never reaches. A
   login through a connector not tied to the directory that resolves to a
@@ -3747,7 +3782,9 @@ not say why, and a grant the explanation names that the inputs do not hold.
   Every applied call of the registered identity sync is recorded on the
   tenant's control stream, in the transaction that makes the change, with the
   sync as the actor (`identity-sync:<provider>`, no person) and the
-  `provider` and `external_id` on every record:
+  `provider`, the directory's `source` and its `external_id` on every record
+  (`identity_sync.refused` carries the source whenever the refused call named
+  one):
   `identity_sync.subject_provisioned` and `identity_sync.subject_updated`, with
   the before and after of groups, claims and login names and the mapping
   version; `identity_sync.subject_deactivated`, with the reason code and the
@@ -3874,7 +3911,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0039 | Inbound actions: the executor, a subject lock & a target quarantine | **M28.** Control's `ext.ActionExecutor` (`internal/action`), executing every `ActionKind` through the service an operator's route calls: `kill_session` by exactly one of a session or a subject through the event stream (M9), `revoke_grant` through 0012's revocation (M10, split into `RevokeWithin` and `Finish` so the ledger row commits with it), and `lock_subject`, `unlock_subject` and `quarantine_target` through a subject lock and a target quarantine (`internal/standing`; migration `0020`: `subject_locks`, `target_quarantines`, `action_executions`). A lock and a quarantine are standing denials applied above the engine — `subject_locked` and `target_quarantined`, a deny and never an outage — read in the statement that reads the subject and the target (no round trip added, counted by a test), holding for an id with no row, surviving an upsert, a delete and a re-create, recorded whole in `inputs.standing`, explained, and reproduced by replay. An operator places and lifts each on `POST …/subjects/{subject}/lock` / `unlock` and `POST …/targets/{target}/quarantine` / `release` under `session:revoke`; `GET` shows them, and `DELETE` of a quarantined target is `409 target_quarantined`. The executor is idempotent per tenant on `ActionID` (a different action under one id is `KindConflict`; a repeat returns the first result and sends again what it owed the stream), refuses to lock a break-glass subject (`KindDenied`, `break_glass_subject`), shows the holder `ReasonText` once validated or Control's own text, and records every execution with the handler as actor (`action-handler:<provider>`): the act's record, `action.unchanged`, or `action.refused`. The registered `ext.ActionHandler` is started after the registry is sealed and before the listeners open, stopped before they drain, and a `Start` that fails, panics or never returns is logged and shown on `GET …/extensions` (`started`, `start_error`) and never stops Control. No `ext` signature changes; `v0.26.0` (M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; on one node it depends only on merged phases (0009, 0012, 0019) |
 | 0040 | Identity sync: Control's sync sink & de-provisioning | **M28 extended.** Control's `ext.SyncSink` (`internal/provision`) over its identity store, handed to the registered `ext.IdentitySync`, which is started once after the registry is sealed and before the listeners open and stopped before they drain, a `Start` that fails, panics or never returns logged and shown on `GET …/extensions` (`started`, `start_error`) and never stopping Control. A provisioned subject is joined on `ExternalID` by a link row and never on the username (migration `0021`: `directory_links`, `directory_groups`, `idp_connectors.directory_claim`), its id allocated by Control (`dir-…`), its one login name the directory's username and unique in the tenant (`KindConflict`, never adopted); every method idempotent on `ExternalID` and ordered by `UpdatedAt`, with a deactivation or a group tombstone kept for an id not yet seen (0017's precedent) and Control's clock ordering a re-activation; what the directory holds reaching policy only through the tenant's claim mapping (`Mapping.ApplyDirectory`, M7), a renamed or deleted group re-deriving its members in the same transaction; the directory the only writer of what it provisions (`409 subject_directory_managed`); a connector's `directory_claim`, through which a login reaches the provisioned subject or is refused (`federation.not_provisioned`); a deactivation a standing denial of its own beside 0039's lock (`subject_deactivated`), read as a third join in the subject's statement (no round trip added, counted by a test), lifted only by the directory, refusing every login (`federation.subject_deactivated`) and every north-bound credential, and revoking credentials, certificates, grants, pending requests and live sessions through the services an operator's levers call, with a retry that finishes it; every applied call recorded on the control stream (`identity_sync.*`) with the sync as actor. No `ext` signature changes; `v0.27.0` (M7, M15, M9, M10, M5, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0039 and 0027, and on merged phases (0011, 0012, 0016, 0019) |
 | 0041 | Confined inbound actions | **M28 extended.** `ext.Action` gains `Within *ext.ActionScope` (`SubjectIDs`, `TargetIDs` — the one field Control added to the ask — and `TargetLabels`; at most 1 000, 1 000 and 64, a non-nil empty scope `KindInvalid` on `within`) and `IfPlacedBy`. Control resolves what each kind reaches from its own data inside the action's transaction, after the ledger's lock and before the ledger answers (so a repeat is checked too): a session's subjects and targets from its decision records (`Decisions().SessionReach`), a kill by subject, a lock and an unlock reaching every target, a quarantine every subject, and a grant its subject and what its selector can reach — inside a target scope only when it lists hostnames each naming a held target the scope admits, matched case-insensitively, or its own labels require the scope's; the rows read are held until the act (`Targets().ForShare`, `ForShareByHostnames`, `Grants().GetForUpdate`). An action reaching outside is `KindDenied`, `out_of_scope`, recorded as `action.refused` with `scope_field` and `outside`, its error naming only the field; a selector Control holds nothing for is `out_of_scope` unless the scope names it by id alone. `unlock_subject` with `IfPlacedBy` lifts only a lock that action of this handler's principal placed, in one `DELETE` (`SubjectLocks().LiftIfPlacedBy`), and otherwise leaves it standing (`not_this_lock`, `action.unchanged`); the condition is part of the action's identity (migration `0022`: `action_executions.if_placed_by`; a changed one is `KindConflict`), the scope is not. No method added; `v0.28.0` (M28, M15, M23, M10, M11, M18). Raised by `Hoplock/enterprise#50`; depends on 0039 |
-| 0042 | Directory source on the sync sink | `ext.SyncedSubject` and `ext.SyncedGroup` gain a required `Source` naming the directory each comes from, and `ext.DirectoryRef` (`Tenant`, `Source`, `ExternalID`) replaces the tenant and id `SyncSink.DeactivateSubject` and `DeleteGroup` take; everything 0040 keyed on an `ExternalID` — link and group rows, ordering, tombstones, owed delivery, the per-identity lock, a group's members — keyed on `(tenant, source, ExternalID)`, a subject's groups resolving within its own source, a login name still unique across sources (`KindConflict`), and `directory_links`' unique `(tenant, subject_id)` key kept so the decision path's join and cost are unchanged (M28, M5); a tied connector names its `directory_source` beside its claim, both or neither, refused for a source nothing in the tenant has written, and shown on the sign-in methods; `source` on the subject read's `directory`, on the deactivation's standing entry (M4) and on every `identity_sync.*` record; a migration keying every existing row under the source `default`. A `### Breaking` MINOR (M7, M15, M23, M12, M18). Raised by `Hoplock/enterprise#51`, item 1; depends on 0040 |
+| 0042 | Directory source on the sync sink | **M7 and M28 revised in place, no decision added.** `ext.SyncedSubject` and `ext.SyncedGroup` gain a required `Source` (`^[a-z0-9][a-z0-9-]{0,62}$`, else `KindInvalid` on `source`, recorded) and `ext.DirectoryRef` (`Tenant`, `Source`, `ExternalID`) is what `SyncSink.DeactivateSubject(ctx, ref, reasonCode)` and `DeleteGroup(ctx, ref)` take; everything 0040 keyed on an `ExternalID` — link and group rows, the ordering, the kept deactivation, the tombstone, the owed delivery, the per-identity advisory lock, a group's members — keyed on `(tenant, source, ExternalID)` (migration `0023`: both primary keys, the members read still on 0021's GIN index), a subject's groups resolving within its own source, a login name still unique across sources (`KindConflict`), and `directory_links`' unique `(tenant, subject_id)` key kept, so the decision path reads the link's `source` in the join it already made and sends no more statements (M28, M5); a tied connector's `idp_connectors.directory_source` beside its claim (`identity connector-put --directory-source`), both or neither (a check constraint), refused for a source nothing in the tenant has written with the error naming up to twenty it has (`DirectoryLinks().HasSource`, `Sources`), a login looking the link up by `(tenant, directory_source, claim value)`, and both shown on the sign-in methods; `directory.source` on the subject read, `source` on the deactivation's standing entry (M4) and on every `identity_sync.*` record (`AttrSyncSource`); every existing row keyed under the source `default`. `v0.29.0`, a `### Breaking` MINOR (M7, M15, M23, M12, M18). Raised by `Hoplock/enterprise#51`, item 1; depends on 0040 |
 | 0043 | Directory-scoped group entries | a `groups.map` entry in the claim mapping lists the `directories` it applies to (each a directory source, 0042) and matches a directory group of its name from a listed source instead of the unscoped entry, never a login's group claim; `groups.require_directories` makes every directory group match only an entry listing its own source, so unscoped entries serve logins only; no wildcard, three rejection codes (`mapping.directory_name`, `mapping.directories_empty`, `mapping.directory_duplicate`), a scoped entry counted once per directory it lists against the mapping's bound, and `schema_version` still `1`; every mapping write, scoped or not, reaching every directory subject by itself — stale subjects (a row naming another version) recalculated after the write commits in batches under the sink's lock order, at once on the node that took an API write and by a once-a-minute sweep on every node otherwise, with no sync needed, their cached decisions dropped as a group change drops them, and `operator.claim_mapping.applied` recording each run — where until then a mapping reached a directory subject only when the directory changed that person; `directories`, `require_directories` and `stale_directory_subjects` on the claim-mapping read, and `directory_source` on a decision record's subject, read from the link row the subject's statement already joins (M4, M5). No `ext` change, at most one migration (an index); a MINOR (M7, M4, M5, M9, M21, M23). Raised by `Hoplock/enterprise#51`, item 2; depends on 0042 |
 | 0044 | Registered reports served | every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (a report is the audit store, summarised): `GET …/reports` lists each provider's `Reports(ctx, tenant)` with a provider that failed listed with its failure rather than dropped, and `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), checks it against the descriptor the provider listed for that tenant before `Generate` is called, and streams the body with the format's own media type, `nosniff` and `attachment`, never the provider's; a generation with its own bound (`north.report_timeout`) and a per-node ceiling (`north.max_concurrent_reports`, past it `503 report_generation_busy`) beside the decision path (M5), and a body that fails after its first byte aborts the response rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation; `ErrNotFound` `404`, `ErrInvalid` `400`, and every other failure `502 report_provider_failed` or `503 report_provider_unavailable`, never a `401` or a `403` of a provider's (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
 | 0045 | North-bound answer names | every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, which rendered store and fleet structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0046 makes the names a compatibility promise (M19, M26, M17, M23) |

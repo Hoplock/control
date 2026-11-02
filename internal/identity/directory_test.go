@@ -22,22 +22,35 @@ import (
 
 const directorySubjectID = provision.SubjectIDPrefix + "abc123"
 
+// directorySource is the directory the fixture's sync names (0042), and
+// otherSource a second one feeding the same tenant.
+const (
+	directorySource = "okta-a"
+	otherSource     = "azure-b"
+)
+
 // provisioned seeds what the identity sync leaves for a person: the subject
 // row, with its groups, claims and one login name, and the link.
 func (f *federationFixture) provisioned(t *testing.T, tenant store.Tenant, externalID, subjectID string, deactivated bool) store.Subject {
 	t.Helper()
+	return f.provisionedIn(t, tenant, directorySource, externalID, subjectID, "alice", deactivated)
+}
+
+// provisionedIn is provisioned for a source and a login name.
+func (f *federationFixture) provisionedIn(t *testing.T, tenant store.Tenant, source, externalID, subjectID, login string, deactivated bool) store.Subject {
+	t.Helper()
 	ctx := context.Background()
 	s := store.Subject{
 		ID: subjectID, Source: "hoplock/scim", DisplayName: "Alice (directory)",
-		Principals: []string{"alice"}, Groups: []string{"dba"}, Claims: map[string]string{"department": "finance"},
+		Principals: []string{login}, Groups: []string{"dba"}, Claims: map[string]string{"department": "finance"},
 		MappingVersion: 7,
 	}
 	if err := f.st.Subjects().Upsert(ctx, tenant, s); err != nil {
 		t.Fatalf("subject: %v", err)
 	}
 	link := store.DirectoryLink{
-		ExternalID: externalID, SubjectID: subjectID, Provider: "hoplock/scim", LinkedAt: time.Now().UTC(),
-		Provisioned: true, UpdatedAt: time.Now().UTC(), Username: "alice",
+		Source: source, ExternalID: externalID, SubjectID: subjectID, Provider: "hoplock/scim", LinkedAt: time.Now().UTC(),
+		Provisioned: true, UpdatedAt: time.Now().UTC(), Username: login,
 	}
 	if deactivated {
 		link.DeactivatedAt, link.DeactivationReason = time.Now().UTC(), "terminated"
@@ -48,15 +61,27 @@ func (f *federationFixture) provisioned(t *testing.T, tenant store.Tenant, exter
 	return s
 }
 
-// tieToDirectory gives a connector a directory claim.
+// tieToDirectory gives a connector a directory claim in the fixture's source,
+// and an empty claim unties it.
 func (f *federationFixture) tieToDirectory(t *testing.T, tenant store.Tenant, name, claim string) {
+	t.Helper()
+	source := ""
+	if claim != "" {
+		source = directorySource
+	}
+	f.tieToSource(t, tenant, name, claim, source)
+}
+
+// tieToSource gives a connector a directory claim and the source it is an id
+// in.
+func (f *federationFixture) tieToSource(t *testing.T, tenant store.Tenant, name, claim, source string) {
 	t.Helper()
 	ctx := context.Background()
 	c, err := f.st.Connectors().Get(ctx, tenant, name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.DirectoryClaim = claim
+	c.DirectoryClaim, c.DirectorySource = claim, source
 	if err := f.st.Connectors().Upsert(ctx, tenant, c); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +197,7 @@ func TestADeactivatedSubjectIsRefusedThroughEveryDoor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	link, err := f.st.DirectoryLinks().Get(ctx, "tenant-a", "u-1")
+	link, err := f.st.DirectoryLinks().Get(ctx, "tenant-a", directorySource, "u-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,14 +292,64 @@ func TestTheSignInMethodsShowADirectoryClaim(t *testing.T) {
 	}
 	got := map[string]string{}
 	for _, m := range methods {
-		got[m.Name] = m.DirectoryClaim
+		got[m.Name] = m.DirectoryClaim + "@" + m.DirectorySource
 	}
-	if got["azure"] != "oid" || got["okta"] != "" {
-		t.Errorf("directory claims = %v", got)
+	if got["azure"] != "oid@"+directorySource || got["okta"] != "@" {
+		t.Errorf("directory claims and sources = %v", got)
 	}
 	doc, _ := json.Marshal(methods)
-	if strings.Count(string(doc), "directory_claim") != 1 {
-		t.Errorf("an untied connector renders a directory_claim: %s", doc)
+	if strings.Count(string(doc), "directory_claim") != 1 || strings.Count(string(doc), `"directory_source":"`+directorySource+`"`) != 1 {
+		t.Errorf("the methods render %s, want the tied connector's claim and source and nothing for the untied one", doc)
+	}
+}
+
+// A login through a tied connector looks the person up in the connector's own
+// source: one id in two directories is two people, and an id only another
+// directory provisioned is nobody here (0042).
+func TestATiedConnectorResolvesInItsOwnSource(t *testing.T) {
+	f := newFederation(t)
+	f.connect(t, "tenant-a", "okta")
+	f.connect(t, "tenant-a", "azure")
+	f.tieToSource(t, "tenant-a", "okta", "oid", directorySource)
+	f.tieToSource(t, "tenant-a", "azure", "oid", otherSource)
+	f.mapping(t, "tenant-a", mappingSRE)
+	const inA, inB, onlyB = provision.SubjectIDPrefix + "in-a", provision.SubjectIDPrefix + "in-b", provision.SubjectIDPrefix + "only-b"
+	f.provisionedIn(t, "tenant-a", directorySource, "u-1", inA, "alice", false)
+	f.provisionedIn(t, "tenant-a", otherSource, "u-1", inB, "alice.b", false)
+	f.provisionedIn(t, "tenant-a", otherSource, "u-2", onlyB, "bob", false)
+
+	for _, tc := range []struct {
+		connector, oid, want string
+	}{
+		{"okta", "u-1", inA},
+		{"azure", "u-1", inB},
+		{"azure", "u-2", onlyB},
+		{"okta", "u-2", ""},
+	} {
+		f.idp.overrideClaims = func(c map[string]any) { c["oid"] = tc.oid; c["sub"] = tc.connector + "-" + tc.oid }
+		session, err := f.login(t, "tenant-a", tc.connector)
+		if tc.want == "" {
+			_ = refusalFor(t, err, identity.RejectFederationNotProvisioned)
+			continue
+		}
+		if err != nil || session.Principal.Subject != tc.want {
+			t.Errorf("a login through %s carrying %s reached %q (%v), want %q", tc.connector, tc.oid, session.Principal.Subject, err, tc.want)
+		}
+	}
+	if n := subjectCount(t, f.st); n != 3 {
+		t.Errorf("%d subjects after the logins, want only the three the directories provisioned", n)
+	}
+}
+
+func TestADirectorySourceIsHeldToItsPattern(t *testing.T) {
+	for source, ok := range map[string]bool{
+		"okta": true, "okta-a": true, "0": true, "a-": true, strings.Repeat("a", 63): true,
+		"": false, "Okta": false, "-okta": false, "okta_a": false, "okta.a": false, "okta a": false,
+		strings.Repeat("a", 64): false, "é": false,
+	} {
+		if got := identity.DirectorySourceProblem(source) == ""; got != ok {
+			t.Errorf("DirectorySourceProblem(%q) accepted = %v, want %v", source, got, ok)
+		}
 	}
 }
 

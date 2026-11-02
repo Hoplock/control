@@ -14,14 +14,14 @@ import (
 
 // A group's name is what the tenant's claim mapping matches. So a group whose
 // name changes — created, renamed, deleted, or re-created after a delete —
-// re-derives every subject the directory says is a member, in the same
-// transaction, under the tenant's directory-groups lock held exclusively: no
+// re-derives every subject of its own source the directory says is a member,
+// in the same transaction, under the tenant's directory-groups lock held exclusively: no
 // member is left half-applied, and no subject write in flight is re-derived
 // from what it is replacing.
 
 // getGroup reads a group, reporting absence as a bool rather than an error.
-func getGroup(ctx context.Context, tx *store.Store, tenant store.Tenant, externalID string) (store.DirectoryGroup, bool, error) {
-	g, err := tx.DirectoryGroups().Get(ctx, tenant, externalID)
+func getGroup(ctx context.Context, tx *store.Store, tenant store.Tenant, source, externalID string) (store.DirectoryGroup, bool, error) {
+	g, err := tx.DirectoryGroups().Get(ctx, tenant, source, externalID)
 	switch {
 	case err == nil:
 		return g, true, nil
@@ -39,7 +39,7 @@ func (s *Sink) upsertGroup(ctx context.Context, req groupRequest) error {
 		if err := tx.DirectoryGroups().Lock(ctx, req.tenant); err != nil {
 			return err
 		}
-		cur, found, err := getGroup(ctx, tx, req.tenant, req.externalID)
+		cur, found, err := getGroup(ctx, tx, req.tenant, req.source, req.externalID)
 		if err != nil {
 			return err
 		}
@@ -55,13 +55,13 @@ func (s *Sink) upsertGroup(ctx context.Context, req groupRequest) error {
 			before = cur.Name
 		}
 		if err := tx.DirectoryGroups().Put(ctx, req.tenant, store.DirectoryGroup{
-			ExternalID: req.externalID, Provider: s.provider, Name: req.name, UpdatedAt: req.updatedAt,
+			Source: req.source, ExternalID: req.externalID, Provider: s.provider, Name: req.name, UpdatedAt: req.updatedAt,
 		}); err != nil {
 			return err
 		}
 		members := 0
 		if before != req.name {
-			if members, err = s.rederive(ctx, tx, req.tenant, req.externalID); err != nil {
+			if members, err = s.rederive(ctx, tx, req.tenant, req.source, req.externalID); err != nil {
 				return err
 			}
 		}
@@ -74,7 +74,7 @@ func (s *Sink) upsertGroup(ctx context.Context, req groupRequest) error {
 		}
 		return s.recorder.SyncEvent(ctx, tx, req.tenant, audit.SyncAct{
 			Event: audit.EventSyncGroupUpserted, Principal: s.principal, Provider: s.provider,
-			ExternalID: req.externalID, Fields: fields,
+			Source: req.source, ExternalID: req.externalID, Fields: fields,
 			Message: "directory group " + req.externalID + " written",
 		})
 	})
@@ -83,19 +83,19 @@ func (s *Sink) upsertGroup(ctx context.Context, req groupRequest) error {
 // deleteGroup deletes a group, keeping a tombstone so an older upsert delivered
 // after it changes nothing. Deleting an id with no group keeps the tombstone
 // too; deleting one already deleted changes nothing and writes nothing.
-func (s *Sink) deleteGroup(ctx context.Context, tenant store.Tenant, externalID string) error {
+func (s *Sink) deleteGroup(ctx context.Context, tenant store.Tenant, source, externalID string) error {
 	return s.store.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
 		if err := tx.DirectoryGroups().Lock(ctx, tenant); err != nil {
 			return err
 		}
-		cur, found, err := getGroup(ctx, tx, tenant, externalID)
+		cur, found, err := getGroup(ctx, tx, tenant, source, externalID)
 		if err != nil {
 			return err
 		}
 		if found && cur.Deleted() {
 			return nil
 		}
-		tomb := store.DirectoryGroup{ExternalID: externalID, Provider: s.provider, DeletedAt: s.clock()}
+		tomb := store.DirectoryGroup{Source: source, ExternalID: externalID, Provider: s.provider, DeletedAt: s.clock()}
 		if found {
 			tomb.Name, tomb.UpdatedAt = cur.Name, cur.UpdatedAt
 		}
@@ -106,24 +106,26 @@ func (s *Sink) deleteGroup(ctx context.Context, tenant store.Tenant, externalID 
 		if found && cur.Name != "" {
 			// A group with no name mapped nothing, so its members have
 			// nothing to lose.
-			if members, err = s.rederive(ctx, tx, tenant, externalID); err != nil {
+			if members, err = s.rederive(ctx, tx, tenant, source, externalID); err != nil {
 				return err
 			}
 		}
 		return s.recorder.SyncEvent(ctx, tx, tenant, audit.SyncAct{
 			Event: audit.EventSyncGroupDeleted, Principal: s.principal, Provider: s.provider,
-			ExternalID: externalID,
-			Fields:     map[string]string{"name": tomb.Name, "members_rederived": strconv.Itoa(members)},
-			Message:    "directory group " + externalID + " deleted",
+			Source: source, ExternalID: externalID,
+			Fields:  map[string]string{"name": tomb.Name, "members_rederived": strconv.Itoa(members)},
+			Message: "directory group " + externalID + " deleted",
 		})
 	})
 }
 
-// rederive re-derives every provisioned subject the directory says is a member
-// of a group, inside tx, and marks those whose groups changed as owing a cache
-// invalidation. It returns how many it re-derived.
-func (s *Sink) rederive(ctx context.Context, tx *store.Store, tenant store.Tenant, groupExternalID string) (int, error) {
-	links, err := tx.DirectoryLinks().Members(ctx, tenant, groupExternalID)
+// rederive re-derives every provisioned subject of the group's source the
+// directory says is a member of the group, inside tx, and marks those whose
+// groups changed as owing a cache invalidation. It returns how many it
+// re-derived. A subject of another source that names the same id is not a
+// member: its id names a group of its own directory.
+func (s *Sink) rederive(ctx context.Context, tx *store.Store, tenant store.Tenant, source, groupExternalID string) (int, error) {
+	links, err := tx.DirectoryLinks().Members(ctx, tenant, source, groupExternalID)
 	if err != nil || len(links) == 0 {
 		return 0, err
 	}

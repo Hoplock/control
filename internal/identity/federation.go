@@ -189,6 +189,10 @@ type ConnectorSummary struct {
 	// federates on its own. A claim name is configuration, not a secret, and
 	// it tells a login page that this way in reaches a directory account.
 	DirectoryClaim string `json:"directory_claim,omitempty"`
+	// DirectorySource is the directory the claim's value is an id in (0042),
+	// empty exactly when DirectoryClaim is. It is a label an operator chose
+	// for the directory, configuration rather than a secret, like the claim.
+	DirectorySource string `json:"directory_source,omitempty"`
 }
 
 // MaxDirectoryClaimLen bounds a connector's directory claim.
@@ -209,6 +213,28 @@ func DirectoryClaimProblem(claim string) string {
 	return ""
 }
 
+// MaxDirectorySourceLen bounds a directory source: one letter or digit and up
+// to 62 more.
+const MaxDirectorySourceLen = 63
+
+// DirectorySourceProblem says why a name cannot be a directory source — what
+// a registered identity sync calls the directory an identity comes from, and
+// what a tied connector names (0042): "" when it can. A source matches
+// ^[a-z0-9][a-z0-9-]{0,62}$, so it needs no escaping anywhere it is written.
+func DirectorySourceProblem(source string) string {
+	switch {
+	case source == "":
+		return "it is required"
+	case len(source) > MaxDirectorySourceLen:
+		return fmt.Sprintf("it is longer than %d characters", MaxDirectorySourceLen)
+	case source[0] == '-':
+		return "it starts with '-'"
+	case strings.ContainsFunc(source, func(r rune) bool { return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' }):
+		return "it is not lower-case letters, digits and '-'"
+	}
+	return ""
+}
+
 // Connectors lists a tenant's enabled connectors.
 func (f *Federation) Connectors(ctx context.Context, tenant store.Tenant) ([]ConnectorSummary, error) {
 	rows, err := f.st.Connectors().List(ctx, tenant)
@@ -220,7 +246,10 @@ func (f *Federation) Connectors(ctx context.Context, tenant store.Tenant) ([]Con
 		if !c.Enabled {
 			continue
 		}
-		out = append(out, ConnectorSummary{Name: c.Name, Kind: c.Kind, DisplayName: c.DisplayName, DirectoryClaim: c.DirectoryClaim})
+		out = append(out, ConnectorSummary{
+			Name: c.Name, Kind: c.Kind, DisplayName: c.DisplayName,
+			DirectoryClaim: c.DirectoryClaim, DirectorySource: c.DirectorySource,
+		})
 	}
 	return out, nil
 }
@@ -564,8 +593,9 @@ func (f *Federation) provision(ctx context.Context, tenant store.Tenant, a Asser
 }
 
 // linked resolves a login through a connector tied to the directory: the claim
-// the connector names carries the directory's id for the person, and the login
-// reaches the subject the directory provisioned under it, or nobody. Nothing is
+// the connector names carries the directory's id for the person in the source
+// the connector names, and the login reaches the subject the directory
+// provisioned under that source and id, or nobody. Nothing is
 // created and nothing on the subject is rewritten; the federated identity is
 // linked to it, so the person's next login resolves the same way.
 func (f *Federation) linked(ctx context.Context, tenant store.Tenant, c store.Connector, a Assertion) (store.Subject, error) {
@@ -577,11 +607,11 @@ func (f *Federation) linked(ctx context.Context, tenant store.Tenant, c store.Co
 	}
 	var subject store.Subject
 	err := f.st.InTx(ctx, func(ctx context.Context, tx *store.Store) error {
-		link, err := tx.DirectoryLinks().Get(ctx, tenant, externalID)
+		link, err := tx.DirectoryLinks().Get(ctx, tenant, c.DirectorySource, externalID)
 		if store.IsNotFound(err) {
 			return refuse(RejectFederationNotProvisioned,
 				"this account has not been set up here yet",
-				"the directory has provisioned no subject under this "+c.DirectoryClaim)
+				"the directory source "+c.DirectorySource+" has provisioned no subject under this "+c.DirectoryClaim)
 		}
 		if err != nil {
 			return err

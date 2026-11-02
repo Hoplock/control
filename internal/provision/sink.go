@@ -90,11 +90,12 @@ type Options struct {
 	Now func() time.Time
 }
 
-// Sink implements ext.SyncSink over Control's identity store.
+// Sink implements ext.SyncSink over Control's identity store, keyed by
+// (tenant, source, ExternalID).
 //
-// It is safe for concurrent use. Calls on one ExternalID are serialised, so
-// two calls on one id have one effect; calls on different ids run
-// concurrently, and a group change waits for the subject writes in flight in
+// It is safe for concurrent use. Calls on one source's ExternalID are
+// serialised, so two calls on one id have one effect; calls on different ids,
+// or the same id of different sources, run concurrently, and a group change waits for the subject writes in flight in
 // its tenant and holds the next ones back while it re-derives its members.
 type Sink struct {
 	provider      string
@@ -147,22 +148,23 @@ func (s *Sink) Provider() string { return s.provider }
 // clock is Control's own time, as it is stored and compared.
 func (s *Sink) clock() time.Time { return instant(s.now()) }
 
-// UpsertSubject creates or updates the subject joined to in.ExternalID. See
-// ext.SyncSink for what each outcome asks of the caller.
+// UpsertSubject creates or updates the subject joined to in.Source and
+// in.ExternalID. See ext.SyncSink for what each outcome asks of the caller.
 func (s *Sink) UpsertSubject(ctx context.Context, in ext.SyncedSubject) error {
 	const op = "SyncSink.UpsertSubject"
 	if s.closing.Load() {
 		return s.stopped(op)
 	}
+	ref := ext.DirectoryRef{Tenant: in.Tenant, Source: in.Source, ExternalID: in.ExternalID}
 	req, bad := validateSubject(in)
 	if bad != nil {
-		return s.refuse(ctx, op, in.Tenant, in.ExternalID, bad)
+		return s.refuse(ctx, op, ref, bad)
 	}
 	out, err := s.upsertSubject(ctx, req)
 	if err != nil {
 		var r *refusal
 		if errors.As(err, &r) {
-			return s.refuse(ctx, op, in.Tenant, in.ExternalID, r)
+			return s.refuse(ctx, op, ref, r)
 		}
 		return s.internal(ctx, op, "apply the subject", err)
 	}
@@ -170,20 +172,20 @@ func (s *Sink) UpsertSubject(ctx context.Context, in ext.SyncedSubject) error {
 }
 
 // DeactivateSubject places the directory's standing deactivation on the
-// subject joined to externalID and revokes what it holds. See ext.SyncSink.
-func (s *Sink) DeactivateSubject(ctx context.Context, tenant ext.Tenant, externalID, reasonCode string) error {
+// subject joined to ref and revokes what it holds. See ext.SyncSink.
+func (s *Sink) DeactivateSubject(ctx context.Context, ref ext.DirectoryRef, reasonCode string) error {
 	const op = "SyncSink.DeactivateSubject"
 	if s.closing.Load() {
 		return s.stopped(op)
 	}
-	if bad := validateRef(tenant, externalID, reasonCode); bad != nil {
-		return s.refuse(ctx, op, tenant, externalID, bad)
+	if bad := validateRef(ref, reasonCode); bad != nil {
+		return s.refuse(ctx, op, ref, bad)
 	}
-	out, err := s.deactivate(ctx, store.Tenant(tenant), externalID, reasonCode)
+	out, err := s.deactivate(ctx, store.Tenant(ref.Tenant), ref.Source, ref.ExternalID, reasonCode)
 	if err != nil {
 		return s.internal(ctx, op, "deactivate the subject", err)
 	}
-	return s.deliverSubject(ctx, op, store.Tenant(tenant), out)
+	return s.deliverSubject(ctx, op, store.Tenant(ref.Tenant), out)
 }
 
 // UpsertGroup creates or updates a directory group. See ext.SyncSink.
@@ -194,28 +196,29 @@ func (s *Sink) UpsertGroup(ctx context.Context, in ext.SyncedGroup) error {
 	}
 	req, bad := validateGroup(in)
 	if bad != nil {
-		return s.refuse(ctx, op, in.Tenant, in.ExternalID, bad)
+		return s.refuse(ctx, op, ext.DirectoryRef{Tenant: in.Tenant, Source: in.Source, ExternalID: in.ExternalID}, bad)
 	}
 	if err := s.upsertGroup(ctx, req); err != nil {
 		return s.internal(ctx, op, "apply the group", err)
 	}
-	return s.deliverGroup(ctx, op, req.tenant, req.externalID)
+	return s.deliverGroup(ctx, op, req.tenant, req.source, req.externalID)
 }
 
 // DeleteGroup deletes a directory group, keeping a tombstone. See
 // ext.SyncSink.
-func (s *Sink) DeleteGroup(ctx context.Context, tenant ext.Tenant, externalID string) error {
+func (s *Sink) DeleteGroup(ctx context.Context, ref ext.DirectoryRef) error {
 	const op = "SyncSink.DeleteGroup"
 	if s.closing.Load() {
 		return s.stopped(op)
 	}
-	if bad := validateRef(tenant, externalID, ""); bad != nil {
-		return s.refuse(ctx, op, tenant, externalID, bad)
+	if bad := validateRef(ref, ""); bad != nil {
+		return s.refuse(ctx, op, ref, bad)
 	}
-	if err := s.deleteGroup(ctx, store.Tenant(tenant), externalID); err != nil {
+	tenant := store.Tenant(ref.Tenant)
+	if err := s.deleteGroup(ctx, tenant, ref.Source, ref.ExternalID); err != nil {
 		return s.internal(ctx, op, "delete the group", err)
 	}
-	return s.deliverGroup(ctx, op, store.Tenant(tenant), externalID)
+	return s.deliverGroup(ctx, op, tenant, ref.Source, ref.ExternalID)
 }
 
 // allocate chooses the subject id for a newly linked external id. It is random,
@@ -278,9 +281,9 @@ func (s *Sink) unavailable(ctx context.Context, op, what string, err error) erro
 
 // refuse answers a call Control will not apply, and records the refusal. A
 // refusal has no effect, so the record is the whole of what it leaves.
-func (s *Sink) refuse(ctx context.Context, op string, tenant ext.Tenant, externalID string, r *refusal) error {
-	recordIn := store.Tenant(tenant)
-	if checkID("tenant", string(tenant)) != nil {
+func (s *Sink) refuse(ctx context.Context, op string, ref ext.DirectoryRef, r *refusal) error {
+	recordIn := store.Tenant(ref.Tenant)
+	if checkID("tenant", string(ref.Tenant)) != nil {
 		recordIn = s.defaultTenant
 	}
 	if recordIn == "" {
@@ -299,7 +302,7 @@ func (s *Sink) refuse(ctx context.Context, op string, tenant ext.Tenant, externa
 		// control character in it is exactly what must not reach a log line.
 		if err := s.recorder.SyncEvent(ctx, nil, recordIn, audit.SyncAct{
 			Event: audit.EventSyncRefused, Principal: s.principal, Provider: s.provider,
-			ExternalID: clean(externalID), Fields: fields, Severity: contract.SeverityWarn,
+			Source: clean(ref.Source), ExternalID: clean(ref.ExternalID), Fields: fields, Severity: contract.SeverityWarn,
 			Message: op + " refused: " + r.kind.String(),
 		}); err != nil {
 			s.log.ErrorContext(ctx, "a refused identity sync call could not be recorded",
