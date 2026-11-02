@@ -344,7 +344,13 @@ func runConnectorPut(ctx context.Context, h Host, args []string, stdout, stderr 
 	disabled := fs.Bool("disabled", false, "write the connector but do not accept logins through it")
 	directoryClaim := fs.String("directory-claim", "",
 		"the claim in this connector's assertions that carries the directory's id for the person; "+
-			"a login then reaches the subject the registered identity sync provisioned, or is refused")
+			"a login then reaches the subject the registered identity sync provisioned, or is refused. "+
+			"Needs --directory-source")
+	directorySource := fs.String("directory-source", "",
+		"the directory --directory-claim's value is an id in, as the identity sync names it "+
+			"(^[a-z0-9][a-z0-9-]{0,62}$); refused until something in the tenant comes from it, so provision first, then tie. "+
+			"It is shown on the sign-in methods, so name the directory with it, not describe the organisation. "+
+			"Writing a connector with neither flag unties it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -368,16 +374,30 @@ func runConnectorPut(ctx context.Context, h Host, args []string, stdout, stderr 
 	// entry that fails at the worst moment, and the error here names the field
 	// rather than the connector.
 	row := store.Connector{
-		Name:           *name,
-		Kind:           connectorKind,
-		DisplayName:    *display,
-		Enabled:        !*disabled,
-		Config:         document,
-		DirectoryClaim: *directoryClaim,
+		Name:            *name,
+		Kind:            connectorKind,
+		DisplayName:     *display,
+		Enabled:         !*disabled,
+		Config:          document,
+		DirectoryClaim:  *directoryClaim,
+		DirectorySource: *directorySource,
+	}
+	// A tied connector names both the claim and the directory it is an id in
+	// (0042); writing neither unties it.
+	switch {
+	case row.DirectoryClaim != "" && row.DirectorySource == "":
+		return fmt.Errorf("identity connector-put: --directory-claim needs --directory-source: " +
+			"a tied connector names the directory its claim's value is an id in")
+	case row.DirectorySource != "" && row.DirectoryClaim == "":
+		return fmt.Errorf("identity connector-put: --directory-source needs --directory-claim: " +
+			"a tied connector names the claim that carries the directory's id for the person")
 	}
 	if row.DirectoryClaim != "" {
 		if problem := identity.DirectoryClaimProblem(row.DirectoryClaim); problem != "" {
 			return fmt.Errorf("identity connector-put: --directory-claim: %s", problem)
+		}
+		if problem := identity.DirectorySourceProblem(row.DirectorySource); problem != "" {
+			return fmt.Errorf("identity connector-put: --directory-source: %s: a source matches ^[a-z0-9][a-z0-9-]{0,62}$", problem)
 		}
 	}
 	if _, err := (identity.DefaultBrokerFactory{}).Broker(ctx, "", row); err != nil {
@@ -408,6 +428,11 @@ func runConnectorPut(ctx context.Context, h Host, args []string, stdout, stderr 
 	if *tenantFlag != "" {
 		tenant = store.Tenant(*tenantFlag)
 	}
+	if row.DirectorySource != "" {
+		if err := checkSourceWritten(ctx, st, tenant, row.DirectorySource); err != nil {
+			return err
+		}
+	}
 	if err := st.Connectors().Upsert(ctx, tenant, row); err != nil {
 		return err
 	}
@@ -416,8 +441,38 @@ func runConnectorPut(ctx context.Context, h Host, args []string, stdout, stderr 
 	if row.DirectoryClaim != "" {
 		_, _ = fmt.Fprintf(stdout, "  directory_claim: %s (a login reaches the subject the identity sync provisioned, or is refused)\n",
 			row.DirectoryClaim)
+		_, _ = fmt.Fprintf(stdout, "  directory_source: %s (the directory that claim's value is an id in)\n",
+			row.DirectorySource)
 	}
 	return nil
+}
+
+// checkSourceWritten refuses a tie to a source nothing in the tenant comes
+// from (0042). Such a tie would refuse every login through the connector as
+// `federation.not_provisioned`, so a misspelt source is caught here, when the
+// connector is written, rather than at somebody's sign-in. The error names the
+// sources the tenant does have.
+func checkSourceWritten(ctx context.Context, st *store.Store, tenant store.Tenant, source string) error {
+	found, err := st.DirectoryLinks().HasSource(ctx, tenant, source)
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	sources, err := st.DirectoryLinks().Sources(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	has := "it has none yet: provision through the identity sync first, then tie the connector"
+	if len(sources) > 0 {
+		has = "the sources it has are " + strings.Join(sources, ", ")
+		if len(sources) == store.MaxListedSources {
+			has += fmt.Sprintf(" (the first %d)", store.MaxListedSources)
+		}
+	}
+	return fmt.Errorf("identity connector-put: --directory-source: nothing in tenant %s comes from the source %q; %s",
+		tenant, source, has)
 }
 
 // openWithSync opens the store for a write that needs a registered identity

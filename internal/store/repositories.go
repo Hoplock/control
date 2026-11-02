@@ -62,13 +62,15 @@ type SubjectRepository interface {
 
 // DirectoryLinkRepository stores the links a registered identity sync makes
 // between the directory's ids and Control's subjects, with the deactivation the
-// directory places (0040, M28). A link never moves to another subject.
+// directory places (0040, M28). A link is keyed by its source and external id
+// (0042) and never moves to another subject.
 type DirectoryLinkRepository interface {
-	// Lock serialises everything done under one external id for the rest of
-	// the transaction. Outside a transaction it is refused.
-	Lock(ctx context.Context, tenant Tenant, externalID string) error
-	// Get returns the link of an external id. Absent is ErrNotFound.
-	Get(ctx context.Context, tenant Tenant, externalID string) (DirectoryLink, error)
+	// Lock serialises everything done under one external id of one source
+	// for the rest of the transaction. Outside a transaction it is refused.
+	Lock(ctx context.Context, tenant Tenant, source, externalID string) error
+	// Get returns the link of an external id in a source. Absent is
+	// ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, source, externalID string) (DirectoryLink, error)
 	// BySubject returns the link of a subject. Absent is ErrNotFound, and
 	// means the directory does not manage the subject.
 	BySubject(ctx context.Context, tenant Tenant, subjectID string) (DirectoryLink, error)
@@ -79,12 +81,19 @@ type DirectoryLinkRepository interface {
 	// ErrConflict.
 	Put(ctx context.Context, tenant Tenant, l DirectoryLink) error
 	// Settle clears what a link owes the revocation stream once delivered.
-	Settle(ctx context.Context, tenant Tenant, externalID string, invalidate, deactivation bool) error
-	// Members returns the provisioned links that name a directory group.
-	Members(ctx context.Context, tenant Tenant, groupExternalID string) ([]DirectoryLink, error)
+	Settle(ctx context.Context, tenant Tenant, source, externalID string, invalidate, deactivation bool) error
+	// Members returns the provisioned links of a source that name one of
+	// its directory groups.
+	Members(ctx context.Context, tenant Tenant, source, groupExternalID string) ([]DirectoryLink, error)
 	// For returns the links of these subjects, by subject id, for a page of
 	// the subject list. It names at most a page's worth of ids.
 	For(ctx context.Context, tenant Tenant, subjectIDs []string) (map[string]DirectoryLink, error)
+	// HasSource reports whether any link or group in the tenant comes from
+	// a source.
+	HasSource(ctx context.Context, tenant Tenant, source string) (bool, error)
+	// Sources returns the sources the tenant's links and groups come from,
+	// in order, at most MaxListedSources of them.
+	Sources(ctx context.Context, tenant Tenant) ([]string, error)
 }
 
 // DirectoryGroupRepository stores the directory's groups, in its own
@@ -97,12 +106,13 @@ type DirectoryGroupRepository interface {
 	// Share takes the same lock shared: subject writes run beside each other
 	// and never beside a group change. Outside a transaction it is refused.
 	Share(ctx context.Context, tenant Tenant) error
-	// Get returns a group. Absent is ErrNotFound.
-	Get(ctx context.Context, tenant Tenant, externalID string) (DirectoryGroup, error)
+	// Get returns a group of a source. Absent is ErrNotFound.
+	Get(ctx context.Context, tenant Tenant, source, externalID string) (DirectoryGroup, error)
 	// Put writes a group whole.
 	Put(ctx context.Context, tenant Tenant, g DirectoryGroup) error
-	// Names resolves group ids to the names of the live groups among them.
-	Names(ctx context.Context, tenant Tenant, externalIDs []string) (map[string]string, error)
+	// Names resolves group ids of one source to the names of the live
+	// groups among them.
+	Names(ctx context.Context, tenant Tenant, source string, externalIDs []string) (map[string]string, error)
 }
 
 // SubjectLockRepository stores the standing denials on subjects (0039, M28).

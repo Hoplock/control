@@ -120,7 +120,7 @@ func TestTheDaemonStartsTheIdentitySyncOnceBeforeAnyListenerAcceptsAndStopsItOnS
 		}
 		// A call that arrives once Stop has begun is KindUnavailable.
 		if err := sink.UpsertSubject(context.Background(), ext.SyncedSubject{
-			Tenant: "default", ExternalID: "late", Username: "late", Active: true, UpdatedAt: time.Now(),
+			Tenant: "default", Source: "okta", ExternalID: "late", Username: "late", Active: true, UpdatedAt: time.Now(),
 		}); ext.KindOf(err) != ext.KindUnavailable {
 			t.Errorf("UpsertSubject after shutdown began: %v, want KindUnavailable", err)
 		}
@@ -143,15 +143,15 @@ func TestTheDaemonStartsTheIdentitySyncOnceBeforeAnyListenerAcceptsAndStopsItOnS
 	// the directory's, and the deactivation is shown.
 	ctx := context.Background()
 	if err := sink.UpsertSubject(ctx, ext.SyncedSubject{
-		Tenant: "default", ExternalID: "u-1", Username: "erin", Active: true, UpdatedAt: time.Now().Add(-time.Minute),
+		Tenant: "default", Source: "okta", ExternalID: "u-1", Username: "erin", Active: true, UpdatedAt: time.Now().Add(-time.Minute),
 	}); err != nil {
 		t.Fatalf("UpsertSubject: %v", err)
 	}
-	link, err := st.DirectoryLinks().Get(ctx, "default", "u-1")
+	link, err := st.DirectoryLinks().Get(ctx, "default", "okta", "u-1")
 	if err != nil {
 		t.Fatalf("the provisioned link: %v", err)
 	}
-	if err := sink.DeactivateSubject(ctx, "default", "u-1", "terminated"); err != nil {
+	if err := sink.DeactivateSubject(ctx, ext.DirectoryRef{Tenant: "default", Source: "okta", ExternalID: "u-1"}, "terminated"); err != nil {
 		t.Fatalf("DeactivateSubject: %v", err)
 	}
 	federation, err := identity.NewFederation(st)
@@ -164,6 +164,7 @@ func TestTheDaemonStartsTheIdentitySyncOnceBeforeAnyListenerAcceptsAndStopsItOnS
 		DirectoryManaged bool `json:"directory_managed"`
 		Directory        struct {
 			Provider   string `json:"provider"`
+			Source     string `json:"source"`
 			ExternalID string `json:"external_id"`
 		} `json:"directory"`
 		Deactivated bool `json:"deactivated"`
@@ -171,7 +172,7 @@ func TestTheDaemonStartsTheIdentitySyncOnceBeforeAnyListenerAcceptsAndStopsItOnS
 	if err := json.NewDecoder(resp.Body).Decode(&subject); err != nil {
 		t.Fatal(err)
 	}
-	if !subject.DirectoryManaged || subject.Directory.Provider != hostProvider+"/scim" ||
+	if !subject.DirectoryManaged || subject.Directory.Provider != hostProvider+"/scim" || subject.Directory.Source != "okta" ||
 		subject.Directory.ExternalID != "u-1" || !subject.Deactivated {
 		t.Errorf("the operator's view of the provisioned subject = %+v", subject)
 	}
@@ -253,7 +254,7 @@ func TestADirectoryClaimNeedsARegisteredSync(t *testing.T) {
 		return out.String(), err
 	}
 
-	if _, err := put(ext.NewRegistry(), "--directory-claim", "oid"); err == nil || !strings.Contains(err.Error(), "no identity sync is registered") {
+	if _, err := put(ext.NewRegistry(), "--directory-claim", "oid", "--directory-source", "okta"); err == nil || !strings.Contains(err.Error(), "no identity sync is registered") {
 		t.Errorf("a directory claim with no sync: %v, want a refusal saying none is registered", err)
 	}
 	st, err := store.Open(context.Background(), dsn)
@@ -265,10 +266,12 @@ func TestADirectoryClaimNeedsARegisteredSync(t *testing.T) {
 		t.Errorf("a refused connector was written: %v", err)
 	}
 
-	if _, err := put(registryWithSync(t, &identitySync{}), "--directory-claim", "two words"); err == nil {
+	if _, err := put(registryWithSync(t, &identitySync{}), "--directory-claim", "two words", "--directory-source", "okta"); err == nil {
 		t.Error("a malformed directory claim was accepted")
 	}
-	out, err := put(registryWithSync(t, &identitySync{}), "--directory-claim", "oid")
+	// A tie is made after the directory has provisioned (0042).
+	provisionUnder(t, st, "okta")
+	out, err := put(registryWithSync(t, &identitySync{}), "--directory-claim", "oid", "--directory-source", "okta")
 	if err != nil {
 		t.Fatalf("a directory claim with a sync registered: %v", err)
 	}
@@ -282,5 +285,134 @@ func TestADirectoryClaimNeedsARegisteredSync(t *testing.T) {
 	// Without the flag, a connector is written as it always was.
 	if _, err := put(ext.NewRegistry()); err != nil {
 		t.Errorf("a connector with no directory claim and no sync: %v", err)
+	}
+}
+
+// provisionUnder leaves a link in the default tenant under a source, as a sync
+// that provisioned from that directory would.
+func provisionUnder(t *testing.T, st *store.Store, source string) {
+	t.Helper()
+	if err := st.DirectoryLinks().Put(context.Background(), "default", store.DirectoryLink{
+		Source: source, ExternalID: "u-" + source, SubjectID: "dir-" + source, Provider: hostProvider + "/scim",
+		LinkedAt: time.Now().UTC(), Provisioned: true, UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A tied connector names its claim and its source, both or neither; the
+// source is held to its pattern and refused while nothing in the tenant comes
+// from it, naming what does; and writing the connector with neither unties it
+// (0042).
+func TestATieToASourceNothingHasWrittenIsRefused(t *testing.T) {
+	dsn := testDatabase(t)
+	south, north := freeAddrs(t)
+	path := writeFile(t, configDoc(south, north, dsn)+hostSection)
+	connector := writeFile(t, `{"issuer":"https://idp.example.com","client_id":"control","redirect_uri":"https://control.example.com/cb"}`)
+	migrate(t, path, hostOptions(&sectionRecorder{}, ext.NewRegistry()))
+	put := func(extra ...string) (string, error) {
+		o := hostOptions(&sectionRecorder{}, registryWithSync(t, &identitySync{}))
+		var out bytes.Buffer
+		args := append([]string{"identity", "connector-put", "--config", path, "--name", "azure", "--kind", "oidc", "--file", connector}, extra...)
+		err := server.Main(context.Background(), args, &out, io.Discard, o)
+		return out.String(), err
+	}
+	st, err := store.Open(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	provisionUnder(t, st, "okta-a")
+	provisionUnder(t, st, "azure-b")
+
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		names string
+	}{
+		{"a source with no claim", []string{"--directory-source", "okta-a"}, "--directory-source needs --directory-claim"},
+		{"a claim with no source", []string{"--directory-claim", "oid"}, "--directory-claim needs --directory-source"},
+		{"a malformed source", []string{"--directory-claim", "oid", "--directory-source", "Okta_A"}, "--directory-source: it is not lower-case"},
+		{"a source nothing has written", []string{"--directory-claim", "oid", "--directory-source", "okta"},
+			`nothing in tenant default comes from the source "okta"; the sources it has are azure-b, okta-a`},
+	} {
+		if _, err := put(tc.args...); err == nil || !strings.Contains(err.Error(), tc.names) {
+			t.Errorf("%s: %v, want a refusal containing %q", tc.name, err, tc.names)
+		}
+		if _, err := st.Connectors().Get(context.Background(), "default", "azure"); !store.IsNotFound(err) {
+			t.Fatalf("%s: a refused connector was written: %v", tc.name, err)
+		}
+	}
+
+	out, err := put("--directory-claim", "oid", "--directory-source", "okta-a")
+	if err != nil {
+		t.Fatalf("a tie to a written source: %v", err)
+	}
+	if !strings.Contains(out, "directory_claim: oid") || !strings.Contains(out, "directory_source: okta-a") {
+		t.Errorf("the command's output does not show the tie: %q", out)
+	}
+	if c, err := st.Connectors().Get(context.Background(), "default", "azure"); err != nil || c.DirectoryClaim != "oid" || c.DirectorySource != "okta-a" {
+		t.Errorf("the stored connector = %+v, %v", c, err)
+	}
+	if _, err := put(); err != nil {
+		t.Fatalf("writing the connector with neither flag: %v", err)
+	}
+	if c, err := st.Connectors().Get(context.Background(), "default", "azure"); err != nil || c.DirectoryClaim != "" || c.DirectorySource != "" {
+		t.Errorf("writing the connector with neither flag left %+v, %v; want it untied", c, err)
+	}
+}
+
+// Two directories feeding one tenant through the registered sync keep their
+// own ids: one id in both is two subjects, each read showing its own source,
+// and a deactivation in one reaches nobody in the other (0042).
+func TestARegisteredSyncFeedsTwoDirectoriesIntoOneTenant(t *testing.T) {
+	sync := &identitySync{}
+	base, st, _ := runHost(t, registryWithSync(t, sync), "")
+	_, _, _, sink := sync.snapshot()
+	if sink == nil {
+		t.Fatal("the sync was handed no sink")
+	}
+	ctx := context.Background()
+	for source, username := range map[string]string{"okta-a": "erin", "azure-b": "frank"} {
+		if err := sink.UpsertSubject(ctx, ext.SyncedSubject{
+			Tenant: "default", Source: source, ExternalID: "00u1", Username: username, Active: true,
+			UpdatedAt: time.Now().Add(-time.Minute),
+		}); err != nil {
+			t.Fatalf("UpsertSubject from %s: %v", source, err)
+		}
+	}
+	if err := sink.DeactivateSubject(ctx, ext.DirectoryRef{Tenant: "default", Source: "okta-a", ExternalID: "00u1"}, "terminated"); err != nil {
+		t.Fatalf("DeactivateSubject: %v", err)
+	}
+
+	federation, err := identity.NewFederation(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditor := issue(t, federation, "default", map[store.Tenant]identity.RoleSet{"default": {identity.RoleAuditor}})
+	seen := map[string]bool{}
+	for source, deactivated := range map[string]bool{"okta-a": true, "azure-b": false} {
+		link, err := st.DirectoryLinks().Get(ctx, "default", source, "00u1")
+		if err != nil {
+			t.Fatalf("the link from %s: %v", source, err)
+		}
+		seen[link.SubjectID] = true
+		resp := get(t, base+"/api/v1/tenants/default/subjects/"+link.SubjectID, auditor)
+		var subject struct {
+			Directory struct {
+				Source     string `json:"source"`
+				ExternalID string `json:"external_id"`
+			} `json:"directory"`
+			Deactivated bool `json:"deactivated"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&subject); err != nil {
+			t.Fatal(err)
+		}
+		if subject.Directory.Source != source || subject.Directory.ExternalID != "00u1" || subject.Deactivated != deactivated {
+			t.Errorf("the subject from %s reads %+v, want its own source and deactivated %v", source, subject, deactivated)
+		}
+	}
+	if len(seen) != 2 {
+		t.Errorf("one id in two directories is %d subjects, want two", len(seen))
 	}
 }

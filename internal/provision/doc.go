@@ -16,11 +16,15 @@
 //
 // # What a call guarantees
 //
-//   - Joined on ExternalID, never on the username. Control allocates the
-//     subject id the first time it links an id, and the link row is the join.
-//   - Idempotent on ExternalID, and ordered: an upsert is applied only when
-//     its UpdatedAt is later than the last one applied, so a replay or a stale
-//     write changes nothing and writes no record.
+//   - Joined on the directory's source and ExternalID (0042), never on the
+//     username. Control allocates the subject id the first time it links a
+//     source's id, and the link row is the join. Two directories feeding one
+//     tenant keep their own ids, and a subject's groups resolve within its own
+//     source; a login name is still unique across sources.
+//   - Idempotent on (tenant, source, ExternalID), and ordered per that key: an
+//     upsert is applied only when its UpdatedAt is later than the last one
+//     applied, so a replay or a stale write changes nothing and writes no
+//     record.
 //   - The directory is the only writer of what it provisions. Its groups and
 //     attributes reach policy only through the tenant's claim mapping (M7),
 //     exactly as a login's claims do.

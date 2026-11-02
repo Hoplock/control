@@ -114,7 +114,10 @@ type standingDenial struct {
 	reasonCode  string
 	reason      string
 	externalRef string
-	actionID    string
+	// source is the directory externalRef is an id in, for the directory's
+	// deactivation only (0042).
+	source   string
+	actionID string
 }
 
 func lockedDenial(l store.SubjectLock) standingDenial {
@@ -125,13 +128,15 @@ func lockedDenial(l store.SubjectLock) standingDenial {
 }
 
 // deactivatedDenial is the directory's deactivation as the decision records it:
-// placed by the sync, with the directory's reason code, and the directory's id
-// for the person as the external reference that ties the denial to its cause.
+// placed by the sync, with the directory's reason code, and the directory's
+// source and its id for the person, which together tie the denial to its
+// cause: one `00u1` is two people once two directories feed the tenant.
 func deactivatedDenial(subjectID string, d store.SubjectDirectory) standingDenial {
 	return standingDenial{
 		code: CodeSubjectDeactivated, subjectID: subjectID, placedAt: d.DeactivatedAt,
 		placedBy:   d.DeactivatedBy(),
-		reasonCode: d.DeactivationReason, reason: access.DeactivatedByDirectoryReason, externalRef: d.ExternalID,
+		reasonCode: d.DeactivationReason, reason: access.DeactivatedByDirectoryReason,
+		externalRef: d.ExternalID, source: d.Source,
 	}
 }
 

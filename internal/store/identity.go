@@ -394,7 +394,7 @@ type ConnectorRepository interface {
 
 type connectorRepo struct{ s *Store }
 
-const connectorColumns = `connector, kind, display_name, enabled, config, directory_claim, created_at, updated_at`
+const connectorColumns = `connector, kind, display_name, enabled, config, directory_claim, directory_source, created_at, updated_at`
 
 func (r connectorRepo) Get(ctx context.Context, tenant Tenant, name string) (Connector, error) {
 	const op = "store.Connectors.Get"
@@ -452,16 +452,17 @@ func (r connectorRepo) Upsert(ctx context.Context, tenant Tenant, c Connector) e
 	defer cancel()
 
 	_, err := r.s.db.Exec(ctx, `
-		INSERT INTO idp_connectors (tenant, connector, kind, display_name, enabled, config, directory_claim)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO idp_connectors (tenant, connector, kind, display_name, enabled, config, directory_claim, directory_source)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (tenant, connector) DO UPDATE SET
-			kind            = EXCLUDED.kind,
-			display_name    = EXCLUDED.display_name,
-			enabled         = EXCLUDED.enabled,
-			config          = EXCLUDED.config,
-			directory_claim = EXCLUDED.directory_claim,
-			updated_at      = now()`,
-		tenant, c.Name, string(c.Kind), c.DisplayName, c.Enabled, nonNilJSON(c.Config), c.DirectoryClaim)
+			kind             = EXCLUDED.kind,
+			display_name     = EXCLUDED.display_name,
+			enabled          = EXCLUDED.enabled,
+			config           = EXCLUDED.config,
+			directory_claim  = EXCLUDED.directory_claim,
+			directory_source = EXCLUDED.directory_source,
+			updated_at       = now()`,
+		tenant, c.Name, string(c.Kind), c.DisplayName, c.Enabled, nonNilJSON(c.Config), c.DirectoryClaim, c.DirectorySource)
 	return wrap(op, err)
 }
 

@@ -310,8 +310,8 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		},
 		"Subjects.Lock":          func() error { return s.Subjects().Lock(ctx, "") },
 		"Subjects.LockPrincipal": func() error { return s.Subjects().LockPrincipal(ctx, "", "alice") },
-		"DirectoryLinks.Lock":    func() error { return s.DirectoryLinks().Lock(ctx, "", "e") },
-		"DirectoryLinks.Get":     func() error { _, err := s.DirectoryLinks().Get(ctx, "", "e"); return err },
+		"DirectoryLinks.Lock":    func() error { return s.DirectoryLinks().Lock(ctx, "", "src", "e") },
+		"DirectoryLinks.Get":     func() error { _, err := s.DirectoryLinks().Get(ctx, "", "src", "e"); return err },
 		"DirectoryLinks.BySubject": func() error {
 			_, err := s.DirectoryLinks().BySubject(ctx, "", "s")
 			return err
@@ -321,12 +321,20 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return err
 		},
 		"DirectoryLinks.Put": func() error {
-			return s.DirectoryLinks().Put(ctx, "", DirectoryLink{ExternalID: "e", SubjectID: "s", Provider: "p", LinkedAt: nowForTest()})
+			return s.DirectoryLinks().Put(ctx, "", DirectoryLink{Source: "src", ExternalID: "e", SubjectID: "s", Provider: "p", LinkedAt: nowForTest()})
 		},
-		"DirectoryLinks.Settle":  func() error { return s.DirectoryLinks().Settle(ctx, "", "e", true, true) },
-		"DirectoryLinks.Members": func() error { _, err := s.DirectoryLinks().Members(ctx, "", "g"); return err },
+		"DirectoryLinks.Settle":  func() error { return s.DirectoryLinks().Settle(ctx, "", "src", "e", true, true) },
+		"DirectoryLinks.Members": func() error { _, err := s.DirectoryLinks().Members(ctx, "", "src", "g"); return err },
 		"DirectoryLinks.For": func() error {
 			_, err := s.DirectoryLinks().For(ctx, "", []string{"s"})
+			return err
+		},
+		"DirectoryLinks.HasSource": func() error {
+			_, err := s.DirectoryLinks().HasSource(ctx, "", "src")
+			return err
+		},
+		"DirectoryLinks.Sources": func() error {
+			_, err := s.DirectoryLinks().Sources(ctx, "")
 			return err
 		},
 		"DirectoryGroups.Lock":  func() error { return s.DirectoryGroups().Lock(ctx, "") },
@@ -335,12 +343,12 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.Subjects().PresentedByAnother(ctx, "", "alice", "s")
 			return err
 		},
-		"DirectoryGroups.Get": func() error { _, err := s.DirectoryGroups().Get(ctx, "", "g"); return err },
+		"DirectoryGroups.Get": func() error { _, err := s.DirectoryGroups().Get(ctx, "", "src", "g"); return err },
 		"DirectoryGroups.Put": func() error {
-			return s.DirectoryGroups().Put(ctx, "", DirectoryGroup{ExternalID: "g", Provider: "p"})
+			return s.DirectoryGroups().Put(ctx, "", DirectoryGroup{Source: "src", ExternalID: "g", Provider: "p"})
 		},
 		"DirectoryGroups.Names": func() error {
-			_, err := s.DirectoryGroups().Names(ctx, "", []string{"g"})
+			_, err := s.DirectoryGroups().Names(ctx, "", "src", []string{"g"})
 			return err
 		},
 		"NorthPrincipals.RevokeBySubject": func() error {

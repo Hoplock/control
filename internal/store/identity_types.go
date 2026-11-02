@@ -83,6 +83,10 @@ type Connector struct {
 	// sync provisioned, or is refused; it never creates a subject of its own.
 	// Empty is a connector that federates as it always did.
 	DirectoryClaim string
+	// DirectorySource is the directory that claim's value is an ExternalID
+	// in (0042): a login looks the link up by (tenant, source, claim value).
+	// A connector names both or neither.
+	DirectorySource string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

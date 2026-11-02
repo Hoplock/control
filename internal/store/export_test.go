@@ -221,3 +221,8 @@ func MigrateThrough(ctx context.Context, s *Store, version int64) error {
 	}
 	return nil
 }
+
+// DirectoryMembersSQL is the statement DirectoryLinks().Members runs, for the
+// test that asks Postgres how it would plan it. It is compiled into the test
+// binary alone.
+func DirectoryMembersSQL() string { return directoryMembersSQL }

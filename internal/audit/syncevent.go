@@ -36,9 +36,11 @@ const (
 )
 
 // Attribute keys every sync record carries, so that "everything the directory
-// did to this person" is one filter whatever the event.
+// did to this person" is one filter whatever the event: the sync's provider,
+// the directory's source (0042) and its id for the person or the group.
 const (
 	AttrSyncProvider   = "provider"
+	AttrSyncSource     = "source"
 	AttrSyncExternalID = "external_id"
 	// AttrSyncPrefix namespaces a sync record's own fields.
 	AttrSyncPrefix = "identity_sync."
@@ -52,7 +54,11 @@ type SyncAct struct {
 	Principal string
 	// Provider is the registered sync's provider.
 	Provider string
-	// ExternalID is the directory's id for the subject or the group.
+	// Source names the directory the subject or the group comes from (0042).
+	// A refusal carries it whenever the refused call named one.
+	Source string
+	// ExternalID is the directory's id for the subject or the group, unique
+	// within its source.
 	ExternalID string
 	// Subject is the subject the call concerned, where it concerned one, so
 	// the existing subject filter finds it.
@@ -87,6 +93,7 @@ func (e *Emitter) SyncEvent(ctx context.Context, tx *store.Store, tenant store.T
 	}
 	put(attrs, AttrPrincipalID, act.Principal)
 	put(attrs, AttrSyncProvider, act.Provider)
+	put(attrs, AttrSyncSource, act.Source)
 	put(attrs, AttrSyncExternalID, act.ExternalID)
 	for k, v := range act.Fields {
 		put(attrs, AttrSyncPrefix+k, v)

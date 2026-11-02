@@ -27,7 +27,7 @@ func (f *serverFixture) provision(t *testing.T, subjectID, externalID string, de
 		t.Fatal(err)
 	}
 	l := store.DirectoryLink{
-		ExternalID: externalID, SubjectID: subjectID, Provider: "hoplock/scim",
+		Source: "okta-a", ExternalID: externalID, SubjectID: subjectID, Provider: "hoplock/scim",
 		LinkedAt: time.Now().UTC(), Provisioned: true, UpdatedAt: time.Now().UTC(), Username: "dana",
 	}
 	if deactivated {
@@ -43,6 +43,7 @@ type directorySubjectView struct {
 	DirectoryManaged bool   `json:"directory_managed"`
 	Directory        *struct {
 		Provider   string `json:"provider"`
+		Source     string `json:"source"`
 		ExternalID string `json:"external_id"`
 	} `json:"directory"`
 	Deactivated  bool `json:"deactivated"`
@@ -67,6 +68,9 @@ func TestASubjectTheDirectoryManagesIsShownAndNeverWrittenByAnOperator(t *testin
 	if !one.DirectoryManaged || one.Directory == nil || one.Directory.Provider != "hoplock/scim" || one.Directory.ExternalID != "u-dana" {
 		t.Errorf("GET subject = %+v, want the provider and the external id", one)
 	}
+	if one.Directory != nil && one.Directory.Source != "okta-a" {
+		t.Errorf("GET subject's directory source = %q, want okta-a", one.Directory.Source)
+	}
 	if !one.Deactivated || one.Deactivation == nil || one.Deactivation.ReasonCode != "terminated" || one.Deactivation.DeactivatedAt.IsZero() {
 		t.Errorf("GET subject = %+v, want the deactivation", one.Deactivation)
 	}
@@ -82,7 +86,8 @@ func TestASubjectTheDirectoryManagesIsShownAndNeverWrittenByAnOperator(t *testin
 	for _, s := range list.Subjects {
 		byID[s.ID] = s
 	}
-	if d := byID["dir-dana"]; !d.DirectoryManaged || !d.Deactivated || d.Directory == nil || d.Directory.ExternalID != "u-dana" {
+	if d := byID["dir-dana"]; !d.DirectoryManaged || !d.Deactivated || d.Directory == nil || d.Directory.ExternalID != "u-dana" ||
+		d.Directory.Source != "okta-a" {
 		t.Errorf("the list shows the directory's subject as %+v", d)
 	}
 	if l := byID["local@example.com"]; l.DirectoryManaged || l.Directory != nil || l.Deactivated {
@@ -117,7 +122,7 @@ func TestADeactivationAheadOfItsCreateIsReadableAndItsIDIsTheDirectorys(t *testi
 	f := newServer(t)
 	admin := f.roleToken(t, identity.RoleAdmin)
 	if err := f.st.DirectoryLinks().Put(t.Context(), "tenant-a", store.DirectoryLink{
-		ExternalID: "u-early", SubjectID: "dir-early", Provider: "hoplock/scim", LinkedAt: time.Now().UTC(),
+		Source: "okta-a", ExternalID: "u-early", SubjectID: "dir-early", Provider: "hoplock/scim", LinkedAt: time.Now().UTC(),
 		DeactivatedAt: time.Now().UTC(), DeactivationReason: "offboarded",
 	}); err != nil {
 		t.Fatal(err)
@@ -131,4 +136,57 @@ func TestADeactivationAheadOfItsCreateIsReadableAndItsIDIsTheDirectorys(t *testi
 	}
 	resp = f.send(t, "PUT", api+"/subjects/dir-early", admin, map[string]any{"groups": []string{"sre"}})
 	mustStatus(t, resp, http.StatusConflict)
+}
+
+// The directory's source is `directory.source`, and the subject's top-level
+// `source` stays what asserted it (0042): the same word for two things, each
+// shown where it belongs.
+func TestADirectorySubjectShowsItsDirectorysSourceBesideItsOwn(t *testing.T) {
+	f := newServer(t)
+	auditor := f.roleToken(t, identity.RoleAuditor)
+	f.provision(t, "dir-dana", "u-dana", false)
+
+	resp := f.send(t, "GET", api+"/subjects/dir-dana", auditor, nil)
+	mustStatus(t, resp, http.StatusOK)
+	var one struct {
+		Source    string `json:"source"`
+		Directory struct {
+			Source string `json:"source"`
+		} `json:"directory"`
+	}
+	decodeInto(t, resp, &one)
+	if one.Source != "hoplock/scim" || one.Directory.Source != "okta-a" {
+		t.Errorf("source = %q, directory.source = %q; want the sync's provider and the directory's source", one.Source, one.Directory.Source)
+	}
+}
+
+// The sign-in methods show a tied connector's claim and source, and neither
+// for a connector that is not tied (0042).
+func TestTheSignInMethodsShowATiedConnectorsSource(t *testing.T) {
+	f := newServer(t)
+	for name, tie := range map[string][2]string{"okta": {"oid", "okta-a"}, "github": {"", ""}} {
+		if err := f.st.Connectors().Upsert(t.Context(), "tenant-a", store.Connector{
+			Name: name, Kind: store.ConnectorOIDC, DisplayName: name, Enabled: true, Config: []byte(`{}`),
+			DirectoryClaim: tie[0], DirectorySource: tie[1],
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp := f.do(t, "GET", "/api/v1/session/methods", "", nil)
+	mustStatus(t, resp, http.StatusOK)
+	var body struct {
+		Methods []map[string]any `json:"methods"`
+	}
+	decodeInto(t, resp, &body)
+	byName := map[string]map[string]any{}
+	for _, m := range body.Methods {
+		name, _ := m["name"].(string)
+		byName[name] = m
+	}
+	if m := byName["okta"]; m["directory_claim"] != "oid" || m["directory_source"] != "okta-a" {
+		t.Errorf("the tied connector shows %v", m)
+	}
+	if m := byName["github"]; m == nil || m["directory_claim"] != nil || m["directory_source"] != nil {
+		t.Errorf("the untied connector shows %v", m)
+	}
 }

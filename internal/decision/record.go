@@ -91,8 +91,8 @@ type recordedInputs struct {
 // that had to be joined to the lock table to say so would stop saying so the
 // moment the lock was lifted (M4).
 type recordedStanding struct {
-	// Code is the reason code the deny carried: `subject_locked` or
-	// `target_quarantined`.
+	// Code is the reason code the deny carried: `subject_locked`,
+	// `subject_deactivated` or `target_quarantined`.
 	Code string `json:"code"`
 	// SubjectID or TargetID is what the denial stood on.
 	SubjectID   string             `json:"subject_id,omitempty"`
@@ -102,14 +102,18 @@ type recordedStanding struct {
 	ReasonCode  string             `json:"reason_code"`
 	Reason      string             `json:"reason"`
 	ExternalRef string             `json:"external_ref"`
-	ActionID    string             `json:"action_id"`
+	// Source is the directory ExternalRef is an id in, on the directory's
+	// deactivation (0042). It is absent on a lock, a quarantine and a record
+	// written before the directory had a source.
+	Source   string `json:"source,omitempty"`
+	ActionID string `json:"action_id"`
 }
 
 func newRecordedStanding(d standingDenial) recordedStanding {
 	return recordedStanding{
 		Code: d.code, SubjectID: d.subjectID, TargetID: d.targetID, PlacedAt: timeString(d.placedAt),
 		PlacedBy:   recordedGrantActor{Subject: d.placedBy.Subject, Principal: d.placedBy.Principal, BreakGlass: d.placedBy.BreakGlass},
-		ReasonCode: d.reasonCode, Reason: d.reason, ExternalRef: d.externalRef, ActionID: d.actionID,
+		ReasonCode: d.reasonCode, Reason: d.reason, ExternalRef: d.externalRef, Source: d.source, ActionID: d.actionID,
 	}
 }
 

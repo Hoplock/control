@@ -13,9 +13,15 @@ import (
 	"github.com/hoplock/control/internal/store/storetest"
 )
 
+// sourceA and sourceB are two directories feeding one tenant (0042).
+const (
+	sourceA = "okta-a"
+	sourceB = "azure-b"
+)
+
 func directoryLink(externalID, subjectID string) store.DirectoryLink {
 	return store.DirectoryLink{
-		ExternalID: externalID, SubjectID: subjectID, Provider: "hoplock/scim",
+		Source: sourceA, ExternalID: externalID, SubjectID: subjectID, Provider: "hoplock/scim",
 		LinkedAt: time.Now().UTC().Truncate(time.Microsecond), Provisioned: true,
 		UpdatedAt: time.Now().UTC().Truncate(time.Microsecond), Username: "alice",
 		Attributes: map[string]string{"department": "platform"}, GroupIDs: []string{"grp-1", "grp-2"},
@@ -32,11 +38,11 @@ func TestADirectoryLinkRoundTripsAndNeverMoves(t *testing.T) {
 	if err := st.DirectoryLinks().Put(ctx, tenantA, l); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	got, err := st.DirectoryLinks().Get(ctx, tenantA, "u-1")
+	got, err := st.DirectoryLinks().Get(ctx, tenantA, sourceA, "u-1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.SubjectID != "dir-a" || !got.UpdatedAt.Equal(l.UpdatedAt) || got.Attributes["department"] != "platform" ||
+	if got.Source != sourceA || got.SubjectID != "dir-a" || !got.UpdatedAt.Equal(l.UpdatedAt) || got.Attributes["department"] != "platform" ||
 		!slices.Equal(got.GroupIDs, l.GroupIDs) || got.Deactivated() {
 		t.Errorf("round trip = %+v", got)
 	}
@@ -49,11 +55,31 @@ func TestADirectoryLinkRoundTripsAndNeverMoves(t *testing.T) {
 		t.Errorf("re-pointing a link: %v, want a conflict", err)
 	}
 	// Another tenant has no such link, and can hold its own under the id.
-	if _, err := st.DirectoryLinks().Get(ctx, tenantB, "u-1"); !store.IsNotFound(err) {
+	if _, err := st.DirectoryLinks().Get(ctx, tenantB, sourceA, "u-1"); !store.IsNotFound(err) {
 		t.Errorf("tenant B reads tenant A's link: %v", err)
 	}
 	if err := st.DirectoryLinks().Put(ctx, tenantB, directoryLink("u-1", "dir-b")); err != nil {
 		t.Errorf("tenant B's own link under the same id: %v", err)
+	}
+	// Another source in the same tenant is another identity under the same
+	// id, and one subject is still one identity in one directory.
+	if _, err := st.DirectoryLinks().Get(ctx, tenantA, sourceB, "u-1"); !store.IsNotFound(err) {
+		t.Errorf("source B reads source A's link: %v", err)
+	}
+	other := directoryLink("u-1", "dir-c")
+	other.Source = sourceB
+	if err := st.DirectoryLinks().Put(ctx, tenantA, other); err != nil {
+		t.Errorf("source B's own link under the same id: %v", err)
+	}
+	same := directoryLink("u-2", "dir-a")
+	same.Source = sourceB
+	if err := st.DirectoryLinks().Put(ctx, tenantA, same); err == nil {
+		t.Error("a second directory identity linked to subject dir-a was accepted")
+	}
+	noSource := directoryLink("u-3", "dir-d")
+	noSource.Source = ""
+	if err := st.DirectoryLinks().Put(ctx, tenantA, noSource); !store.IsInvalid(err) {
+		t.Errorf("a link with no source: %v, want a refusal", err)
 	}
 }
 
@@ -76,7 +102,8 @@ func TestSubjectStandingCarriesTheDeactivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Directory == nil || got.Directory.ExternalID != "u-1" || got.Directory.Provider != "hoplock/scim" || got.Deactivated() {
+	if got.Directory == nil || got.Directory.ExternalID != "u-1" || got.Directory.Source != sourceA ||
+		got.Directory.Provider != "hoplock/scim" || got.Deactivated() {
 		t.Errorf("Standing of an active directory subject = %+v", got.Directory)
 	}
 
@@ -97,7 +124,7 @@ func TestSubjectStandingCarriesTheDeactivation(t *testing.T) {
 
 	// A deactivation kept ahead of the subject's create.
 	early := store.DirectoryLink{
-		ExternalID: "u-2", SubjectID: "dir-early", Provider: "hoplock/scim", LinkedAt: time.Now().UTC(),
+		Source: sourceA, ExternalID: "u-2", SubjectID: "dir-early", Provider: "hoplock/scim", LinkedAt: time.Now().UTC(),
 		DeactivatedAt: time.Now().UTC(), DeactivationReason: "offboarded",
 	}
 	if err := st.DirectoryLinks().Put(ctx, tenantA, early); err != nil {
@@ -137,33 +164,33 @@ func TestDirectoryGroupsAndTheirMembers(t *testing.T) {
 	if err := st.DirectoryLinks().Put(ctx, tenantA, unprovisioned); err != nil {
 		t.Fatal(err)
 	}
-	members, err := st.DirectoryLinks().Members(ctx, tenantA, "grp-1")
+	members, err := st.DirectoryLinks().Members(ctx, tenantA, sourceA, "grp-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(members) != 2 || members[0].SubjectID != "dir-a" || members[1].SubjectID != "dir-b" {
 		t.Errorf("Members = %+v", members)
 	}
-	if members, _ := st.DirectoryLinks().Members(ctx, tenantB, "grp-1"); len(members) != 0 {
+	if members, _ := st.DirectoryLinks().Members(ctx, tenantB, sourceA, "grp-1"); len(members) != 0 {
 		t.Errorf("tenant B sees %d of tenant A's members", len(members))
 	}
 
 	for _, g := range []store.DirectoryGroup{
-		{ExternalID: "grp-1", Provider: "hoplock/scim", Name: "SRE Team", UpdatedAt: time.Now()},
-		{ExternalID: "grp-2", Provider: "hoplock/scim", Name: "DBAs", UpdatedAt: time.Now(), DeletedAt: time.Now()},
+		{Source: sourceA, ExternalID: "grp-1", Provider: "hoplock/scim", Name: "SRE Team", UpdatedAt: time.Now()},
+		{Source: sourceA, ExternalID: "grp-2", Provider: "hoplock/scim", Name: "DBAs", UpdatedAt: time.Now(), DeletedAt: time.Now()},
 	} {
 		if err := st.DirectoryGroups().Put(ctx, tenantA, g); err != nil {
 			t.Fatal(err)
 		}
 	}
-	names, err := st.DirectoryGroups().Names(ctx, tenantA, []string{"grp-1", "grp-2", "grp-none"})
+	names, err := st.DirectoryGroups().Names(ctx, tenantA, sourceA, []string{"grp-1", "grp-2", "grp-none"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(names) != 1 || names["grp-1"] != "SRE Team" {
 		t.Errorf("Names = %v, want only the live group", names)
 	}
-	if g, err := st.DirectoryGroups().Get(ctx, tenantA, "grp-2"); err != nil || !g.Deleted() {
+	if g, err := st.DirectoryGroups().Get(ctx, tenantA, sourceA, "grp-2"); err != nil || !g.Deleted() || g.Source != sourceA {
 		t.Errorf("the tombstone = %+v, %v", g, err)
 	}
 }
@@ -231,7 +258,7 @@ func TestTheDirectoryLocksAreTakenInsideATransaction(t *testing.T) {
 	st := storetest.New(t)
 	ctx := t.Context()
 	for name, lock := range map[string]func(*store.Store) error{
-		"links":     func(s *store.Store) error { return s.DirectoryLinks().Lock(ctx, tenantA, "u-1") },
+		"links":     func(s *store.Store) error { return s.DirectoryLinks().Lock(ctx, tenantA, sourceA, "u-1") },
 		"groups":    func(s *store.Store) error { return s.DirectoryGroups().Lock(ctx, tenantA) },
 		"share":     func(s *store.Store) error { return s.DirectoryGroups().Share(ctx, tenantA) },
 		"principal": func(s *store.Store) error { return s.Subjects().LockPrincipal(ctx, tenantA, "alice") },

@@ -91,6 +91,15 @@ func checkLine(field, v string, limit int) *refusal {
 
 func hasControl(v string) bool { return strings.ContainsFunc(v, unicode.IsControl) }
 
+// checkSource holds a directory source to its pattern (0042): required, and
+// ^[a-z0-9][a-z0-9-]{0,62}$.
+func checkSource(v string) *refusal {
+	if problem := identity.DirectorySourceProblem(v); problem != "" {
+		return invalidField("source", "%s: a source matches ^[a-z0-9][a-z0-9-]{0,62}$", problem)
+	}
+	return nil
+}
+
 // clean returns v if it is fit to be written to a record, and "" if it is not.
 func clean(v string) string {
 	if len(v) > maxIDLen || !utf8.ValidString(v) || hasControl(v) {
@@ -107,6 +116,7 @@ func instant(t time.Time) time.Time { return t.UTC().Truncate(time.Microsecond) 
 // subjectRequest is an upsert that passed validation.
 type subjectRequest struct {
 	tenant      store.Tenant
+	source      string
 	externalID  string
 	username    string
 	displayName string
@@ -119,10 +129,13 @@ type subjectRequest struct {
 
 func validateSubject(in ext.SyncedSubject) (subjectRequest, *refusal) {
 	req := subjectRequest{
-		tenant: store.Tenant(in.Tenant), externalID: in.ExternalID, username: in.Username,
+		tenant: store.Tenant(in.Tenant), source: in.Source, externalID: in.ExternalID, username: in.Username,
 		displayName: in.DisplayName, email: in.Email, active: in.Active,
 	}
 	if bad := checkID("tenant", string(in.Tenant)); bad != nil {
+		return req, bad
+	}
+	if bad := checkSource(in.Source); bad != nil {
 		return req, bad
 	}
 	if bad := checkID("external_id", in.ExternalID); bad != nil {
@@ -180,14 +193,18 @@ func validateSubject(in ext.SyncedSubject) (subjectRequest, *refusal) {
 // groupRequest is a group upsert that passed validation.
 type groupRequest struct {
 	tenant     store.Tenant
+	source     string
 	externalID string
 	name       string
 	updatedAt  time.Time
 }
 
 func validateGroup(in ext.SyncedGroup) (groupRequest, *refusal) {
-	req := groupRequest{tenant: store.Tenant(in.Tenant), externalID: in.ExternalID, name: in.Name}
+	req := groupRequest{tenant: store.Tenant(in.Tenant), source: in.Source, externalID: in.ExternalID, name: in.Name}
 	if bad := checkID("tenant", string(in.Tenant)); bad != nil {
+		return req, bad
+	}
+	if bad := checkSource(in.Source); bad != nil {
 		return req, bad
 	}
 	if bad := checkID("external_id", in.ExternalID); bad != nil {
@@ -206,13 +223,16 @@ func validateGroup(in ext.SyncedGroup) (groupRequest, *refusal) {
 	return req, nil
 }
 
-// validateRef holds a call that names a tenant and an id, and an optional
-// reason code, to what it must be.
-func validateRef(tenant ext.Tenant, externalID, reasonCode string) *refusal {
-	if bad := checkID("tenant", string(tenant)); bad != nil {
+// validateRef holds a call that names one identity or group in one directory,
+// and an optional reason code, to what it must be.
+func validateRef(ref ext.DirectoryRef, reasonCode string) *refusal {
+	if bad := checkID("tenant", string(ref.Tenant)); bad != nil {
 		return bad
 	}
-	if bad := checkID("external_id", externalID); bad != nil {
+	if bad := checkSource(ref.Source); bad != nil {
+		return bad
+	}
+	if bad := checkID("external_id", ref.ExternalID); bad != nil {
 		return bad
 	}
 	return checkLine("reason_code", reasonCode, maxCodeLen)
