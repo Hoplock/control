@@ -114,6 +114,10 @@ type SubjectLockRepository interface {
 	Place(ctx context.Context, tenant Tenant, l SubjectLock) (SubjectLock, bool, error)
 	// Lift deletes a lock and returns it. Nothing standing is ErrNotFound.
 	Lift(ctx context.Context, tenant Tenant, subjectID string) (SubjectLock, error)
+	// LiftIfPlacedBy deletes the lock only if the inbound action actionID,
+	// performed as principal, placed it, in one statement (0041). Nothing
+	// lifted — no lock, or one somebody else placed — is ErrNotFound.
+	LiftIfPlacedBy(ctx context.Context, tenant Tenant, subjectID, actionID, principal string) (SubjectLock, error)
 	// Get returns the lock on a subject. Nothing standing is ErrNotFound.
 	Get(ctx context.Context, tenant Tenant, subjectID string) (SubjectLock, error)
 	// For returns the locks standing on these subjects, by subject id, for a
@@ -160,6 +164,13 @@ type TargetRepository interface {
 	// GetByHostname is the decision path's lookup: one index hit returning
 	// the labels policy matches on, with no join and no second round trip.
 	GetByHostname(ctx context.Context, tenant Tenant, hostname string) (Target, error)
+	// ForShare returns the targets with these ids, by id, holding each row
+	// FOR SHARE until the transaction ends (0041). It is refused outside a
+	// transaction.
+	ForShare(ctx context.Context, tenant Tenant, targetIDs []string) (map[string]Target, error)
+	// ForShareByHostnames returns the targets whose hostname matches one of
+	// these case-insensitively, held as ForShare holds them (0041).
+	ForShareByHostnames(ctx context.Context, tenant Tenant, hostnames []string) ([]Target, error)
 	// StandingByHostname is GetByHostname with the quarantine on the row, read
 	// in the same statement (M28): the decision path's lookup, so a
 	// quarantine costs it no round trip.
@@ -264,6 +275,9 @@ type DecisionRepository interface {
 	// SessionExists reports whether any decision was recorded for a session
 	// in the tenant (0039).
 	SessionExists(ctx context.Context, tenant Tenant, sessionID string) (bool, error)
+	// SessionReach returns the distinct subjects and targets a session's
+	// decision records name (0041). Both empty is no record of the session.
+	SessionReach(ctx context.Context, tenant Tenant, sessionID string) (SessionReach, error)
 	// Insert stores a decision record. A duplicate decision id is
 	// ErrConflict.
 	Insert(ctx context.Context, tenant Tenant, d Decision) error
@@ -449,6 +463,10 @@ type GrantRepository interface {
 	Insert(ctx context.Context, tenant Tenant, g Grant) error
 	// Get returns one grant. Absent is ErrNotFound.
 	Get(ctx context.Context, tenant Tenant, grantID string) (Grant, error)
+	// GetForUpdate returns one grant and holds its row against every other
+	// writer until the transaction ends (0041). It is refused outside a
+	// transaction. Absent is ErrNotFound.
+	GetForUpdate(ctx context.Context, tenant Tenant, grantID string) (Grant, error)
 	// GetByAssertion returns the grant a push of this assertion produced,
 	// by the external system's name and the assertion's own id (0013).
 	// Absent is ErrNotFound.

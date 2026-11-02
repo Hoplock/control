@@ -1,0 +1,33 @@
+-- 0022 — a confined inbound action: the unlock that lifts only its own lock
+-- (prompt 0041; PLAN M28, M15, M12).
+--
+-- Scope: one column on `action_executions`. No row is rewritten, no index is
+-- built, and nothing on the decision path reads the table.
+--
+-- ---------------------------------------------------------------------------
+-- WHAT IS PART OF AN ACTION'S IDENTITY, AND WHAT IS NOT
+-- ---------------------------------------------------------------------------
+--
+-- 0020's ledger answers a repeat of an action id with the first result, and a
+-- different action under the same id with a conflict. What an action IS — its
+-- kind and its selector — is stored so the two can be told apart.
+--
+-- An unlock with `IfPlacedBy` set lifts a lock only if that action of this
+-- handler placed it, and leaves any other standing. That changes what the
+-- unlock does, so it is part of the action: under one action id, an unlock
+-- with a different `IfPlacedBy`, or with one where the first had none, is a
+-- different action and a conflict, never the first result returned for a
+-- question that was not asked.
+--
+-- The scope an action is confined to (`Within`) is NOT stored. It is who may
+-- ask, not what is asked: the same action asked by two credentials is the same
+-- action, and each ask is checked against its own scope, a repeat included,
+-- before the ledger answers.
+--
+-- Rows written before this migration read '', which is what they asked for:
+-- no condition.
+
+ALTER TABLE action_executions
+    -- The action id the unlock required the lock to have been placed under,
+    -- '' for an unconditional unlock and for every other kind.
+    ADD COLUMN if_placed_by text NOT NULL DEFAULT '';

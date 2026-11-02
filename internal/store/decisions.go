@@ -174,6 +174,49 @@ func (r decisionRepo) SessionExists(ctx context.Context, tenant Tenant, sessionI
 	return found, wrap(op, err)
 }
 
+// SessionReach is what one session reached, from its decision records: every
+// subject and every target they name, each once and in order. A chained session
+// has one record per hop, so every hop's target is here. A target id is empty
+// for a hop to a hostname this server holds no row for. Both empty means the
+// tenant has no record of the session.
+type SessionReach struct {
+	SubjectIDs []string
+	TargetIDs  []string
+}
+
+// SessionReach returns the distinct subjects and targets of a session's
+// decision records, read over decisions_by_session_idx. It is what a confined
+// inbound action is checked against (0041); another tenant's session reaches
+// nothing.
+func (r decisionRepo) SessionReach(ctx context.Context, tenant Tenant, sessionID string) (SessionReach, error) {
+	const op = "store.Decisions.SessionReach"
+	if err := checkTenant(op, tenant); err != nil {
+		return SessionReach{}, err
+	}
+	if sessionID == "" {
+		// "" is no session, and a lookup of it would match every record that
+		// belongs to none.
+		return SessionReach{}, invalid(op, "a session id is required")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	// `session_id <> ''` is the partial index's own predicate, stated so the
+	// planner can use the index whatever plan it caches for the parameter.
+	var out SessionReach
+	err := r.s.db.QueryRow(ctx, `
+		SELECT COALESCE(array_agg(DISTINCT subject_id ORDER BY subject_id), '{}'),
+		       COALESCE(array_agg(DISTINCT target_id ORDER BY target_id), '{}')
+		FROM decisions
+		WHERE tenant = $1 AND session_id = $2 AND session_id <> ''`,
+		tenant, sessionID).Scan(&out.SubjectIDs, &out.TargetIDs)
+	if err != nil {
+		return SessionReach{}, wrap(op, err)
+	}
+	return out, nil
+}
+
 // ListBySession returns the decisions taken for one SSH session, newest first.
 //
 // It is the lookup an operator actually arrives with: the proxy tells a user

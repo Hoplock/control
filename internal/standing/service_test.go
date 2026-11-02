@@ -332,3 +332,58 @@ func TestADenialIsTheTenantsOwn(t *testing.T) {
 		t.Errorf("tenant acme's lock was lifted: %v", err)
 	}
 }
+
+// A conditional lift (0041) lifts only the lock its action and principal
+// placed, records only a lift it made, and is refused half-stated; a
+// quarantine takes no condition at all.
+func TestAConditionalLiftLiftsOnlyItsOwnLock(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := t.Context()
+	handler := standing.Actor{Principal: "action-handler:soar", Action: &access.ActionRef{ID: "A", Kind: "lock_subject", Provider: "soar"}}
+	if _, err := f.svc.Lock(ctx, tenant, handler, standing.LockRequest{SubjectID: "alice", Reason: "Suspended."}); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, req := range map[string]standing.LiftRequest{
+		"another action":    {ID: "alice", IfPlacedBy: "B", PlacedByPrincipal: "action-handler:soar"},
+		"another principal": {ID: "alice", IfPlacedBy: "A", PlacedByPrincipal: "action-handler:other"},
+	} {
+		res, err := f.svc.Unlock(ctx, tenant, handler, req)
+		if err != nil || res.Lifted {
+			t.Errorf("%s: %+v, %v; want nothing lifted", name, res, err)
+		}
+	}
+	if n := f.rec.count(audit.EventSubjectUnlocked); n != 0 {
+		t.Errorf("a lift that lifted nothing wrote %d records", n)
+	}
+	for name, req := range map[string]standing.LiftRequest{
+		"an action and no principal": {ID: "alice", IfPlacedBy: "A"},
+		"a principal and no action":  {ID: "alice", PlacedByPrincipal: "action-handler:soar"},
+	} {
+		if _, err := f.svc.Unlock(ctx, tenant, handler, req); err == nil {
+			t.Errorf("%s: a half-stated condition was accepted", name)
+		}
+	}
+	if _, err := f.st.SubjectLocks().Get(ctx, tenant, "alice"); err != nil {
+		t.Fatalf("the lock was lifted by a condition it does not meet: %v", err)
+	}
+
+	res, err := f.svc.Unlock(ctx, tenant, handler, standing.LiftRequest{ID: "alice", IfPlacedBy: "A", PlacedByPrincipal: "action-handler:soar"})
+	if err != nil || !res.Lifted || res.Lock.ActionID != "A" {
+		t.Fatalf("the lift of its own lock = %+v, %v", res, err)
+	}
+	if n := f.rec.count(audit.EventSubjectUnlocked); n != 1 {
+		t.Errorf("%d operator.subject.unlocked records, want one", n)
+	}
+
+	if _, err := f.svc.Quarantine(ctx, tenant, operator, standing.QuarantineRequest{TargetID: "t-db"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Release(ctx, tenant, operator, standing.LiftRequest{ID: "t-db", IfPlacedBy: "A", PlacedByPrincipal: "p-operator"}); err == nil {
+		t.Error("a quarantine was released under a condition, which it does not take")
+	}
+	if _, err := f.st.TargetQuarantines().Get(ctx, tenant, "t-db"); err != nil {
+		t.Errorf("the quarantine was lifted: %v", err)
+	}
+}
