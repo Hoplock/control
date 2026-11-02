@@ -197,3 +197,27 @@ func deleteOne(ctx context.Context, s *Store, op, sql string, args ...any) error
 	}
 	return err
 }
+
+// MigrateThrough applies the pending migrations up to and including version,
+// and no later one. It is how a test proves a migration applies forward over
+// rows written under the schema before it, and it is compiled into the test
+// binary alone.
+func MigrateThrough(ctx context.Context, s *Store, version int64) error {
+	const op = "test.MigrateThrough"
+	if err := s.ensureMigrationsTable(ctx, op); err != nil {
+		return err
+	}
+	plan, err := s.PlanMigrations(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range plan.Pending {
+		if m.Version > version {
+			break
+		}
+		if err := s.applyMigration(ctx, op, m); err != nil {
+			return err
+		}
+	}
+	return nil
+}

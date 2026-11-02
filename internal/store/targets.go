@@ -27,6 +27,90 @@ func (r targetRepo) Get(ctx context.Context, tenant Tenant, targetID string) (Ta
 	return scanTarget(op, row)
 }
 
+// ForShare returns the targets with these ids that this tenant holds, by id,
+// and holds each row FOR SHARE until the transaction ends: a relabel or a
+// delete committed meanwhile waits for it, so what a check read is what the act
+// beside it acts on (0041). An id with no row is absent from the map. The
+// decision path takes no row lock, so it is not slowed.
+//
+// A row lock taken outside a transaction is released the instant the
+// statement ends, so it is refused there.
+func (r targetRepo) ForShare(ctx context.Context, tenant Tenant, targetIDs []string) (map[string]Target, error) {
+	const op = "store.Targets.ForShare"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+	if r.s.pool != nil {
+		return nil, invalid(op, "a row is held FOR SHARE inside a transaction")
+	}
+	out := make(map[string]Target, len(targetIDs))
+	if len(targetIDs) == 0 {
+		return out, nil
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.s.db.Query(ctx, `
+		SELECT `+targetColumns+`
+		FROM targets
+		WHERE tenant = $1 AND target_id = ANY($2)
+		ORDER BY target_id
+		FOR SHARE`, tenant, targetIDs)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		t, err := scanTarget(op, rows)
+		if err != nil {
+			return nil, err
+		}
+		out[t.ID] = t
+	}
+	return out, wrap(op, rows.Err())
+}
+
+// ForShareByHostnames returns the targets whose hostname is one of these, held
+// FOR SHARE as ForShare holds them. The match is case-insensitive, as a grant's
+// selector matches (DNS is), so a hostname can name more than one row; the
+// hostnames are expected in lower case, as a grant's selector stores them.
+func (r targetRepo) ForShareByHostnames(ctx context.Context, tenant Tenant, hostnames []string) ([]Target, error) {
+	const op = "store.Targets.ForShareByHostnames"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+	if r.s.pool != nil {
+		return nil, invalid(op, "a row is held FOR SHARE inside a transaction")
+	}
+	if len(hostnames) == 0 {
+		return nil, nil
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.s.db.Query(ctx, `
+		SELECT `+targetColumns+`
+		FROM targets
+		WHERE tenant = $1 AND lower(hostname) = ANY($2)
+		ORDER BY target_id
+		FOR SHARE`, tenant, hostnames)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+	var out []Target
+	for rows.Next() {
+		t, err := scanTarget(op, rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, wrap(op, rows.Err())
+}
+
 func (r targetRepo) GetByHostname(ctx context.Context, tenant Tenant, hostname string) (Target, error) {
 	const op = "store.Targets.GetByHostname"
 	if err := checkTenant(op, tenant); err != nil {

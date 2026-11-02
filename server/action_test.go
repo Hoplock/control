@@ -171,6 +171,23 @@ func TestTheDaemonStartsTheActionHandlerOnceBeforeAnyListenerAcceptsAndStopsItOn
 		t.Errorf("the operator's view of the lock = %+v, want it placed by the handler under its action id", subject)
 	}
 
+	// A confined action (0041): the handler's executor refuses what reaches
+	// outside the scope it hands over, and its expiry lifts only its own lock.
+	confined := &ext.ActionScope{SubjectIDs: []string{"bob@example.com"}}
+	if res, err := exec.Execute(ctx, ext.Action{
+		Tenant: "default", Kind: ext.ActionUnlockSubject, ActionID: "a-2", SubjectID: "alice@example.com",
+		IfPlacedBy: "a-1", Within: confined,
+	}); ext.KindOf(err) != ext.KindDenied || res.ReasonCode != "out_of_scope" || strings.Contains(err.Error(), "alice") {
+		t.Errorf("an unlock outside its scope = %+v, %v; want KindDenied out_of_scope naming no subject", res, err)
+	}
+	confined.SubjectIDs = append(confined.SubjectIDs, "alice@example.com")
+	if res, err := exec.Execute(ctx, ext.Action{
+		Tenant: "default", Kind: ext.ActionUnlockSubject, ActionID: "a-3", SubjectID: "alice@example.com",
+		IfPlacedBy: "a-1", Within: confined,
+	}); err != nil || res.Affected != 1 {
+		t.Errorf("the expiry of its own lock inside its scope = %+v, %v; want it lifted", res, err)
+	}
+
 	// The listing says it is registered and running.
 	registered, started, startError := actionRow(t, base, auditor)
 	if !registered || started == nil || !*started || startError != "" {

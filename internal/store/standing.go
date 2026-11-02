@@ -178,6 +178,34 @@ func (r subjectLockRepo) Lift(ctx context.Context, tenant Tenant, subjectID stri
 		RETURNING `+subjectLockColumns, tenant, subjectID))
 }
 
+// LiftIfPlacedBy deletes the lock on a subject only if the inbound action
+// actionID of the handler principal placed it, and returns it. A lock placed by
+// an operator, by another action, or by another handler is left standing, and
+// nothing lifted is ErrNotFound; the caller tells "no lock" from "not this
+// lock" by reading the lock afterwards.
+//
+// It is one statement, so no lock placed between a read and a delete can be
+// lifted by it.
+func (r subjectLockRepo) LiftIfPlacedBy(ctx context.Context, tenant Tenant, subjectID, actionID, principal string) (SubjectLock, error) {
+	const op = "store.SubjectLocks.LiftIfPlacedBy"
+	if err := checkTenant(op, tenant); err != nil {
+		return SubjectLock{}, err
+	}
+	if actionID == "" || principal == "" {
+		// An operator's lock has no action id: a condition that matched ''
+		// would lift exactly the locks it exists to leave standing.
+		return SubjectLock{}, invalid(op, "the action id and the principal that placed the lock are required")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	return scanSubjectLock(op, r.s.db.QueryRow(ctx, `
+		DELETE FROM subject_locks
+		WHERE tenant = $1 AND subject_id = $2 AND action_id = $3 AND locked_by_principal = $4
+		RETURNING `+subjectLockColumns, tenant, subjectID, actionID, principal))
+}
+
 // Get returns the lock on a subject. Nothing standing is ErrNotFound.
 func (r subjectLockRepo) Get(ctx context.Context, tenant Tenant, subjectID string) (SubjectLock, error) {
 	const op = "store.SubjectLocks.Get"
@@ -542,17 +570,23 @@ type ActionExecution struct {
 	// RecordedAt is when the record of the act was written; zero while a kill
 	// that owes one has not been published.
 	RecordedAt time.Time
+	// IfPlacedBy is the action id an unlock required the lock to have been
+	// placed under, empty for an unconditional unlock and every other kind. It
+	// changes what the action does, so it is part of the action's identity.
+	// The scope the action was confined to is not stored: it is who asked,
+	// not what was asked.
+	IfPlacedBy string
 }
 
 type actionExecutionRepo struct{ s *Store }
 
 const actionExecutionColumns = `action_id, kind, subject_id, session_id, target_id, grant_id,
-	affected, reason_code, applied_at, provider, holder_reason, COALESCE(recorded_at, 'epoch')`
+	affected, reason_code, applied_at, provider, holder_reason, COALESCE(recorded_at, 'epoch'), if_placed_by`
 
 func scanActionExecution(op string, row rowScanner) (ActionExecution, error) {
 	var a ActionExecution
 	err := row.Scan(&a.ActionID, &a.Kind, &a.SubjectID, &a.SessionID, &a.TargetID, &a.GrantID,
-		&a.Affected, &a.ReasonCode, &a.AppliedAt, &a.Provider, &a.HolderReason, &a.RecordedAt)
+		&a.Affected, &a.ReasonCode, &a.AppliedAt, &a.Provider, &a.HolderReason, &a.RecordedAt, &a.IfPlacedBy)
 	if err != nil {
 		return ActionExecution{}, wrap(op, err)
 	}
@@ -627,10 +661,10 @@ func (r actionExecutionRepo) Insert(ctx context.Context, tenant Tenant, a Action
 	}
 	_, err := r.s.db.Exec(ctx, `
 		INSERT INTO action_executions (tenant, action_id, kind, subject_id, session_id, target_id,
-			grant_id, affected, reason_code, applied_at, provider, holder_reason, recorded_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+			grant_id, affected, reason_code, applied_at, provider, holder_reason, recorded_at, if_placed_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		tenant, a.ActionID, a.Kind, a.SubjectID, a.SessionID, a.TargetID, a.GrantID,
-		a.Affected, a.ReasonCode, a.AppliedAt.UTC(), a.Provider, a.HolderReason, recorded)
+		a.Affected, a.ReasonCode, a.AppliedAt.UTC(), a.Provider, a.HolderReason, recorded, a.IfPlacedBy)
 	return wrap(op, err)
 }
 

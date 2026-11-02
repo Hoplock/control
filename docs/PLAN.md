@@ -123,7 +123,7 @@ decision.
 | **M25** | the event stream's state is in the store, and the cluster bus only wakes nodes | live | §3, §4, §5, §10, §11 |
 | **M26** | every north-bound list is bounded by its caller and says where it stopped | live | §3, §7, §10 |
 | **M27** | the north-bound listener is four namespaces — Control's API, a host's API, Control's console, a host's console — and no path is in two | live | §3, §10 |
-| **M28** | a lock, a quarantine and the directory's deactivation are standing denials applied above the engine; an inbound action pulls only levers an operator can pull | live | §3, §5, §6, §7, §10 |
+| **M28** | a lock, a quarantine and the directory's deactivation are standing denials applied above the engine; an inbound action pulls only levers an operator can pull, held to the scope its handler hands over, and its unlock can lift only the lock it placed | live | §3, §5, §6, §7, §10 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -1405,7 +1405,8 @@ decision.
 - **M28 — A lock, a quarantine and the directory's deactivation are standing
   denials applied above the engine, and an inbound action pulls only levers an
   operator can pull (new; completes M15's *disabled* form for the action point;
-  0040 adds the deactivation, the third denial).** A **subject lock** and a
+  0040 adds the deactivation, the third denial; 0041 confines an inbound
+  action).** A **subject lock** and a
   **target quarantine** are standing denials an operator places and lifts on
   the north-bound API and that a registered `ext.ActionHandler` places through
   the same code. While one stands, every authorize call it covers is a deny —
@@ -1483,7 +1484,37 @@ decision.
   that access survives the failure of everything else, and a third party able to
   lock it out holds a denial of service. An operator, acting deliberately,
   still can. Lifting a quarantine is an operator's act only, and a lock's expiry
-  is the requester's to drive by executing `unlock_subject`.
+  is the requester's to drive by executing `unlock_subject` with `IfPlacedBy`
+  set to the action id that placed it: that unlock lifts the lock only if that
+  action of this handler placed it (its `action_id` and its
+  `locked_by_principal`, in one `DELETE`), and otherwise leaves it standing
+  (`not_this_lock`), so an expiry cannot lift a lock an operator placed after
+  the handler's was lifted. The condition is part of the action's identity in
+  the ledger (`action_executions.if_placed_by`).
+
+  **An action is held to the scope its handler hands over (0041).** A handler
+  confines an action to what its requester may touch by setting
+  `ext.Action.Within` — subject ids, target ids, target labels, each that is set
+  holding for everything the action reaches — and Control checks the action's
+  reach against it from its own data, inside the transaction that performs the
+  act, after the ledger's lock and before the ledger answers, so a repeat is
+  checked too. What a kind reaches is fixed: a kill by session, every subject
+  and target on the session's decision records; a kill by subject, a lock and an
+  unlock, that subject and every target; a revocation, the grant's subject and
+  the targets its selector can reach; a quarantine, that target and every
+  subject. A dimension a kind reaches whole fails a scope that confines it, and
+  a grant's selector is inside a target scope only when it cannot reach outside
+  it — it lists hostnames, each naming a held target the scope admits, unless
+  its own labels require what the scope requires. The rows the check reads are
+  held until the act (targets `FOR SHARE`, the grant as its revocation holds
+  it), so nothing it read moves before the act; the decision path takes no such
+  lock. An action outside is refused on purpose — `KindDenied`, `out_of_scope`,
+  never an outage (M11) — and a confined requester learns nothing outside its
+  scope: a selector Control holds nothing for is `out_of_scope` unless the scope
+  names it by id alone, and the error names the scope field, never the id.
+  The scope is who asked, not what was asked, so it is never stored. An
+  operator's levers stay unconfined: an operator's scope is the RBAC of a
+  person.
 
   **A handler that fails to start does not stop Control.** Access must not
   depend on somebody else's automation (M11), so a `Start` that errors,
@@ -1896,7 +1927,12 @@ for nothing.
 - **`internal/action`** — Control's side of the inbound action channel (M15,
   M28): `Executor` implements `ext.ActionExecutor` for the five `ActionKind`s
   over `internal/standing`, `internal/access` and `internal/revoke`, idempotent
-  per tenant on `ActionID` through a ledger written in the act's transaction;
+  per tenant on `ActionID` through a ledger written in the act's transaction.
+  A confined action (`ext.Action.Within`, 0041) is checked in that transaction
+  before the ledger answers: a reach resolver per kind reads what the action
+  reaches from the store — a session's decision records, the grant row and the
+  targets its selector names, a target row — holding each row until the act,
+  and an action that reaches outside is refused (`out_of_scope`);
   `Runner` calls the one registered `ext.ActionHandler`'s `Start` and `Stop` and
   reports whether it is running. With no handler registered neither exists.
 - **`internal/provision`** — Control's side of identity provisioning (M15, M7,
@@ -3693,8 +3729,18 @@ not say why, and a grant the explanation names that the inputs do not hold.
   `action.unchanged` when it found nothing to act on, which is not the lever's
   event because that would claim an act that did not happen; `action.refused`
   when it refused, with the field at fault or the reason code
-  (`break_glass_subject`) and what was sent only where it is fit to be written.
-  A repeat of an action writes nothing. The decision a standing denial made is
+  (`break_glass_subject`, `out_of_scope`) and what was sent only where it is fit
+  to be written. An `out_of_scope` refusal also carries `scope_field`
+  (`subject_ids`, `target_ids` or `target_labels`) and `outside`: the first
+  subject or target id found outside; `all_subjects` or `all_targets` for a
+  dimension the kind reaches whole or a grant selector that lists no hostname;
+  a grant selector's hostname as written, for a wildcard or a hostname with no
+  target row; `unrecorded_target` for a session's hop to a hostname with no
+  row; or, with `unknown_selector` naming the selector, the id of a session,
+  grant or target Control holds nothing for. An unlock with `IfPlacedBy` that
+  found a lock its action did not place is `action.unchanged` with
+  `outcome_reason` `not_this_lock`, and the lock and its record stand. A repeat
+  of an action writes nothing. The decision a standing denial made is
   a decision record like any other (§5.3).
 
 - **Identity provisioning is audited on this server's own chain** (0040).
@@ -3827,7 +3873,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0038 | Host routes and the console in namespaces of their own | every way a host route can overlap a path Control serves, verified against the real route table and at the request level, with each guard proven by a mutation; then four namespaces on the north-bound listener, each under a prefix of its own — Control's API, a host's API of both classes, Control's console and a host's console screens — with no path in two, held pairwise by tests in both directions, both consoles reserved before either is built, no catch-all outside its own prefix, and start-up's refusal kept as defence in depth; a decision (M27), a `### Breaking` release (`v0.25.0`), and the sync `hoplock/enterprise` is owed (M15, M24, M18, M19, M20, M21, M23). Queued at the user's direction |
 | 0039 | Inbound actions: the executor, a subject lock & a target quarantine | **M28.** Control's `ext.ActionExecutor` (`internal/action`), executing every `ActionKind` through the service an operator's route calls: `kill_session` by exactly one of a session or a subject through the event stream (M9), `revoke_grant` through 0012's revocation (M10, split into `RevokeWithin` and `Finish` so the ledger row commits with it), and `lock_subject`, `unlock_subject` and `quarantine_target` through a subject lock and a target quarantine (`internal/standing`; migration `0020`: `subject_locks`, `target_quarantines`, `action_executions`). A lock and a quarantine are standing denials applied above the engine — `subject_locked` and `target_quarantined`, a deny and never an outage — read in the statement that reads the subject and the target (no round trip added, counted by a test), holding for an id with no row, surviving an upsert, a delete and a re-create, recorded whole in `inputs.standing`, explained, and reproduced by replay. An operator places and lifts each on `POST …/subjects/{subject}/lock` / `unlock` and `POST …/targets/{target}/quarantine` / `release` under `session:revoke`; `GET` shows them, and `DELETE` of a quarantined target is `409 target_quarantined`. The executor is idempotent per tenant on `ActionID` (a different action under one id is `KindConflict`; a repeat returns the first result and sends again what it owed the stream), refuses to lock a break-glass subject (`KindDenied`, `break_glass_subject`), shows the holder `ReasonText` once validated or Control's own text, and records every execution with the handler as actor (`action-handler:<provider>`): the act's record, `action.unchanged`, or `action.refused`. The registered `ext.ActionHandler` is started after the registry is sealed and before the listeners open, stopped before they drain, and a `Start` that fails, panics or never returns is logged and shown on `GET …/extensions` (`started`, `start_error`) and never stops Control. No `ext` signature changes; `v0.26.0` (M15, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; on one node it depends only on merged phases (0009, 0012, 0019) |
 | 0040 | Identity sync: Control's sync sink & de-provisioning | **M28 extended.** Control's `ext.SyncSink` (`internal/provision`) over its identity store, handed to the registered `ext.IdentitySync`, which is started once after the registry is sealed and before the listeners open and stopped before they drain, a `Start` that fails, panics or never returns logged and shown on `GET …/extensions` (`started`, `start_error`) and never stopping Control. A provisioned subject is joined on `ExternalID` by a link row and never on the username (migration `0021`: `directory_links`, `directory_groups`, `idp_connectors.directory_claim`), its id allocated by Control (`dir-…`), its one login name the directory's username and unique in the tenant (`KindConflict`, never adopted); every method idempotent on `ExternalID` and ordered by `UpdatedAt`, with a deactivation or a group tombstone kept for an id not yet seen (0017's precedent) and Control's clock ordering a re-activation; what the directory holds reaching policy only through the tenant's claim mapping (`Mapping.ApplyDirectory`, M7), a renamed or deleted group re-deriving its members in the same transaction; the directory the only writer of what it provisions (`409 subject_directory_managed`); a connector's `directory_claim`, through which a login reaches the provisioned subject or is refused (`federation.not_provisioned`); a deactivation a standing denial of its own beside 0039's lock (`subject_deactivated`), read as a third join in the subject's statement (no round trip added, counted by a test), lifted only by the directory, refusing every login (`federation.subject_deactivated`) and every north-bound credential, and revoking credentials, certificates, grants, pending requests and live sessions through the services an operator's levers call, with a retry that finishes it; every applied call recorded on the control stream (`identity_sync.*`) with the sync as actor. No `ext` signature changes; `v0.27.0` (M7, M15, M9, M10, M5, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0039 and 0027, and on merged phases (0011, 0012, 0016, 0019) |
-| 0041 | Confined inbound actions | `ext.Action` gains `Within *ActionScope` (`SubjectIDs`, `TargetIDs`, `TargetLabels`) and `IfPlacedBy`: Control resolves what each kind reaches from its own data inside the action's transaction — a session's subjects and targets from its decision records, a grant's from its selector, and a dimension a kind reaches whole failing any scope that confines it — and refuses an action that reaches outside (`KindDenied`, `out_of_scope`, recorded as `action.refused`), checking a repeat as well and telling a confined requester nothing outside its scope; `unlock_subject` with `IfPlacedBy` lifts only a lock that action of this handler placed, in one statement, and otherwise leaves it standing (`not_this_lock`), `IfPlacedBy` being part of the action's identity in the ledger (a migration adds `action_executions.if_placed_by`). No method added; a MINOR (M28, M15, M23, M10, M11). Raised by `Hoplock/enterprise#50`; depends on 0039 |
+| 0041 | Confined inbound actions | **M28 extended.** `ext.Action` gains `Within *ext.ActionScope` (`SubjectIDs`, `TargetIDs` — the one field Control added to the ask — and `TargetLabels`; at most 1 000, 1 000 and 64, a non-nil empty scope `KindInvalid` on `within`) and `IfPlacedBy`. Control resolves what each kind reaches from its own data inside the action's transaction, after the ledger's lock and before the ledger answers (so a repeat is checked too): a session's subjects and targets from its decision records (`Decisions().SessionReach`), a kill by subject, a lock and an unlock reaching every target, a quarantine every subject, and a grant its subject and what its selector can reach — inside a target scope only when it lists hostnames each naming a held target the scope admits, matched case-insensitively, or its own labels require the scope's; the rows read are held until the act (`Targets().ForShare`, `ForShareByHostnames`, `Grants().GetForUpdate`). An action reaching outside is `KindDenied`, `out_of_scope`, recorded as `action.refused` with `scope_field` and `outside`, its error naming only the field; a selector Control holds nothing for is `out_of_scope` unless the scope names it by id alone. `unlock_subject` with `IfPlacedBy` lifts only a lock that action of this handler's principal placed, in one `DELETE` (`SubjectLocks().LiftIfPlacedBy`), and otherwise leaves it standing (`not_this_lock`, `action.unchanged`); the condition is part of the action's identity (migration `0022`: `action_executions.if_placed_by`; a changed one is `KindConflict`), the scope is not. No method added; `v0.28.0` (M28, M15, M23, M10, M11, M18). Raised by `Hoplock/enterprise#50`; depends on 0039 |
 | 0042 | Directory source on the sync sink | `ext.SyncedSubject` and `ext.SyncedGroup` gain a required `Source` naming the directory each comes from, and `ext.DirectoryRef` (`Tenant`, `Source`, `ExternalID`) replaces the tenant and id `SyncSink.DeactivateSubject` and `DeleteGroup` take; everything 0040 keyed on an `ExternalID` — link and group rows, ordering, tombstones, owed delivery, the per-identity lock, a group's members — keyed on `(tenant, source, ExternalID)`, a subject's groups resolving within its own source, a login name still unique across sources (`KindConflict`), and `directory_links`' unique `(tenant, subject_id)` key kept so the decision path's join and cost are unchanged (M28, M5); a tied connector names its `directory_source` beside its claim, both or neither, refused for a source nothing in the tenant has written, and shown on the sign-in methods; `source` on the subject read's `directory`, on the deactivation's standing entry (M4) and on every `identity_sync.*` record; a migration keying every existing row under the source `default`. A `### Breaking` MINOR (M7, M15, M23, M12, M18). Raised by `Hoplock/enterprise#51`, item 1; depends on 0040 |
 | 0043 | Directory-scoped group entries | a `groups.map` entry in the claim mapping lists the `directories` it applies to (each a directory source, 0042) and matches a directory group of its name from a listed source instead of the unscoped entry, never a login's group claim; `groups.require_directories` makes every directory group match only an entry listing its own source, so unscoped entries serve logins only; no wildcard, three rejection codes (`mapping.directory_name`, `mapping.directories_empty`, `mapping.directory_duplicate`), a scoped entry counted once per directory it lists against the mapping's bound, and `schema_version` still `1`; every mapping write, scoped or not, reaching every directory subject by itself — stale subjects (a row naming another version) recalculated after the write commits in batches under the sink's lock order, at once on the node that took an API write and by a once-a-minute sweep on every node otherwise, with no sync needed, their cached decisions dropped as a group change drops them, and `operator.claim_mapping.applied` recording each run — where until then a mapping reached a directory subject only when the directory changed that person; `directories`, `require_directories` and `stale_directory_subjects` on the claim-mapping read, and `directory_source` on a decision record's subject, read from the link row the subject's statement already joins (M4, M5). No `ext` change, at most one migration (an index); a MINOR (M7, M4, M5, M9, M21, M23). Raised by `Hoplock/enterprise#51`, item 2; depends on 0042 |
 | 0044 | Registered reports served | every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (a report is the audit store, summarised): `GET …/reports` lists each provider's `Reports(ctx, tenant)` with a provider that failed listed with its failure rather than dropped, and `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), checks it against the descriptor the provider listed for that tenant before `Generate` is called, and streams the body with the format's own media type, `nosniff` and `attachment`, never the provider's; a generation with its own bound (`north.report_timeout`) and a per-node ceiling (`north.max_concurrent_reports`, past it `503 report_generation_busy`) beside the decision path (M5), and a body that fails after its first byte aborts the response rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation; `ErrNotFound` `404`, `ErrInvalid` `400`, and every other failure `502 report_provider_failed` or `503 report_provider_unavailable`, never a `401` or a `403` of a provider's (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |

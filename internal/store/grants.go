@@ -113,6 +113,34 @@ func (r grantRepo) Get(ctx context.Context, tenant Tenant, grantID string) (Gran
 	return scanGrant(op, row)
 }
 
+// GetForUpdate returns a grant and holds its row against every other writer
+// until the transaction ends, so a check made on it and the revocation beside
+// it see the same grant (0041). It takes the lock a revocation's UPDATE takes:
+// two transactions that each held the row FOR SHARE and then revoked it would
+// deadlock, and the decision path, which takes no row lock, is not slowed.
+//
+// A row lock taken outside a transaction is released the instant the
+// statement ends, so it is refused there.
+func (r grantRepo) GetForUpdate(ctx context.Context, tenant Tenant, grantID string) (Grant, error) {
+	const op = "store.Grants.GetForUpdate"
+	if err := checkTenant(op, tenant); err != nil {
+		return Grant{}, err
+	}
+	if r.s.pool != nil {
+		return Grant{}, invalid(op, "a row is held inside a transaction")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	row := r.s.db.QueryRow(ctx, `
+		SELECT `+grantColumns+`
+		FROM grants
+		WHERE tenant = $1 AND grant_id = $2
+		FOR NO KEY UPDATE`, tenant, grantID)
+	return scanGrant(op, row)
+}
+
 func (r grantRepo) ListLive(ctx context.Context, tenant Tenant, subjectID string, at time.Time) ([]Grant, error) {
 	const op = "store.Grants.ListLive"
 	if err := checkTenant(op, tenant); err != nil {

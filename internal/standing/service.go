@@ -360,6 +360,13 @@ type LiftRequest struct {
 	ReasonCode  string
 	Reason      string
 	ExternalRef string
+	// IfPlacedBy and PlacedByPrincipal make lifting a lock conditional: it is
+	// lifted only if the inbound action IfPlacedBy, performed as the principal
+	// PlacedByPrincipal, placed it, and any other lock is left standing (0041).
+	// Both or neither: an operator's lift never sets them, and is
+	// unconditional. A quarantine takes no condition.
+	IfPlacedBy        string
+	PlacedByPrincipal string
 }
 
 func (r LiftRequest) normalize(field string) (LiftRequest, error) {
@@ -391,16 +398,28 @@ type UnlockResult struct {
 }
 
 // LiftLock lifts the lock on a subject inside tx and records it there. No lock
-// standing is not an error: it is Lifted false.
+// standing is not an error: it is Lifted false. With req.IfPlacedBy set, a lock
+// that action did not place is not lifted either, and is Lifted false too: the
+// caller reads the lock to tell the two apart.
 func (s *Service) LiftLock(ctx context.Context, tx *store.Store, tenant store.Tenant, actor Actor, req LiftRequest) (UnlockResult, error) {
 	if err := actor.check(); err != nil {
 		return UnlockResult{}, err
+	}
+	if (req.IfPlacedBy == "") != (req.PlacedByPrincipal == "") {
+		// A wiring fault, not a validation error: half a condition would lift
+		// a lock unconditionally or match none.
+		return UnlockResult{}, errors.New("standing: a conditional unlock names both the action and the principal that placed the lock")
 	}
 	req, err := req.normalize("subject")
 	if err != nil {
 		return UnlockResult{}, err
 	}
-	lock, err := tx.SubjectLocks().Lift(ctx, tenant, req.ID)
+	var lock store.SubjectLock
+	if req.IfPlacedBy != "" {
+		lock, err = tx.SubjectLocks().LiftIfPlacedBy(ctx, tenant, req.ID, req.IfPlacedBy, req.PlacedByPrincipal)
+	} else {
+		lock, err = tx.SubjectLocks().Lift(ctx, tenant, req.ID)
+	}
 	switch {
 	case store.IsNotFound(err):
 		return UnlockResult{}, nil
@@ -544,6 +563,12 @@ type ReleaseResult struct {
 func (s *Service) LiftQuarantine(ctx context.Context, tx *store.Store, tenant store.Tenant, actor Actor, req LiftRequest) (ReleaseResult, error) {
 	if err := actor.check(); err != nil {
 		return ReleaseResult{}, err
+	}
+	if req.IfPlacedBy != "" || req.PlacedByPrincipal != "" {
+		// Lifting a quarantine is an operator's act only (M28), and an
+		// operator's lift is unconditional: a condition here would be ignored
+		// or would mean something nobody specified.
+		return ReleaseResult{}, errors.New("standing: a quarantine is lifted unconditionally and takes no condition")
 	}
 	req, err := req.normalize("target")
 	if err != nil {

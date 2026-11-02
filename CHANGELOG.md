@@ -26,6 +26,58 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.28.0
+
+Phase 0041, confined inbound actions: an action held to its requester's scope,
+and an unlock that lifts only its own lock (decision M28, extended,
+`docs/PLAN.md` §2). Raised by `Hoplock/enterprise#50`. An action that sets
+neither new field behaves exactly as it did in `v0.27.0`. **Run
+`hoplock-control migrate`:** migration `0022` adds
+`action_executions.if_placed_by`.
+
+- **`ext.Action.Within *ext.ActionScope`** confines an action to what its
+  requester may touch. `ext.ActionScope` has three fields, each of which must
+  hold for everything the action reaches when it is set: `SubjectIDs` and
+  `TargetIDs` (at most 1 000 each, each held to an action id's bounds) and
+  `TargetLabels` (at most 64, each key and value one non-blank line of at most
+  256 bytes). Control resolves what the action reaches from its own data
+  inside the transaction that performs it — a session's subjects and targets
+  from its decision records, every hop included; a grant's subject and the
+  targets its selector can reach — and refuses an action that reaches outside:
+  `KindDenied`, `ReasonCode` `out_of_scope`, nothing executed, recorded as
+  `action.refused` with `scope_field` and `outside`. The error names the
+  scope field and never the subject or target outside it.
+- **A dimension a kind reaches whole fails a scope that confines it.** A scope
+  that sets `TargetIDs` or `TargetLabels` refuses `lock_subject`,
+  `unlock_subject` and a kill by subject; one that sets `SubjectIDs` refuses
+  `quarantine_target`.
+- **A grant is inside a target scope only when its selector cannot reach
+  outside it.** It must list hostnames, each naming a target the tenant holds
+  (matched case-insensitively) that the scope admits, unless its own labels
+  require a label the scope requires. A wildcard hostname, a hostname with no
+  target row, a selector of zones alone and an empty selector are outside
+  every target scope.
+- **A confined requester learns nothing outside its scope.** A selector Control
+  holds nothing for is `out_of_scope` rather than `KindNotFound`, unless the
+  scope names it by id alone. A repeat of an `ActionID` is checked against the
+  scope it carries before the first result is returned or anything is sent
+  again. A non-nil scope with every field empty is `KindInvalid` on `within`;
+  a bound exceeded is `KindInvalid` on `within.subject_ids`,
+  `within.target_ids` or `within.target_labels`.
+- **`ext.Action.IfPlacedBy`** makes `unlock_subject` conditional: the lock is
+  lifted only if the action with that `ActionID` placed it **and** this
+  handler's principal (`action-handler:<provider>`) did. Any other lock — an
+  operator's, another action's, one placed under a provider name since
+  changed — is left standing: `Affected` 0, `ReasonCode` `not_this_lock`, nil
+  error, recorded as `action.unchanged`. With no lock it is `not_locked`, as
+  before. It is `KindInvalid` on `if_placed_by` with any other kind. It is part
+  of the action's identity: an unlock under a used `ActionID` with a different
+  `IfPlacedBy`, or with one where the first had none, is `KindConflict`.
+  `Within` is not.
+- The doc comments of `ext.ActionLockSubject`, `ext.ActionUnlockSubject`,
+  `ext.ActionResult` and `ext.ActionExecutor` say what is now true. No method
+  is added to any interface.
+
 ## v0.27.0
 
 Phase 0040, identity sync: Control's sync sink and de-provisioning that takes

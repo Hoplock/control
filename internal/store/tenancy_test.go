@@ -259,6 +259,26 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.Decisions().SessionExists(ctx, "", "s")
 			return err
 		},
+		"Decisions.SessionReach": func() error {
+			_, err := s.Decisions().SessionReach(ctx, "", "s")
+			return err
+		},
+		"Targets.ForShare": func() error {
+			_, err := s.Targets().ForShare(ctx, "", []string{"t"})
+			return err
+		},
+		"Targets.ForShareByHostnames": func() error {
+			_, err := s.Targets().ForShareByHostnames(ctx, "", []string{"h"})
+			return err
+		},
+		"Grants.GetForUpdate": func() error {
+			_, err := s.Grants().GetForUpdate(ctx, "", "g")
+			return err
+		},
+		"SubjectLocks.LiftIfPlacedBy": func() error {
+			_, err := s.SubjectLocks().LiftIfPlacedBy(ctx, "", "s", "a", "p")
+			return err
+		},
 		"Subjects.Standing": func() error { _, err := s.Subjects().Standing(ctx, "", "s"); return err },
 		"SubjectLocks.Place": func() error {
 			_, _, err := s.SubjectLocks().Place(ctx, "", SubjectLock{SubjectID: "s", LockedBy: StandingActor{Principal: "p"}})

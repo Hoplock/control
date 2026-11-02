@@ -1,0 +1,37 @@
+# 0041 — confined inbound actions — Learnings
+
+## Summary
+- **M28 extended**, release `v0.28.0` (MINOR, no `### Breaking`; no method added). Migration `0022`: `action_executions.if_placed_by`. Answers `Hoplock/enterprise#50`. An action with neither new field behaves as in `v0.27.0`.
+- **`ext.Action.Within *ext.ActionScope`** — `SubjectIDs` (≤ 1 000), `TargetIDs` (≤ 1 000; Control's addition to the ask), `TargetLabels` (≤ 64, key and value non-blank, one line, ≤ 256 bytes); each set field holds for everything reached. **`ext.Action.IfPlacedBy`** — `unlock_subject` only, held to `ActionID`'s bounds.
+- **Reach**: kill by session → the session's decision records' subjects and targets, every hop; kill by subject, lock, unlock → that subject, **all** targets; `revoke_grant` → the grant's subject, its selector's targets; quarantine → that target, **all** subjects. **A dimension reached whole fails a scope that confines it.**
+- **Grant rule**: `TargetIDs` — selector lists hostnames, each naming a held target (case-insensitive) in `TargetIDs`; `TargetLabels` — per label, the selector's own labels require it, or every listed hostname names a held target carrying it. A wildcard, a hostname with no row, zones alone and an empty selector are outside. **`ScopeTargets` are hostnames, not ids** (the prompt said ids).
+- **Errors/codes**: `KindDenied` + `out_of_scope` (error names `within.<field>`, never an id); `not_this_lock` with `Affected` 0 and a nil error (`action.unchanged`); `KindInvalid` on `within`, `within.subject_ids`, `within.target_ids`, `within.target_labels`, `if_placed_by`; `KindConflict` for an unlock under a used id with a changed `IfPlacedBy` (`Within` is not part of the action).
+- **What a confined requester learns**: an unknown selector is `out_of_scope` unless the scope names it by id alone (a `SubjectID` in `SubjectIDs` / `TargetID` in `TargetIDs`, other dimension unconfined) — so `KindNotFound` only for ids it names. **A repeat is checked** against its own scope before the ledger answers; refused, nothing is re-sent.
+- **`IfPlacedBy` matches `action_id` AND `locked_by_principal`** (`action-handler:<provider>`), one `DELETE`; a renamed provider's lock is `not_this_lock`.
+- **Key files**: `internal/action/scope.go` (validation, reach, check), `executor.go`; `internal/standing/service.go` (`LiftRequest.IfPlacedBy`/`PlacedByPrincipal`); `internal/store/{standing,decisions,targets,grants}.go` (`LiftIfPlacedBy`, `SessionReach`, `ForShare`, `ForShareByHostnames`, `GetForUpdate`).
+- **Gotcha**: the grant row is read `FOR NO KEY UPDATE`, not `FOR SHARE` as the prompt said: two revocations that each held it shared and then updated it would deadlock.
+- **NEXT**: Enterprise's sync is queued (see the PR); its 0007 rewrites "What Control does not do yet" against `v0.28.0`.
+
+## Details
+
+### Where this phase read the prompt, and where it departs from it
+- **`ScopeTargets` holds hostname patterns, not target ids.** Item 4 speaks of "every id in it" and "every target it lists". The store, the engine (`model.Grant.Covers`) and the grant spec all say `ScopeTargets` is hostnames, exact or `*.suffix`, lowercased on write and matched case-insensitively. The item's own principle — inside only when it *cannot reach outside* — settles the translation: each exact hostname is resolved to the target rows whose `lower(hostname)` equals it, every one must be admitted, and a hostname with no row or a wildcard is outside because it can reach a target the scope does not name (one created tomorrow included). A target row written in upper case (`DB03.Example.com`) is found by the grant's lower-case entry, as the engine would match it.
+- **The grant row is held `FOR NO KEY UPDATE`.** Item 9 says `FOR SHARE`. Grants are never re-scoped (only revoked), so the lock exists to keep the check and the act on one row; but two confined `revoke_grant`s of one grant under different ids would each take the share lock and then both `UPDATE` it — a deadlock Postgres resolves by failing one with `KindInternal`. `FOR NO KEY UPDATE` is the lock the revocation's `UPDATE` takes anyway, so it adds no blocking the act did not, and the decision path (plain reads) is not slowed. Targets stay `FOR SHARE`: nothing in the act updates them.
+- **`outside` for things that are not one id.** Item 10 lists ids and `all_subjects` / `all_targets`. Four more cases arise and are recorded as: a grant selector that lists no hostname (zones alone, labels alone, empty) → `all_targets`; a wildcard or a hostname with no row → the hostname as the grant wrote it; a session hop to a hostname with no target row (the decision record's `target_id` is `''`) → `unrecorded_target`; an unknown session, grant or target → that selector's id, with `unknown_selector` naming the selector field. PLAN §7 lists all of them.
+- **Which scope field an unknown selector fails.** The first one set, in check order (`subject_ids`, `target_ids`, `target_labels`). An unknown target under `TargetIDs ∋ t` *and* `TargetLabels` is `out_of_scope` on `target_labels`: the labels cannot be admitted by id alone.
+- **The check order.** Within each kind: `subject_ids`, then `target_ids`, then `target_labels`; the first failure is reported.
+
+### How it works
+- `validate` checks `IfPlacedBy` (kind, then `checkToken`) and `Within` (`validateScope`) after the selectors. `request` carries `ifPlacedBy` and a validated `*scope` (sets, sorted label keys).
+- `Execute` runs `confine` inside its transaction after `ActionExecutions().Lock` and **before** `Get`, so a repeat is checked and a refusal rolls back, is recorded by `refuse`, and leaves no ledger row. `sameAction` compares `IfPlacedBy`; the ledger row stores it.
+- `confine` dispatches per kind: `subjectWide` (no read), `session` (`SessionReach`, then `Targets().ForShare` for labels), `target` (`ForShare` only if labels are required), `grant` (`GetForUpdate`, then `ForShareByHostnames` once, for whichever of ids or labels needs it).
+- `unlock` passes `IfPlacedBy` and the executor's principal to `standing.LiftLock`, which calls `SubjectLocks().LiftIfPlacedBy` (one `DELETE … RETURNING`). Nothing lifted with a condition → one `SubjectLocks().Get`: a lock → `action.unchanged`/`not_this_lock`; none → the existing `not_locked`/`KindNotFound` path. `LiftLock` refuses half a condition, and `LiftQuarantine` refuses any (both wiring faults, not validation errors).
+- `SessionReach` is one statement over `decisions_by_session_idx`, with the partial index's predicate (`session_id <> ''`) stated so a generic plan can use it.
+
+### Test notes
+- `internal/action/confined_test.go`: one test per item, tables per item; `wantOutOfScope` asserts KindDenied, the error naming `within.<field>` and no id, no ledger row or publication, and the record's `scope_field` / `outside`. `TestAnExpiryNeverLiftsALockAnOperatorPlacedSince` is the reported scenario.
+- `internal/store/confined_test.go`: `LiftIfPlacedBy`, `SessionReach` (chain, unrecorded hop, another tenant), the held rows (proved with `NOWAIT` / `lock_timeout` from a second connection), and 0022 applied over a 0020 row via `store.MigrateThrough` (test-only, `export_test.go`).
+- `internal/standing/service_test.go`: the conditional lift and its guards. `server/action_test.go`: a confined unlock through a registered handler, refused and then admitted.
+
+### Follow-ups
+- None in this repository. Enterprise's 0007 owes the rewrite listed under the PR's `## Cross-repo impact`; the proxy owes nothing (contract untouched, M1).

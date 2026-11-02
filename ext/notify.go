@@ -80,12 +80,20 @@ const (
 	// ActionLockSubject stops a subject from obtaining new access, and ends
 	// what they currently hold. While the lock stands every authorize call
 	// for the subject is a deny, whatever policy, grants or windows say; it
-	// stands until ActionUnlockSubject or an operator lifts it. A
-	// break-glass subject (M7) is refused with KindDenied: the break-glass
-	// path exists so that access survives the failure of everything else,
-	// and an operator, acting deliberately, can still lock it.
+	// stands until ActionUnlockSubject or an operator lifts it. Control never
+	// expires a lock: a requester that means its lock to end at a time
+	// executes ActionUnlockSubject then, with Action.IfPlacedBy set to the
+	// ActionID that placed it, so the expiry cannot lift a lock somebody else
+	// placed meanwhile. A break-glass subject (M7) is refused with
+	// KindDenied: the break-glass path exists so that access survives the
+	// failure of everything else, and an operator, acting deliberately, can
+	// still lock it.
 	ActionLockSubject
-	// ActionUnlockSubject reverses ActionLockSubject.
+	// ActionUnlockSubject reverses ActionLockSubject. Without
+	// Action.IfPlacedBy it lifts whatever lock stands on the subject, an
+	// operator's included. With it, it lifts the lock only if that action of
+	// this handler placed it, and leaves any other standing (`not_this_lock`):
+	// that is the form an expiry uses.
 	ActionUnlockSubject
 	// ActionRevokeGrant ends one grant before its window closes, and the
 	// sessions it backed. A grant already revoked or expired is nothing to
@@ -133,6 +141,36 @@ type Action struct {
 	SessionID string
 	TargetID  string
 	GrantID   string
+	// Within confines the action to what its requester may touch. When it is
+	// non-nil, Control resolves what the action reaches from its own data,
+	// inside the transaction that performs it, and refuses an action that
+	// reaches outside: KindDenied, ActionResult.ReasonCode `out_of_scope`,
+	// nothing executed, recorded as `action.refused`. ActionScope says what
+	// each kind reaches. Nil confines nothing, which is the whole tenant.
+	//
+	// A non-nil scope with every field empty is KindInvalid on `within`: it is
+	// far more likely a credential whose scope failed to load than a request
+	// for the whole tenant, which is nil.
+	//
+	// Within is who may ask, not what is asked, so it is not part of the
+	// action's identity: a repeat of an ActionID is checked against the scope
+	// it carries, before the first result is returned and before anything is
+	// sent again, and a repeat under a scope that does not admit what the
+	// action reaches is refused.
+	Within *ActionScope
+	// IfPlacedBy is for ActionUnlockSubject only, and makes the unlock
+	// conditional: the lock is lifted only if the ActionID that placed it
+	// equals this one AND it was placed by this handler (the principal
+	// `action-handler:<provider>`). A lock placed by an operator, by another
+	// action, or under a provider name since changed is left standing:
+	// ActionResult.Affected 0, ReasonCode `not_this_lock`, nil error. With no
+	// lock standing it is `not_locked`, as without it.
+	//
+	// It is held to the bounds of ActionID. With any other kind it is
+	// KindInvalid on `if_placed_by`. Unlike Within it is part of the action's
+	// identity: the same ActionID with a different IfPlacedBy, or with one
+	// where the first had none, is KindConflict.
+	IfPlacedBy string
 	// ReasonCode is why, as a stable code; ReasonText is what the user is
 	// told when the action ends their session, and is the one piece of prose
 	// here that reaches a person directly.
@@ -153,6 +191,69 @@ type Action struct {
 	RequestedAt time.Time
 }
 
+// ActionScope is what an action's requester may touch: the confinement a
+// handler hands Control in Action.Within, typically the scope of the
+// credential the inbound request arrived with. Each field that is set must
+// hold for everything the action reaches; an empty field confines nothing,
+// and a scope with every field empty is KindInvalid.
+//
+// Control resolves what an action reaches from its own data, inside the
+// transaction that performs it, so a relabel or a re-scope committed
+// meanwhile either waits for the act or is seen by the check:
+//
+//	Kind                        Subjects it reaches          Targets it reaches
+//	kill_session by SessionID   every subject on the         every target on them, every
+//	                            session's decision records   hop of a chain included
+//	kill_session by SubjectID   that subject                 all of them
+//	lock_subject,               that subject                 all of them (a lock denies
+//	unlock_subject                                           every target)
+//	revoke_grant                the grant's subject          the grant's selector (below)
+//	quarantine_target           all of them (a quarantine    that target
+//	                            denies it to every subject)
+//
+// A dimension a kind reaches whole fails a scope that confines it: a scope
+// that sets TargetIDs or TargetLabels refuses a lock, an unlock and a kill by
+// subject, and a scope that sets SubjectIDs refuses a quarantine. A
+// credential confined to some targets must not be able to lock a person out
+// of every other, nor one confined to some people deny a target to everyone
+// else.
+//
+// A grant's selector is inside a target scope only when it cannot reach
+// outside it. Its parts are ANDed, and an empty selector reaches whatever
+// target the matching rule does, so:
+//
+//   - TargetIDs: the selector must list hostnames, and every one must name a
+//     target this tenant holds whose ID is in TargetIDs. A hostname with no
+//     target row, or a wildcard (`*.example.com`), can reach a target that
+//     is not, and is outside.
+//   - TargetLabels: for each required label k=v, either the selector's own
+//     labels require k=v, or it lists hostnames and every one names a target
+//     this tenant holds that carries k=v.
+//   - A selector of zones alone, or an empty one, is outside every target
+//     scope: a zone is not a label.
+//
+// A confined requester learns nothing outside its scope. The scope is checked
+// before Control says whether a selector is known, and a selector Control
+// holds nothing for is outside the scope, unless the scope admits it by its
+// id alone: a SubjectID in SubjectIDs, or a TargetID in TargetIDs, on a kind
+// whose other dimension the scope leaves unconfined. So KindNotFound reaches
+// a confined requester only for an id its own scope names, and the error of
+// an `out_of_scope` refusal names the scope field that failed, never the
+// subject or target that lay outside it. Control's own audit record names
+// those.
+type ActionScope struct {
+	// SubjectIDs: every subject the action reaches is one of these. At most
+	// 1 000, each held to the bounds of an ActionID.
+	SubjectIDs []string
+	// TargetIDs: every target the action reaches is one of these (Target.ID).
+	// At most 1 000, each held to the bounds of an ActionID.
+	TargetIDs []string
+	// TargetLabels: every target the action reaches carries each of these
+	// labels with this value (Target.Labels). At most 64, each key and value
+	// non-blank, one line and at most 256 bytes.
+	TargetLabels map[string]string
+}
+
 // ActionResult is what executing an action did.
 type ActionResult struct {
 	// ActionID echoes the request.
@@ -170,15 +271,18 @@ type ActionResult struct {
 	//   - ActionRevokeGrant: one when this call revoked the grant.
 	//
 	// Zero with no error means there was nothing to act on (already locked,
-	// not locked, already quarantined, a grant already revoked or expired),
-	// which is a legitimate outcome and not a failure; ReasonCode then says
-	// which. A repeat of an action returns the first execution's result.
+	// not locked, a lock this action did not place, already quarantined, a
+	// grant already revoked or expired), which is a legitimate outcome and not
+	// a failure; ReasonCode then says which. A repeat of an action returns the
+	// first execution's result.
 	Affected int
 	// AppliedAt is when Control did it.
 	AppliedAt time.Time
 	// ReasonCode explains a refusal, a partial application or a nothing to
-	// act on: `already_locked`, `not_locked`, `already_quarantined`,
-	// `already_revoked`, `expired`, or, with KindDenied, `break_glass_subject`.
+	// act on: `already_locked`, `not_locked`, `not_this_lock` (an unlock with
+	// Action.IfPlacedBy found a lock its action did not place, and left it
+	// standing), `already_quarantined`, `already_revoked`, `expired`, or,
+	// with KindDenied, `break_glass_subject` or `out_of_scope`.
 	ReasonCode string
 }
 
@@ -200,15 +304,19 @@ type ActionExecutor interface {
 	//
 	// The error says what to do next:
 	//
-	//   - KindInvalid: the action is malformed; the error names the field.
-	//     Do not retry it unchanged.
+	//   - KindInvalid: the action is malformed; the error names the field
+	//     (`within`, `within.subject_ids`, `within.target_ids`,
+	//     `within.target_labels` and `if_placed_by` among them). Do not
+	//     retry it unchanged.
 	//   - KindNotFound: the subject, session, grant or target is not known in
 	//     Action.Tenant. An id that exists only in another tenant is not
-	//     found.
+	//     found. A confined action (Action.Within) gets it only for an id its
+	//     scope names; any other unknown selector is `out_of_scope`.
 	//   - KindDenied: Control refused on purpose; ActionResult.ReasonCode says
-	//     why. This is the answer rather than the symptom, and a retry gets
-	//     the same one.
-	//   - KindConflict: Action.ActionID was used for a different action.
+	//     why: `break_glass_subject` or `out_of_scope`. This is the answer
+	//     rather than the symptom, and a retry gets the same one.
+	//   - KindConflict: Action.ActionID was used for a different action,
+	//     which includes an unlock with a different Action.IfPlacedBy.
 	//   - KindUnavailable: the state change was made and stands, and the
 	//     event stream refused the publication (or Control is stopping). It is
 	//     safe to retry under the same ActionID, and the retry delivers.

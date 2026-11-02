@@ -150,6 +150,12 @@ type request struct {
 	kind                                    ext.ActionKind
 	subjectID, sessionID, targetID, grantID string
 	reasonCode, reasonText, externalRef     string
+	// ifPlacedBy makes an unlock conditional on the action that placed the
+	// lock. It is part of what the action is.
+	ifPlacedBy string
+	// within is the scope the requester was confined to, nil for none. It is
+	// who asked, not what was asked, so it is never part of the action.
+	within *scope
 }
 
 // ref is the action as every record it writes names it.
@@ -166,7 +172,12 @@ type refusal struct {
 	field string
 	// code is the reason code, for KindDenied.
 	code string
-	msg  string
+	// scopeField and outside are an out-of-scope refusal's: the scope field
+	// that failed and the first subject or target found outside it.
+	// unknownSelector names the action's selector when Control held nothing
+	// for it, and outside is then that selector's id.
+	scopeField, outside, unknownSelector string
+	msg                                  string
 }
 
 func invalidField(field, format string, args ...any) *refusal {
@@ -201,6 +212,12 @@ func (e *Executor) Execute(ctx context.Context, a ext.Action) (ext.ActionResult,
 		if err := tx.ActionExecutions().Lock(ctx, req.tenant, req.id); err != nil {
 			return err
 		}
+		// A confined action is checked before the ledger answers: a repeat
+		// under a scope that does not admit what the action reaches is
+		// refused, and is not handed the first result or sent again.
+		if err := e.confine(ctx, tx, req); err != nil {
+			return err
+		}
 		found, err := tx.ActionExecutions().Get(ctx, req.tenant, req.id)
 		switch {
 		case err == nil:
@@ -222,6 +239,7 @@ func (e *Executor) Execute(ctx context.Context, a ext.Action) (ext.ActionResult,
 			ActionID: req.id, Kind: req.kind.String(), SubjectID: req.subjectID, SessionID: req.sessionID,
 			TargetID: req.targetID, GrantID: req.grantID, Affected: done.affected, ReasonCode: done.reasonCode,
 			AppliedAt: e.now().UTC().Truncate(time.Microsecond), Provider: e.provider, HolderReason: done.holder,
+			IfPlacedBy: req.ifPlacedBy,
 		}
 		if !done.recordAfter {
 			executed.RecordedAt = executed.AppliedAt
@@ -254,12 +272,14 @@ func (e *Executor) Execute(ctx context.Context, a ext.Action) (ext.ActionResult,
 }
 
 // sameAction reports whether a ledger row is the action a request asks for: the
-// same kind and the same selector. The reason, the text and the external
-// reference are not part of it: a requester that retries with different words
-// is retrying, not asking for something else.
+// same kind, the same selector and, for an unlock, the same condition. The
+// reason, the text and the external reference are not part of it: a requester
+// that retries with different words is retrying, not asking for something
+// else. Nor is the scope: it is who asked, and each ask is checked against its
+// own.
 func sameAction(x store.ActionExecution, r request) bool {
 	return x.Kind == r.kind.String() && x.SubjectID == r.subjectID && x.SessionID == r.sessionID &&
-		x.TargetID == r.targetID && x.GrantID == r.grantID
+		x.TargetID == r.targetID && x.GrantID == r.grantID && x.IfPlacedBy == r.ifPlacedBy
 }
 
 func resultOf(x store.ActionExecution) ext.ActionResult {
@@ -364,14 +384,34 @@ func (e *Executor) lock(ctx context.Context, tx *store.Store, req request, ref *
 }
 
 func (e *Executor) unlock(ctx context.Context, tx *store.Store, req request, ref *access.ActionRef) (applied, error) {
-	res, err := e.standing.LiftLock(ctx, tx, req.tenant, e.standingActor(ref), standing.LiftRequest{
+	lift := standing.LiftRequest{
 		ID: req.subjectID, ReasonCode: req.reasonCode, Reason: req.reasonText, ExternalRef: req.externalRef,
-	})
+	}
+	if req.ifPlacedBy != "" {
+		// Only a lock this handler placed under that action id: the action
+		// id is the requester's own name, and a lock is not this handler's
+		// because some other placer used the same string.
+		lift.IfPlacedBy, lift.PlacedByPrincipal = req.ifPlacedBy, e.principal
+	}
+	res, err := e.standing.LiftLock(ctx, tx, req.tenant, e.standingActor(ref), lift)
 	if err != nil {
 		return applied{}, translate(err)
 	}
 	if res.Lifted {
 		return applied{affected: 1}, nil
+	}
+	if req.ifPlacedBy != "" {
+		// Nothing lifted: no lock, or a lock somebody else placed, which is
+		// left as it stands with its record.
+		switch _, err := tx.SubjectLocks().Get(ctx, req.tenant, req.subjectID); {
+		case err == nil:
+			if err := e.recordUnchanged(ctx, tx, req, ref, ReasonNotThisLock); err != nil {
+				return applied{}, err
+			}
+			return applied{reasonCode: ReasonNotThisLock}, nil
+		case !store.IsNotFound(err):
+			return applied{}, err
+		}
 	}
 	// Nothing to lift. A subject this server has never heard of is not
 	// "not locked", it is not known.
@@ -631,6 +671,15 @@ func (e *Executor) recordRefusal(ctx context.Context, a ext.Action, r *refusal) 
 	if r.code != "" {
 		fields["code"] = r.code
 	}
+	if r.scopeField != "" {
+		// Control's own data on its own chain: what lay outside the scope.
+		// The requester's error names only the field.
+		fields["scope_field"] = r.scopeField
+		fields["outside"] = r.outside
+		if r.unknownSelector != "" {
+			fields["unknown_selector"] = r.unknownSelector
+		}
+	}
 	// What was sent is recorded only where it is fit to be: an id with a
 	// control character in it is exactly what must not reach a log line.
 	ref := &access.ActionRef{
@@ -713,6 +762,21 @@ func validate(a ext.Action) (request, *refusal) {
 	}
 	if a.Kind != ext.ActionKillSession && takes[0].value == "" {
 		return req, invalidField(takes[0].field, "a %s needs a %s", a.Kind, takes[0].field)
+	}
+	if a.IfPlacedBy != "" {
+		if a.Kind != ext.ActionUnlockSubject {
+			return req, invalidField("if_placed_by", "only an unlock_subject takes if_placed_by, and a %s does not", a.Kind)
+		}
+		if bad := checkToken("if_placed_by", a.IfPlacedBy); bad != nil {
+			return req, bad
+		}
+		req.ifPlacedBy = a.IfPlacedBy
+	}
+	if a.Within != nil {
+		var bad *refusal
+		if req.within, bad = validateScope(a.Within); bad != nil {
+			return req, bad
+		}
 	}
 
 	var err error
