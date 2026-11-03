@@ -70,6 +70,11 @@ type assembled struct {
 	// break-glass one.
 	mappingVersion int
 	breakGlass     bool
+	// directorySource is the directory the subject's groups came from, from
+	// the link row the standing read already joins (0043): with scoped group
+	// entries, "why is Alice in this group" turns on it as well as on the
+	// mapping version. Empty for a subject no directory provisioned.
+	directorySource string
 	// grants are the live grant rows the engine's grant input was made from.
 	// The record renders them rather than the engine's copy because a
 	// record also names what the engine does not read — who created a grant
@@ -195,6 +200,9 @@ func (s *Service) assemble(ctx context.Context, tenant store.Tenant, req *contra
 		out.input.Subject.Claims = subject.Claims
 		out.mappingVersion = subject.MappingVersion
 		out.breakGlass = subject.BreakGlass
+		if standing.Directory != nil {
+			out.directorySource = standing.Directory.Source
+		}
 	} else {
 		// A subject this server holds no record of gets NO groups and NO
 		// claims — not the ones the request carries. The request's copy

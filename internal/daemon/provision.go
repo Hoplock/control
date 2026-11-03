@@ -23,7 +23,8 @@ import (
 // The sink is handed the services an operator's levers call (grant revocation
 // and the request cancel path, the revocation publisher), so a deactivation
 // revokes what an operator would. Its provider is the registration's, which is
-// the actor on every record it writes.
+// the actor on every record it writes. Each tenant it writes in is reported to
+// track, the claim mapping recalculation's sweep (0043).
 func buildIdentitySync(
 	cfg *config.Config,
 	st *store.Store,
@@ -31,6 +32,7 @@ func buildIdentitySync(
 	grants *access.Service,
 	revocations *revoke.Operator,
 	emitter *audit.Emitter,
+	track func(store.Tenant),
 	log *slog.Logger,
 ) (*provision.Runner, error) {
 	sync, ok := extensions.IdentitySync()
@@ -46,6 +48,7 @@ func buildIdentitySync(
 	sink, err := provision.New(provision.Options{
 		Provider: provider, Store: st, Grants: grants, Revoker: revocations, Recorder: emitter,
 		DefaultTenant: store.Tenant(cfg.Tenant), Settle: cfg.Decision.Budget + settleMargin, Logger: log,
+		Track: track,
 	})
 	if err != nil {
 		return nil, err

@@ -248,10 +248,19 @@ type claimMappingResponse struct {
 	// author reads them to know which names a rule may match on, and it is
 	// the answer to "why did Alice not match the sre rule" as often as the
 	// rule is.
-	Attributes  []string `json:"attributes"`
-	Groups      []string `json:"groups"`
-	Description string   `json:"description,omitempty"`
-	Document    string   `json:"document"`
+	Attributes []string `json:"attributes"`
+	Groups     []string `json:"groups"`
+	// Directories are the directory sources the mapping's group entries
+	// list, sorted, and empty when none does; RequireDirectories is
+	// `groups.require_directories` (0043).
+	Directories        []string `json:"directories"`
+	RequireDirectories bool     `json:"require_directories"`
+	// StaleDirectorySubjects counts the directory subjects not yet on this
+	// version: it falls to zero as the recalculation a mapping write starts
+	// finishes (0043).
+	StaleDirectorySubjects int64  `json:"stale_directory_subjects"`
+	Description            string `json:"description,omitempty"`
+	Document               string `json:"document"`
 }
 
 func (s *Server) handleClaimMapping(w http.ResponseWriter, r *http.Request) {
@@ -264,13 +273,23 @@ func (s *Server) handleClaimMapping(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "read claim mapping", err)
 		return
 	}
+	stale, err := s.st.DirectoryLinks().StaleCount(r.Context(), tenant, mapping.Version)
+	if err != nil {
+		s.fail(w, r, "count the directory subjects not yet on the claim mapping", err)
+		return
+	}
+	// A tenant whose mapping is read is one the sweep looks in.
+	s.recalc.Track(tenant)
 	answer(w, http.StatusOK, claimMappingResponse{
-		Tenant:      tenant.String(),
-		Version:     mapping.Version,
-		Digest:      mapping.Digest,
-		Attributes:  mapping.MappedAttributeNames(),
-		Groups:      mapping.MappedGroupNames(),
-		Description: mapping.Description,
-		Document:    mapping.Document(),
+		Tenant:                 tenant.String(),
+		Version:                mapping.Version,
+		Digest:                 mapping.Digest,
+		Attributes:             mapping.MappedAttributeNames(),
+		Groups:                 mapping.MappedGroupNames(),
+		Directories:            mapping.MappedDirectories(),
+		RequireDirectories:     mapping.RequiresDirectories(),
+		StaleDirectorySubjects: stale,
+		Description:            mapping.Description,
+		Document:               mapping.Document(),
 	})
 }

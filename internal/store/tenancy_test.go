@@ -337,6 +337,14 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.DirectoryLinks().Sources(ctx, "")
 			return err
 		},
+		"DirectoryLinks.Stale": func() error {
+			_, err := s.DirectoryLinks().Stale(ctx, "", 1, "", 1)
+			return err
+		},
+		"DirectoryLinks.StaleCount": func() error {
+			_, err := s.DirectoryLinks().StaleCount(ctx, "", 1)
+			return err
+		},
 		"DirectoryGroups.Lock":  func() error { return s.DirectoryGroups().Lock(ctx, "") },
 		"DirectoryGroups.Share": func() error { return s.DirectoryGroups().Share(ctx, "") },
 		"Subjects.PresentedByAnother": func() error {

@@ -85,6 +85,9 @@ type serverFixture struct {
 	server     *north.Server
 	http       *httptest.Server
 	lifecycle  *lifecycle
+	// recalc records what the claim mapping routes ask of the
+	// recalculation (0043).
+	recalc *recordingRecalculation
 }
 
 // lifecycle is what the 0019 routes stand on: the fleet, the policy lifecycle,
@@ -181,21 +184,23 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 	// Every server these tests build carries a host's routes (M15), so the
 	// tests that enumerate the router cover host routes on the day they are
 	// mounted rather than on the day somebody remembers them.
+	recalc := &recordingRecalculation{}
 	server, err := north.New(north.Options{
-		Federation:      federation,
-		CA:              ca,
-		Grants:          newGrants(t, st, grantOpts),
-		Store:           st,
-		Fleet:           lifecycle.fleet,
-		Authoring:       lifecycle.authoring,
-		Revocations:     lifecycle.operator,
-		Standing:        lifecycle.standing,
-		Audit:           lifecycle.emitter,
-		DefaultTenant:   "tenant-a",
-		InsecureCookies: true,
-		HostProvider:    testHostProvider,
-		HostRoutes:      testHostRoutes(),
-		HostErrorCodes:  []string{"report_not_found"},
+		Federation:           federation,
+		CA:                   ca,
+		MappingRecalculation: recalc,
+		Grants:               newGrants(t, st, grantOpts),
+		Store:                st,
+		Fleet:                lifecycle.fleet,
+		Authoring:            lifecycle.authoring,
+		Revocations:          lifecycle.operator,
+		Standing:             lifecycle.standing,
+		Audit:                lifecycle.emitter,
+		DefaultTenant:        "tenant-a",
+		InsecureCookies:      true,
+		HostProvider:         testHostProvider,
+		HostRoutes:           testHostRoutes(),
+		HostErrorCodes:       []string{"report_not_found"},
 	})
 	if err != nil {
 		t.Fatalf("server: %v", err)
@@ -207,7 +212,7 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 		t.Fatalf("ensure b: %v", err)
 	}
 
-	f := &serverFixture{st: st, federation: federation, ca: ca, server: server, lifecycle: lifecycle}
+	f := &serverFixture{st: st, federation: federation, ca: ca, server: server, lifecycle: lifecycle, recalc: recalc}
 	f.http = httptest.NewServer(server)
 	t.Cleanup(f.http.Close)
 	return f

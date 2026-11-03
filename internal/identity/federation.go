@@ -437,7 +437,7 @@ func ActiveMapping(ctx context.Context, st *store.Store, tenant store.Tenant) (*
 		return nil, fmt.Errorf("identity: tenant %s's active claim mapping (version %d) no longer parses: %w",
 			tenant, row.Version, err)
 	}
-	m.Version = row.Version
+	m.Version, m.Author = row.Version, row.CreatedBy
 	return m, nil
 }
 

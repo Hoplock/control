@@ -56,6 +56,11 @@ const (
 	// retention key: it signs from now on, and older ones still check what
 	// they signed.
 	EventAuditRetentionKeyRotated = "operator.audit.retention_key_rotated"
+	// EventClaimMappingApplied is a claim mapping version reaching the
+	// tenant's directory subjects (0043): a count of those a run recalculated
+	// and of those whose groups or claims changed, and whether it left
+	// nothing stale. Its actor is the version's author: it finishes their act.
+	EventClaimMappingApplied = "operator.claim_mapping.applied"
 )
 
 // EventActionRefused is an inbound action Control refused (0039): malformed,

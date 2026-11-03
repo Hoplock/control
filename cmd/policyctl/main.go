@@ -679,9 +679,10 @@ type story struct {
 	Rule       string    `json:"rule"`
 	RuleLine   int       `json:"rule_line"`
 	Mapping    struct {
-		Version int  `json:"version"`
-		Active  int  `json:"active"`
-		Changed bool `json:"changed"`
+		Version         int    `json:"version"`
+		Active          int    `json:"active"`
+		Changed         bool   `json:"changed"`
+		DirectorySource string `json:"directory_source"`
 	} `json:"mapping"`
 	Obligations []string        `json:"obligations"`
 	Grant       json.RawMessage `json:"grant"`
@@ -691,7 +692,14 @@ type story struct {
 func (c *client) printStory(s story) {
 	c.line("decision", s.DecisionID, s.Effect, s.Rule, s.RuleLine, "session", s.SessionID, "proxy", s.ProxyID,
 		"decided_at", s.DecidedAt.UTC().Format(time.RFC3339))
-	c.line("mapping", s.Mapping.Version, "active", s.Mapping.Active, "changed", s.Mapping.Changed)
+	if s.Mapping.DirectorySource != "" {
+		// The directory the subject's groups came from, beside the version
+		// that mapped them (0043).
+		c.line("mapping", s.Mapping.Version, "active", s.Mapping.Active, "changed", s.Mapping.Changed,
+			"directory_source", s.Mapping.DirectorySource)
+	} else {
+		c.line("mapping", s.Mapping.Version, "active", s.Mapping.Active, "changed", s.Mapping.Changed)
+	}
 	for _, o := range s.Obligations {
 		c.line("obligation", o)
 	}

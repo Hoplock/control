@@ -276,7 +276,29 @@ func runMappingPut(ctx context.Context, h Host, args []string, stdout, stderr io
 	if err != nil {
 		return err
 	}
-	return printMapping(stdout, mapping, fmt.Sprintf("stored and activated as version %d", mapping.Version))
+	if err := printMapping(stdout, mapping, fmt.Sprintf("stored and activated as version %d", mapping.Version)); err != nil {
+		return err
+	}
+	// A listed source nothing has written yet is named, never refused: a
+	// mapping is written before the directory it scopes, so that the
+	// directory's first write is already scoped (0043).
+	var unwritten []string
+	for _, source := range mapping.MappedDirectories() {
+		seen, err := st.DirectoryLinks().HasSource(ctx, tenant, source)
+		if err != nil {
+			return err
+		}
+		if !seen {
+			unwritten = append(unwritten, source)
+		}
+	}
+	if len(unwritten) > 0 {
+		_, _ = fmt.Fprintf(stdout, "  directories nothing in tenant %s has written yet: %s (their entries map nothing until they write)\n",
+			tenant, strings.Join(unwritten, ", "))
+	}
+	_, _ = fmt.Fprintln(stdout, "  the server recalculates the tenant's directory subjects onto this version in the background, "+
+		"within a minute of a write that did not come through the API; `identity mapping-show` shows how many remain")
+	return nil
 }
 
 // runMappingShow prints the active mapping.
@@ -307,7 +329,15 @@ func runMappingShow(ctx context.Context, h Host, args []string, stdout, stderr i
 	if err != nil {
 		return err
 	}
-	return printMapping(stdout, mapping, fmt.Sprintf("active version %d", mapping.Version))
+	stale, err := st.DirectoryLinks().StaleCount(ctx, tenant, mapping.Version)
+	if err != nil {
+		return err
+	}
+	if err := printMapping(stdout, mapping, fmt.Sprintf("active version %d", mapping.Version)); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "  directory subjects not yet on this version: %d\n", stale)
+	return nil
 }
 
 func printMapping(stdout io.Writer, mapping *identity.Mapping, status string) error {
@@ -315,6 +345,8 @@ func printMapping(stdout io.Writer, mapping *identity.Mapping, status string) er
 	_, _ = fmt.Fprintf(stdout, "  digest: %s\n", mapping.Digest)
 	_, _ = fmt.Fprintf(stdout, "  attributes it can produce: %s\n", orNone(mapping.MappedAttributeNames()))
 	_, _ = fmt.Fprintf(stdout, "  groups it can produce: %s\n", orNone(mapping.MappedGroupNames()))
+	_, _ = fmt.Fprintf(stdout, "  directories its group entries list: %s\n", orNone(mapping.MappedDirectories()))
+	_, _ = fmt.Fprintf(stdout, "  require_directories: %t\n", mapping.RequiresDirectories())
 	return nil
 }
 

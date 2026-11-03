@@ -37,6 +37,16 @@
 //     silent: an error is classified, and nil is returned only for something
 //     done or found to be already so.
 //
+// # A new claim mapping
+//
+// A directory subject's row names the claim mapping version it was derived
+// under, and a Recalculator brings every one that names another version onto
+// the tenant's active mapping by itself (0043): started by a mapping written
+// through the API, and by a sweep of the tenants this process has seen. It is
+// built from the store and the revocation stream alone, so it runs with no sync
+// registered, and it recalculates through the same derive, lock order and
+// delivery as a sink write.
+//
 // # Start
 //
 // A sync that fails to Start does not stop Control: access must not depend on

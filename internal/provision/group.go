@@ -134,22 +134,10 @@ func (s *Sink) rederive(ctx context.Context, tx *store.Store, tenant store.Tenan
 		return 0, err
 	}
 	for _, link := range links {
-		before, err := tx.Subjects().Get(ctx, tenant, link.SubjectID)
-		if err != nil {
+		// A renamed group changes what the CURRENT mapping makes of its
+		// members, so a row already on that version is re-derived too.
+		if _, _, err := recalculate(ctx, tx, tenant, link, mapping, false); err != nil {
 			return 0, err
-		}
-		subject, err := s.derive(ctx, tx, tenant, link, mapping)
-		if err != nil {
-			return 0, err
-		}
-		if err := tx.Subjects().Upsert(ctx, tenant, subject); err != nil {
-			return 0, err
-		}
-		if changed(before, subject) && !link.InvalidateOwed {
-			link.InvalidateOwed = true
-			if err := tx.DirectoryLinks().Put(ctx, tenant, link); err != nil {
-				return 0, err
-			}
 		}
 	}
 	return len(links), nil

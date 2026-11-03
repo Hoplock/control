@@ -42,6 +42,17 @@ import (
 // templates, no conditional expressions over several claims. Those are
 // `ext.IdentitySync`'s and Hoplock Enterprise's (0011's scope note). A mapping
 // language is a policy language, and this product already has one.
+//
+// DIRECTORY-SCOPED GROUP ENTRIES (0043). A `groups.map` entry may list the
+// directories it applies to under `directories`: directory sources, exactly as
+// a registered identity sync names them (0042). Such an entry matches a
+// directory group of its `external` name from a directory it lists, and never
+// a login's group claim; and `groups.require_directories: true` makes a
+// directory group match ONLY such an entry, leaving the unscoped entries to
+// logins. That is matching, not transformation: a listed source is one more
+// exact key looked up beside the group's name, with no pattern and no wildcard,
+// so a directory connected later reaches no scoped entry until somebody lists
+// it.
 
 // MappingSchemaVersion is the only document schema version this build reads.
 const MappingSchemaVersion = 1
@@ -115,11 +126,29 @@ type Mapping struct {
 	Digest string
 	// Description is the operator's own note.
 	Description string
+	// Author is who submitted the stored version, as it was stored; empty on
+	// a document that has been parsed but not stored.
+	Author string
 
 	claims    []claimRule
 	groupFrom string
-	groups    map[string]string
-	document  string
+	// groups are the unscoped group entries, by external name: what a
+	// login's group claim matches, and a directory group where no scoped
+	// entry lists its source.
+	groups map[string]string
+	// scoped are the entries that list directories, one per listed source
+	// (0043).
+	scoped map[scopedGroup]string
+	// requireDirectories leaves the unscoped entries to logins alone.
+	requireDirectories bool
+	document           string
+}
+
+// scopedGroup is what a scoped entry matches: a group's name from one
+// directory source.
+type scopedGroup struct {
+	source   string
+	external string
 }
 
 type claimRule struct {
@@ -153,6 +182,10 @@ type mappingClaimEntry struct {
 type mappingGroupsEntry struct {
 	// Claim names which claim carries the IdP's group names.
 	Claim string `yaml:"claim"`
+	// RequireDirectories makes every directory group match only an entry
+	// that lists its source (0043). The unscoped entries then serve logins
+	// alone. False by default, which maps as before it existed.
+	RequireDirectories bool `yaml:"require_directories"`
 	// Map is the exact external-to-local translation. There is no prefix
 	// rule and no pattern: see the note at the top of this file.
 	Map []mappingGroupEntry `yaml:"map"`
@@ -160,7 +193,11 @@ type mappingGroupsEntry struct {
 
 type mappingGroupEntry struct {
 	External string `yaml:"external"`
-	Group    string `yaml:"group"`
+	// Directories, when present, are the directory sources the entry
+	// applies to (0043). Nil is an unscoped entry; an empty list is refused,
+	// because it reads as "none" to one author and "every one" to another.
+	Directories []string `yaml:"directories"`
+	Group       string   `yaml:"group"`
 }
 
 // MappingRejection is one reason a document was refused.
@@ -212,6 +249,10 @@ const (
 	RejectMappingGroupDup      = "mapping.group_duplicate"
 	RejectMappingTooLarge      = "mapping.too_large"
 	RejectMappingValueEmpty    = "mapping.value_empty"
+	// The directory-scoped group entries' own (0043).
+	RejectMappingDirectoryName    = "mapping.directory_name"
+	RejectMappingDirectoriesEmpty = "mapping.directories_empty"
+	RejectMappingDirectoryDup     = "mapping.directory_duplicate"
 )
 
 // ParseMapping parses and validates a mapping document.
@@ -238,9 +279,14 @@ func ParseMapping(document []byte) (*Mapping, error) {
 		})
 	}
 
+	// The bound counts what a document matches: a scoped entry once for each
+	// directory it lists, so it holds over the (external, source) pairs as
+	// well as over the lines (0043). An unscoped entry counts once.
 	entries := len(doc.Claims)
 	if doc.Groups != nil {
-		entries += len(doc.Groups.Map)
+		for _, e := range doc.Groups.Map {
+			entries += max(1, len(e.Directories))
+		}
 	}
 	if entries > MaxMappingEntries {
 		rej = append(rej, MappingRejection{
@@ -252,6 +298,7 @@ func ParseMapping(document []byte) (*Mapping, error) {
 	m := &Mapping{
 		Description: doc.Description,
 		groups:      map[string]string{},
+		scoped:      map[scopedGroup]string{},
 		document:    string(document),
 	}
 	sum := sha256.Sum256(document)
@@ -317,16 +364,23 @@ func ParseMapping(document []byte) (*Mapping, error) {
 
 	if doc.Groups != nil {
 		m.groupFrom = strings.TrimSpace(doc.Groups.Claim)
+		m.requireDirectories = doc.Groups.RequireDirectories
 		if m.groupFrom == "" {
 			rej = append(rej, MappingRejection{
 				Code: RejectMappingGroupClaim, Field: "groups.claim",
 				Message: "a group mapping must name the claim that carries the IdP's groups",
 			})
 		}
+		// firstListed is the entry that first listed a source for an
+		// external name, which a second listing's rejection names.
+		firstListed := map[scopedGroup]int{}
 		for i, e := range doc.Groups.Map {
 			field := fmt.Sprintf("groups.map[%d]", i)
 			external := strings.TrimSpace(e.External)
 			group := strings.TrimSpace(e.Group)
+			// The listed sources are checked whatever else is wrong with
+			// the entry, so one round trip names every fault.
+			sources, scopedOK := directoriesOf(field, e.Directories, &rej)
 			if external == "" {
 				rej = append(rej, MappingRejection{
 					Code: RejectMappingGroupName, Field: field + ".external",
@@ -339,6 +393,28 @@ func ParseMapping(document []byte) (*Mapping, error) {
 					Code: RejectMappingGroupName, Field: field + ".group",
 					Message: "a group name is letters, digits, dot, dash and underscore",
 				})
+				continue
+			}
+			if e.Directories != nil {
+				if !scopedOK {
+					continue
+				}
+				// A scoped entry and an unscoped one with the same
+				// external name are not a duplicate: the scoped one wins
+				// for the sources it lists.
+				for j, source := range sources {
+					key := scopedGroup{source: source, external: external}
+					if first, dup := firstListed[key]; dup {
+						rej = append(rej, MappingRejection{
+							Code: RejectMappingDirectoryDup, Field: fmt.Sprintf("%s.directories[%d]", field, j),
+							Message: fmt.Sprintf("%q from %q is already mapped by groups.map[%d]; a source is listed once for an external name",
+								external, source, first),
+						})
+						continue
+					}
+					firstListed[key] = i
+					m.scoped[key] = group
+				}
 				continue
 			}
 			if _, dup := m.groups[external]; dup {
@@ -356,6 +432,33 @@ func ParseMapping(document []byte) (*Mapping, error) {
 		return nil, &MappingRejected{Rejections: rej}
 	}
 	return m, nil
+}
+
+// directoriesOf validates an entry's `directories`, appending a rejection for
+// each fault, and returns the listed sources in order and whether every one is
+// valid. Nil is an unscoped entry and is valid.
+func directoriesOf(field string, directories []string, rej *[]MappingRejection) ([]string, bool) {
+	if directories == nil {
+		return nil, true
+	}
+	if len(directories) == 0 {
+		*rej = append(*rej, MappingRejection{
+			Code: RejectMappingDirectoriesEmpty, Field: field + ".directories",
+			Message: "an entry lists at least one directory; an entry for every directory is written without the key",
+		})
+		return nil, false
+	}
+	ok := true
+	for j, source := range directories {
+		if problem := DirectorySourceProblem(source); problem != "" {
+			*rej = append(*rej, MappingRejection{
+				Code: RejectMappingDirectoryName, Field: fmt.Sprintf("%s.directories[%d]", field, j),
+				Message: fmt.Sprintf("a directory is listed by its source, and %q is not one: %s", source, problem),
+			})
+			ok = false
+		}
+	}
+	return directories, ok
 }
 
 // Document returns the bytes the digest covers, so a caller storing a mapping
@@ -403,8 +506,24 @@ func (m *Mapping) Apply(a Assertion) Attributes {
 	if m == nil {
 		return Attributes{Claims: map[string]string{}}
 	}
-	out := Attributes{Claims: map[string]string{}, MappingVersion: m.Version}
+	out := Attributes{Claims: m.mapClaims(a), MappingVersion: m.Version}
+	if m.groupFrom != "" {
+		// A login matches the unscoped entries only: an entry that lists
+		// directories is the directories' (0043).
+		for _, external := range m.assertedGroups(a) {
+			if local, ok := m.groups[external]; ok {
+				out.Groups = append(out.Groups, local)
+			}
+		}
+		out.Groups = sortedSet(out.Groups)
+	}
+	return out
+}
 
+// mapClaims is the claims half of a mapping: every claim rule whose claim the
+// assertion carries, with a permitted value where the rule lists them.
+func (m *Mapping) mapClaims(a Assertion) map[string]string {
+	out := map[string]string{}
 	for _, rule := range m.claims {
 		value, ok := m.claimValue(a, rule.claim)
 		if !ok {
@@ -413,19 +532,14 @@ func (m *Mapping) Apply(a Assertion) Attributes {
 		if len(rule.values) > 0 && !slices.Contains(rule.values, value) {
 			continue
 		}
-		out.Claims[rule.attribute] = value
-	}
-
-	if m.groupFrom != "" {
-		for _, external := range m.assertedGroups(a) {
-			if local, ok := m.groups[external]; ok {
-				out.Groups = append(out.Groups, local)
-			}
-		}
-		slices.Sort(out.Groups)
-		out.Groups = slices.Compact(out.Groups)
+		out[rule.attribute] = value
 	}
 	return out
+}
+
+func sortedSet(values []string) []string {
+	slices.Sort(values)
+	return slices.Compact(values)
 }
 
 // ClaimEmail is the claim a directory's email address is offered to the
@@ -436,14 +550,28 @@ const ClaimEmail = "email"
 // through the same allow-list a login goes through (M7, 0040): the directory is
 // a second door, and the mapping governs it too.
 //
-// The directory's attributes are offered as claims, its email as the claim
-// [ClaimEmail], and the names of its groups under the claim the mapping's
-// `groups.claim` names, so one `groups.map` serves a login and the directory
-// alike. The group claim is always set, empty when the subject is in no group
-// the directory has named, so an attribute that happens to share its name can
-// never be read as a group list.
-func (m *Mapping) ApplyDirectory(attributes map[string]string, email string, groupNames []string) Attributes {
-	a := Assertion{Claims: map[string]string{}, MultiClaims: map[string][]string{}}
+// The directory's attributes are offered as claims and its email as the claim
+// [ClaimEmail], exactly as a login's claims are. Its groups are the names its
+// own source gave them, and source is that directory (0042). A group named N
+// from source S matches, in this order (0043):
+//
+//  1. the entry with `external: N` that lists S, if there is one;
+//  2. otherwise, unless `groups.require_directories` is set, the entry with
+//     `external: N` and no `directories`;
+//  3. otherwise nothing.
+//
+// The first match is INSTEAD OF the second, never as well as it: where an entry
+// lists S for N, the unscoped entry for N does not also apply to S's group.
+// If both applied, scoping could add a group but never take one away, and two
+// directories that both call a group `admins` would still reach each other's
+// mapping. An attribute that happens to share the group claim's name is never
+// read as a group list: the directory's groups are matched here, not offered as
+// a claim.
+func (m *Mapping) ApplyDirectory(source string, attributes map[string]string, email string, groupNames []string) Attributes {
+	if m == nil {
+		return Attributes{Claims: map[string]string{}}
+	}
+	a := Assertion{Claims: map[string]string{}}
 	for code, value := range attributes {
 		if ReservedName(code) {
 			continue
@@ -453,10 +581,29 @@ func (m *Mapping) ApplyDirectory(attributes map[string]string, email string, gro
 	if email != "" {
 		a.Claims[ClaimEmail] = email
 	}
-	if m != nil && m.groupFrom != "" {
-		a.MultiClaims[m.groupFrom] = append([]string{}, groupNames...)
+	out := Attributes{Claims: m.mapClaims(a), MappingVersion: m.Version}
+	if m.groupFrom != "" {
+		for _, name := range groupNames {
+			if local, ok := m.directoryGroup(source, name); ok {
+				out.Groups = append(out.Groups, local)
+			}
+		}
+		out.Groups = sortedSet(out.Groups)
 	}
-	return m.Apply(a)
+	return out
+}
+
+// directoryGroup is the local group a directory group named name from source
+// maps to, by ApplyDirectory's rule.
+func (m *Mapping) directoryGroup(source, name string) (string, bool) {
+	if local, ok := m.scoped[scopedGroup{source: source, external: name}]; ok {
+		return local, true
+	}
+	if m.requireDirectories {
+		return "", false
+	}
+	local, ok := m.groups[name]
+	return local, ok
 }
 
 // claimValue reads a single-valued claim. A multi-valued claim is NOT
@@ -492,12 +639,27 @@ func (m *Mapping) MappedAttributeNames() []string {
 	return slices.Compact(out)
 }
 
-// MappedGroupNames returns every local group this mapping can produce, sorted.
+// MappedGroupNames returns every local group this mapping can produce, sorted:
+// the scoped entries' as well as the unscoped ones'.
 func (m *Mapping) MappedGroupNames() []string {
 	out := slices.Collect(maps.Values(m.groups))
-	slices.Sort(out)
-	return slices.Compact(out)
+	out = slices.AppendSeq(out, maps.Values(m.scoped))
+	return sortedSet(out)
 }
+
+// MappedDirectories returns every directory source the mapping's group entries
+// list, sorted; empty when none does (0043).
+func (m *Mapping) MappedDirectories() []string {
+	out := []string{}
+	for key := range m.scoped {
+		out = append(out, key.source)
+	}
+	return sortedSet(out)
+}
+
+// RequiresDirectories reports `groups.require_directories`: every directory
+// group matches only an entry that lists its source (0043).
+func (m *Mapping) RequiresDirectories() bool { return m.requireDirectories }
 
 // EmptyMapping is the mapping a tenant has before an operator writes one.
 //
@@ -507,5 +669,5 @@ func (m *Mapping) MappedGroupNames() []string {
 // alternative — passing claims through until a mapping exists — is a hole that
 // closes only when somebody remembers.
 func EmptyMapping() *Mapping {
-	return &Mapping{groups: map[string]string{}, document: "schema_version: 1\n"}
+	return &Mapping{groups: map[string]string{}, scoped: map[scopedGroup]string{}, document: "schema_version: 1\n"}
 }

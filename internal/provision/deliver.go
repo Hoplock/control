@@ -219,7 +219,7 @@ func (s *Sink) publish(ctx context.Context, tenant store.Tenant, subjectID strin
 			return fmt.Errorf("cache_invalidate: %w", err)
 		}
 		if record {
-			if err := s.recordPublication(ctx, tenant, "cache_invalidate", subjectID, inv, ""); err != nil {
+			if err := s.publisher().record(ctx, tenant, "cache_invalidate", subjectID, inv, ""); err != nil {
 				return err
 			}
 		}
@@ -231,7 +231,7 @@ func (s *Sink) publish(ctx context.Context, tenant store.Tenant, subjectID strin
 			return fmt.Errorf("session_kill: %w", err)
 		}
 		if record {
-			return s.recordPublication(ctx, tenant, "session_kill", subjectID, rcpt, DeactivatedByDirectory)
+			return s.publisher().record(ctx, tenant, "session_kill", subjectID, rcpt, DeactivatedByDirectory)
 		}
 		return nil
 	}
@@ -254,7 +254,28 @@ func (s *Sink) publish(ctx context.Context, tenant store.Tenant, subjectID strin
 	return nil
 }
 
-func (s *Sink) recordPublication(ctx context.Context, tenant store.Tenant, kind, subjectID string, rcpt revoke.Receipt, reason string) error {
+// publisher publishes what changed subjects owe the revocation stream, and
+// records each publication as `operator.revocation.published` with its actor.
+// The sink publishes as the sync; a claim mapping's recalculation as the
+// mapping's author (0043).
+type publisher struct {
+	store    *store.Store
+	revoker  Revoker
+	recorder Recorder
+	actor    audit.OperatorActor
+	// cause ends the record's message: what changed the subject.
+	cause string
+}
+
+// publisher is the sink's: the sync is the actor.
+func (s *Sink) publisher() publisher {
+	return publisher{
+		store: s.store, revoker: s.revoker, recorder: s.recorder,
+		actor: audit.OperatorActor{Principal: s.principal}, cause: "the directory changed",
+	}
+}
+
+func (p publisher) record(ctx context.Context, tenant store.Tenant, kind, subjectID string, rcpt revoke.Receipt, reason string) error {
 	fields := map[string]string{
 		"type": kind, "event_id": rcpt.EventID, "delivered": strconv.Itoa(rcpt.Delivered), "audience": "all",
 	}
@@ -266,12 +287,56 @@ func (s *Sink) recordPublication(ctx context.Context, tenant store.Tenant, kind,
 	if reason != "" {
 		fields["reason"] = reason
 	}
-	if err := s.recorder.OperatorEvent(ctx, nil, tenant, audit.OperatorAct{
-		Event: audit.EventRevocationPublished, Actor: audit.OperatorActor{Principal: s.principal},
+	if err := p.recorder.OperatorEvent(ctx, nil, tenant, audit.OperatorAct{
+		Event: audit.EventRevocationPublished, Actor: p.actor,
 		Subject: subjectID, Fields: fields,
-		Message: kind + " published for a subject the directory changed",
+		Message: kind + " published for a subject " + p.cause,
 	}); err != nil {
 		return &recordError{err: err}
+	}
+	return nil
+}
+
+// settleError is an invalidation published and recorded whose link could not
+// be marked delivered: it will be published again, which is harmless.
+type settleError struct{ err error }
+
+func (e *settleError) Error() string { return "marking an invalidation delivered: " + e.err.Error() }
+func (e *settleError) Unwrap() error { return e.err }
+
+// invalidate drops the cached decisions of every link in owed, which each owe
+// one, and marks each delivered: one `cache_invalidate` per subject, or one
+// for the tenant past maxSubjectInvalidations, as a quarantine drops them
+// (M28). It kills no session. A failure is a *recordError when the stream took
+// a publication and its record could not be written, a *settleError when only
+// marking it delivered failed, and otherwise the stream's own refusal.
+func (p publisher) invalidate(ctx context.Context, tenant store.Tenant, owed []store.DirectoryLink) error {
+	if len(owed) == 0 {
+		return nil
+	}
+	if len(owed) > maxSubjectInvalidations {
+		rcpt, err := p.revoker.Invalidate(ctx, tenant, revoke.Everyone(), revoke.Invalidation{All: true})
+		if err != nil {
+			return fmt.Errorf("cache_invalidate: %w", err)
+		}
+		if err := p.record(ctx, tenant, "cache_invalidate", "", rcpt, ""); err != nil {
+			return err
+		}
+	} else {
+		for _, l := range owed {
+			rcpt, err := p.revoker.Invalidate(ctx, tenant, revoke.Everyone(), revoke.Invalidation{Subject: l.SubjectID})
+			if err != nil {
+				return fmt.Errorf("cache_invalidate: %w", err)
+			}
+			if err := p.record(ctx, tenant, "cache_invalidate", l.SubjectID, rcpt, ""); err != nil {
+				return err
+			}
+		}
+	}
+	for _, l := range owed {
+		if err := p.store.DirectoryLinks().Settle(ctx, tenant, l.Source, l.ExternalID, true, false); err != nil {
+			return &settleError{err: err}
+		}
 	}
 	return nil
 }
@@ -287,32 +352,19 @@ func (s *Sink) deliverGroup(ctx context.Context, op string, tenant store.Tenant,
 		return s.internal(ctx, op, "read the group's members", err)
 	}
 	owed := slices.DeleteFunc(links, func(l store.DirectoryLink) bool { return !l.InvalidateOwed })
-	if len(owed) == 0 {
+	err = s.publisher().invalidate(ctx, tenant, owed)
+	var (
+		published *recordError
+		settled   *settleError
+	)
+	switch {
+	case err == nil:
 		return nil
+	case errors.As(err, &published):
+		return s.internal(ctx, op, "record the invalidation", err)
+	case errors.As(err, &settled):
+		return s.internal(ctx, op, "record the invalidation as delivered", err)
+	default:
+		return s.unavailable(ctx, op, "dropping the members' cached decisions", err)
 	}
-	if len(owed) > maxSubjectInvalidations {
-		rcpt, err := s.revoker.Invalidate(ctx, tenant, revoke.Everyone(), revoke.Invalidation{All: true})
-		if err != nil {
-			return s.unavailable(ctx, op, "dropping the members' cached decisions", err)
-		}
-		if err := s.recordPublication(ctx, tenant, "cache_invalidate", "", rcpt, ""); err != nil {
-			return s.internal(ctx, op, "record the invalidation", err)
-		}
-	} else {
-		for _, l := range owed {
-			if err := s.publish(ctx, tenant, l.SubjectID, false, false); err != nil {
-				var published *recordError
-				if errors.As(err, &published) {
-					return s.internal(ctx, op, "record the invalidation", err)
-				}
-				return s.unavailable(ctx, op, "dropping the members' cached decisions", err)
-			}
-		}
-	}
-	for _, l := range owed {
-		if err := s.store.DirectoryLinks().Settle(ctx, tenant, l.Source, l.ExternalID, true, false); err != nil {
-			return s.internal(ctx, op, "record the invalidation as delivered", err)
-		}
-	}
-	return nil
 }

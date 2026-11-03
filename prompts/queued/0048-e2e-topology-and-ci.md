@@ -11,9 +11,10 @@
   wire (esp. `0002` conformance, `0006` fleet enrollment, `0008` authorize,
   `0009` events, `0010` audit assertions, `0012` grants, and
   `0039` — the inbound action executor and the lock, `0040` — the
-  identity sync's sink and de-provisioning, and `0042` — the directory
-  source every sink call and every tied connector names, for the scenarios
-  below).
+  identity sync's sink and de-provisioning, `0042` — the directory
+  source every sink call and every tied connector names, and `0043` — the
+  claim mapping's directory-scoped group entries and the recalculation a
+  mapping write starts, for the scenarios below).
   `docs/PLAN.md` **M28** says what a lock and a deactivation are and what each
   owes the stream, and §6 at "The directory door" what a deactivation refuses.
 - In the **Hoplock Proxy repository**: its `deploy/` topology and its own e2e phase.
@@ -112,6 +113,18 @@ Each scenario is a product claim, proven across both components:
   carrying the shared id in its claim, reaches its own source's subject, and
   that deactivating one through its `DirectoryRef` ends that person's session
   through the real proxy and leaves the other's open and authorizing.
+  **Then the groups the two directories share** (0043): both directories hold
+  a group of one name (say `admins`), mapped differently per directory with
+  `directories: [<one source>]` on each entry, and a second group both hold
+  (say `BigCorporationAdmins`) mapped once by an entry listing both. Show that
+  each subject gets its own directory's mapping of `admins` and both get the
+  shared one. Then write a mapping that scopes an entry both directories had
+  reached (e.g. `groups.require_directories: true` with the shared entry
+  listing one source only), **with no directory call after it**, wait for
+  `stale_directory_subjects` on `GET …/identity/claim-mapping` to reach zero,
+  and show that the access it took away is refused through the real proxy,
+  that `operator.claim_mapping.applied` was recorded, and that the decision
+  record's subject carries `directory_source`.
 - **The three policy axes**: `sftp` denied while `shell` succeeds; a tunnel to
   the permitted host:port succeeds while another is refused; `tcpip-forward`
   refused with no listener created.

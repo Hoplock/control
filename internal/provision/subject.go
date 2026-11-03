@@ -144,7 +144,7 @@ func (s *Sink) upsertSubject(ctx context.Context, req subjectRequest) (subjectOu
 		if err != nil {
 			return err
 		}
-		subject, err := s.derive(ctx, tx, req.tenant, link, mapping)
+		subject, err := derive(ctx, tx, req.tenant, link, mapping)
 		if err != nil {
 			return err
 		}
@@ -295,19 +295,21 @@ func (s *Sink) recordDeactivated(ctx context.Context, tx *store.Store, tenant st
 }
 
 // derive builds the subject row a link stands for, through the tenant's claim
-// mapping (item 3): the directory's attributes and email offered as claims, its
-// groups resolved to the names its own source gave them and offered under the
-// mapping's group claim.
+// mapping (0040's item 3): the directory's attributes and email offered as
+// claims, and its groups resolved to the names its own source gave them and
+// matched against the entries that apply to that source (0043).
 // Only what the mapping names becomes an attribute or a group, and the row
 // records the mapping's version (M4). Local membership merges in as it does for
 // a federated subject, and the principals are exactly the directory's username.
-func (s *Sink) derive(ctx context.Context, tx *store.Store, tenant store.Tenant, link store.DirectoryLink, mapping *identity.Mapping) (store.Subject, error) {
+// The subject's source is the link's provider, so a recalculation that runs
+// with no sync registered writes what the sink would (0043).
+func derive(ctx context.Context, tx *store.Store, tenant store.Tenant, link store.DirectoryLink, mapping *identity.Mapping) (store.Subject, error) {
 	names, err := tx.DirectoryGroups().Names(ctx, tenant, link.Source, link.GroupIDs)
 	if err != nil {
 		return store.Subject{}, err
 	}
 	groupNames := slices.Compact(slices.Sorted(maps.Values(names)))
-	attrs := mapping.ApplyDirectory(link.Attributes, link.Email, groupNames)
+	attrs := mapping.ApplyDirectory(link.Source, link.Attributes, link.Email, groupNames)
 	local, err := tx.Groups().GroupsOf(ctx, tenant, link.SubjectID)
 	if err != nil {
 		return store.Subject{}, err
@@ -319,7 +321,7 @@ func (s *Sink) derive(ctx context.Context, tx *store.Store, tenant store.Tenant,
 	}
 	return store.Subject{
 		ID:             link.SubjectID,
-		Source:         s.provider,
+		Source:         link.Provider,
 		DisplayName:    firstNonEmpty(link.DisplayName, link.Username, link.SubjectID),
 		Principals:     principals,
 		Groups:         groups,
@@ -327,6 +329,54 @@ func (s *Sink) derive(ctx context.Context, tx *store.Store, tenant store.Tenant,
 		BreakGlass:     false,
 		MappingVersion: attrs.MappingVersion,
 	}, nil
+}
+
+// recalculated is what recalculating one subject did.
+type recalculated int
+
+const (
+	// recalculatedSkipped: the row already named the mapping's version.
+	recalculatedSkipped recalculated = iota
+	// recalculatedUnchanged: re-derived, and nothing a decision reads moved.
+	recalculatedUnchanged
+	// recalculatedChanged: re-derived, and the link owes an invalidation.
+	recalculatedChanged
+)
+
+// recalculate re-derives one provisioned subject inside tx through mapping and
+// writes its row, marking the link as owing a cache invalidation when what a
+// decision reads changed. It is the one way a subject is recalculated without a
+// call on it: a renamed or deleted group's members (rederive) and a claim
+// mapping's stale subjects (Recalculator) both come through here. With
+// skipCurrent, a row that already names the mapping's version is left alone.
+// The caller holds the tenant's directory-groups lock, shared or exclusive, and
+// for a recalculation the link's own lock (0040's order). It returns the link
+// as it now stands.
+func recalculate(ctx context.Context, tx *store.Store, tenant store.Tenant, link store.DirectoryLink, mapping *identity.Mapping, skipCurrent bool) (store.DirectoryLink, recalculated, error) {
+	before, err := tx.Subjects().Get(ctx, tenant, link.SubjectID)
+	if err != nil {
+		return link, recalculatedSkipped, err
+	}
+	if skipCurrent && before.MappingVersion == mapping.Version {
+		return link, recalculatedSkipped, nil
+	}
+	subject, err := derive(ctx, tx, tenant, link, mapping)
+	if err != nil {
+		return link, recalculatedSkipped, err
+	}
+	if err := tx.Subjects().Upsert(ctx, tenant, subject); err != nil {
+		return link, recalculatedSkipped, err
+	}
+	if !changed(before, subject) {
+		return link, recalculatedUnchanged, nil
+	}
+	if !link.InvalidateOwed {
+		link.InvalidateOwed = true
+		if err := tx.DirectoryLinks().Put(ctx, tenant, link); err != nil {
+			return link, recalculatedSkipped, err
+		}
+	}
+	return link, recalculatedChanged, nil
 }
 
 // changed reports a change to what a decision reads: groups, claims or the
