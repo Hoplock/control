@@ -19,6 +19,7 @@ import (
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/south"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/provision"
 	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/standing"
 	"github.com/hoplock/control/internal/store"
@@ -215,6 +216,29 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 
+	// A claim mapping reaches every directory subject by itself (0043): the
+	// recalculation is built whether or not an identity sync is registered,
+	// because a lapsed sync must not freeze an older mapping's groups in
+	// place. It walks the tenants this process has seen, which it is told of
+	// as the grant poller is: the configured one here, each a proxy
+	// subscribes in, each whose mapping is written or read, and each the
+	// sync writes in.
+	revocations := revoke.NewOperator(bus, registry)
+	recalc, err := provision.NewRecalculator(provision.RecalculatorOptions{
+		Store: st, Revoker: revocations, Recorder: emitter, Logger: log,
+	})
+	if err != nil {
+		return err
+	}
+	recalc.Track(store.Tenant(cfg.Tenant))
+	trackTenant := recalc.Track
+	if trackFeeds != nil {
+		trackTenant = func(t store.Tenant) {
+			recalc.Track(t)
+			trackFeeds(t)
+		}
+	}
+
 	// The certificate authority (0011) serves both listeners: the north-bound
 	// surface manages it, and the south-bound one mints the per-session
 	// certificates `brokered-certificate` routes ask for (Hoplock/proxy#68).
@@ -229,7 +253,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		Identity:        auth,
 		Fleet:           registry,
 		Decision:        decisions,
-		Events:          trackSubscriptions(bus, grants, registry, trackFeeds),
+		Events:          trackSubscriptions(bus, grants, registry, trackTenant),
 		Logs:            ingest,
 		Logger:          log,
 		MaxBodyBytes:    cfg.South.MaxBodyBytes,
@@ -267,6 +291,19 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	registry.TrackConfigTenant(store.Tenant(cfg.Tenant))
 	go registry.WatchAnnouncements(pollCtx, fleet.DefaultAnnounceInterval)
 
+	// Stale directory subjects are recalculated onto their tenant's active
+	// mapping: once now, for a mapping written while no node ran or a run a
+	// stop interrupted, and then on a timer, for a mapping written by
+	// `identity mapping-put` straight to the database (0043). It is stopped
+	// before the listeners drain.
+	recalcCtx, stopRecalc := context.WithCancel(ctx)
+	defer stopRecalc()
+	recalcDone := make(chan struct{})
+	go func() {
+		defer close(recalcDone)
+		recalc.Run(recalcCtx, provision.DefaultRecalculateInterval)
+	}()
+
 	// The push receiver (0013): an admitted window becomes a grant through
 	// the grant service, and whether a scope is privileged is the active
 	// policy's to say, which the decision service already holds.
@@ -288,7 +325,6 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 
 	// The inbound action channel (0039): with a handler registered, the
 	// executor it acts through and the lifecycle that starts it. Nil with none.
-	revocations := revoke.NewOperator(bus, registry)
 	actions, err := buildActionRunner(cfg, st, extensions, denials, grants, revocations, emitter, log)
 	if err != nil {
 		return err
@@ -297,7 +333,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	// Identity provisioning (0040): with a sync registered, the sink it
 	// applies what it learns through and the lifecycle that starts it. Nil
 	// with none.
-	syncer, err := buildIdentitySync(cfg, st, extensions, grants, revocations, emitter, log)
+	syncer, err := buildIdentitySync(cfg, st, extensions, grants, revocations, emitter, recalc.Track, log)
 	if err != nil {
 		return err
 	}
@@ -305,6 +341,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	deps := northDeps{
 		st: st, ca: ca, emitter: emitter, grants: grants, pushes: pushes,
 		fleet: registry, revocations: revocations, standing: denials, extensions: extensions,
+		recalc: recalc,
 	}
 	if actions != nil {
 		deps.actions = actions
@@ -437,6 +474,16 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		if err := syncer.Stop(shutdownCtx); err != nil {
 			log.Warn("the identity sync did not stop inside the shutdown grace", "provider", syncer.Provider(), "error", err)
 		}
+	}
+
+	// The recalculation stops before the listeners drain: a batch in flight
+	// rolls back or commits whole, and what it did not reach is still stale
+	// for the next node or start to find.
+	stopRecalc()
+	select {
+	case <-recalcDone:
+	case <-shutdownCtx.Done():
+		log.Warn("the claim mapping recalculation did not stop inside the shutdown grace")
 	}
 
 	// THE ORDER MATTERS. The listeners stop accepting first, so nothing new

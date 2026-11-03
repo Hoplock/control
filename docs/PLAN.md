@@ -277,7 +277,10 @@ decision.
   claims, and only what it names reaches policy (0040, §6). A person is
   linked by the directory they come from (its source) and that directory's
   id for them, so one sync may feed several directories into a tenant
-  (0042). Local credentials
+  (0042). A group entry of the mapping may list the directories it applies
+  to, and a tenant may require that every directory group match only such an
+  entry, so a directory reaches only the entries that name it; a new mapping
+  version reaches every directory subject by itself (0043, §6). Local credentials
   exist for development and for break-glass only, are flagged as such in the
   audit record, and are never the production path.
 - **M8 — Audit is append-only and tamper-evident.** Records are immutable, hash
@@ -1720,7 +1723,9 @@ for nothing.
 
   `Mapping` is the one place an IdP's vocabulary becomes this server's, and it
   is an allow-list (§6). A directory's vocabulary goes through the same
-  function (`Mapping.ApplyDirectory`, 0040), and a login through a connector
+  function (`Mapping.ApplyDirectory`, 0040), told the directory a subject's
+  groups came from, so a group entry that lists directories matches only
+  theirs and never a login (0043); and a login through a connector
   tied to the directory (`directory_claim` and `directory_source`) reaches the
   subject the directory provisioned under that source, rewrites nothing on
   it, or is refused. `Role`, `Permission` and `RoleSet` are the whole of
@@ -1954,7 +1959,13 @@ for nothing.
   levers make. Every applied call is recorded (`identity_sync.*`) with the sync
   as the actor. `Runner` calls the one registered `ext.IdentitySync`'s `Start`
   and `Stop` and reports whether it is running. With no sync registered neither
-  exists.
+  exists. `Recalculator` is built whether or not one is (0043): it brings a
+  tenant's directory subjects onto the active claim mapping, through the same
+  `derive`, lock order and delivery as a sink write, started by a mapping
+  written through the API and by a once-a-minute sweep of the tenants this
+  process has seen — the configured one, each a proxy subscribes in, each
+  whose mapping is written or read here, and each the sync writes in —
+  because the store cannot list tenants (M18).
 - **`internal/accessctx`** — external access context (M16): the provider set
   keyed by external system, the per-tenant scope bindings and their internal
   API, the push receiver that admits a window through its binding and creates
@@ -3067,7 +3078,8 @@ stored version, or the active one (`POST …/policy/simulate`):
 it, into its story (`GET …/decisions/{id}`, `…/sessions/{id}/decisions`, which
 answers a session's newest 100 and says `truncated` past them, M26.3): the
 effect, the rule and its line, the claim-mapping version it was taken under and
-the active one, the obligations, the grant that decided and its external
+the active one, with the directory a provisioned subject's groups came from
+beside them (0043), the obligations, the grant that decided and its external
 window, the inputs, the explanation and the snapshot exactly as stored, and why
 it was unserved if it was. A record that cannot tell its own story is an
 integrity fault, answered `500 decision_unexplainable` and logged at error —
@@ -3104,7 +3116,10 @@ not say why, and a grant the explanation names that the inputs do not hold.
   often as by the rule. It is an **allow-list, not a transform**: a claim it does
   not name does not become an attribute — not renamed, not passed through, not
   namespaced — and a claim may not be mapped onto a name this server sets for
-  itself (`chain_hop_proxy_id`, anything under `hoplock.`). Transformation
+  itself (`chain_hop_proxy_id`, anything under `hoplock.`). A group entry may
+  list the directory sources it applies to (`directories`, 0043): one more
+  exact key matched beside the group's name, so there is still no prefix rule,
+  no pattern and no wildcard. Transformation
   languages are deliberately absent: a mapping language is a policy language,
   and this product already has one. Multi-IdP federation, complex
   claim-transformation rules and SCIM provisioning are Enterprise's, behind
@@ -3123,7 +3138,7 @@ not say why, and a grant the explanation names that the inputs do not hold.
   strip every attribute in the tenant, which reads as a permissions bug and
   would be debugged as one.
 
-- **The directory door (M7, M15, M28, 0040, 0042).** A registered
+- **The directory door (M7, M15, M28, 0040, 0042, 0043).** A registered
   `ext.IdentitySync` provisions subjects ahead of their first login through
   Control's `ext.SyncSink` (`internal/provision`). Each identity and group
   names the directory it comes from, its **source**
@@ -3153,10 +3168,19 @@ not say why, and a grant the explanation names that the inputs do not hold.
   attributes and email are offered to the tenant's claim mapping as claims, its
   groups resolved from id to the directory's group name and offered under the
   claim `groups.claim` names, and only what the mapping names becomes an
-  attribute or a group, with the mapping's version on the row (M4). So one
-  `groups.map` serves login and directory alike, a renamed group maps nothing
-  until the mapping names the new name, and a new mapping version reaches a
-  provisioned subject at its next applied write. Its login names are exactly the
+  attribute or a group, with the mapping's version on the row (M4). A group
+  named N from directory S matches the entry that lists S under
+  `external: N`, if one does; otherwise, unless `groups.require_directories`
+  is set, the entry with `external: N` and no `directories`; otherwise
+  nothing (0043). A login's group claim matches only entries with no
+  `directories`. The scoped match is *instead of* the unscoped one, never as
+  well as it, or scoping could add a group and never take one away; and
+  requiring scoping is a key in the document rather than a rule that changes
+  with how many directories have written, so the version a decision record
+  names still says what it mapped. A renamed group maps nothing until the
+  mapping names the new name.
+
+  A provisioned subject's login names are exactly the
   directory's username, replaced on each write; one another subject in the
   tenant presents, from any source, is `KindConflict`, and an existing subject
   is never adopted or merged. So a person who moves from one directory to
@@ -3165,6 +3189,33 @@ not say why, and a grant the explanation names that the inputs do not hold.
   operator's `PUT` or `DELETE` of it is `409 subject_directory_managed`; the
   lock, role bindings and local group membership remain an operator's, and
   local membership merges into its groups as it does for a federated subject.
+
+  **A new mapping version reaches every directory subject by itself** (0043),
+  because a directory that re-pushes unchanged data writes nothing and a
+  person the directory never changes would otherwise keep what an older
+  mapping gave them. A provisioned subject whose row names another version
+  than the tenant's active one is stale, a deactivated one included, and is
+  recalculated as a sink write recalculates one: in batches of 200 in subject
+  order, each its own transaction under the tenant's directory-groups lock
+  shared and each identity's own lock, through the mapping active as the
+  batch runs, with the owed `cache_invalidate`s published after each commit as
+  a group change publishes them (one per subject, or one for the tenant past
+  64), and no session ended. The mapping's `PUT` never waits for it and its
+  transaction writes no subject: it starts the tenant's run on the node that
+  took it, and a sweep on every node runs each tenant this process has seen
+  with a stale subject once a minute, which covers a mapping written by
+  `identity mapping-put`, a node that stopped mid-run, and a restart. The
+  tenants it has seen are the configured one, each a proxy subscribes in,
+  each whose mapping is written or read there, and each the sync writes in,
+  because the store cannot list tenants (M18); every tenant a decision can be
+  taken in has a proxy. Progress is never stored, so overlapping runs cost
+  only reads and a tenant always ends on its newest mapping, and a run also
+  delivers an invalidation an earlier one committed and could not publish.
+  No identity sync is needed. Each run that
+  recalculated anything records `operator.claim_mapping.applied` with its
+  counts, as the version's author, and `stale_directory_subjects` on the
+  mapping's read counts what remains. Federated and local subjects reach a new
+  mapping at their next login.
 
   **A connector may be tied to the directory.** Its `directory_claim` names the
   claim in its assertions that carries the directory's `ExternalID`, and its
@@ -3912,7 +3963,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0040 | Identity sync: Control's sync sink & de-provisioning | **M28 extended.** Control's `ext.SyncSink` (`internal/provision`) over its identity store, handed to the registered `ext.IdentitySync`, which is started once after the registry is sealed and before the listeners open and stopped before they drain, a `Start` that fails, panics or never returns logged and shown on `GET …/extensions` (`started`, `start_error`) and never stopping Control. A provisioned subject is joined on `ExternalID` by a link row and never on the username (migration `0021`: `directory_links`, `directory_groups`, `idp_connectors.directory_claim`), its id allocated by Control (`dir-…`), its one login name the directory's username and unique in the tenant (`KindConflict`, never adopted); every method idempotent on `ExternalID` and ordered by `UpdatedAt`, with a deactivation or a group tombstone kept for an id not yet seen (0017's precedent) and Control's clock ordering a re-activation; what the directory holds reaching policy only through the tenant's claim mapping (`Mapping.ApplyDirectory`, M7), a renamed or deleted group re-deriving its members in the same transaction; the directory the only writer of what it provisions (`409 subject_directory_managed`); a connector's `directory_claim`, through which a login reaches the provisioned subject or is refused (`federation.not_provisioned`); a deactivation a standing denial of its own beside 0039's lock (`subject_deactivated`), read as a third join in the subject's statement (no round trip added, counted by a test), lifted only by the directory, refusing every login (`federation.subject_deactivated`) and every north-bound credential, and revoking credentials, certificates, grants, pending requests and live sessions through the services an operator's levers call, with a retry that finishes it; every applied call recorded on the control stream (`identity_sync.*`) with the sync as actor. No `ext` signature changes; `v0.27.0` (M7, M15, M9, M10, M5, M11, M12, M18, M23). Raised by `Hoplock/enterprise#26`; depends on 0039 and 0027, and on merged phases (0011, 0012, 0016, 0019) |
 | 0041 | Confined inbound actions | **M28 extended.** `ext.Action` gains `Within *ext.ActionScope` (`SubjectIDs`, `TargetIDs` — the one field Control added to the ask — and `TargetLabels`; at most 1 000, 1 000 and 64, a non-nil empty scope `KindInvalid` on `within`) and `IfPlacedBy`. Control resolves what each kind reaches from its own data inside the action's transaction, after the ledger's lock and before the ledger answers (so a repeat is checked too): a session's subjects and targets from its decision records (`Decisions().SessionReach`), a kill by subject, a lock and an unlock reaching every target, a quarantine every subject, and a grant its subject and what its selector can reach — inside a target scope only when it lists hostnames each naming a held target the scope admits, matched case-insensitively, or its own labels require the scope's; the rows read are held until the act (`Targets().ForShare`, `ForShareByHostnames`, `Grants().GetForUpdate`). An action reaching outside is `KindDenied`, `out_of_scope`, recorded as `action.refused` with `scope_field` and `outside`, its error naming only the field; a selector Control holds nothing for is `out_of_scope` unless the scope names it by id alone. `unlock_subject` with `IfPlacedBy` lifts only a lock that action of this handler's principal placed, in one `DELETE` (`SubjectLocks().LiftIfPlacedBy`), and otherwise leaves it standing (`not_this_lock`, `action.unchanged`); the condition is part of the action's identity (migration `0022`: `action_executions.if_placed_by`; a changed one is `KindConflict`), the scope is not. No method added; `v0.28.0` (M28, M15, M23, M10, M11, M18). Raised by `Hoplock/enterprise#50`; depends on 0039 |
 | 0042 | Directory source on the sync sink | **M7 and M28 revised in place, no decision added.** `ext.SyncedSubject` and `ext.SyncedGroup` gain a required `Source` (`^[a-z0-9][a-z0-9-]{0,62}$`, else `KindInvalid` on `source`, recorded) and `ext.DirectoryRef` (`Tenant`, `Source`, `ExternalID`) is what `SyncSink.DeactivateSubject(ctx, ref, reasonCode)` and `DeleteGroup(ctx, ref)` take; everything 0040 keyed on an `ExternalID` — link and group rows, the ordering, the kept deactivation, the tombstone, the owed delivery, the per-identity advisory lock, a group's members — keyed on `(tenant, source, ExternalID)` (migration `0023`: both primary keys, the members read still on 0021's GIN index), a subject's groups resolving within its own source, a login name still unique across sources (`KindConflict`), and `directory_links`' unique `(tenant, subject_id)` key kept, so the decision path reads the link's `source` in the join it already made and sends no more statements (M28, M5); a tied connector's `idp_connectors.directory_source` beside its claim (`identity connector-put --directory-source`), both or neither (a check constraint), refused for a source nothing in the tenant has written with the error naming up to twenty it has (`DirectoryLinks().HasSource`, `Sources`), a login looking the link up by `(tenant, directory_source, claim value)`, and both shown on the sign-in methods; `directory.source` on the subject read, `source` on the deactivation's standing entry (M4) and on every `identity_sync.*` record (`AttrSyncSource`); every existing row keyed under the source `default`. `v0.29.0`, a `### Breaking` MINOR (M7, M15, M23, M12, M18). Raised by `Hoplock/enterprise#51`, item 1; depends on 0040 |
-| 0043 | Directory-scoped group entries | a `groups.map` entry in the claim mapping lists the `directories` it applies to (each a directory source, 0042) and matches a directory group of its name from a listed source instead of the unscoped entry, never a login's group claim; `groups.require_directories` makes every directory group match only an entry listing its own source, so unscoped entries serve logins only; no wildcard, three rejection codes (`mapping.directory_name`, `mapping.directories_empty`, `mapping.directory_duplicate`), a scoped entry counted once per directory it lists against the mapping's bound, and `schema_version` still `1`; every mapping write, scoped or not, reaching every directory subject by itself — stale subjects (a row naming another version) recalculated after the write commits in batches under the sink's lock order, at once on the node that took an API write and by a once-a-minute sweep on every node otherwise, with no sync needed, their cached decisions dropped as a group change drops them, and `operator.claim_mapping.applied` recording each run — where until then a mapping reached a directory subject only when the directory changed that person; `directories`, `require_directories` and `stale_directory_subjects` on the claim-mapping read, and `directory_source` on a decision record's subject, read from the link row the subject's statement already joins (M4, M5). No `ext` change, at most one migration (an index); a MINOR (M7, M4, M5, M9, M21, M23). Raised by `Hoplock/enterprise#51`, item 2; depends on 0042 |
+| 0043 | Directory-scoped group entries | a `groups.map` entry in the claim mapping lists the `directories` it applies to (each a directory source, 0042) and matches a directory group of its name from a listed source instead of the unscoped entry, never a login's group claim; `groups.require_directories` makes every directory group match only an entry listing its own source, so unscoped entries serve logins only; no wildcard, three rejection codes (`mapping.directory_name`, `mapping.directories_empty`, `mapping.directory_duplicate`), a scoped entry counted once per directory it lists against the mapping's bound, and `schema_version` still `1`; every mapping write, scoped or not, reaching every directory subject by itself through `provision.Recalculator` — stale subjects (a row naming another version) recalculated after the write commits in batches of 200 under the sink's lock order and through its `derive`, at once on the node that took an API write and by a once-a-minute sweep of the tenants each node has seen (the store cannot list tenants, M18), with no sync needed, their cached decisions dropped as a group change drops them, and `operator.claim_mapping.applied` recording each run as the version's author; `directories`, `require_directories` and `stale_directory_subjects` on the claim-mapping read and in `identity mapping-put`/`mapping-show`, and `directory_source` on a decision record's subject and in `explain`, read from the link row the subject's statement already joins (M4, M5). No `ext` change and no migration: both stale reads are served by existing indexes. A MINOR, `v0.30.0` (M7, M4, M5, M9, M21, M23). Raised by `Hoplock/enterprise#51`, item 2; depends on 0042 |
 | 0044 | Registered reports served | every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (a report is the audit store, summarised): `GET …/reports` lists each provider's `Reports(ctx, tenant)` with a provider that failed listed with its failure rather than dropped, and `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), checks it against the descriptor the provider listed for that tenant before `Generate` is called, and streams the body with the format's own media type, `nosniff` and `attachment`, never the provider's; a generation with its own bound (`north.report_timeout`) and a per-node ceiling (`north.max_concurrent_reports`, past it `503 report_generation_busy`) beside the decision path (M5), and a body that fails after its first byte aborts the response rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation; `ErrNotFound` `404`, `ErrInvalid` `400`, and every other failure `502 report_provider_failed` or `503 report_provider_unavailable`, never a `401` or a `403` of a provider's (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
 | 0045 | North-bound answer names | every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, which rendered store and fleet structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0046 makes the names a compatibility promise (M19, M26, M17, M23) |
 | 0046 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |

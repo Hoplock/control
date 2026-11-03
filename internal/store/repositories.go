@@ -94,6 +94,15 @@ type DirectoryLinkRepository interface {
 	// Sources returns the sources the tenant's links and groups come from,
 	// in order, at most MaxListedSources of them.
 	Sources(ctx context.Context, tenant Tenant) ([]string, error)
+	// Stale returns at most limit provisioned links of the tenant, in subject
+	// order after a subject id ("" for the first), whose subject row names a
+	// claim mapping version other than version, or which owe a cache
+	// invalidation that is not a deactivation's: what a recalculation works
+	// through (0043).
+	Stale(ctx context.Context, tenant Tenant, version int, after string, limit int) ([]DirectoryLink, error)
+	// StaleCount counts the tenant's directory subjects whose row names a
+	// claim mapping version other than version (0043).
+	StaleCount(ctx context.Context, tenant Tenant, version int) (int64, error)
 }
 
 // DirectoryGroupRepository stores the directory's groups, in its own

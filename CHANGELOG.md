@@ -26,6 +26,74 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.30.0
+
+Phase 0043, directory-scoped group entries: a claim mapping's group entry may
+list the directories it applies to, a tenant may require that every directory
+group match only such an entry, and every claim mapping write now reaches
+every directory subject by itself (decision M7, `docs/PLAN.md` §2 and §6).
+Raised by `Hoplock/enterprise#51`, item 2. No migration, and nothing in `ext`
+or `server` changes.
+
+### Added and changed
+
+- **`directories` on a `groups.map` entry** lists directory sources, as an
+  identity sync names them. Such an entry matches a directory group of its
+  `external` name from a directory it lists, and never a login's group claim.
+  For a group named N from directory S, the entry listing S for N wins
+  *instead of* the entry for N with no `directories`, never as well as it.
+  An entry with no `directories` matches as before: logins, and every
+  directory not listed for its name. There is no wildcard: a directory
+  connected later reaches no scoped entry until somebody lists it.
+- **`groups.require_directories: true`** makes every directory group match
+  only an entry that lists its own directory; the unscoped entries then serve
+  logins alone. A mapping with neither key maps exactly as before, and
+  `schema_version` stays `1`.
+- **Three mapping rejection codes**: `mapping.directory_name` (a listed name
+  that is not a valid source), `mapping.directories_empty` (`directories: []`,
+  which is refused rather than given a meaning), and
+  `mapping.directory_duplicate` (a source listed twice for one `external`, in
+  one entry or across two; the message names the entry that listed it
+  first). `mapping.too_large` counts a scoped entry once for each directory
+  it lists, so the bound holds over what a document matches; every document
+  valid before stays valid.
+- **`GET …/identity/claim-mapping`** gains `directories` (the sorted sources
+  the mapping lists, empty when none), `require_directories`, and
+  `stale_directory_subjects` (how many directory subjects are not yet on the
+  active version). `groups` includes what scoped entries produce. The `PUT`'s
+  answer is unchanged.
+- **The decision record's subject gains `directory_source`**, the directory a
+  provisioned subject's groups came from, beside `mapping_version`. It is
+  omitted for a subject no directory provisioned and absent on older records.
+  `explain` shows it in `mapping.directory_source`, and `policyctl explain`
+  prints it on the `mapping` line.
+- **`operator.claim_mapping.applied`**: a record of a mapping version reaching
+  the tenant's directory subjects, with `recalculated`, `changed` and
+  `complete`. Its actor is the version's author.
+- `identity mapping-put` (dry run included) and `identity mapping-show` print
+  the directories the mapping lists and `require_directories`; `mapping-show`
+  prints how many directory subjects are not yet on the active version, and
+  `mapping-put` names any listed source nothing in the tenant has written yet.
+
+### Operator notes
+
+- **A mapping that uses `directories` or `require_directories` is unreadable
+  to an older build**, which decodes the mapping strictly. An older node that
+  reads one as a tenant's active mapping refuses that tenant's logins and
+  directory writes as an outage; it never applies it unscoped. Finish a
+  rolling upgrade before writing a mapping that scopes.
+- **Every claim mapping write, scoped or not, now reaches every directory
+  subject by itself**: at once when written through the API, and within a
+  minute when written by `identity mapping-put` straight to the database, on
+  any node that has seen the tenant (its configured tenant, a tenant its
+  proxies subscribe in, or one whose mapping it served). It runs whether or
+  not an identity sync is registered or started. Each subject whose groups,
+  claims or login names change has its cached decisions dropped
+  (`cache_invalidate`, or one for the tenant past 64 in a batch); live
+  sessions are not ended. Until this release a new mapping reached a directory
+  subject only when the directory changed that person.
+  `stale_directory_subjects` shows how many remain.
+
 ## v0.29.0
 
 Phase 0042, the directory source on the sync sink: every directory identity

@@ -85,6 +85,10 @@ type MappingFacts struct {
 	Active int `json:"active"`
 	// Changed reports that the mapping has moved since the decision.
 	Changed bool `json:"changed"`
+	// DirectorySource is the directory the subject's groups came from,
+	// recorded beside the version (0043); empty for a subject no directory
+	// provisioned, and on a record written before it was recorded.
+	DirectorySource string `json:"directory_source,omitempty"`
 }
 
 // ActiveMapping reports the claim mapping version active now, for explain to
@@ -164,7 +168,7 @@ func story(ctx context.Context, active ActiveMapping, tenant store.Tenant, d sto
 		DecidedAt: d.DecidedAt.UTC(), Rule: expl.Rule, RuleLine: expl.RuleLine,
 		Obligations: expl.Obligations, Inputs: d.Inputs, Explanation: d.Explanation,
 		Snapshot: d.Snapshot, Unserved: expl.Unserved,
-		Mapping: MappingFacts{Version: in.Subject.MappingVersion},
+		Mapping: MappingFacts{Version: in.Subject.MappingVersion, DirectorySource: in.Subject.DirectorySource},
 	}
 	if expl.Grant != "" {
 		found := false

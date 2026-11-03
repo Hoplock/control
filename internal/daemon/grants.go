@@ -147,7 +147,10 @@ func buildGrants(
 //
 // The archive feed (0025) and sink delivery (0026) learn it the same way,
 // when either is built: a tenant whose proxies subscribe is one whose records
-// they deliver after a restart, before any of them writes again.
+// they deliver after a restart, before any of them writes again. So does the
+// claim mapping's recalculation (0043): every tenant a decision can be taken
+// in has a proxy, so a mapping written straight to the database reaches the
+// directory subjects of every tenant where a stale one could decide anything.
 func trackSubscriptions(events south.EventStream, grants *access.Service, registry *fleet.Registry, feeds func(store.Tenant)) south.EventStream {
 	return trackedEvents{EventStream: events, track: func(t store.Tenant) {
 		grants.Track(t)

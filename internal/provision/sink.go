@@ -86,6 +86,10 @@ type Options struct {
 	// DefaultSettle.
 	Settle time.Duration
 	Logger *slog.Logger
+	// Track, when set, is told the tenant of every call the sink applies, so
+	// the claim mapping's recalculation sweeps a tenant the directory writes
+	// in (0043). It must be cheap and never wait.
+	Track func(store.Tenant)
 	// Now overrides the clock for tests.
 	Now func() time.Time
 }
@@ -107,6 +111,7 @@ type Sink struct {
 	defaultTenant store.Tenant
 	settle        time.Duration
 	log           *slog.Logger
+	track         func(store.Tenant)
 	now           func() time.Time
 
 	// closing is set when the sync is being stopped: a call that arrives
@@ -128,7 +133,10 @@ func New(o Options) (*Sink, error) {
 	s := &Sink{
 		provider: o.Provider, principal: PrincipalPrefix + o.Provider,
 		store: o.Store, grants: o.Grants, revoker: o.Revoker, recorder: o.Recorder,
-		defaultTenant: o.DefaultTenant, settle: o.Settle, log: o.Logger, now: o.Now,
+		defaultTenant: o.DefaultTenant, settle: o.Settle, log: o.Logger, track: o.Track, now: o.Now,
+	}
+	if s.track == nil {
+		s.track = func(store.Tenant) {}
 	}
 	if s.settle <= 0 {
 		s.settle = DefaultSettle
@@ -160,6 +168,7 @@ func (s *Sink) UpsertSubject(ctx context.Context, in ext.SyncedSubject) error {
 	if bad != nil {
 		return s.refuse(ctx, op, ref, bad)
 	}
+	s.track(req.tenant)
 	out, err := s.upsertSubject(ctx, req)
 	if err != nil {
 		var r *refusal
@@ -181,6 +190,7 @@ func (s *Sink) DeactivateSubject(ctx context.Context, ref ext.DirectoryRef, reas
 	if bad := validateRef(ref, reasonCode); bad != nil {
 		return s.refuse(ctx, op, ref, bad)
 	}
+	s.track(store.Tenant(ref.Tenant))
 	out, err := s.deactivate(ctx, store.Tenant(ref.Tenant), ref.Source, ref.ExternalID, reasonCode)
 	if err != nil {
 		return s.internal(ctx, op, "deactivate the subject", err)
@@ -198,6 +208,7 @@ func (s *Sink) UpsertGroup(ctx context.Context, in ext.SyncedGroup) error {
 	if bad != nil {
 		return s.refuse(ctx, op, ext.DirectoryRef{Tenant: in.Tenant, Source: in.Source, ExternalID: in.ExternalID}, bad)
 	}
+	s.track(req.tenant)
 	if err := s.upsertGroup(ctx, req); err != nil {
 		return s.internal(ctx, op, "apply the group", err)
 	}
@@ -215,6 +226,7 @@ func (s *Sink) DeleteGroup(ctx context.Context, ref ext.DirectoryRef) error {
 		return s.refuse(ctx, op, ref, bad)
 	}
 	tenant := store.Tenant(ref.Tenant)
+	s.track(tenant)
 	if err := s.deleteGroup(ctx, tenant, ref.Source, ref.ExternalID); err != nil {
 		return s.internal(ctx, op, "delete the group", err)
 	}

@@ -226,3 +226,11 @@ func MigrateThrough(ctx context.Context, s *Store, version int64) error {
 // test that asks Postgres how it would plan it. It is compiled into the test
 // binary alone.
 func DirectoryMembersSQL() string { return directoryMembersSQL }
+
+// DirectoryStaleSQL and DirectoryStaleCountSQL are the statements
+// DirectoryLinks().Stale and StaleCount run, for the test that asks Postgres
+// how it would plan them.
+func DirectoryStaleSQL() string { return directoryStaleSQL }
+
+// DirectoryStaleCountSQL is the statement DirectoryLinks().StaleCount runs.
+func DirectoryStaleCountSQL() string { return directoryStaleCountSQL }

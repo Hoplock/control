@@ -367,6 +367,80 @@ func (r directoryLinkRepo) For(ctx context.Context, tenant Tenant, subjectIDs []
 	return out, wrap(op, rows.Err())
 }
 
+// MaxStaleBatch bounds what one Stale read returns: a recalculation's batch.
+const MaxStaleBatch = 1000
+
+// directoryStaleSQL is the recalculation's batch read (0043): the tenant's
+// provisioned links, in subject order after a cursor, whose subject row names
+// a claim mapping version other than $3, or which owe a cache invalidation
+// that is not a deactivation's. The range on (tenant, subject_id) is served by
+// directory_links_subject_key, and each row's subject by the subjects primary
+// key; staleness is checked on the rows that range returns.
+const directoryStaleSQL = `
+		SELECT ` + directoryLinkColumnsAs + `
+		FROM directory_links d
+		JOIN subjects s ON s.tenant = d.tenant AND s.subject_id = d.subject_id
+		WHERE d.tenant = $1 AND d.provisioned AND d.subject_id > $2
+			AND (s.mapping_version <> $3 OR (d.invalidate_owed AND NOT d.deactivation_owed))
+		ORDER BY d.subject_id
+		LIMIT $4`
+
+// directoryStaleCountSQL counts the tenant's provisioned links whose subject
+// row names a claim mapping version other than $2: what the claim-mapping read
+// shows while a recalculation runs (0043).
+const directoryStaleCountSQL = `
+		SELECT count(*)
+		FROM directory_links d
+		JOIN subjects s ON s.tenant = d.tenant AND s.subject_id = d.subject_id
+		WHERE d.tenant = $1 AND d.provisioned AND s.mapping_version <> $2`
+
+// Stale returns at most limit provisioned links of the tenant, in subject
+// order after the subject id after ("" for the first), whose subject is stale
+// against the claim mapping version — its row names another — or which owe a
+// cache invalidation that is not a deactivation's (0043). A deactivated
+// subject is returned like any other, so a re-activation starts from the
+// active mapping; a deactivation kept for an id never provisioned has no
+// subject and is not.
+func (r directoryLinkRepo) Stale(ctx context.Context, tenant Tenant, version int, after string, limit int) ([]DirectoryLink, error) {
+	const op = "store.DirectoryLinks.Stale"
+	if err := checkTenant(op, tenant); err != nil {
+		return nil, err
+	}
+	if limit < 1 || limit > MaxStaleBatch {
+		return nil, invalid(op, "a batch is between 1 and 1000 links")
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	rows, err := r.s.db.Query(ctx, directoryStaleSQL, tenant, after, version, limit)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+	var out []DirectoryLink
+	for rows.Next() {
+		l, err := scanDirectoryLink(op, rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, wrap(op, rows.Err())
+}
+
+// StaleCount counts the tenant's directory subjects whose row names a claim
+// mapping version other than version (0043).
+func (r directoryLinkRepo) StaleCount(ctx context.Context, tenant Tenant, version int) (int64, error) {
+	const op = "store.DirectoryLinks.StaleCount"
+	if err := checkTenant(op, tenant); err != nil {
+		return 0, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	var n int64
+	err := r.s.db.QueryRow(ctx, directoryStaleCountSQL, tenant, version).Scan(&n)
+	return n, wrap(op, err)
+}
+
 // MaxListedSources bounds the sources Sources returns: enough to name the
 // directories a tenant is fed by, and never a page of them.
 const MaxListedSources = 20

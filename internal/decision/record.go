@@ -135,6 +135,12 @@ type recordedSubject struct {
 	// rule, so a record that names the rule and not the mapping answers half
 	// the question. Zero means no mapping was involved.
 	MappingVersion int `json:"mapping_version,omitempty"`
+	// DirectorySource is the directory a provisioned subject's groups came
+	// from (0043): a group entry may list the directories it applies to, so
+	// what the mapping version produced turns on it too. Omitted for a
+	// subject no directory provisioned, and absent on records written
+	// before it. It is not Source, which names what asserted the subject.
+	DirectorySource string `json:"directory_source,omitempty"`
 	// BreakGlass reports that this subject's credential is a break-glass one
 	// (M7). It is ASSERTED from the subject row and never inferred from
 	// Source by a reader: a break-glass access that looks like a normal one
@@ -369,8 +375,9 @@ func newRecordedInputs(in assembled, req *contract.AuthorizeRequest) recordedInp
 			MFA:    in.input.Subject.MFA,
 			Known:  in.subjectKnown,
 
-			MappingVersion: in.mappingVersion,
-			BreakGlass:     in.breakGlass,
+			MappingVersion:  in.mappingVersion,
+			DirectorySource: in.directorySource,
+			BreakGlass:      in.breakGlass,
 		},
 		Target: recordedTarget{
 			Hostname: in.input.Target.Hostname,

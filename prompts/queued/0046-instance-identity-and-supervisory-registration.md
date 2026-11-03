@@ -27,7 +27,10 @@
   (`directory.source` on the subject reads and a tied connector's
   `directory_source` on `GET /api/v1/session/methods`, which the promise
   covers as well — the subject's top-level `source` is a different field and
-  keeps its meaning), and `0044`
+  keeps its meaning), `0043` (`directories`, `require_directories` and
+  `stale_directory_subjects` on `GET …/identity/claim-mapping`, and
+  `directory_source` on a decision record's subject and on explain's
+  `mapping`, which the promise covers as well), and `0044`
   (the two report routes, the generate body, the listing's entries and the
   three `report_*` codes, which the promise covers as well).
 - In the **Hoplock Proxy repository**, `docs/PLAN.md` **D11** and §6.1 —

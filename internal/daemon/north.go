@@ -56,6 +56,9 @@ type northDeps struct {
 	// sync is the registered identity sync's lifecycle (0040), nil when none
 	// is registered, likewise.
 	sync north.IdentitySyncState
+	// recalc brings directory subjects onto a newly written claim mapping
+	// (0043). It is always built.
+	recalc north.MappingRecalculation
 }
 
 // buildNorth assembles the federation service, the policy lifecycle and the
@@ -82,27 +85,28 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 	}
 
 	handler, err := north.New(north.Options{
-		Federation:      federation,
-		CA:              d.ca,
-		Grants:          d.grants,
-		AccessContext:   d.pushes,
-		Store:           st,
-		Fleet:           d.fleet,
-		Authoring:       lifecycle,
-		Revocations:     d.revocations,
-		Standing:        d.standing,
-		Audit:           d.emitter,
-		Extensions:      d.extensions,
-		Archive:         d.archive,
-		Sinks:           d.sinks,
-		Actions:         d.actions,
-		IdentitySync:    d.sync,
-		MaxPushBytes:    cfg.AccessContext.MaxPushBytes,
-		Logger:          log,
-		MaxBodyBytes:    cfg.North.MaxBodyBytes,
-		RequestTimeout:  cfg.North.RequestTimeout,
-		InsecureCookies: cfg.North.InsecureCookies,
-		DefaultTenant:   store.Tenant(cfg.Tenant),
+		Federation:           federation,
+		CA:                   d.ca,
+		Grants:               d.grants,
+		AccessContext:        d.pushes,
+		Store:                st,
+		Fleet:                d.fleet,
+		Authoring:            lifecycle,
+		Revocations:          d.revocations,
+		Standing:             d.standing,
+		Audit:                d.emitter,
+		Extensions:           d.extensions,
+		Archive:              d.archive,
+		Sinks:                d.sinks,
+		Actions:              d.actions,
+		IdentitySync:         d.sync,
+		MappingRecalculation: d.recalc,
+		MaxPushBytes:         cfg.AccessContext.MaxPushBytes,
+		Logger:               log,
+		MaxBodyBytes:         cfg.North.MaxBodyBytes,
+		RequestTimeout:       cfg.North.RequestTimeout,
+		InsecureCookies:      cfg.North.InsecureCookies,
+		DefaultTenant:        store.Tenant(cfg.Tenant),
 		// A host's routes enter the same table, behind the same chain (M15).
 		HostProvider:   h.Provider,
 		HostRoutes:     h.Routes,

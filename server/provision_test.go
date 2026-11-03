@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -414,5 +416,166 @@ func TestARegisteredSyncFeedsTwoDirectoriesIntoOneTenant(t *testing.T) {
 	}
 	if len(seen) != 2 {
 		t.Errorf("one id in two directories is %d subjects, want two", len(seen))
+	}
+}
+
+// putMapping writes a claim mapping through the API, as an operator does.
+func putMapping(t *testing.T, base, token, document string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"document": document})
+	req, err := http.NewRequest(http.MethodPut, base+"/api/v1/tenants/default/identity/claim-mapping", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("PUT claim-mapping answered %d: %s", resp.StatusCode, b)
+	}
+}
+
+// Two directories feed one tenant through a registered sync, each with a group
+// called `admins`; a mapping that scopes `admins` to one of them is applied to
+// both directories' subjects with no further sync call (0043).
+func TestATightenedMappingReachesBothDirectoriesWithNoSyncCall(t *testing.T) {
+	sync := &identitySync{}
+	base, st, _ := runHost(t, registryWithSync(t, sync), "")
+	_, _, _, sink := sync.snapshot()
+	if sink == nil {
+		t.Fatal("the sync was handed no sink")
+	}
+	federation, err := identity.NewFederation(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := issue(t, federation, "default", map[store.Tenant]identity.RoleSet{"default": {identity.RoleAdmin}})
+	putMapping(t, base, admin, "schema_version: 1\ngroups:\n  claim: groups\n  map:\n    - external: admins\n      group: all-admins\n")
+
+	ctx := context.Background()
+	at := time.Now().Add(-time.Minute)
+	for source, username := range map[string]string{"okta-a": "erin", "azure-b": "frank"} {
+		if err := sink.UpsertGroup(ctx, ext.SyncedGroup{
+			Tenant: "default", Source: source, ExternalID: "g1", Name: "admins", UpdatedAt: at,
+		}); err != nil {
+			t.Fatalf("UpsertGroup from %s: %v", source, err)
+		}
+		if err := sink.UpsertSubject(ctx, ext.SyncedSubject{
+			Tenant: "default", Source: source, ExternalID: "00u1", Username: username, Groups: []string{"g1"},
+			Active: true, UpdatedAt: at,
+		}); err != nil {
+			t.Fatalf("UpsertSubject from %s: %v", source, err)
+		}
+	}
+	groupsOf := func(source string) []string {
+		t.Helper()
+		link, err := st.DirectoryLinks().Get(ctx, "default", source, "00u1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := st.Subjects().Get(ctx, "default", link.SubjectID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.Groups
+	}
+	for _, source := range []string{"okta-a", "azure-b"} {
+		if got := groupsOf(source); !slices.Equal(got, []string{"all-admins"}) {
+			t.Fatalf("before scoping, the %s subject has %v", source, got)
+		}
+	}
+
+	// Tightened, with no sync call after it: okta-a's admins is a-admins
+	// alone, and under require_directories azure-b's maps nothing.
+	putMapping(t, base, admin, "schema_version: 1\ngroups:\n  claim: groups\n  require_directories: true\n"+
+		"  map:\n    - external: admins\n      directories: [okta-a]\n      group: a-admins\n"+
+		"    - external: admins\n      group: all-admins\n")
+	auditor := issue(t, federation, "default", map[store.Tenant]identity.RoleSet{"default": {identity.RoleAuditor}})
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		resp := get(t, base+"/api/v1/tenants/default/identity/claim-mapping", auditor)
+		var read struct {
+			Directories []string `json:"directories"`
+			Stale       int64    `json:"stale_directory_subjects"`
+		}
+		err := json.NewDecoder(resp.Body).Decode(&read)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(read.Directories, []string{"okta-a"}) {
+			t.Fatalf("the read names directories %v", read.Directories)
+		}
+		if read.Stale == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d directory subjects never reached the new mapping", read.Stale)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := groupsOf("okta-a"); !slices.Equal(got, []string{"a-admins"}) {
+		t.Errorf("the okta-a subject has %v, want a-admins alone", got)
+	}
+	if got := groupsOf("azure-b"); len(got) != 0 {
+		t.Errorf("the azure-b subject has %v, want nothing under require_directories", got)
+	}
+}
+
+// `identity mapping-put` prints the directories a mapping lists and whether it
+// requires them, with no database on a dry run; stored, it names a listed
+// source nothing has written without refusing it, and says how the server
+// reaches the tenant's directory subjects; `mapping-show` prints how many are
+// not yet on the active version (0043).
+func TestTheMappingCommandsShowDirectoriesAndWhatRemains(t *testing.T) {
+	dsn := testDatabase(t)
+	south, north := freeAddrs(t)
+	path := writeFile(t, configDoc(south, north, dsn)+hostSection)
+	doc := writeFile(t, "schema_version: 1\ngroups:\n  claim: groups\n  require_directories: true\n  map:\n"+
+		"    - external: admins\n      directories: [okta-a, emea]\n      group: a-admins\n")
+	run := func(args ...string) (string, error) {
+		var out bytes.Buffer
+		err := server.Main(context.Background(), append([]string{"identity"}, args...), &out, io.Discard,
+			hostOptions(&sectionRecorder{}, ext.NewRegistry()))
+		return out.String(), err
+	}
+
+	// A dry run reads no configuration and opens no database.
+	out, err := run("mapping-put", "--config", "/nonexistent.yaml", "--file", doc, "--dry-run")
+	if err != nil || !strings.Contains(out, "directories its group entries list: emea, okta-a") ||
+		!strings.Contains(out, "require_directories: true") {
+		t.Fatalf("dry run: %v\n%s", err, out)
+	}
+
+	migrate(t, path, hostOptions(&sectionRecorder{}, ext.NewRegistry()))
+	st, err := store.Open(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	provisionUnder(t, st, "okta-a")
+
+	out, err = run("mapping-put", "--config", path, "--file", doc)
+	if err != nil {
+		t.Fatalf("mapping-put: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "directories nothing in tenant default has written yet: emea (") || strings.Contains(out, "yet: emea, okta-a") {
+		t.Errorf("mapping-put does not name the unwritten source alone:\n%s", out)
+	}
+	if !strings.Contains(out, "recalculates the tenant's directory subjects") {
+		t.Errorf("mapping-put does not say how the mapping reaches directory subjects:\n%s", out)
+	}
+	if m, err := identity.ActiveMapping(context.Background(), st, "default"); err != nil || m.Version != 1 {
+		t.Errorf("the mapping was not stored: %v, %v", m, err)
+	}
+
+	out, err = run("mapping-show", "--config", path)
+	if err != nil || !strings.Contains(out, "directory subjects not yet on this version: ") {
+		t.Errorf("mapping-show: %v\n%s", err, out)
 	}
 }

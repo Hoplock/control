@@ -62,6 +62,7 @@ type Server struct {
 	sinks       SinkDelivery
 	actions     ActionHandlerState
 	sync        IdentitySyncState
+	recalc      MappingRecalculation
 	mapping     decision.ActiveMapping
 
 	maxBodyBytes   int64
@@ -109,6 +110,23 @@ type ActionHandlerState interface {
 // shown on its row in the same shape: registered and not started is a sync
 // whose Start failed, and Control serving without it.
 type IdentitySyncState = ActionHandlerState
+
+// MappingRecalculation brings a tenant's directory subjects onto its active
+// claim mapping (0043). `*provision.Recalculator` implements it.
+type MappingRecalculation interface {
+	// Start recalculates the tenant in the background, under the server's
+	// lifetime rather than the request's, and returns at once.
+	Start(tenant store.Tenant)
+	// Track reports a tenant whose mapping was read here, so the sweep
+	// looks in it.
+	Track(tenant store.Tenant)
+}
+
+// noRecalculation is what a server built without one starts: nothing.
+type noRecalculation struct{}
+
+func (noRecalculation) Start(store.Tenant) {}
+func (noRecalculation) Track(store.Tenant) {}
 
 // Options configures a Server.
 type Options struct {
@@ -170,6 +188,10 @@ type Options struct {
 	// IdentitySync is the registered identity sync's state (0040), shown on
 	// its row of the extension listing. Nil when none is registered.
 	IdentitySync IdentitySyncState
+	// MappingRecalculation is started by a claim mapping write and told of
+	// a tenant whose mapping is read (0043). Nil starts nothing, and the
+	// subjects reach the new mapping at their next write.
+	MappingRecalculation MappingRecalculation
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
@@ -263,6 +285,7 @@ func New(o Options) (*Server, error) {
 		sinks:          o.Sinks,
 		actions:        o.Actions,
 		sync:           o.IdentitySync,
+		recalc:         o.MappingRecalculation,
 		mapping:        decision.StoredActiveMapping(o.Store),
 	}
 	if s.reader == nil {
@@ -276,6 +299,9 @@ func New(o Options) (*Server, error) {
 	}
 	if s.log == nil {
 		s.log = slog.Default()
+	}
+	if s.recalc == nil {
+		s.recalc = noRecalculation{}
 	}
 	if s.now == nil {
 		s.now = time.Now

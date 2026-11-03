@@ -956,6 +956,9 @@ func (s *Server) handleClaimMappingPut(w http.ResponseWriter, r *http.Request) {
 		s.inventoryFailure(w, r, "write claim mapping", err)
 		return
 	}
+	// Committed and active: every directory subject is recalculated onto it
+	// in the background, and this answer does not wait for that (0043).
+	s.recalc.Start(tenant)
 	answer(w, http.StatusOK, map[string]any{"version": m.Version, "digest": m.Digest, "previous": previous})
 }
 

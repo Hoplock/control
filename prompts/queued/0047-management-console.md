@@ -55,6 +55,14 @@
   `source`. `GET /api/v1/session/methods` carries a tied connector's
   `directory_claim` and `directory_source`, and the identity sync's row of
   `GET …/extensions` carries `started` and `start_error`.
+- **`docs/PLAN.md` §6 at "The directory door" and
+  `docs/learnings/0043-directory-scoped-group-entries-learnings.md` (its
+  summary), for the claim mapping's directory-scoped group entries.**
+  `GET …/identity/claim-mapping` carries `directories`, `require_directories`
+  and `stale_directory_subjects`; a mapping write is refused with
+  `mapping.directory_name`, `mapping.directories_empty` and
+  `mapping.directory_duplicate` beside the older codes; and a decision
+  record's subject, and explain's `mapping`, carry `directory_source`.
 - `docs/PLAN.md` §4 at "One endpoint carries two observations", §5.2's
   algorithm bullet (the floor and the bans), and **M17**, for what
   `Hoplock/proxy#69` added and 0019 serves: the impact preview, the fleet
@@ -146,8 +154,10 @@ is written so that half can fail a review rather than merely disappoint one.
      per-build finding can see what that build offers. A proxy whose build
      declared no profiles is `Not reported`, never "offers nothing".
   2. **Explain** — a session or decision id in, the whole story out: identity,
-     matched rule, mapping version, grant, obligations, route and hops. Deep
-     links from the audit view.
+     matched rule, mapping version — with, beside it, the directory the
+     subject's groups came from (`mapping.directory_source`, 0043) when a
+     directory provisioned the subject — grant, obligations, route and hops.
+     Deep links from the audit view.
   3. **Audit** — query by subject, target, time, kind, severity; the blocked-
      command view; session replay for recorded sessions. **Where a proxy's
      stream has a hole, and why** (`Hoplock/proxy#71`, served by 0019). A
@@ -246,6 +256,14 @@ is written so that half can fail a review rather than merely disappoint one.
      `directory_source`, so an operator can tell a connector that reaches only
      provisioned people — and from which directory — from one that creates
      subjects at login.
+     **Where the console shows the claim mapping** (0043), it shows each
+     group entry's `directories` (none means it serves logins and every
+     directory not listed for its name), the tenant's `require_directories`,
+     and, while `stale_directory_subjects` is not zero, how many directory
+     subjects are still being brought onto the new mapping. It renders the
+     three new rejection codes (`mapping.directory_name`,
+     `mapping.directories_empty`, `mapping.directory_duplicate`) with their
+     field, as it renders the older ones.
   6. **Extensions** — which `ext` points have an implementation registered
      (0004). An operator debugging behaviour must be able to see that Enterprise
      is in play. **Each registered sink shows its delivery lag** for the tenant
