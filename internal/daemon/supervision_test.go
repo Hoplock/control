@@ -326,12 +326,19 @@ func TestHealthPolledAtItsMaximumRateLeavesTheDecisionPathAlone(t *testing.T) {
 			}
 		})
 	}
+	// The load is on before the measurement starts and still on when it
+	// ends: what is asserted is concurrency, not a count a slow box misses.
+	for polls.Load() < 16 {
+		time.Sleep(time.Millisecond)
+	}
+	before := polls.Load()
 	loaded := p95()
+	during := polls.Load() - before
 	cancel()
 	wg.Wait()
 
-	if polls.Load() < 100 {
-		t.Fatalf("health was polled %d times; the load this test claims was not applied", polls.Load())
+	if during == 0 {
+		t.Fatalf("no health poll ran while authorize was measured; the load this test claims was not applied")
 	}
 	// Generous on purpose: the claim is "unaffected", and a shared CI box
 	// jitters. What this bound refuses is the decision path queueing behind
