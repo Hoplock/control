@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/audit"
@@ -222,9 +223,20 @@ func TestTheJoinAndTheNegotiatedSessionsBindTheirSelectionAndCrossNoTenant(t *te
 	}
 }
 
-func decodeBlocked(t *testing.T, item json.RawMessage) store.BlockedCommand {
+// blockedItem is the part of an item of the showcase join these tests read:
+// its record's id and place, under the names the answer gives them.
+type blockedItem struct {
+	Record struct {
+		RecordID   string    `json:"record_id"`
+		Stream     string    `json:"stream"`
+		ChainSeq   int64     `json:"chain_seq"`
+		RecordedAt time.Time `json:"recorded_at"`
+	} `json:"record"`
+}
+
+func decodeBlocked(t *testing.T, item json.RawMessage) blockedItem {
 	t.Helper()
-	var b store.BlockedCommand
+	var b blockedItem
 	if err := json.Unmarshal(item, &b); err != nil {
 		t.Fatalf("item %s: %v", item, err)
 	}

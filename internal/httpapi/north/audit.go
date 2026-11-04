@@ -361,7 +361,51 @@ func (s *Server) handleBlockedCommands(w http.ResponseWriter, r *http.Request) {
 		s.auditFailure(w, r, "blocked commands", err)
 		return
 	}
-	s.answerPage(w, r, p, "blocked", page.Rows, page.More, auditPosition(page.Rows, blockedPosition), nil)
+	s.answerPage(w, r, p, "blocked", viewBlocked(page.Rows), page.More, auditPosition(page.Rows, blockedPosition), nil)
+}
+
+// blockedView is one item of the showcase join. Its record is rendered as an
+// item of `…/audit/records` renders it, so a client reads one record shape;
+// the facts the store's record also carries are in that record's body, as on
+// every other audit list. A decision this store does not have is
+// `decision_found: false` and nothing more: never an empty rule, never a
+// year-one instant.
+type blockedView struct {
+	Record        recordView        `json:"record"`
+	Command       string            `json:"command"`
+	Action        string            `json:"action"`
+	TargetZone    string            `json:"target_zone"`
+	TargetLabels  map[string]string `json:"target_labels"`
+	DecisionFound bool              `json:"decision_found"`
+	MatchedRule   string            `json:"matched_rule,omitempty"`
+	RouteType     string            `json:"route_type,omitempty"`
+	DecidedAt     *time.Time        `json:"decided_at,omitempty"`
+}
+
+func viewBlocked(rows []store.BlockedCommand) []blockedView {
+	out := make([]blockedView, 0, len(rows))
+	for _, row := range rows {
+		labels := row.TargetLabels
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		out = append(out, blockedView{
+			Record: viewRecord(row.Record), Command: row.Command, Action: row.Action,
+			TargetZone: row.TargetZone, TargetLabels: labels, DecisionFound: row.DecisionFound,
+			MatchedRule: row.MatchedRule, RouteType: row.RouteType, DecidedAt: instant(row.DecisionAt),
+		})
+	}
+	return out
+}
+
+// instant is t in UTC, or nil for the zero instant, which an answer renders
+// as absent: absent means "never", and year one would be a date.
+func instant(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	u := t.UTC()
+	return &u
 }
 
 // blockedPosition is a blocked command's place in the audit order: its
@@ -525,10 +569,24 @@ func (s *Server) handleSessionLoss(w http.ResponseWriter, r *http.Request) {
 		s.auditFailure(w, r, "session loss", err)
 		return
 	}
-	if loss == nil {
-		loss = []store.GapLoss{}
+	answer(w, http.StatusOK, map[string]any{"session_id": r.PathValue("session"), "loss": viewLoss(loss)})
+}
+
+// lossView is one cause's row of a session's loss.
+type lossView struct {
+	Cause   string `json:"cause"`
+	Reports int64  `json:"reports"`
+	Records int64  `json:"records"`
+	Bytes   int64  `json:"bytes"`
+}
+
+// viewLoss is never nil: no loss is `[]` (M26.3).
+func viewLoss(rows []store.GapLoss) []lossView {
+	out := make([]lossView, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, lossView{Cause: row.Cause, Reports: row.Reports, Records: row.Records, Bytes: row.Bytes})
 	}
-	answer(w, http.StatusOK, map[string]any{"session_id": r.PathValue("session"), "loss": loss})
+	return out
 }
 
 func (s *Server) handleSessionAlgorithms(w http.ResponseWriter, r *http.Request) {

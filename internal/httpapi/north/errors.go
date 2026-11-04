@@ -235,12 +235,21 @@ var AllCodes = []string{
 // the media type of the format asked for. Every error, that route's included,
 // is written here.
 func writeJSON(w http.ResponseWriter, status int, body any) {
+	if answerProbe != nil {
+		answerProbe(body)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	// A write failure here is a client that went away. There is nothing to
 	// say to it and nothing to recover.
 	_ = json.NewEncoder(w).Encode(body)
 }
+
+// answerProbe, when set, sees every body writeJSON is about to render. It is
+// nil in production: only the package's tests set it (SetAnswerProbe), to hold
+// that every answer names every member (§8), and a source test fails if any
+// non-test file assigns it.
+var answerProbe func(any)
 
 // writeError renders a classified failure.
 func writeError(w http.ResponseWriter, status int, e Error) {

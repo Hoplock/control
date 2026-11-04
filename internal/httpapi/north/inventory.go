@@ -948,7 +948,7 @@ func (s *Server) handleClaimMappingPut(w http.ResponseWriter, r *http.Request) {
 			// compiler's are for a bundle (M21).
 			writeError(w, http.StatusBadRequest, Error{
 				Code: CodeInvalidRequest, CorrelationID: CorrelationIDFrom(r.Context()),
-				Parameters: map[string]any{"field": "document", "problem": "invalid", "rejections": rejected.Rejections},
+				Parameters: map[string]any{"field": "document", "problem": "invalid", "rejections": viewMappingRejections(rejected.Rejections)},
 				Message:    rejected.Error(),
 			})
 			return
@@ -968,6 +968,22 @@ func (s *Server) handleClaimMappingPut(w http.ResponseWriter, r *http.Request) {
 
 // proxyList is the fleet view (M26): by proxy id, the primary key.
 var proxyList = list{name: "proxies", key: []keyKind{keyString}}
+
+// mappingRejectionView is one reason a claim mapping was refused, named as
+// the compiler's rejections of a bundle are (`code`, `field`, `message`).
+type mappingRejectionView struct {
+	Code    string `json:"code"`
+	Field   string `json:"field,omitempty"`
+	Message string `json:"message"`
+}
+
+func viewMappingRejections(rows []identity.MappingRejection) []mappingRejectionView {
+	out := make([]mappingRejectionView, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, mappingRejectionView{Code: r.Code, Field: r.Field, Message: r.Message})
+	}
+	return out
+}
 
 // handleProxyList is the fleet view, one page at a time (M26). `liveness`, the
 // staleness rule every row was judged by, is the same on every page.
@@ -989,7 +1005,73 @@ func (s *Server) handleProxyList(w http.ResponseWriter, r *http.Request) {
 	if n := len(page.Rows); n > 0 {
 		last = []any{page.Rows[n-1].ProxyID}
 	}
-	s.answerPage(w, r, p, "proxies", page.Rows, page.More, last, map[string]any{"liveness": s.fleet.Liveness()})
+	s.answerPage(w, r, p, "proxies", viewProxies(page.Rows), page.More, last,
+		map[string]any{"liveness": viewLiveness(s.fleet.Liveness())})
+}
+
+// proxyView is one item of the fleet view. fleet.ProxyHealth is the fleet's
+// struct and this is the wire: a zero instant is absent, which means "never",
+// and is never year one.
+type proxyView struct {
+	ProxyID            string                `json:"proxy_id"`
+	Zone               fleet.Zone            `json:"zone"`
+	State              store.EnrollmentState `json:"state"`
+	Live               bool                  `json:"live"`
+	LastHeartbeatAt    *time.Time            `json:"last_heartbeat_at,omitempty"`
+	SubscriptionSeenAt *time.Time            `json:"subscription_seen_at,omitempty"`
+	ContractVersion    int                   `json:"contract_version"`
+	Capabilities       fleet.Capabilities    `json:"capabilities"`
+	RelayRegistrations []string              `json:"relay_registrations"`
+	Config             fleet.ConfigRollout   `json:"config"`
+	SessionCount       int                   `json:"session_count"`
+	LastError          string                `json:"last_error,omitempty"`
+	LastErrorAt        *time.Time            `json:"last_error_at,omitempty"`
+}
+
+func viewProxies(rows []fleet.ProxyHealth) []proxyView {
+	out := make([]proxyView, 0, len(rows))
+	for _, h := range rows {
+		relays := h.RelayRegistrations
+		if relays == nil {
+			relays = []string{}
+		}
+		out = append(out, proxyView{
+			ProxyID: h.ProxyID, Zone: h.Zone, State: h.State, Live: h.Live,
+			LastHeartbeatAt: instant(h.LastHeartbeatAt), SubscriptionSeenAt: instant(h.SubscriptionSeenAt),
+			ContractVersion: h.ContractVersion, Capabilities: h.Capabilities, RelayRegistrations: relays,
+			Config: h.Config, SessionCount: h.SessionCount, LastError: h.LastError, LastErrorAt: instant(h.LastErrorAt),
+		})
+	}
+	return out
+}
+
+// livenessView is the fleet view's liveness rule, in whole seconds rounded
+// up, so a bound configured below a second never reads as 0 — which a client
+// would read as no bound. `report_after_seconds` is the name the capability
+// report answers the same interval under.
+type livenessView struct {
+	HeartbeatTTLSeconds         int64 `json:"heartbeat_ttl_seconds"`
+	RelayRegistrationTTLSeconds int64 `json:"relay_registration_ttl_seconds"`
+	TargetCapabilityTTLSeconds  int64 `json:"target_capability_ttl_seconds"`
+	ReportAfterSeconds          int64 `json:"report_after_seconds"`
+}
+
+func viewLiveness(l fleet.Liveness) livenessView {
+	return livenessView{
+		HeartbeatTTLSeconds:         ceilSeconds(l.HeartbeatTTL),
+		RelayRegistrationTTLSeconds: ceilSeconds(l.RelayRegistrationTTL),
+		TargetCapabilityTTLSeconds:  ceilSeconds(l.TargetCapabilityTTL),
+		ReportAfterSeconds:          ceilSeconds(l.ReportAfter),
+	}
+}
+
+// ceilSeconds is d in whole seconds, rounded up.
+func ceilSeconds(d time.Duration) int64 {
+	secs := int64(d / time.Second)
+	if d%time.Second > 0 {
+		secs++
+	}
+	return secs
 }
 
 type enrollmentBody struct {

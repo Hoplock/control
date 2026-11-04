@@ -1808,6 +1808,15 @@ for nothing.
   (`truncated` and no cursor, for a list bounded by one object), or an
   exemption with its reason, and to nothing else.
 
+  Every answer it writes names every member (§8). `writeJSON` (`errors.go`)
+  is the package's one writer, and the package's tests install a probe on it
+  (`answerProbe`, nil in production and set only from `export_test.go`):
+  `answer_names_test.go`'s `TestMain` walks every body those tests produce
+  and fails the package on any exported field with no snake_case `json` tag.
+  So a store, fleet or service struct rendered directly fails the build, and
+  each answer is a view — `recordView`, `blockedView`, `lossView`,
+  `proxyView`, `livenessView` and their kind.
+
   Control's own routes: federation and the caller's own session under
   `/api/v1/session…`, which run before authentication or need only a live
   principal; and every other one under `/api/v1/tenants/{tenant}/` with one
@@ -3614,13 +3623,19 @@ not say why, and a grant the explanation names that the inputs do not hold.
   records share an instant. A cursor binds the whole selection the reader
   applies, and an item of the drift feed, the unmet policy or the gaps
   carries its record's `stream` and `chain_seq` beside its instant, because
-  a cursor holds nothing its caller was not handed (M26.2).
+  a cursor holds nothing its caller was not handed (M26.2). An item of the
+  showcase join carries its record whole, under `record`, rendered exactly
+  as an item of `…/audit/records`, with its target's `target_zone` and
+  `target_labels` and the decision's `matched_rule`, `route_type` and
+  `decided_at`; a decision the store no longer has is `decision_found:
+  false` and none of those three.
   `audit/negotiated` counts sessions, and pages by each session's latest
   matching record, which each item carries as `latest_recorded_at` beside
   its `session_id`. The per-session reads keep their bound of 500 records
   and say `truncated` when it cut them: a session's certificates and its
   algorithm summary, which still summarises the first 500. A session's loss
-  is one row per cause and is never cut.
+  is one row per cause — `cause`, `reports`, `records`, `bytes` — and is
+  never cut.
 - **Reports** — a registered `ext.ReportProvider`'s packs, served by Control
   (0044, M15) under `audit:read`, because a report is the audit store,
   summarised. With nothing registered, the query above, explain and
@@ -3956,6 +3971,14 @@ not say why, and a grant the explanation names that the inputs do not hold.
   pull request and push. On a push to `main`, the `release` job runs after
   every other job has passed. It is the only job with `contents: write`, and
   it tags only the merge that introduced a version.
+- **North-bound answers name every member.** Every answer is rendered
+  through a view whose every field has a snake_case `json` tag, under the
+  proxy's name where the proxy has one (M19). A store, fleet or service
+  struct is never rendered directly, because its field names are Go's, and a
+  rename inside Control would then change the wire without failing anything.
+  An instant is RFC 3339 in UTC, and a zero instant is absent, never year
+  one. The guard in `internal/httpapi/north` (§3) holds it over every answer the
+  package's tests produce.
 
 ---
 
@@ -4028,7 +4051,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0042 | Directory source on the sync sink | **M7 and M28 revised in place, no decision added.** `ext.SyncedSubject` and `ext.SyncedGroup` gain a required `Source` (`^[a-z0-9][a-z0-9-]{0,62}$`, else `KindInvalid` on `source`, recorded) and `ext.DirectoryRef` (`Tenant`, `Source`, `ExternalID`) is what `SyncSink.DeactivateSubject(ctx, ref, reasonCode)` and `DeleteGroup(ctx, ref)` take; everything 0040 keyed on an `ExternalID` — link and group rows, the ordering, the kept deactivation, the tombstone, the owed delivery, the per-identity advisory lock, a group's members — keyed on `(tenant, source, ExternalID)` (migration `0023`: both primary keys, the members read still on 0021's GIN index), a subject's groups resolving within its own source, a login name still unique across sources (`KindConflict`), and `directory_links`' unique `(tenant, subject_id)` key kept, so the decision path reads the link's `source` in the join it already made and sends no more statements (M28, M5); a tied connector's `idp_connectors.directory_source` beside its claim (`identity connector-put --directory-source`), both or neither (a check constraint), refused for a source nothing in the tenant has written with the error naming up to twenty it has (`DirectoryLinks().HasSource`, `Sources`), a login looking the link up by `(tenant, directory_source, claim value)`, and both shown on the sign-in methods; `directory.source` on the subject read, `source` on the deactivation's standing entry (M4) and on every `identity_sync.*` record (`AttrSyncSource`); every existing row keyed under the source `default`. `v0.29.0`, a `### Breaking` MINOR (M7, M15, M23, M12, M18). Raised by `Hoplock/enterprise#51`, item 1; depends on 0040 |
 | 0043 | Directory-scoped group entries | a `groups.map` entry in the claim mapping lists the `directories` it applies to (each a directory source, 0042) and matches a directory group of its name from a listed source instead of the unscoped entry, never a login's group claim; `groups.require_directories` makes every directory group match only an entry listing its own source, so unscoped entries serve logins only; no wildcard, three rejection codes (`mapping.directory_name`, `mapping.directories_empty`, `mapping.directory_duplicate`), a scoped entry counted once per directory it lists against the mapping's bound, and `schema_version` still `1`; every mapping write, scoped or not, reaching every directory subject by itself through `provision.Recalculator` — stale subjects (a row naming another version) recalculated after the write commits in batches of 200 under the sink's lock order and through its `derive`, at once on the node that took an API write and by a once-a-minute sweep of the tenants each node has seen (the store cannot list tenants, M18), with no sync needed, their cached decisions dropped as a group change drops them, and `operator.claim_mapping.applied` recording each run as the version's author; `directories`, `require_directories` and `stale_directory_subjects` on the claim-mapping read and in `identity mapping-put`/`mapping-show`, and `directory_source` on a decision record's subject and in `explain`, read from the link row the subject's statement already joins (M4, M5). No `ext` change and no migration: both stale reads are served by existing indexes. A MINOR, `v0.30.0` (M7, M4, M5, M9, M21, M23). Raised by `Hoplock/enterprise#51`, item 2; depends on 0042 |
 | 0044 | Registered reports served | **Built, `v0.31.0`.** Every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (§7 "Reports"), by `internal/report`: `GET …/reports` lists each provider's `Reports(ctx, tenant)`, asked concurrently under the request's bound, a provider that failed or offered a descriptor Control cannot serve listed with its error rather than dropped (exempt from M26: sized by registrations); `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), asks `Reports` again and checks the request against the descriptor listed for that tenant before `Generate` is called, and streams the body in the format's own media type with `nosniff`, `attachment` and `no-store`, never the provider's; the route's own bound (`north.report_timeout`, 10 m, `Route.Timeout` chosen in `withLimits`) and a per-node ceiling (`north.max_concurrent_reports`, 2; past it `503 report_generation_busy` with `Retry-After`) beside the decision path (M5), a provider ignoring its context abandoned at the bound and keeping its place until it returns; a body that fails after its first byte aborts the response (`http.ErrAbortHandler`, let through by `withRecovery`, logged by the access log) rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation, and nothing recorded of a generation; `ErrNotFound` `404`, `ErrInvalid` `400`, `ErrUnavailable` `503 report_provider_unavailable`, every other failure `502 report_provider_failed`, never a `401` or a `403` of a provider's. No `ext` or `server` signature changed (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
-| 0045 | North-bound answer names | every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, which rendered store and fleet structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0046 makes the names a compatibility promise (M19, M26, M17, M23) |
+| 0045 | North-bound answer names | **Built, `v0.32.0`.** Every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, and a refused claim mapping's `rejections`, which rendered store, fleet and identity structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0046 makes the names a compatibility promise (M19, M26, M17, M23) |
 | 0046 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
 | 0047 | Management console | operator web UI served from the binary, inside the console namespace 0038 reserves and nowhere else, with a host's screens under the host's: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's finding with the builds it names (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
 | 0048 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
