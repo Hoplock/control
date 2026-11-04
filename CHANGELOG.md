@@ -26,6 +26,53 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.32.0
+
+Phase 0045, north-bound answer names: every member of every north-bound
+answer is named in snake_case, before the north-bound API becomes a
+compatibility promise (M19). Five answers rendered internal structs under Go
+field names; each is now rendered through a view (`docs/PLAN.md` §8). No
+migration, no new route, and no exported identifier in `ext` or `server` is
+added, removed or changed. No status code, list order, key or cursor
+changes: a cursor minted by an earlier release continues.
+
+### Breaking
+
+No identifier is added, removed or changed, so `make release-check` sees
+none of this. Five wire changes:
+
+- **`GET /api/v1/tenants/{tenant}/audit/blocked-commands`**, each item of
+  `blocked`: `Record` becomes `record`, rendered exactly as an item of
+  `GET …/audit/records` (`record_id`, `stream`, `chain_seq`, …, `body`). The
+  record's `Grant`, `Enforcement`, `Device`, `DeviceFields` and `Gap` facts
+  are no longer members: they are in its `body` alone, as on every other
+  audit list. `Command`, `Action`, `TargetZone`, `TargetLabels`,
+  `DecisionFound`, `MatchedRule`, `RouteType` and `DecisionAt` become
+  `command`, `action`, `target_zone`, `target_labels` (`{}` when the target
+  has none), `decision_found`, `matched_rule`, `route_type` and `decided_at`.
+  When the decision is not found, `matched_rule`, `route_type` and
+  `decided_at` are absent, where they were `""` and `0001-01-01T00:00:00Z`.
+- **`GET /api/v1/tenants/{tenant}/audit/sessions/{session}/loss`**, each row
+  of `loss`: `Cause`, `Reports`, `Records`, `Bytes` become `cause`,
+  `reports`, `records`, `bytes`.
+- **`GET /api/v1/tenants/{tenant}/proxies`**, each item of `proxies`:
+  `ProxyID`, `Zone`, `State`, `Live`, `LastHeartbeatAt`,
+  `SubscriptionSeenAt`, `ContractVersion`, `Capabilities`,
+  `RelayRegistrations`, `Config`, `SessionCount`, `LastError`, `LastErrorAt`
+  become `proxy_id`, `zone`, `state`, `live`, `last_heartbeat_at`,
+  `subscription_seen_at`, `contract_version`, `capabilities`,
+  `relay_registrations` (`[]` when none), `config`, `session_count`,
+  `last_error`, `last_error_at`. Every zero instant is absent, where it was
+  `0001-01-01T00:00:00Z`, and `last_error` is absent when empty.
+- **The same answer's `liveness`**: `HeartbeatTTL`, `RelayRegistrationTTL`,
+  `TargetCapabilityTTL`, `ReportAfter`, each a count of nanoseconds, become
+  `heartbeat_ttl_seconds`, `relay_registration_ttl_seconds`,
+  `target_capability_ttl_seconds` and `report_after_seconds`, each integer
+  seconds rounded up (`90`, `60`, `86400`, `21600` with nothing configured).
+- **`PUT /api/v1/tenants/{tenant}/identity/claim-mapping`**, a refused
+  mapping's `parameters.rejections`: `Code`, `Field`, `Message` become
+  `code`, `field` (absent at document scope) and `message`.
+
 ## v0.31.0
 
 Phase 0044, registered reports served: Control lists and generates every

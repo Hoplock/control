@@ -47,3 +47,8 @@ func (s *Server) BoundFor(r *http.Request) time.Duration {
 
 // ReportTimeout is the bound the generation route was registered with.
 func (s *Server) ReportTimeout() time.Duration { return s.reportTimeout }
+
+// SetAnswerProbe installs probe to see every body the package's writer is
+// about to render (0045). It is for TestMain alone: set once, before any test
+// runs, and never reset.
+func SetAnswerProbe(probe func(body any)) { answerProbe = probe }

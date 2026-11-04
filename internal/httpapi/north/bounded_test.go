@@ -1135,7 +1135,10 @@ func TestNeitherFleetListLeaksAcrossTenantsFromAnyCursor(t *testing.T) {
 	// whose names the tenant a row belongs to, from what each list shows.
 	whose := map[string]func(json.RawMessage) string{
 		"proxies": func(item json.RawMessage) string {
-			var v struct{ ProxyID, Zone string }
+			var v struct {
+				ProxyID string `json:"proxy_id"`
+				Zone    string `json:"zone"`
+			}
 			_ = json.Unmarshal(item, &v)
 			return v.ProxyID + "@" + strings.Replace(v.Zone, "zone-", "tenant-", 1)
 		},

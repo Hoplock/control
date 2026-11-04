@@ -175,8 +175,8 @@ func TestTheMappingsRejectionCodesReachTheCaller(t *testing.T) {
 	var body struct {
 		Parameters struct {
 			Rejections []struct {
-				Code  string
-				Field string
+				Code  string `json:"code"`
+				Field string `json:"field"`
 			} `json:"rejections"`
 		} `json:"parameters"`
 	}

@@ -50,6 +50,37 @@ func TestOnlyTheMiddlewareAndALoginRefusalNameA401(t *testing.T) {
 	}
 }
 
+// The answer probe is the tests' alone (0045): a non-test file that assigns
+// it would be a production path inspecting every answer. Its declaration is
+// the one place it is named without being read.
+func TestNoSourceFileSetsTheAnswerProbe(t *testing.T) {
+	var offenders []string
+	forEachSourceNode(t, ".", func(n ast.Node, fn string, pos token.Position) {
+		switch v := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range v.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok && id.Name == "answerProbe" {
+					offenders = append(offenders, pos.String()+": answerProbe assigned in "+fn)
+				}
+			}
+		case *ast.ValueSpec:
+			for _, name := range v.Names {
+				if name.Name == "answerProbe" && len(v.Values) > 0 {
+					offenders = append(offenders, pos.String()+": answerProbe initialised")
+				}
+			}
+		case *ast.UnaryExpr:
+			if id, ok := v.X.(*ast.Ident); ok && v.Op == token.AND && id.Name == "answerProbe" {
+				offenders = append(offenders, pos.String()+": answerProbe's address taken in "+fn)
+			}
+		}
+	})
+	if len(offenders) > 0 {
+		t.Fatalf("answerProbe is set outside the tests:\n  %s\n\nOnly export_test.go sets it (SetAnswerProbe).",
+			strings.Join(offenders, "\n  "))
+	}
+}
+
 // dynamicCodes are the functions that answer a code held in a variable, and
 // what bounds it. Every other Error literal names one of the Code constants.
 var dynamicCodes = map[string]string{
