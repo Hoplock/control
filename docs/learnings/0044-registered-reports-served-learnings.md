@@ -9,7 +9,7 @@
 - **Errors:** Control's lookup / `Generate`'s `ErrNotFound` → `404 not_found`; Control's checks → `400 invalid_request {field, problem}`; `Generate`'s `ErrInvalid` → `400 invalid_request`, message = the provider's words; `ErrUnavailable` (either call), or no answer/first byte by the bound → `503 report_provider_unavailable`; anything else (`ErrDenied` too, a non-`*ext.Error` even wrapping a sentinel, a panic, an unservable descriptor, a refused `Report`) → `502 report_provider_failed`; over the ceiling → `503 report_generation_busy` + `Retry-After: 10`. Never `401`, never a provider's `403`.
 - **Caller:** `server.CallerFrom` (`north.HostCallerFrom`) answers inside `Reports` and `Generate` with tenant, subject (zero for a token), principal, break-glass and correlation id; `server.WriteError` still refuses there (`500 internal`). **Control records nothing of a generation**; the access log line carries `report_provider`, `report_id`, `report_format`, `report_from`, `report_to`, `report_outcome` (`complete` | `aborted` | the code), `report_bytes`, and `aborted: true` on an abort.
 - **Key files:** `internal/report/{doc,service}.go`; `internal/httpapi/north/{reports,router,middleware,host,errors,server,routes}.go`; `internal/config/config.go`; `internal/daemon/north.go`; `ext/audit.go`; `server/caller.go`.
-- **NEXT:** Enterprise's sync is queued (see the PR). A route needing its own bound sets `Route.Timeout`; `withLimits` asks the router (`boundFor`), and `TestEveryRouteButTheGenerationKeepsTheListenersBound` holds every other route to the listener's.
+- **NEXT:** Enterprise's sync is queued as `prompts/downstream/queued/control-PR#131-registered-reports-served.md`. A route needing its own bound sets `Route.Timeout`; `withLimits` asks the router (`boundFor`), and `TestEveryRouteButTheGenerationKeepsTheListenersBound` holds every other route to the listener's.
 
 ## Details
 
@@ -119,8 +119,9 @@ groups): 58/58.
 
 ### Cross-repo
 
-Downstream sync for `hoplock/enterprise` owed and queued under
-`prompts/downstream/queued/` (see the PR's `## Cross-repo impact`): its 0009
+Downstream sync for `hoplock/enterprise` owed and queued as
+`prompts/downstream/queued/control-PR#131-registered-reports-served.md`
+(control#131's `## Cross-repo impact`): its 0009
 rewrites "What Control does not do yet" against `v0.31.0`, drops its own
 listing/generation routes, keeps schedules, campaigns and history in its own
 namespace, and turns its skipped end-to-end criterion into a real one.
