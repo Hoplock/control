@@ -116,6 +116,7 @@ func (b *Bus) wake(ctx context.Context, tenant store.Tenant, seq int64) {
 		})
 	}
 	if err != nil {
+		b.health.wake(b.now())
 		b.log.Warn("the other nodes were not woken for a logged event; each delivers it at its next sync",
 			"event", "revoke_wake_failed", "tenant", tenant.String(), "seq", seq, "error", err.Error())
 	}
@@ -130,6 +131,7 @@ func (b *Bus) listen(ctx context.Context) {
 	for ctx.Err() == nil {
 		ch, cancel, err := b.coord.Subscribe(ctx, wakeTopic)
 		if err != nil {
+			b.health.wake(b.now())
 			b.log.Warn("could not subscribe to the coordinator's bus; the log is read on the sync clock meanwhile",
 				"event", "revoke_wake_subscribe_failed", "error", err.Error())
 			select {
@@ -145,6 +147,7 @@ func (b *Bus) listen(ctx context.Context) {
 		b.drain(ctx, ch)
 		cancel()
 		if ctx.Err() == nil {
+			b.health.wake(b.now())
 			b.log.Warn("this node was dropped from the coordinator's bus; resubscribing and reading the log",
 				"event", "revoke_wake_dropped")
 		}
@@ -183,6 +186,9 @@ func (b *Bus) woken(ctx context.Context, ev ext.ClusterEvent) {
 	b.mu.Lock()
 	c := b.cursors[tenant]
 	held := len(b.local[tenant]) > 0
+	if c != nil {
+		c.seen = max(c.seen, w.Seq)
+	}
 	b.mu.Unlock()
 	if c == nil || !held {
 		// Nobody here to deliver to. The first subscription in the tenant

@@ -130,6 +130,12 @@ const (
 	// it; it exists so that a host's licence route names a permission this
 	// file defines rather than one it invents.
 	PermLicenseRead Permission = "license:read"
+
+	// PermInstanceRead is reading the deployment's identity, its health at
+	// every level and the supervisors acting on the tenant (0046, M19). It
+	// is in the read set: anyone administering or auditing a tenant is
+	// answering an incident with it.
+	PermInstanceRead Permission = "instance:read"
 )
 
 // AllPermissions is every permission, in a stable order. A test asserts each
@@ -145,6 +151,7 @@ var AllPermissions = []Permission{
 	PermAccessContextPush, PermAccessContextRead, PermAccessContextWrite,
 	PermExtensionRead,
 	PermReportWrite, PermLicenseRead,
+	PermInstanceRead,
 }
 
 // Role is a named permission set. Closed set (M13).
@@ -207,7 +214,7 @@ var readOnly = []Permission{
 	PermPolicyRead, PermGrantRead, PermFleetRead,
 	PermIdentityRead, PermCARead, PermAuditRead, PermDecisionRead,
 	PermAccessContextRead, PermExtensionRead,
-	PermLicenseRead,
+	PermLicenseRead, PermInstanceRead,
 }
 
 // rolePermissions is the whole of RBAC's vocabulary. Read it as the product's

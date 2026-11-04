@@ -126,6 +126,11 @@ type Bus struct {
 	// that Close can drain rather than drop.
 	live sync.WaitGroup
 
+	// health counts the failures the plane logs, for the deployment's node
+	// report (0046). Atomics: they are written where the failure is logged
+	// and read by whoever asks, and neither may wait on the other.
+	health planeCounters
+
 	// The loop Start runs, and what only it touches.
 	stop    context.CancelFunc
 	loops   sync.WaitGroup
@@ -143,6 +148,10 @@ type cursor struct {
 	// head is the last position fanned out. It is written holding both mu
 	// and Bus.mu, so either is enough to read it.
 	head int64
+	// seen is the furthest position this node has been told the log reached
+	// — by a wake-up, or by its own fan-out — written holding Bus.mu. seen
+	// minus head is how far this node trails the tenant's log (0046).
+	seen int64
 }
 
 // Receipt is what an operator action produced.
@@ -402,6 +411,7 @@ func (b *Bus) advanceLocked(ctx context.Context, tenant store.Tenant, c *cursor,
 				delivered = n
 			}
 			c.head = l.seq
+			c.seen = max(c.seen, l.seq)
 		}
 		b.mu.Unlock()
 		b.logDropped(tenant, dropped)

@@ -40,6 +40,8 @@ type Store struct {
 	timeout time.Duration
 	// tracer observes every statement the pool sends; nil is none.
 	tracer pgx.QueryTracer
+	// maxConns caps the pool; zero leaves pgx's default.
+	maxConns int32
 }
 
 // Option configures a Store at Open.
@@ -52,6 +54,14 @@ type Option func(*Store)
 // the path it observes.
 func WithQueryTracer(t pgx.QueryTracer) Option {
 	return func(s *Store) { s.tracer = t }
+}
+
+// WithMaxConns caps the pool at n connections. It exists for a pool of its own
+// that something off the decision path reads through — the deployment's health
+// (0046) — so that however often it is asked, it can never hold a connection
+// the authorize path needs (M5).
+func WithMaxConns(n int32) Option {
+	return func(s *Store) { s.maxConns = n }
 }
 
 // WithQueryTimeout overrides DefaultQueryTimeout. A non-positive duration
@@ -79,6 +89,10 @@ func Open(ctx context.Context, dsn string, opts ...Option) (*Store, error) {
 	}
 	if s.tracer != nil {
 		cfg.ConnConfig.Tracer = s.tracer
+	}
+	if s.maxConns > 0 {
+		cfg.MaxConns = s.maxConns
+		cfg.MinConns = 0
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)

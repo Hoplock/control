@@ -622,3 +622,45 @@ policy:
   # never a deny-list in the data plane. Empty takes the shipped list (see
   # internal/authoring.DefaultInterpreters); a list here replaces it whole.
   interpreters: []
+
+# What this deployment says about itself (phase 0046, PLAN M19). Optional.
+instance:
+  # The operator's name for the deployment, shown beside its instance id. The
+  # id is generated once and kept in the database; renaming changes only this.
+  display_name: ""
+  # How often each node writes its health report. A node silent for three of
+  # these reads as not reporting, which degrades the deployment and names it.
+  report_interval: 10s
+  # The most often health is computed however often it is asked: the ceiling a
+  # poller — an operator's dashboard, a supervisor — can impose.
+  health_interval: 1s
+  # How old a deployment or fleet check may be before it is served as `stale`
+  # rather than as current. At least health_interval.
+  health_fresh_for: 30s
+  # The database connections health reads through: a pool of its own, so
+  # health never holds a connection the decision path needs (M5).
+  health_connections: 2
+
+# Outbound registration to a supervisor (phase 0046, PLAN M19). Off unless
+# `endpoint` is set, and that is the common case. The deployment dials out and
+# holds one connection; the supervisor never dials in, and nothing it sends
+# acts — an administrative action from a supervisor is a north-bound API call
+# with a scoped token (`identity token-issue --supervisor`), audited here.
+# Revoke it locally, without a restart and without the supervisor, with
+# `hoplock-control supervision revoke`.
+supervisor:
+  # The supervisor's registration URL, https. Empty: unsupervised.
+  endpoint: ""
+  # The environment variable holding the bearer credential this deployment
+  # presents to the supervisor. Required with endpoint; never in this file.
+  credential_env: ""
+  # How often this side sends a heartbeat and reads its feed. A supervisor
+  # silent for three of these is redialled.
+  heartbeat: 5s
+  # How long to wait for the supervisor to connect and answer.
+  dial_timeout: 10s
+  # The longest wait between attempts to reach it.
+  max_backoff: 1m
+  # Permits an http:// endpoint, for a lab. Never in production: the
+  # connection carries a credential.
+  insecure_transport: false

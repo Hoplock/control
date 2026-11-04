@@ -73,6 +73,8 @@ func runTokenIssue(ctx context.Context, h Host, args []string, stdout, stderr io
 	name := fs.String("name", "", "what an operator recognises this token by (required)")
 	scope := fs.String("scope", "", "tenant=role[,role] — repeatable with semicolons for several tenants (required)")
 	ttl := fs.Duration("ttl", 0, "how long the token lives; zero means it does not expire")
+	supervisor := fs.Bool("supervisor", false,
+		"issue a supervisor's token: every act through it is attributed to the supervisor in this deployment's audit trail (0046)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -98,7 +100,7 @@ func runTokenIssue(ctx context.Context, h Host, args []string, stdout, stderr io
 	}
 
 	cred, principal, err := federation.IssueToken(ctx, store.Tenant(cfg.Tenant),
-		identity.TokenRequest{DisplayName: *name, Scopes: scopes, TTL: *ttl})
+		identity.TokenRequest{DisplayName: *name, Scopes: scopes, TTL: *ttl, Supervisor: *supervisor})
 	if err != nil {
 		return err
 	}

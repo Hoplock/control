@@ -101,9 +101,11 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, h Host) 
 			return runCA(ctx, h, args[1:], stdout, stderr)
 		case "audit-retention":
 			return runAuditRetention(ctx, h, args[1:], stdout, stderr)
+		case "supervision":
+			return runSupervision(ctx, h, args[1:], stdout, stderr)
 		default:
 			return fmt.Errorf(
-				"unknown subcommand %q (known: migrate, seed, audit-verify, audit-retention, identity, ca)", args[0])
+				"unknown subcommand %q (known: migrate, seed, audit-verify, audit-retention, identity, ca, supervision)", args[0])
 		}
 	}
 

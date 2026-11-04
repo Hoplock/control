@@ -72,6 +72,7 @@ func (b *Bus) syncPresence(ctx context.Context) {
 	for _, tenant := range tracked {
 		if expire {
 			if _, err := b.presence.EventSubscriptions().Expire(ctx, tenant, now.Add(-presenceExpiry)); err != nil && ctx.Err() == nil {
+				b.health.presence(b.now())
 				b.log.Warn("expired event subscriptions could not be removed",
 					"event", "revoke_presence_expire_failed", "tenant", tenant.String(), "error", err.Error())
 			}
@@ -79,6 +80,7 @@ func (b *Bus) syncPresence(ctx context.Context) {
 		rows, err := b.presence.EventSubscriptions().List(ctx, tenant)
 		if err != nil {
 			if ctx.Err() == nil {
+				b.health.presence(b.now())
 				b.log.Warn("other nodes' event subscriptions could not be read; hints to proxies they hold are withheld until they are",
 					"event", "revoke_presence_read_failed", "tenant", tenant.String(), "error", err.Error())
 			}
@@ -135,6 +137,7 @@ func (b *Bus) writePresence(ctx context.Context, desired map[store.Tenant]map[st
 		if len(put) > 0 {
 			if err := b.presence.EventSubscriptions().Put(ctx, tenant, b.node, put); err != nil {
 				if ctx.Err() == nil {
+					b.health.presence(b.now())
 					b.log.Warn("this node's event subscriptions could not be written; other nodes withhold hints to them until they are",
 						"event", "revoke_presence_write_failed", "tenant", tenant.String(), "error", err.Error())
 				}
@@ -151,6 +154,7 @@ func (b *Bus) writePresence(ctx context.Context, desired map[store.Tenant]map[st
 		if len(gone) > 0 {
 			if err := b.presence.EventSubscriptions().Remove(ctx, tenant, b.node, gone); err != nil {
 				if ctx.Err() == nil {
+					b.health.presence(b.now())
 					b.log.Warn("ended event subscriptions could not be removed; other nodes stop believing them once their last write ages out",
 						"event", "revoke_presence_remove_failed", "tenant", tenant.String(), "error", err.Error())
 				}

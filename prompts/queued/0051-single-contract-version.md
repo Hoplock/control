@@ -52,8 +52,12 @@ exists moves them as a pair.
 > deployment could be supervised: a supervisory plane consumes many deployments
 > at many versions, so the north-bound surface has *exactly* the mid-upgrade
 > problem this phase is narrowing away south-bound, and it has it permanently.
-> Phase 0046 gives that surface its own version and its own negotiation. This
-> phase must not touch it, must not fold its number into the contract's, and
+> Phase 0046 gave that surface its own version and its own negotiation —
+> `north.APIVersion` and `north.MinAPIVersion`
+> (`internal/httpapi/north/apiversion.go`), the `Hoplock-Api-Version` header,
+> and the promise in `docs/API-VERSIONING.md` — and reports it beside the
+> contract's as `versions.north_api` and `versions.contract` on
+> `GET …/instance`. This phase must not touch it, must not fold its number into the contract's, and
 > must state the split in its learnings — the two numbers move independently and
 > for different reasons, which is the same lesson §4 already records about
 > `policy_version` and the document version.

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -231,12 +232,23 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 	recalc.Track(store.Tenant(cfg.Tenant))
-	trackTenant := recalc.Track
-	if trackFeeds != nil {
-		trackTenant = func(t store.Tenant) {
-			recalc.Track(t)
+
+	// The deployment's own identity and health (0046, M19), over a pool of
+	// its own so that however often it is asked it never holds a
+	// connection the decision path needs (M5).
+	self, stopSelf, err := buildInstance(ctx, cfg, bus, extensions, log)
+	if err != nil {
+		return err
+	}
+	defer stopSelf()
+	self.Tenants().Touch(ctx, store.Tenant(cfg.Tenant))
+
+	trackTenant := func(t store.Tenant) {
+		recalc.Track(t)
+		if trackFeeds != nil {
 			trackFeeds(t)
 		}
+		go self.Tenants().Touch(context.WithoutCancel(ctx), t)
 	}
 
 	// The certificate authority (0011) serves both listeners: the north-bound
@@ -341,7 +353,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	deps := northDeps{
 		st: st, ca: ca, emitter: emitter, grants: grants, pushes: pushes,
 		fleet: registry, revocations: revocations, standing: denials, extensions: extensions,
-		recalc: recalc,
+		recalc: recalc, instance: self,
 	}
 	if actions != nil {
 		deps.actions = actions
@@ -418,8 +430,14 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	}
 
 	errs := make(chan error, 2)
+	southLn, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return err
+	}
+	self.SetListener("south", true)
 	go func() {
-		err := srv.ListenAndServe()
+		err := srv.Serve(southLn)
+		self.SetListener("south", false)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
@@ -443,8 +461,14 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 			"access", route.Access, "permission", string(route.Permission),
 			"provider", route.Provider)
 	}
+	northLn, err := net.Listen("tcp", northSrv.Addr)
+	if err != nil {
+		return err
+	}
+	self.SetListener("north", true)
 	go func() {
-		err := northSrv.ListenAndServe()
+		err := northSrv.Serve(northLn)
+		self.SetListener("north", false)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}

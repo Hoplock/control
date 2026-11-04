@@ -313,7 +313,7 @@ func TestTheRequesterRoleCanOnlyAsk(t *testing.T) {
 func TestTheRoleTableIsHeldWhole(t *testing.T) {
 	read := []string{
 		"access-context:read", "audit:read", "ca:read", "decision:read", "extension:read",
-		"fleet:read", "grant:read", "identity:read", "license:read", "policy:read",
+		"fleet:read", "grant:read", "identity:read", "instance:read", "license:read", "policy:read",
 	}
 	with := func(extra ...string) []string {
 		out := append(slices.Clone(read), extra...)

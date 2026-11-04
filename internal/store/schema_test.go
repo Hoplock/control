@@ -14,10 +14,13 @@ import (
 
 // bookkeepingTables are the only tables allowed to have no tenant column.
 //
-// There is exactly one, and it holds no tenant data: schema_migrations records
-// which files have run against this database. Adding to this list is the thing
-// M12 was written to prevent, so it is a list rather than a pattern.
-var bookkeepingTables = []string{"schema_migrations"}
+// None holds a tenant's data. schema_migrations records which files have run
+// against this database. The other three describe the DEPLOYMENT, which no
+// tenant owns (0046, M19; migration 0024 says why): its one identity, its
+// nodes' reports, and the supervisory feed it sends its operator's supervisor.
+// Adding to this list is the thing M12 was written to prevent, so it is a list
+// rather than a pattern, and each entry is named with its reason.
+var bookkeepingTables = []string{"schema_migrations", "deployment", "deployment_nodes", "supervision_log"}
 
 // M12, checked against the database rather than against a reviewer's
 // attention: retrofitting the tenant column into a populated audit store later
