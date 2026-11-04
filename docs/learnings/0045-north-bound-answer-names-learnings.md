@@ -68,5 +68,6 @@ rejections (`mapping_scope_test.go`).
 
 ### Cross-repo
 Downstream sync owed to `hoplock/enterprise` (its supervisory plane and
-console read the fleet view): queued under `prompts/downstream/queued/` once
-the PR is open (see the PR's `## Cross-repo impact`). `hoplock/proxy`: none.
+console read the fleet view): queued as
+`prompts/downstream/queued/control-PR#133-north-bound-answer-names.md`
+(control#133's `## Cross-repo impact`). `hoplock/proxy`: none.
