@@ -299,6 +299,7 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 		"POST /policy/validate":                               "a read: compiles and reports, stores nothing",
 		"POST /policy/diff":                                   "a read: diffs a source against a stored version",
 		"POST /policy/simulate":                               "a read: simulation stores nothing",
+		"POST /reports/generate":                              "a read under audit:read: a registered pack summarises the audit store, and Control records nothing of a generation (0044)",
 		"POST /revocations":                                   "no transaction: an event on the bus, recorded after it (TestEveryMutatingActionIsAuditedWithItsActor)",
 		"PUT /access-context/providers/{provider}/binding":    "accessctx's own transaction: TestABindingWriteCommitsWithItsRecordOrNotAtAll",
 		"DELETE /access-context/providers/{provider}/binding": "accessctx's own transaction: TestABindingWriteCommitsWithItsRecordOrNotAtAll",

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/hoplock/control/internal/identity"
 )
@@ -148,6 +149,13 @@ type Route struct {
 	// for Control's own. It travels into the listing so that an operator can
 	// see which routes are not Control's.
 	Provider string
+	// Timeout is the route's own bound, from the start of the request to its
+	// last byte, in place of the listener's request timeout. Zero, which is
+	// every route but one, takes the listener's. Only a route whose work
+	// cannot fit that bound carries one — generating a report (0044) — so
+	// raising it for one route never loosens it for the rest. A host's
+	// routes cannot set it.
+	Timeout time.Duration
 }
 
 // RouteInfo is a registered route as the listing and the tests see it.
@@ -176,6 +184,9 @@ func (r RouteInfo) String() string { return r.Method + " " + r.Pattern }
 type Router struct {
 	mux      *http.ServeMux
 	patterns map[string]map[string]http.Handler
+	// bounds holds the routes that carry a Timeout of their own, by
+	// pattern and method.
+	bounds   map[string]map[string]time.Duration
 	routes   []RouteInfo
 	consoles []ConsoleInfo
 	wrap     func(Route) http.Handler
@@ -192,6 +203,7 @@ func NewRouter(wrap func(Route) http.Handler) *Router {
 	r := &Router{
 		mux:      http.NewServeMux(),
 		patterns: map[string]map[string]http.Handler{},
+		bounds:   map[string]map[string]time.Duration{},
 		wrap:     wrap,
 	}
 	return r
@@ -219,6 +231,9 @@ func (r *Router) Register(route Route) error {
 	}
 	if route.Handler == nil {
 		return fmt.Errorf("httpapi/north: route %s %s has no handler", route.Method, route.Pattern)
+	}
+	if route.Timeout < 0 {
+		return fmt.Errorf("httpapi/north: route %s %s has a negative timeout", route.Method, route.Pattern)
 	}
 	if err := checkNamespace(route); err != nil {
 		return err
@@ -262,6 +277,12 @@ func (r *Router) Register(route Route) error {
 		return fmt.Errorf("httpapi/north: route %s %s is registered twice", route.Method, route.Pattern)
 	}
 	byMethod[route.Method] = r.wrap(route)
+	if route.Timeout > 0 {
+		if r.bounds[route.Pattern] == nil {
+			r.bounds[route.Pattern] = map[string]time.Duration{}
+		}
+		r.bounds[route.Pattern][route.Method] = route.Timeout
+	}
 
 	r.routes = append(r.routes, RouteInfo{
 		Method:     route.Method,
@@ -337,6 +358,19 @@ func (r *Router) dispatch(pattern string) http.Handler {
 			CorrelationID: CorrelationIDFrom(req.Context()),
 		})
 	})
+}
+
+// boundFor is the Timeout of the route req would reach, or false when that
+// route carries none of its own — and for a path or a method no route serves.
+//
+// It asks the mux which pattern req matches, rather than matching a path of
+// its own, so the bound follows exactly the dispatch the request will get: a
+// route's bound cannot be reached by a path that dispatches elsewhere, nor
+// missed by one that dispatches to it. Asking does not change req.
+func (r *Router) boundFor(req *http.Request) (time.Duration, bool) {
+	_, pattern := r.mux.Handler(req)
+	d, ok := r.bounds[pattern][req.Method]
+	return d, ok
 }
 
 // Routes returns every registered route.

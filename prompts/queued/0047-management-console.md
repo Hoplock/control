@@ -300,7 +300,10 @@ is written so that half can fail a review rather than merely disappoint one.
      required ones marked), and the formats it lists. A report is named
      through the catalogue of the host that registered it, under its
      `<provider>:` keys (M27), and by its code where no catalogue names it
-     (M21). A
+     (M21). The listing's `provider` is the pack's `ext.Registration.Provider`
+     (by convention a module path), not the host's `<owner>/<name>`: a binary
+     has one host, so the catalogue is that host's. Post `provider` and
+     `report` back exactly as listed; neither is ever a path segment. A
      provider listed with an error is shown as unavailable, never as having
      no packs. With no provider registered, the screen says that the audit
      view is the reporting available, which is the point's own answer (M15),

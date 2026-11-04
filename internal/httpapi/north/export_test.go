@@ -3,7 +3,10 @@
 
 package north
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+)
 
 // ServedByHeader names who answered a request on a [ServeTable] handler.
 const ServedByHeader = "X-Test-Served-By"
@@ -32,3 +35,15 @@ func ServeTable(provider string, routes []HostRoute) (http.Handler, error) {
 	}
 	return s.withCorrelationID(s.router), nil
 }
+
+// BoundFor is the deadline withLimits gives r: its route's own Timeout, or the
+// listener's request timeout (0044).
+func (s *Server) BoundFor(r *http.Request) time.Duration {
+	if d, ok := s.router.boundFor(r); ok {
+		return d
+	}
+	return s.requestTimeout
+}
+
+// ReportTimeout is the bound the generation route was registered with.
+func (s *Server) ReportTimeout() time.Duration { return s.reportTimeout }

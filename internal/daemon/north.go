@@ -23,6 +23,7 @@ import (
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/report"
 	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/standing"
 	"github.com/hoplock/control/internal/store"
@@ -84,6 +85,17 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 		return nil, nil, err
 	}
 
+	// The registered report packs (0044), served under the node's own
+	// ceiling: a provider runs in this process, beside the decision path.
+	var providers []ext.Bound[ext.ReportProvider]
+	if d.extensions != nil {
+		providers = d.extensions.ReportProviders()
+	}
+	reports, err := report.New(providers, report.Options{MaxConcurrent: cfg.North.MaxConcurrentReports})
+	if err != nil {
+		return nil, nil, err
+	}
+
 	handler, err := north.New(north.Options{
 		Federation:           federation,
 		CA:                   d.ca,
@@ -101,10 +113,12 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 		Actions:              d.actions,
 		IdentitySync:         d.sync,
 		MappingRecalculation: d.recalc,
+		Reports:              reports,
 		MaxPushBytes:         cfg.AccessContext.MaxPushBytes,
 		Logger:               log,
 		MaxBodyBytes:         cfg.North.MaxBodyBytes,
 		RequestTimeout:       cfg.North.RequestTimeout,
+		ReportTimeout:        cfg.North.ReportTimeout,
 		InsecureCookies:      cfg.North.InsecureCookies,
 		DefaultTenant:        store.Tenant(cfg.Tenant),
 		// A host's routes enter the same table, behind the same chain (M15).

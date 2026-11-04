@@ -20,6 +20,7 @@ import (
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/report"
 	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/standing"
 	"github.com/hoplock/control/internal/store"
@@ -64,10 +65,13 @@ type Server struct {
 	sync        IdentitySyncState
 	recalc      MappingRecalculation
 	mapping     decision.ActiveMapping
+	// reports lists and generates the registered report packs (0044).
+	reports *report.Service
 
 	maxBodyBytes   int64
 	maxPushBytes   int64
 	requestTimeout time.Duration
+	reportTimeout  time.Duration
 	secureCookies  bool
 	defaultTenant  store.Tenant
 
@@ -192,11 +196,19 @@ type Options struct {
 	// a tenant whose mapping is read (0043). Nil starts nothing, and the
 	// subjects reach the new mapping at their next write.
 	MappingRecalculation MappingRecalculation
+	// Reports lists and generates every registered ext.ReportProvider
+	// (0044). Nil builds one over Extensions with report.DefaultMaxConcurrent.
+	Reports *report.Service
 	// Logger is where the access log goes. Nil takes slog's default.
 	Logger *slog.Logger
 	// MaxBodyBytes and RequestTimeout override the chain's bounds.
 	MaxBodyBytes   int64
 	RequestTimeout time.Duration
+	// ReportTimeout bounds `POST …/reports/generate` alone, from the start
+	// of the request to its last byte, in place of RequestTimeout (0044).
+	// Zero takes DefaultReportTimeout, or RequestTimeout when that is
+	// longer; one below RequestTimeout is refused.
+	ReportTimeout time.Duration
 	// InsecureCookies drops the Secure attribute from the session cookie. It
 	// exists for a local development deployment over plain HTTP and for
 	// tests, and it is spelled "insecure" so that nobody sets it by
@@ -271,6 +283,8 @@ func New(o Options) (*Server, error) {
 		now:            o.Now,
 		maxBodyBytes:   o.MaxBodyBytes,
 		requestTimeout: o.RequestTimeout,
+		reportTimeout:  o.ReportTimeout,
+		reports:        o.Reports,
 		secureCookies:  !o.InsecureCookies,
 		defaultTenant:  o.DefaultTenant,
 		st:             o.Store,
@@ -311,6 +325,18 @@ func New(o Options) (*Server, error) {
 	}
 	if s.requestTimeout <= 0 {
 		s.requestTimeout = DefaultRequestTimeout
+	}
+	if s.reportTimeout <= 0 {
+		s.reportTimeout = max(DefaultReportTimeout, s.requestTimeout)
+	}
+	if s.reportTimeout < s.requestTimeout {
+		return nil, fmt.Errorf("httpapi/north: the report timeout (%s) is below the request timeout (%s); "+
+			"a generation would be bound tighter than every other request", s.reportTimeout, s.requestTimeout)
+	}
+	if s.reports == nil {
+		if s.reports, err = report.New(s.extensions.ReportProviders(), report.Options{}); err != nil {
+			return nil, err
+		}
 	}
 	if s.maxPushBytes <= 0 {
 		s.maxPushBytes = DefaultMaxPushBytes

@@ -11,7 +11,8 @@ import (
 	"github.com/hoplock/control/internal/httpapi/north"
 )
 
-// Caller is who Control authenticated for the request a host route is serving.
+// Caller is who Control authenticated for the request a host route is serving,
+// or a registered report provider is answering.
 //
 // It is a projection, never the principal itself: which tenants a caller may
 // reach is Control's to know and the middleware's to check. A handler is handed
@@ -44,8 +45,13 @@ type Caller struct {
 	CorrelationID string
 }
 
-// CallerFrom returns who Control authenticated for the request a host route is
-// serving. ok is false outside a host route.
+// CallerFrom returns who Control authenticated for the request ctx belongs to,
+// in two places: inside a host route, and inside Control's own calls into a
+// registered ext.ReportProvider — its Reports and Generate, on Control's report
+// routes — so a pack can record who generated a report. It is for attribution,
+// never for authorisation: Control has already resolved the tenant and checked
+// the permission. ok is false everywhere else. WriteError still answers only
+// inside a host route: a provider call is not one.
 func CallerFrom(ctx context.Context) (Caller, bool) {
 	c, ok := north.HostCallerFrom(ctx)
 	if !ok {

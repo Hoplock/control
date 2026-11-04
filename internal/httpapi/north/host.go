@@ -113,17 +113,36 @@ type hostRequest struct {
 	log      *slog.Logger
 }
 
-// HostCallerFrom returns the caller of the host route serving ctx's request.
-// ok is false outside a host route.
+// HostCallerFrom returns who Control authenticated for the request ctx belongs
+// to, in two places: inside a host route, and inside Control's own calls into a
+// registered ext.ReportProvider — its Reports and Generate on `GET …/reports`
+// and `POST …/reports/generate` (0044) — so a pack can record who generated
+// it. It is for attribution, never for authorisation: the middleware has
+// already resolved the tenant and checked the permission. ok is false
+// everywhere else.
 func HostCallerFrom(ctx context.Context) (HostCaller, bool) {
-	hr, ok := ctx.Value(ctxKeyHost).(*hostRequest)
-	if !ok {
-		return HostCaller{}, false
+	var c HostCaller
+	switch v := ctx.Value(ctxKeyHost).(type) {
+	case *hostRequest:
+		c = v.caller
+	default:
+		pc, ok := ctx.Value(ctxKeyProviderCaller).(HostCaller)
+		if !ok {
+			return HostCaller{}, false
+		}
+		c = pc
 	}
-	c := hr.caller
 	c.Tenants = slices.Clone(c.Tenants)
 	c.Subject.Groups = slices.Clone(c.Subject.Groups)
 	return c, true
+}
+
+// withProviderCaller is ctx carrying its request's caller for a call into a
+// registered provider (0044), under a key of its own: [HostCallerFrom] answers
+// inside the call, and [WriteHostError] — which reads only a host route's
+// request — still refuses, because a provider call is not a host route.
+func withProviderCaller(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ctxKeyProviderCaller, callerOf(ctx))
 }
 
 // WriteHostError answers a host route's request in this surface's envelope
@@ -362,6 +381,13 @@ func checkHostPattern(prefix, pattern string) error {
 // has already authenticated, resolved and checked.
 func (s *Server) withHostRequest(r *http.Request, provider string) context.Context {
 	ctx := r.Context()
+	return context.WithValue(ctx, ctxKeyHost, &hostRequest{
+		caller: callerOf(ctx), provider: provider, codes: s.codes, log: s.log,
+	})
+}
+
+// callerOf projects what the middleware resolved on ctx into a HostCaller.
+func callerOf(ctx context.Context) HostCaller {
 	caller := HostCaller{CorrelationID: CorrelationIDFrom(ctx)}
 	if t, ok := TenantFrom(ctx); ok {
 		caller.Tenant = ext.Tenant(t)
@@ -379,9 +405,7 @@ func (s *Server) withHostRequest(r *http.Request, provider string) context.Conte
 			caller.Subject = ext.Subject{ID: p.Subject, Groups: slices.Clone(p.Groups)}
 		}
 	}
-	return context.WithValue(ctx, ctxKeyHost, &hostRequest{
-		caller: caller, provider: provider, codes: s.codes, log: s.log,
-	})
+	return caller
 }
 
 // registerTable registers Control's routes, then the host's, through the one

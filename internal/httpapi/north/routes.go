@@ -353,8 +353,13 @@ func (s *Server) inventoryRoutes() []Route {
 	}
 }
 
-// auditRoutes are the audit query and retention (0010, 0019).
+// auditRoutes are the audit query and retention (0010, 0019), and the
+// registered report packs (0044): reading a report is audit:read, because a
+// report is the audit store, summarised.
 func (s *Server) auditRoutes() []Route {
+	generate := tenantRoute("POST", "/reports/generate", identity.PermAuditRead,
+		"generate one registered report and stream it", s.handleReportGenerate)
+	generate.Timeout = s.reportTimeout
 	return []Route{
 		tenantRoute("GET", "/audit/records", identity.PermAuditRead,
 			"records over every dimension and projection", s.handleAuditRecords),
@@ -382,5 +387,8 @@ func (s *Server) auditRoutes() []Route {
 			"delete a stream's oldest records, never the head, and record where verification resumes", s.handleRetention),
 		tenantRoute("POST", "/audit/captures/retention", identity.PermAuditRetain,
 			"remove old session captures' bytes, keeping their records", s.handleCaptureRetention),
+		tenantRoute("GET", "/reports", identity.PermAuditRead,
+			"every registered report pack this tenant can generate, per provider", s.handleReports),
+		generate,
 	}
 }

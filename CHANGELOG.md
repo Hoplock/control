@@ -26,6 +26,66 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.31.0
+
+Phase 0044, registered reports served: Control lists and generates every
+registered `ext.ReportProvider` on its north-bound API, for the tenant the
+middleware resolved, under `audit:read` (`docs/PLAN.md` §7 "Reports", M15).
+Raised by `Hoplock/enterprise#26`, item 5. No migration, and no exported
+identifier in `ext` or `server` is added, removed or changed.
+
+### Added and changed
+
+- **`GET /api/v1/tenants/{tenant}/reports`** lists every registered provider,
+  in registration order: `provider`, `version` and `reports`, each `report`,
+  `formats` (`json`, `csv`, `pdf`) and `parameters` (`name`, `required`,
+  `values`). It answers `200` whenever Control can: a provider whose `Reports`
+  failed, whose descriptors Control cannot serve, or that had not answered
+  within the request's bound is listed with `error`
+  (`report_provider_unavailable` or `report_provider_failed`) and no reports.
+  With nothing registered it is `{"providers": []}`. It is not paged.
+- **`POST /api/v1/tenants/{tenant}/reports/generate`** takes `{provider,
+  report, from, to, parameters, format}` and streams the report. Control calls
+  `Reports` for the tenant first and generates only what is listed there
+  (`404 not_found` otherwise), and answers `400 invalid_request` naming the
+  field for a format the descriptor does not list, a required parameter
+  missing, one it does not name, a value outside a closed set, or a `from` or
+  `to` that is missing, not RFC 3339, or not in order (`from` inclusive, `to`
+  exclusive) — all before `Generate` is called. The body is served as the
+  format's media type (`application/json`, `text/csv; charset=utf-8`,
+  `application/pdf`), never the provider's, with `X-Content-Type-Options:
+  nosniff`, `Content-Disposition: attachment` (a filename in `[A-Za-z0-9._-]`),
+  `Cache-Control: no-store` and no `Content-Length`. A `Report` in another
+  format or media type is `502 report_provider_failed`, its body closed unread.
+  A body that fails after its first byte, or the bound running out, aborts the
+  response: never a short report.
+- **Errors.** `Generate`'s `ErrNotFound` is `404 not_found`; its `ErrInvalid`
+  `400 invalid_request` with the provider's message; `ErrUnavailable` from
+  either call `503 report_provider_unavailable`; every other kind (`ErrDenied`
+  included), an error that is not an `*ext.Error`, a panic, or a descriptor
+  Control cannot serve `502 report_provider_failed`. A generation past the
+  node's ceiling is `503 report_generation_busy` with `Retry-After`. Three new
+  codes: `report_provider_unavailable`, `report_provider_failed`,
+  `report_generation_busy`.
+- **`north.report_timeout`** (default `10m`, or `north.request_timeout` when
+  that is longer; at least `north.request_timeout` and at most `1h`) bounds a
+  generation alone, from the start of the request to its last byte. Every
+  other route keeps `north.request_timeout`.
+- **`north.max_concurrent_reports`** (default `2`; a negative is refused)
+  caps the generations running at once on one node. The listing is not
+  counted.
+- **`server.CallerFrom`** now also answers inside Control's calls into a
+  registered `ext.ReportProvider` (`Reports` and `Generate`), with the
+  request's tenant, subject, principal, break-glass flag and correlation id.
+  `server.WriteError` still answers only inside a host route.
+- **`ext` doc comments** on `ReportFormat`, `ReportParameter`,
+  `ReportDescriptor`, `ReportRequest`, `Report` and `ReportProvider` state what
+  Control now does: the media type of each format, what makes a descriptor
+  servable, the checks made before `Generate`, the period's bounds, the bound
+  and the ceiling, the answer to each error kind, that `Body.Close` may be
+  called while a `Read` is in progress, and that Control records nothing of a
+  generation.
+
 ## v0.30.0
 
 Phase 0043, directory-scoped group entries: a claim mapping's group entry may

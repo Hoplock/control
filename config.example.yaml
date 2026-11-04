@@ -349,6 +349,20 @@ north:
   max_body_bytes: 4194304
   request_timeout: 30s
 
+  # Bounds POST /api/v1/tenants/{tenant}/reports/generate alone, from the start
+  # of the request to its last byte (0044): a registered report pack over a year
+  # of a large estate does not finish in request_timeout, and raising that for
+  # every route would loosen it where it matters. At least request_timeout and
+  # at most 1h, refused at start-up otherwise. Absent, 10m, or request_timeout
+  # when that is longer.
+  report_timeout: 10m
+
+  # Caps the report generations running at once on this node; one past it is
+  # answered 503 report_generation_busy with Retry-After, before the provider is
+  # asked anything. Per node, because a provider runs inside the process that
+  # serves the decision path. The listing is not counted. Absent or 0, 2.
+  max_concurrent_reports: 2
+
   # Drops the Secure attribute from the session cookie, for a local development
   # deployment served over plain HTTP. It is spelled "insecure" so that nobody
   # sets it by accident; a deployment reachable by anybody else must leave it
