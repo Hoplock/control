@@ -310,18 +310,30 @@ type ArchiveStore interface {
 // ReportFormat is how a report's body is encoded. It is a closed enum: a
 // format Control cannot describe to a caller is a format the north-bound API
 // cannot offer.
+//
+// Control serves each format as one media type, whatever a provider's
+// ContentType says, and a Report's ContentType must name that media type:
+//
+//   - ReportFormatJSON: application/json
+//   - ReportFormatCSV: text/csv; charset=utf-8 (a charset other than UTF-8 is
+//     refused)
+//   - ReportFormatPDF: application/pdf
 type ReportFormat int
 
 const (
-	// ReportFormatJSON is a machine-readable body.
+	// ReportFormatJSON is a machine-readable body, served as
+	// application/json.
 	ReportFormatJSON ReportFormat = iota
-	// ReportFormatCSV is a tabular body.
+	// ReportFormatCSV is a tabular body, served as text/csv; charset=utf-8.
 	ReportFormatCSV
-	// ReportFormatPDF is a rendered document.
+	// ReportFormatPDF is a rendered document, served as application/pdf.
 	ReportFormatPDF
 )
 
-// String renders the format as the stable code that crosses the wire.
+// String renders the format as the stable code that crosses the wire: json,
+// csv or pdf. A value outside the three constants also renders as "json", so
+// Control checks a descriptor's formats against the constants rather than
+// trusting this rendering.
 func (f ReportFormat) String() string {
 	switch f {
 	case ReportFormatJSON:
@@ -336,18 +348,27 @@ func (f ReportFormat) String() string {
 
 // ReportParameter describes one input a report accepts.
 type ReportParameter struct {
-	// Name is the parameter's stable code.
+	// Name is the parameter's stable code: non-empty, and unique within the
+	// report.
 	Name string
-	// Required reports whether Generate fails without it.
+	// Required reports whether Generate fails without it. Control refuses a
+	// request missing it before Generate is called.
 	Required bool
 	// Values enumerates the accepted values, when the parameter is a closed
-	// set. Empty means free-form.
+	// set. Empty means free-form. Control refuses a value outside a
+	// non-empty set before Generate is called.
 	Values []string
 }
 
 // ReportDescriptor describes one report a provider offers. It carries codes,
 // not titles: the console holds the catalogue that turns ReportID into a name
 // somebody reads (M21).
+//
+// Control serves a descriptor only when it is servable: a non-empty ReportID,
+// unique within the provider; at least one format, each one of the three
+// ReportFormat constants; and parameters whose names are non-empty and unique.
+// One descriptor that is not refuses the whole provider: its listing entry
+// carries report_provider_failed, and none of its reports is generated.
 type ReportDescriptor struct {
 	// ReportID is the report's stable code, unique within the provider.
 	ReportID string
@@ -357,34 +378,49 @@ type ReportDescriptor struct {
 	Parameters []ReportParameter
 }
 
-// ReportRequest asks for one report.
+// ReportRequest asks for one report. By the time Generate sees it, Control has
+// checked it against the descriptor the provider listed for Tenant: ReportID is
+// listed, Format is one of its Formats, every Required parameter is present,
+// none it does not name is, and every value is inside a closed set.
 type ReportRequest struct {
-	// Tenant is required.
+	// Tenant is required: the one tenant the north-bound middleware
+	// resolved, never one a caller named in a body.
 	Tenant Tenant
 	// ReportID names the report.
 	ReportID string
-	// From and To bound the reporting period.
+	// From and To bound the reporting period: From inclusive, To exclusive,
+	// as the audit query reads a window. Both are set, and From is before
+	// To.
 	From time.Time
 	To   time.Time
 	// Parameters carries the report's own inputs.
 	Parameters map[string]string
-	// Format is the requested encoding; it must be one the descriptor lists.
+	// Format is the requested encoding; it is one the descriptor lists.
 	Format ReportFormat
 }
 
 // Report is a generated report. Body is streamed rather than buffered because
 // a compliance pack over a year of a large estate is not a value to hold in
 // memory, and the caller closes it.
+//
+// Format must be the format requested, and ContentType must name that
+// format's media type (see ReportFormat), or Control refuses the report as
+// report_provider_failed and closes Body before a byte of it is served.
 type Report struct {
 	// ReportID echoes the request.
 	ReportID string
 	// GeneratedAt is when the provider produced it.
 	GeneratedAt time.Time
-	// Format is the encoding actually produced.
+	// Format is the encoding actually produced: the one requested.
 	Format ReportFormat
-	// ContentType is the media type of Body.
+	// ContentType is the media type of Body: the format's. Control serves
+	// the format's media type, never this string.
 	ContentType string
-	// Body is the report. The caller closes it.
+	// Body is the report. The caller closes it. Control may call Close while
+	// a Read is in progress — when the bound runs out or the client goes
+	// away — and a Read blocked at that moment should return. An error from
+	// Read other than io.EOF, after the first byte, ends the response broken
+	// and never as a short report.
 	Body io.ReadCloser
 }
 
@@ -398,10 +434,45 @@ type Report struct {
 // reached what, when, and why any decision went the way it did, and can export
 // the answer. A provider packages those answers into a named, repeatable
 // artefact; it does not unlock the underlying data, which was never locked.
+//
+// # What Control does with a registered provider
+//
+// Control serves it on the north-bound API, under audit:read, for the tenant
+// the middleware resolved (PLAN §7 "Reports"):
+//
+//   - GET /api/v1/tenants/{tenant}/reports lists every provider's Reports for
+//     the tenant, in registration order, each provider asked concurrently
+//     under the request's bound.
+//   - POST /api/v1/tenants/{tenant}/reports/generate takes {provider, report,
+//     from, to, parameters, format}, calls Reports for the tenant before every
+//     Generate, generates only a report listed there, checks the request
+//     against its descriptor (ReportRequest says what holds), and streams
+//     Body.
+//
+// Generation is bounded by north.report_timeout, from the start of the request
+// to its last byte, and capped per node by north.max_concurrent_reports. A
+// call still running when the bound runs out is abandoned, and keeps its place
+// under the cap until it returns. A panic in either method or in Body is a
+// failure, never a crash.
+//
+// The errors answer: ErrNotFound from Generate is 404 not_found; ErrInvalid
+// from Generate is 400 invalid_request carrying the error's own message;
+// ErrUnavailable from either method is 503 report_provider_unavailable; any
+// other kind, an error that is not an *Error, and ErrNotFound or ErrInvalid
+// from Reports are 502 report_provider_failed. A provider never decides who may
+// see a report — audit:read and the tenant are the whole of that — so its
+// ErrDenied is a fault too, and nothing it answers is a 401 or a 403.
+//
+// Inside both methods, server.CallerFrom answers with the request's tenant,
+// subject, principal, break-glass flag and correlation id, so a pack can record
+// who generated what. It is for attribution, never for authorisation. Control
+// writes no record of a generation: a report is a read, like the audit query,
+// so a pack that keeps one writes it itself.
 type ReportProvider interface {
 	// Reports lists what this provider offers for the tenant. The list may
 	// differ per tenant, because a reporting pack can be licensed per
-	// tenant.
+	// tenant: Control asks again before every generation, and generates
+	// only what is listed.
 	Reports(ctx context.Context, tenant Tenant) ([]ReportDescriptor, error)
 	// Generate produces one report. An unknown ReportID is an ErrNotFound
 	// *Error; an unsupported format or a missing required parameter is

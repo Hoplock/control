@@ -605,6 +605,7 @@ var exemptRoutes = map[string]string{
 	"GET /api/v1/tenants/{tenant}/access-context/providers/{provider}/binding": "one object",
 	"GET /api/v1/tenants/{tenant}/audit/records/{record}":                      "one object",
 	"GET /api/v1/tenants/{tenant}/audit/sessions/{session}/loss":               "one row per gap cause, of which the contract names two",
+	"GET /api/v1/tenants/{tenant}/reports":                                     "one entry per registered report provider; its size is set by the binary's registrations and each provider's catalogue, never by the estate",
 }
 
 // seedSampleSession stores, in tenant-a, one provisioning record of the

@@ -849,3 +849,49 @@ database: {dsn: "postgres://x"}
 		t.Errorf("sinks %+v, archive %+v", cfg.Audit.Sinks, cfg.Audit.Archive)
 	}
 }
+
+// A report generation has its own bound and a per-node ceiling (0044). The
+// bound is never tighter than every other request and never past an hour; a
+// file that says nothing takes ten minutes, or its request timeout when that is
+// longer, so a file written before the key existed still loads.
+func TestTheReportBoundAndCeilingAreDefaultedAndRefusedOutOfRange(t *testing.T) {
+	base := `listeners: {south: "0.0.0.0:8443", north: "127.0.0.1:9443"}
+database: {dsn: "postgres://x"}
+`
+	for name, c := range map[string]struct {
+		doc     string
+		timeout time.Duration
+		max     int
+	}{
+		"nothing said":                    {base, config.DefaultNorthReportTimeout, config.DefaultNorthMaxConcurrentReports},
+		"an explicit zero of each":        {base + "north: {report_timeout: 0s, max_concurrent_reports: 0}\n", 10 * time.Minute, 2},
+		"a longer request timeout":        {base + "north: {request_timeout: 20m}\n", 20 * time.Minute, 2},
+		"a request timeout past the hour": {base + "north: {request_timeout: 2h}\n", 2 * time.Hour, 2},
+		"the floor exactly":               {base + "north: {request_timeout: 30s, report_timeout: 30s}\n", 30 * time.Second, 2},
+		"the ceiling exactly":             {base + "north: {report_timeout: 1h, max_concurrent_reports: 8}\n", time.Hour, 8},
+	} {
+		cfg, err := config.Parse(strings.NewReader(c.doc))
+		if err != nil {
+			t.Errorf("%s: refused: %v", name, err)
+			continue
+		}
+		if cfg.North.ReportTimeout != c.timeout || cfg.North.MaxConcurrentReports != c.max {
+			t.Errorf("%s: report_timeout %s, max_concurrent_reports %d; want %s, %d",
+				name, cfg.North.ReportTimeout, cfg.North.MaxConcurrentReports, c.timeout, c.max)
+		}
+	}
+
+	for name, c := range map[string]struct{ doc, field string }{
+		"below the request timeout":      {base + "north: {report_timeout: 10s}\n", "north.report_timeout"},
+		"below a longer request timeout": {base + "north: {request_timeout: 20m, report_timeout: 10m}\n", "north.report_timeout"},
+		"past the hour":                  {base + "north: {report_timeout: 61m}\n", "north.report_timeout"},
+		"negative":                       {base + "north: {report_timeout: -1s}\n", "north.report_timeout"},
+		"a ceiling below one":            {base + "north: {max_concurrent_reports: -1}\n", "north.max_concurrent_reports"},
+	} {
+		_, err := config.Parse(strings.NewReader(c.doc))
+		var fe *config.FieldError
+		if !errors.As(err, &fe) || fe.Field != c.field {
+			t.Errorf("%s: err = %v, want a *FieldError on %s", name, err, c.field)
+		}
+	}
+}

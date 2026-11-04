@@ -110,7 +110,7 @@ decision.
 | **M12** | tenancy is in the schema from day one | amended by M18 | §10 |
 | **M13** | tech choices (Go, Postgres, closed enum kinds) | live | §3 |
 | **M14** | licensing: this repository is the open-source plane | live | §8 |
-| **M15** | Enterprise extends this repository; it never forks it | amended by M27 | §3, §6, §8, §10, §11 |
+| **M15** | Enterprise extends this repository; it never forks it | amended by M27 | §3, §6, §7, §8, §10, §11 |
 | **M16** | external access context is an input; its integrations are extensions | live | §3, §5, §6, §7, §10, §11 |
 | **M17** | the fleet graph carries capabilities, not just reachability | live | §3, §4, §5, §10 |
 | **M18** | tenancy is a request dimension, not a process constant | amended by M24 | §10, §11 |
@@ -533,7 +533,8 @@ decision.
   The line is **governance and scale, not capability**. Control decides access,
   distributes policy, records what happened, and lets an operator explain any
   decision. Enterprise adds who-may-ask-and-who-must-approve, long-horizon
-  retention and search, compliance reporting, enterprise integrations
+  retention and search, compliance reporting (the packs: Control lists and
+  generates whatever pack is registered, §7 "Reports"), enterprise integrations
   (SCIM, SIEM/SOAR, HSM/KMS), and the operational shape large deployments need
   (HA, air-gapped, licensing). Where a feature could plausibly sit on either
   side, it goes here — an artificially crippled open-source core is a worse
@@ -1347,7 +1348,8 @@ decision.
   - a route that answers one object;
   - a list bounded by configuration rather than by the estate. These are the
     sign-in methods, the trust bundle (answered whole or not at all), the
-    extension registry (sealed; its action-handler row carries `started` and
+    registered report packs (one entry per registered provider, each its
+    provider's catalogue), the extension registry (sealed; its action-handler row carries `started` and
     `start_error` as two fields, still one object per row), the access-context providers and their
     bindings (one per configured provider), and a session's loss (one row per
     gap cause, of which the contract names two).
@@ -1588,6 +1590,7 @@ control/
 │   ├── audit/              # ingest, hash chain, query, retention (M8)
 │   ├── archive/            # the audit feed: to a registered ext.ArchiveStore, and under every sink (M8, M5)
 │   ├── export/             # delivery to every registered ext.AuditSink, on archive's feed (M8, M5)
+│   ├── report/             # the registered report packs: listed, checked, generated, capped (M15, M5)
 │   ├── access/             # time-boxed grants, workflow requests, revocation (M10)
 │   ├── standing/           # the subject lock and the target quarantine: placed, lifted, published (M28)
 │   ├── action/             # the ext.ActionExecutor and the registered handler's lifecycle (M15, M28)
@@ -1776,7 +1779,15 @@ for nothing.
   added.
   Its errors carry a stable code, typed parameters, an English message and the
   correlation id (M21), which is also why it owns its own 404 and 405 rather than
-  letting `http.ServeMux` answer them in prose. Its subject and target views
+  letting `http.ServeMux` answer them in prose. Every body it writes goes
+  through `writeJSON`, with one exception: a generated report's body
+  (`reports.go`), served as the media type of the format asked for, never the
+  provider's. Every request is bounded by `north.request_timeout`, except
+  `POST …/reports/generate`, whose route carries its own bound
+  (`north.report_timeout`, `Route.Timeout`); `withLimits` asks the router which
+  route a request will reach, so no other route's bound moves. `withRecovery`
+  lets `http.ErrAbortHandler` through untouched, so a report whose body fails
+  after its status ends broken rather than with an envelope appended. Its subject and target views
   show a lock or a quarantine and its facts (`locked`, `lock`, `quarantined`,
   `quarantine`), and a subject the directory manages and any deactivation
   (`directory_managed`, `directory`, `deactivated`, `deactivation`), read for a
@@ -1809,7 +1820,7 @@ for nothing.
   algorithm declarations and the target observations; the audit query
   (`…/audit/…`, §7) and its retention; the operator actions (`…/revocations`,
   and the lock and quarantine of M28 under `…/subjects/{subject}/` and
-  `…/targets/{target}/`);
+  `…/targets/{target}/`); the registered report packs (`…/reports`, §7);
   and the extension listing (`…/extensions`, whose archive row carries a
   registered archive's lag for the caller's tenant as scalars). Reads take the `…:read`
   permission every reading role holds; each write takes the narrowest
@@ -1894,6 +1905,20 @@ for nothing.
   It owns no sink: the sinks are a host's (§11). `internal/daemon` builds it
   only when a sink is registered, and starts and stops it as it does the
   archive's feed.
+- **`internal/report`** — every registered `ext.ReportProvider`, served
+  (0044, §7 "Reports"). It lists each provider's `Reports` for a tenant, each
+  provider asked concurrently under the caller's bound, a failed one its own
+  entry's error and never a missing entry (M11); and it generates one report,
+  asking `Reports` again first and holding the request to the descriptor
+  listed for that tenant before `Generate` is called, then holding the
+  `Report` to the format asked for. Every provider call runs on its own
+  goroutine and a panic in it is a failure, so a provider that ignores its
+  context is abandoned at the bound. A counting semaphore caps generations per
+  node (`north.max_concurrent_reports`), acquired before either call and
+  released when the body is closed — or, for an abandoned call, when the
+  provider returns. It knows nothing of HTTP: `internal/httpapi/north` maps its
+  kinds and streams the body. `internal/daemon` builds it over the sealed
+  registry; with nothing registered it lists nothing and generates nothing.
 - **`cmd/policyctl`** — the policy lifecycle from a terminal and from CI, over
   the north-bound API and nothing else: `validate`, `diff`, `apply`,
   `activate`, `versions`, `simulate`, `explain`. It holds an API token, never a
@@ -3596,6 +3621,44 @@ not say why, and a grant the explanation names that the inputs do not hold.
   and say `truncated` when it cut them: a session's certificates and its
   algorithm summary, which still summarises the first 500. A session's loss
   is one row per cause and is never cut.
+- **Reports** — a registered `ext.ReportProvider`'s packs, served by Control
+  (0044, M15) under `audit:read`, because a report is the audit store,
+  summarised. With nothing registered, the query above, explain and
+  simulation are the reporting available. `GET …/reports` lists every
+  provider in registration order — `provider`, `version`, and `reports`, each
+  `report`, `formats` (wire codes) and `parameters` (`name`, `required`,
+  `values`) — for the tenant the middleware resolved, answering `200`
+  whenever Control can: a provider that failed, offered a descriptor Control
+  cannot serve, or had not answered within the request's bound is listed with
+  `error` (`report_provider_failed`, `report_provider_unavailable`) and no
+  reports. It is exempt from M26's paging, sized by registrations, not the
+  estate. `POST …/reports/generate` takes `{provider, report, from, to,
+  parameters, format}` in the body, never the path (a provider is a module
+  path). Control asks `Reports` again and generates only what is listed for
+  the tenant (`404 not_found` otherwise), and refuses `400 invalid_request`
+  naming the field for a format not listed, a required parameter missing, one
+  not named, a value outside a closed set, or a period that is missing,
+  unparseable, or does not start before it ends (`from` inclusive, `to`
+  exclusive). Then `Generate`'s `Report` must be the format asked for in its
+  media type (`application/json`, `text/csv; charset=utf-8`,
+  `application/pdf`), or it is `502 report_provider_failed` and its body is
+  closed unread. The body is streamed in that media type, with
+  `X-Content-Type-Options: nosniff`, `Content-Disposition: attachment` (a
+  filename in `[A-Za-z0-9._-]` from the id and the period), `Cache-Control:
+  no-store` and no `Content-Length`. Its status waits for the first byte: an
+  error before it is answered in the envelope, and one after it, or the bound
+  running out, aborts the response, never a short report (M11). The route's
+  bound is `north.report_timeout` (10 m, between `north.request_timeout` and
+  1 h); `north.max_concurrent_reports` (2) caps generations per node beside
+  the decision path (M5), one past it `503 report_generation_busy` with
+  `Retry-After`. `Generate`'s `ErrNotFound` is `404`, its `ErrInvalid` `400`
+  with its message, `ErrUnavailable` from either call `503
+  report_provider_unavailable`, and anything else — `ErrDenied` included, for a
+  provider never decides who may read — `502 report_provider_failed`; never a
+  `401` or a provider's `403`. `server.CallerFrom` answers inside both calls,
+  for attribution. Control records nothing of a generation, as it records
+  nothing of a query. What stays a host's is in its own namespace (M27):
+  schedules, campaigns and the history of generated reports.
 - **Device fields are audit facts.** The ephemeral-account mapping record carries
   the `device_field.<name>` values the session was provisioned with (§5.2),
   because on a device that is one unit partitioned into many the
@@ -3964,7 +4027,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0041 | Confined inbound actions | **M28 extended.** `ext.Action` gains `Within *ext.ActionScope` (`SubjectIDs`, `TargetIDs` — the one field Control added to the ask — and `TargetLabels`; at most 1 000, 1 000 and 64, a non-nil empty scope `KindInvalid` on `within`) and `IfPlacedBy`. Control resolves what each kind reaches from its own data inside the action's transaction, after the ledger's lock and before the ledger answers (so a repeat is checked too): a session's subjects and targets from its decision records (`Decisions().SessionReach`), a kill by subject, a lock and an unlock reaching every target, a quarantine every subject, and a grant its subject and what its selector can reach — inside a target scope only when it lists hostnames each naming a held target the scope admits, matched case-insensitively, or its own labels require the scope's; the rows read are held until the act (`Targets().ForShare`, `ForShareByHostnames`, `Grants().GetForUpdate`). An action reaching outside is `KindDenied`, `out_of_scope`, recorded as `action.refused` with `scope_field` and `outside`, its error naming only the field; a selector Control holds nothing for is `out_of_scope` unless the scope names it by id alone. `unlock_subject` with `IfPlacedBy` lifts only a lock that action of this handler's principal placed, in one `DELETE` (`SubjectLocks().LiftIfPlacedBy`), and otherwise leaves it standing (`not_this_lock`, `action.unchanged`); the condition is part of the action's identity (migration `0022`: `action_executions.if_placed_by`; a changed one is `KindConflict`), the scope is not. No method added; `v0.28.0` (M28, M15, M23, M10, M11, M18). Raised by `Hoplock/enterprise#50`; depends on 0039 |
 | 0042 | Directory source on the sync sink | **M7 and M28 revised in place, no decision added.** `ext.SyncedSubject` and `ext.SyncedGroup` gain a required `Source` (`^[a-z0-9][a-z0-9-]{0,62}$`, else `KindInvalid` on `source`, recorded) and `ext.DirectoryRef` (`Tenant`, `Source`, `ExternalID`) is what `SyncSink.DeactivateSubject(ctx, ref, reasonCode)` and `DeleteGroup(ctx, ref)` take; everything 0040 keyed on an `ExternalID` — link and group rows, the ordering, the kept deactivation, the tombstone, the owed delivery, the per-identity advisory lock, a group's members — keyed on `(tenant, source, ExternalID)` (migration `0023`: both primary keys, the members read still on 0021's GIN index), a subject's groups resolving within its own source, a login name still unique across sources (`KindConflict`), and `directory_links`' unique `(tenant, subject_id)` key kept, so the decision path reads the link's `source` in the join it already made and sends no more statements (M28, M5); a tied connector's `idp_connectors.directory_source` beside its claim (`identity connector-put --directory-source`), both or neither (a check constraint), refused for a source nothing in the tenant has written with the error naming up to twenty it has (`DirectoryLinks().HasSource`, `Sources`), a login looking the link up by `(tenant, directory_source, claim value)`, and both shown on the sign-in methods; `directory.source` on the subject read, `source` on the deactivation's standing entry (M4) and on every `identity_sync.*` record (`AttrSyncSource`); every existing row keyed under the source `default`. `v0.29.0`, a `### Breaking` MINOR (M7, M15, M23, M12, M18). Raised by `Hoplock/enterprise#51`, item 1; depends on 0040 |
 | 0043 | Directory-scoped group entries | a `groups.map` entry in the claim mapping lists the `directories` it applies to (each a directory source, 0042) and matches a directory group of its name from a listed source instead of the unscoped entry, never a login's group claim; `groups.require_directories` makes every directory group match only an entry listing its own source, so unscoped entries serve logins only; no wildcard, three rejection codes (`mapping.directory_name`, `mapping.directories_empty`, `mapping.directory_duplicate`), a scoped entry counted once per directory it lists against the mapping's bound, and `schema_version` still `1`; every mapping write, scoped or not, reaching every directory subject by itself through `provision.Recalculator` — stale subjects (a row naming another version) recalculated after the write commits in batches of 200 under the sink's lock order and through its `derive`, at once on the node that took an API write and by a once-a-minute sweep of the tenants each node has seen (the store cannot list tenants, M18), with no sync needed, their cached decisions dropped as a group change drops them, and `operator.claim_mapping.applied` recording each run as the version's author; `directories`, `require_directories` and `stale_directory_subjects` on the claim-mapping read and in `identity mapping-put`/`mapping-show`, and `directory_source` on a decision record's subject and in `explain`, read from the link row the subject's statement already joins (M4, M5). No `ext` change and no migration: both stale reads are served by existing indexes. A MINOR, `v0.30.0` (M7, M4, M5, M9, M21, M23). Raised by `Hoplock/enterprise#51`, item 2; depends on 0042 |
-| 0044 | Registered reports served | every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (a report is the audit store, summarised): `GET …/reports` lists each provider's `Reports(ctx, tenant)` with a provider that failed listed with its failure rather than dropped, and `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), checks it against the descriptor the provider listed for that tenant before `Generate` is called, and streams the body with the format's own media type, `nosniff` and `attachment`, never the provider's; a generation with its own bound (`north.report_timeout`) and a per-node ceiling (`north.max_concurrent_reports`, past it `503 report_generation_busy`) beside the decision path (M5), and a body that fails after its first byte aborts the response rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation; `ErrNotFound` `404`, `ErrInvalid` `400`, and every other failure `502 report_provider_failed` or `503 report_provider_unavailable`, never a `401` or a `403` of a provider's (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
+| 0044 | Registered reports served | **Built, `v0.31.0`.** Every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (§7 "Reports"), by `internal/report`: `GET …/reports` lists each provider's `Reports(ctx, tenant)`, asked concurrently under the request's bound, a provider that failed or offered a descriptor Control cannot serve listed with its error rather than dropped (exempt from M26: sized by registrations); `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), asks `Reports` again and checks the request against the descriptor listed for that tenant before `Generate` is called, and streams the body in the format's own media type with `nosniff`, `attachment` and `no-store`, never the provider's; the route's own bound (`north.report_timeout`, 10 m, `Route.Timeout` chosen in `withLimits`) and a per-node ceiling (`north.max_concurrent_reports`, 2; past it `503 report_generation_busy` with `Retry-After`) beside the decision path (M5), a provider ignoring its context abandoned at the bound and keeping its place until it returns; a body that fails after its first byte aborts the response (`http.ErrAbortHandler`, let through by `withRecovery`, logged by the access log) rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation, and nothing recorded of a generation; `ErrNotFound` `404`, `ErrInvalid` `400`, `ErrUnavailable` `503 report_provider_unavailable`, every other failure `502 report_provider_failed`, never a `401` or a `403` of a provider's. No `ext` or `server` signature changed (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
 | 0045 | North-bound answer names | every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, which rendered store and fleet structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0046 makes the names a compatibility promise (M19, M26, M17, M23) |
 | 0046 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
 | 0047 | Management console | operator web UI served from the binary, inside the console namespace 0038 reserves and nowhere else, with a host's screens under the host's: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's finding with the builds it names (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |

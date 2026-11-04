@@ -190,6 +190,24 @@ const (
 	// writer of what it provisions, so it is refused, answered 409, and
 	// changed in the directory instead.
 	CodeSubjectDirectoryManaged = "subject_directory_managed"
+
+	// The registered report packs (0044).
+	//
+	// CodeReportProviderUnavailable is a provider that could not answer now:
+	// its ErrUnavailable, or one that had not answered when the bound ran
+	// out. Asking again later may succeed. A listing entry carries it as its
+	// `error` while the rest are listed.
+	CodeReportProviderUnavailable = "report_provider_unavailable"
+	// CodeReportProviderFailed is a provider that broke its side of the
+	// seam: an error of any other kind (its ErrDenied included — a provider
+	// never decides who may read a report), a descriptor Control cannot
+	// serve, or a report that is not the format asked for. Answered 502,
+	// and never a short report.
+	CodeReportProviderFailed = "report_provider_failed"
+	// CodeReportGenerationBusy is a generation past this node's ceiling
+	// (`north.max_concurrent_reports`), answered with Retry-After before
+	// the provider is asked anything. The listing is never refused for it.
+	CodeReportGenerationBusy = "report_generation_busy"
 )
 
 // AllCodes is every code this surface defines, so a test can assert that adding
@@ -208,10 +226,14 @@ var AllCodes = []string{
 	CodePolicyInvalid, CodeFindingsNotAccepted, CodePolicyBlocked, CodeDecisionUnexplainable,
 	CodeConfigKeyNotFleetOwned, CodeConfigValueInvalid, CodeHostKeyUnresolved, CodeUnavailable,
 	CodeTargetQuarantined, CodeDenialUndelivered, CodeSubjectDirectoryManaged,
+	CodeReportProviderUnavailable, CodeReportProviderFailed, CodeReportGenerationBusy,
 }
 
-// writeJSON is the only writer in this package, so the content type cannot
-// drift between the success and error paths.
+// writeJSON is this package's writer, so the content type cannot drift between
+// the success and error paths. It has one sibling, and only one: a generated
+// report's body (reports.go, 0044), which is bytes a provider wrote, served as
+// the media type of the format asked for. Every error, that route's included,
+// is written here.
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -121,7 +121,9 @@ const (
 	// schedules, their recipients and the campaigns they belong to. Control
 	// serves no route that needs it; a host's reporting routes name it (M15),
 	// because a host names a permission and never declares one. Reading a
-	// report is PermAuditRead: a report is the audit store, summarised.
+	// report is PermAuditRead: a report is the audit store, summarised, and
+	// Control's own report routes — listing and generating a registered
+	// pack (0044) — name it.
 	PermReportWrite Permission = "report:write"
 	// PermLicenseRead is reading a deployment's licence and entitlement
 	// state. Control has no licence (M14) and serves no route that needs

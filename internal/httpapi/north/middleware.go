@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -44,7 +45,11 @@ const (
 	// DefaultRequestTimeout bounds a single request. A server-side timeout
 	// that ANSWERS beats a slow answer that looks like an outage.
 	DefaultRequestTimeout = 30 * time.Second
-	correlationIDBytes    = 9
+	// DefaultReportTimeout bounds a report generation (0044), the one route
+	// whose work cannot fit DefaultRequestTimeout: a compliance pack over a
+	// year of a large estate.
+	DefaultReportTimeout = 10 * time.Minute
+	correlationIDBytes   = 9
 )
 
 type ctxKey int
@@ -57,6 +62,7 @@ const (
 	ctxKeyHost
 	ctxKeySubject
 	ctxKeyTenants
+	ctxKeyProviderCaller
 )
 
 // requestFacts is what the access log learns from a middleware INSIDE it.
@@ -73,6 +79,26 @@ type requestFacts struct {
 	principal *identity.Principal
 	tenant    store.Tenant
 	tenants   []store.Tenant
+	// report is what a report generation adds to the line (0044): what was
+	// asked for, how it ended and how much of it was written.
+	report *reportFacts
+}
+
+// reportFacts is a generation's half of the access log line. Every field is
+// safe to write down: the provider and report names and the format are the
+// caller's own selection, the period is two instants, and nothing of the body
+// or the parameters is here.
+type reportFacts struct {
+	provider string
+	report   string
+	format   string
+	from     string
+	to       string
+	// outcome is `complete`, `aborted` (a body that failed, or the bound
+	// that ran out, after the status was written), or the code the request
+	// was answered with.
+	outcome string
+	bytes   int64
 }
 
 func factsFrom(ctx context.Context) *requestFacts {
@@ -429,49 +455,91 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w}
 		facts := &requestFacts{}
 		r = r.WithContext(context.WithValue(r.Context(), ctxKeyFacts, facts))
+		// A RESPONSE ABORTED MID-STREAM IS STILL A LINE. withRecovery lets
+		// exactly one panic through, http.ErrAbortHandler — a report whose
+		// body failed after its status was written (0044) — and the line
+		// is written on the way past it, then the panic goes on to
+		// net/http, which breaks the connection.
+		defer func() {
+			aborted := recover()
+			s.logRequest(r, rec, facts, start, aborted != nil)
+			if aborted != nil {
+				panic(aborted)
+			}
+		}()
 		next.ServeHTTP(rec, r)
-
-		attrs := []any{
-			"event", "northbound_request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", rec.status,
-			"duration_ms", s.now().Sub(start).Milliseconds(),
-			"correlation_id", CorrelationIDFrom(r.Context()),
-		}
-		if p := facts.principal; p != nil {
-			attrs = append(attrs,
-				"principal_id", p.ID,
-				"principal_kind", string(p.Kind),
-				"subject", p.Subject,
-				// A break-glass request is visible in the access log
-				// as well as in the audit record, because the access
-				// log is what an operator is already reading (M7).
-				"break_glass", p.BreakGlass,
-			)
-		}
-		if facts.tenant != "" {
-			attrs = append(attrs, "tenant", facts.tenant.String())
-		}
-		if len(facts.tenants) > 0 {
-			attrs = append(attrs, "tenants", tenantStrings(facts.tenants))
-		}
-		if rec.status >= http.StatusInternalServerError {
-			s.log.ErrorContext(r.Context(), "north-bound request failed", attrs...)
-			return
-		}
-		s.log.InfoContext(r.Context(), "north-bound request", attrs...)
 	})
+}
+
+// logRequest writes withLogging's line.
+func (s *Server) logRequest(r *http.Request, rec *statusRecorder, facts *requestFacts, start time.Time, aborted bool) {
+	attrs := []any{
+		"event", "northbound_request",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"status", rec.status,
+		"duration_ms", s.now().Sub(start).Milliseconds(),
+		"correlation_id", CorrelationIDFrom(r.Context()),
+	}
+	if p := facts.principal; p != nil {
+		attrs = append(attrs,
+			"principal_id", p.ID,
+			"principal_kind", string(p.Kind),
+			"subject", p.Subject,
+			// A break-glass request is visible in the access log
+			// as well as in the audit record, because the access
+			// log is what an operator is already reading (M7).
+			"break_glass", p.BreakGlass,
+		)
+	}
+	if facts.tenant != "" {
+		attrs = append(attrs, "tenant", facts.tenant.String())
+	}
+	if len(facts.tenants) > 0 {
+		attrs = append(attrs, "tenants", tenantStrings(facts.tenants))
+	}
+	if rf := facts.report; rf != nil {
+		attrs = append(attrs,
+			"report_provider", rf.provider,
+			"report_id", rf.report,
+			"report_format", rf.format,
+			"report_from", rf.from,
+			"report_to", rf.to,
+			"report_outcome", rf.outcome,
+			"report_bytes", rf.bytes,
+		)
+	}
+	if aborted {
+		attrs = append(attrs, "aborted", true)
+		s.log.ErrorContext(r.Context(), "north-bound response aborted", attrs...)
+		return
+	}
+	if rec.status >= http.StatusInternalServerError {
+		s.log.ErrorContext(r.Context(), "north-bound request failed", attrs...)
+		return
+	}
+	s.log.InfoContext(r.Context(), "north-bound request", attrs...)
 }
 
 // withRecovery turns a panic into a 5xx with a correlation id. A panic is an
 // OUTAGE and must never surface as a 401 (M11).
+//
+// ONE PANIC IS NOT ITS TO ANSWER: http.ErrAbortHandler, which a report
+// generation raises when its body fails after the status was written (0044).
+// That response is already a 200 on its way to the client; an envelope written
+// into it would read as the end of the report. So it is re-panicked untouched,
+// and net/http ends the response broken — HTTP/1.1 without its terminating
+// chunk, HTTP/2 with a reset stream — which a client cannot mistake for a
+// complete one.
 func (s *Server) withRecovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			rec := recover()
 			if rec == nil {
 				return
+			}
+			if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+				panic(rec)
 			}
 			id := CorrelationIDFrom(r.Context())
 			s.log.ErrorContext(r.Context(), "north-bound handler panicked",
@@ -490,10 +558,21 @@ func (s *Server) withRecovery(next http.Handler) http.Handler {
 }
 
 // withLimits bounds the body and the time a request may take.
+//
+// The time is the listener's request timeout for every request, except one
+// whose route carries a Timeout of its own (0044: generating a report), which
+// takes that instead. The route is learned from the router, which matches the
+// request exactly as it will dispatch it, so the bound is chosen here — before
+// authentication, as it always was — and no other route's bound moves. The
+// body limit is the same for every request.
 func (s *Server) withLimits(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, s.maxBodyBytes)
-		ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+		timeout := s.requestTimeout
+		if bound, ok := s.router.boundFor(r); ok {
+			timeout = bound
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

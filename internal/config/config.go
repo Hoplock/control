@@ -136,6 +136,21 @@ const (
 	// than the south-bound one because nothing is holding a user's handshake
 	// open while a bundle compiles.
 	DefaultNorthRequestTimeout = 30 * time.Second
+	// DefaultNorthReportTimeout bounds one report generation (0044), the one
+	// north-bound request whose work cannot fit the request timeout: a
+	// compliance pack over a year of a large estate. When the request
+	// timeout is set longer, the default is the request timeout.
+	DefaultNorthReportTimeout = 10 * time.Minute
+	// MaxNorthReportTimeout is the longest a generation may be configured
+	// to run. A report is generated on request and streamed; one that needs
+	// longer is a scheduled job, which is a host's (§7 "Reports").
+	MaxNorthReportTimeout = time.Hour
+	// DefaultNorthMaxConcurrentReports caps the generations running at once
+	// on one node. A provider runs inside the process that serves the
+	// south-bound decision path (M5), so an auditor starting ten year-long
+	// packs must not be what slows somebody's login; two lets one long pack
+	// run without blocking a second, short one.
+	DefaultNorthMaxConcurrentReports = 2
 	// DefaultSessionTTL is how long a console session lives. Short, because
 	// M7's whole point is that identity is short-lived: a session outliving
 	// the IdP's own view of the person is what federation exists to remove.
@@ -708,6 +723,13 @@ func (c *Config) applyDefaults() {
 	if c.North.RequestTimeout == 0 {
 		c.North.RequestTimeout = DefaultNorthRequestTimeout
 	}
+	if c.North.ReportTimeout == 0 {
+		c.North.ReportTimeout = max(DefaultNorthReportTimeout, c.North.RequestTimeout)
+		c.North.reportTimeoutDefaulted = true
+	}
+	if c.North.MaxConcurrentReports == 0 {
+		c.North.MaxConcurrentReports = DefaultNorthMaxConcurrentReports
+	}
 	if c.Identity.SessionTTL == 0 {
 		c.Identity.SessionTTL = DefaultSessionTTL
 	}
@@ -749,10 +771,25 @@ type NorthConfig struct {
 	MaxBodyBytes int64 `yaml:"max_body_bytes"`
 	// RequestTimeout bounds a single request.
 	RequestTimeout time.Duration `yaml:"request_timeout"`
+	// ReportTimeout bounds `POST …/reports/generate` alone, from the start of
+	// the request to its last byte, in place of RequestTimeout (0044). At
+	// least RequestTimeout and at most MaxNorthReportTimeout; absent, the
+	// longer of DefaultNorthReportTimeout and RequestTimeout.
+	ReportTimeout time.Duration `yaml:"report_timeout"`
+	// MaxConcurrentReports caps the report generations running at once on
+	// this node; one past it is `503 report_generation_busy`. The listing is
+	// not counted.
+	MaxConcurrentReports int `yaml:"max_concurrent_reports"`
 	// InsecureCookies drops the Secure attribute from the session cookie. It
 	// exists for a local development deployment over plain HTTP, and it is
 	// spelled "insecure" so that nobody sets it by accident.
 	InsecureCookies bool `yaml:"insecure_cookies"`
+
+	// reportTimeoutDefaulted records that ReportTimeout was absent and
+	// filled from the request timeout, which is then its own bound: a file
+	// that set a request timeout past the ceiling before this key existed
+	// still loads.
+	reportTimeoutDefaulted bool
 }
 
 // IdentityConfig configures federation and sessions (0011, M7).
@@ -880,6 +917,21 @@ func (n NorthConfig) validate() error {
 	}
 	if n.RequestTimeout < 0 {
 		return &FieldError{Field: "north.request_timeout", Msg: "must not be negative"}
+	}
+	switch {
+	case n.ReportTimeout < 0:
+		return &FieldError{Field: "north.report_timeout", Msg: "must not be negative"}
+	case n.reportTimeoutDefaulted, n.ReportTimeout == 0:
+	case n.ReportTimeout < n.RequestTimeout:
+		return &FieldError{Field: "north.report_timeout",
+			Msg: "must be at least north.request_timeout: a generation is never bound tighter than every other request"}
+	case n.ReportTimeout > MaxNorthReportTimeout:
+		return &FieldError{Field: "north.report_timeout",
+			Msg: fmt.Sprintf("must be at most %s: a report that needs longer is a scheduled job, which is a host's", MaxNorthReportTimeout)}
+	}
+	if n.MaxConcurrentReports < 0 {
+		return &FieldError{Field: "north.max_concurrent_reports",
+			Msg: "must be a positive number of generations, or absent for the default"}
 	}
 	return nil
 }
