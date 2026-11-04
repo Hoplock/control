@@ -20,6 +20,7 @@ import (
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/instance"
 	"github.com/hoplock/control/internal/report"
 	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/standing"
@@ -78,6 +79,14 @@ type Server struct {
 	// codes is every error code a handler on this server may answer with:
 	// Control's and its host's (M21).
 	codes map[string]bool
+
+	// The north-bound API version range this server answers in (0046):
+	// APIVersion and MinAPIVersion, held as fields so a test can serve a
+	// range wider than one version.
+	apiVersion, minAPIVersion int
+	// instance is the deployment's identity and health; nil serves the
+	// instance routes as unavailable.
+	instance *instance.Service
 
 	router  *Router
 	handler http.Handler
@@ -231,6 +240,11 @@ type Options struct {
 	// HostErrorCodes are the codes HostRoutes may answer with, beside
 	// Control's own (M21).
 	HostErrorCodes []string
+	// Instance is the deployment's identity and health (0046, M19). Nil
+	// serves the instance routes as `503 unavailable`: a deployment built
+	// without one has nothing to say about itself.
+	Instance *instance.Service
+
 	// Consoles are the consoles this listener serves (M27): Control's under
 	// [ConsolePrefix], and the host's screens under its [HostConsoleRoot].
 	// Nothing mounts one before 0047 builds Control's, and a console is
@@ -272,6 +286,9 @@ func New(o Options) (*Server, error) {
 	}
 
 	s := &Server{
+		apiVersion:     APIVersion,
+		minAPIVersion:  MinAPIVersion,
+		instance:       o.Instance,
 		codes:          codes,
 		auth:           o.Authenticator,
 		federation:     o.Federation,
@@ -354,7 +371,7 @@ func New(o Options) (*Server, error) {
 	// The chain, outermost first. The correlation id is first because every
 	// line below it names one; recovery is inside the log so a panic is
 	// still logged as a request.
-	s.handler = s.withCorrelationID(s.withLogging(s.withRecovery(s.withLimits(s.router))))
+	s.handler = s.withCorrelationID(s.withLogging(s.withAPIVersion(s.withRecovery(s.withLimits(s.router)))))
 	return s, nil
 }
 

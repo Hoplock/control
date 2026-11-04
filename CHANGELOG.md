@@ -26,6 +26,47 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.33.0
+
+Phase 0046, instance identity and supervisory registration (M19). A
+deployment has one identity, reports its health at every level it has, serves
+a versioned north-bound API, and can register outbound to a supervisor. Run
+`hoplock-control migrate`: migration `0024` adds four tables. No exported
+identifier in `ext` or `server` is added, removed or changed.
+
+- **Identity**: `GET /api/v1/tenants/{tenant}/instance` — the instance id
+  (generated once, kept in the database, never a node's), `instance.display_name`,
+  the software, contract and north-bound API versions, and the tenant set the
+  caller may read.
+- **Health**: `GET /api/v1/tenants/{tenant}/instance/health` — the deployment
+  (database and schema, listeners), every node (version, report time, jobs,
+  listeners, event-plane lag and failures), and the tenant's fleet summary.
+  States `healthy`, `degraded`, `in_progress`, `unknown`, `stale`, `left`;
+  every value carries its observation time; a rolling upgrade is
+  `in_progress`. Health is read through a pool of its own
+  (`instance.health_connections`) at most once per `instance.health_interval`.
+- **North-bound API version `1`**, in `Hoplock-Api-Version` on every answer. A
+  declared version outside the range is `400 api_version_unsupported`; an
+  answer it cannot express is `500 api_version_unexpressible`. A client that
+  declares nothing is served the current version, so existing clients are
+  unchanged. The promise is `docs/API-VERSIONING.md`.
+- **Supervisor tokens**: `identity token-issue --supervisor` mints an ordinary
+  scoped token whose principal id begins `sup-`, so every act through it is
+  attributed to it in the local audit trail. Listed by
+  `GET …/instance/supervisors`, revoked by
+  `POST …/instance/supervisors/{principal}/revoke` (`identity:write`, audited
+  as `operator.supervisor.revoked`).
+- **Supervisory registration**, off unless `supervisor.endpoint` is set: one
+  outbound NDJSON connection held by the cluster singleton
+  `hoplock.supervision`, carrying identity, health and a coarse event feed out
+  with replay and `resync`, and acting on nothing inbound.
+  `hoplock-control supervision revoke|restore|status` revokes it locally,
+  without a restart.
+- New permission `instance:read`, held by every role that reads a tenant.
+- New configuration sections `instance:` and `supervisor:`.
+- The listeners are bound before they are served, so a node reports whether
+  each is serving.
+
 ## v0.32.0
 
 Phase 0045, north-bound answer names: every member of every north-bound

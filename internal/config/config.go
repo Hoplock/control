@@ -259,6 +259,11 @@ type Config struct {
 
 	AccessContext AccessContextConfig `yaml:"access_context"`
 	Policy        PolicyConfig        `yaml:"policy"`
+
+	// Instance is what the deployment says about itself, and Supervisor
+	// its opt-in outbound registration (0046, M19).
+	Instance   InstanceConfig   `yaml:"instance"`
+	Supervisor SupervisorConfig `yaml:"supervisor"`
 }
 
 // PolicyConfig is what the publish-time report reads beyond the bundle (0019).
@@ -643,6 +648,7 @@ func (c *Config) applyDefaults() {
 	if c.Tenant == "" {
 		c.Tenant = DefaultTenant
 	}
+	c.applyInstanceDefaults()
 	if c.Log.Level == "" {
 		c.Log.Level = DefaultLogLevel
 	}
@@ -1055,6 +1061,12 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.AccessContext.validate(c.Decision, c.Grants); err != nil {
+		return err
+	}
+	if err := c.Instance.validate(); err != nil {
+		return err
+	}
+	if err := c.Supervisor.validate(); err != nil {
 		return err
 	}
 	return c.UIDs.validate()

@@ -229,6 +229,7 @@ func (s *Server) routes() []Route {
 	routes = append(routes, s.policyRoutes()...)
 	routes = append(routes, s.inventoryRoutes()...)
 	routes = append(routes, s.auditRoutes()...)
+	routes = append(routes, s.instanceRoutes()...)
 	return routes
 }
 

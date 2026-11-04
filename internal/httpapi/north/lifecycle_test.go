@@ -562,6 +562,7 @@ func xminOf(t *testing.T, f *serverFixture, query, arg string) string {
 // different condition would have to be removed from here first.
 func TestTheCodeRegistryIsHeldWhole(t *testing.T) {
 	want := []string{
+		"api_version_unexpressible", "api_version_unsupported",
 		"assertion_conflict", "assertion_from_future", "assertion_malformed", "assertion_stale",
 		"binding_disabled", "binding_not_found", "ca_not_configured", "config_key_not_fleet_owned",
 		"config_value_invalid", "decision_unexplainable", "findings_not_accepted", "forbidden",

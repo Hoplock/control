@@ -431,6 +431,16 @@ decision.
   free now, and retrofitting it into a populated audit store later is a
   migration nobody wants to run.
 
+  Four tables have no tenant column, each named with its reason in
+  `internal/store/schema_test.go`, and none holds a tenant's data:
+  `schema_migrations`, and the three that describe the **deployment** rather
+  than any tenant in it (0046, M19) — `deployment` (its one identity),
+  `deployment_nodes` (its nodes' reports) and `supervision_log` (the feed it
+  sends its operator's supervisor). Keying those by tenant would give one
+  deployment an identity per tenant. Their repository,
+  `store.DeploymentRepository`, is the one whose methods name no tenant, and it
+  reads no tenant's rows.
+
   **Amended by M18**, which makes tenancy a dimension a caller selects rather
   than a constant the process is configured with. M12 bought the column; M18
   pays for the plumbing.
@@ -878,6 +888,42 @@ decision.
   at their own dashboard. The supervisory plane that consumes many of them is
   Enterprise's (its E14). The line is the same one M16 draws — the seam and its
   honest default here, the packaged product on top of it there.
+
+  **The shapes, as they stand** (0046; `internal/instance`, §3):
+
+  - **Identity** is `GET …/instance`: `instance_id` (generated once, in the
+    `deployment` row), `display_name` (`instance.display_name`), `versions`
+    (`software`, `contract`, `contract_commit`, `north_api`,
+    `north_api_min`) and `tenants`, filtered to the tenants the caller may
+    read the surface in (`instance:read`), so a tenant-scoped supervisor does
+    not learn another tenant exists.
+  - **Health** is `GET …/instance/health`: a roll-up `state` and every
+    `reason` beneath it; `deployment` (the database and its schema, the
+    listeners); `nodes` (each member's version, report time, uptime, jobs,
+    listeners and event-plane lag and failures, the jobs' holders, and
+    `upgrade`); and the path tenant's `fleet` summary, whose drill-down is the
+    paged fleet view. States are `healthy`, `degraded`, `in_progress`,
+    `unknown` (absent: not run, not reported, not computable), `stale`
+    (observed longer ago than its bound) and `left` (a node stopped on
+    purpose, outside the roll-up). The roll-up is the worst state, and it
+    never makes `unknown` or `stale` healthy.
+  - **The north-bound version** is one integer, `1`, carried in
+    `Hoplock-Api-Version` both ways; `docs/API-VERSIONING.md` is the promise:
+    what moves it, what "additive" means, and the deprecation window.
+  - **The registration** is one `POST` to `supervisor.endpoint` whose request
+    and response bodies are both NDJSON: `hello`, then `resync` or the replay
+    after the supervisor's `resume` id, then the feed's events and heartbeats
+    out; `resume`, `heartbeat` and `rereport` in, and nothing else is acted
+    on. The feed is `supervision_log`, with 0027's ids, epoch and floor, so
+    the registration resumes across a change of node. It is held by the
+    singleton `hoplock.supervision`.
+  - **The supervisor's credential** is a north-bound token minted with
+    `identity token-issue --supervisor`: the ordinary scope grammar
+    (`tenant=role[,role];…`), a principal id beginning `sup-`, listed under
+    `GET …/instance/supervisors` and revoked by `POST
+    …/instance/supervisors/{principal}/revoke`. The registration itself is
+    revoked by the deployment's operator, `hoplock-control supervision
+    revoke`, on every node within one heartbeat.
 
 - **M20 — The console is a product surface, and its design is specified rather
   than improvised (new; amended by M27, which places it under `/console/` and
@@ -2059,11 +2105,20 @@ for nothing.
   --directory-source`, which is refused while no identity sync is registered —
   so an extension a host builds
   from its section can still be registered.
-- **`internal/instance`** — this deployment's own identity and version, and the
-  outbound registration client that makes it supervisable (M19). It is a
-  *client* of something above it, which makes it the only package here that
-  dials outward on the management plane; it may never be reachable from the
-  decision path.
+- **`internal/instance`** — this deployment's own identity and version set,
+  its health at the three levels it has (the deployment, each node, each
+  tenant's proxy fleet), the supervisory feed, and the outbound registration
+  client that makes it supervisable (M19). The identity is one row in the store
+  (`deployment`), never a node's; each node writes a report
+  (`deployment_nodes`) every `instance.report_interval`; health is computed on
+  demand through a store pool of its own (`instance.health_connections`) at most
+  once per `instance.health_interval`, so no poller can reach a connection the
+  decision path needs (M5). It is a *client* of something above it, which makes
+  it the only package here that dials outward on the management plane; it may
+  never be reachable from the decision path, and a test drives authorize while
+  the supervisor is absent, unreachable, failing and hanging to hold that. The
+  north-bound API's version and its negotiation are `internal/httpapi/north`'s
+  (`apiversion.go`), and `docs/API-VERSIONING.md` is the promise.
 - **`ui`** — the operator console, a north-bound API client with no privilege of
   its own (M2) and no database access at all, built from embedded assets so a
   deployment stays one binary. Its visual design is governed by `ui/DESIGN.md`
@@ -4052,7 +4107,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0043 | Directory-scoped group entries | a `groups.map` entry in the claim mapping lists the `directories` it applies to (each a directory source, 0042) and matches a directory group of its name from a listed source instead of the unscoped entry, never a login's group claim; `groups.require_directories` makes every directory group match only an entry listing its own source, so unscoped entries serve logins only; no wildcard, three rejection codes (`mapping.directory_name`, `mapping.directories_empty`, `mapping.directory_duplicate`), a scoped entry counted once per directory it lists against the mapping's bound, and `schema_version` still `1`; every mapping write, scoped or not, reaching every directory subject by itself through `provision.Recalculator` — stale subjects (a row naming another version) recalculated after the write commits in batches of 200 under the sink's lock order and through its `derive`, at once on the node that took an API write and by a once-a-minute sweep of the tenants each node has seen (the store cannot list tenants, M18), with no sync needed, their cached decisions dropped as a group change drops them, and `operator.claim_mapping.applied` recording each run as the version's author; `directories`, `require_directories` and `stale_directory_subjects` on the claim-mapping read and in `identity mapping-put`/`mapping-show`, and `directory_source` on a decision record's subject and in `explain`, read from the link row the subject's statement already joins (M4, M5). No `ext` change and no migration: both stale reads are served by existing indexes. A MINOR, `v0.30.0` (M7, M4, M5, M9, M21, M23). Raised by `Hoplock/enterprise#51`, item 2; depends on 0042 |
 | 0044 | Registered reports served | **Built, `v0.31.0`.** Every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (§7 "Reports"), by `internal/report`: `GET …/reports` lists each provider's `Reports(ctx, tenant)`, asked concurrently under the request's bound, a provider that failed or offered a descriptor Control cannot serve listed with its error rather than dropped (exempt from M26: sized by registrations); `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), asks `Reports` again and checks the request against the descriptor listed for that tenant before `Generate` is called, and streams the body in the format's own media type with `nosniff`, `attachment` and `no-store`, never the provider's; the route's own bound (`north.report_timeout`, 10 m, `Route.Timeout` chosen in `withLimits`) and a per-node ceiling (`north.max_concurrent_reports`, 2; past it `503 report_generation_busy` with `Retry-After`) beside the decision path (M5), a provider ignoring its context abandoned at the bound and keeping its place until it returns; a body that fails after its first byte aborts the response (`http.ErrAbortHandler`, let through by `withRecovery`, logged by the access log) rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation, and nothing recorded of a generation; `ErrNotFound` `404`, `ErrInvalid` `400`, `ErrUnavailable` `503 report_provider_unavailable`, every other failure `502 report_provider_failed`, never a `401` or a `403` of a provider's. No `ext` or `server` signature changed (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
 | 0045 | North-bound answer names | **Built, `v0.32.0`.** Every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, and a refused claim mapping's `rejections`, which rendered store, fleet and identity structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0046 makes the names a compatibility promise (M19, M26, M17, M23) |
-| 0046 | Instance identity & supervisory registration | a deployment's own identity and version, the north-bound compatibility promise, and outbound registration to a supervisor (M19) |
+| 0046 | Instance identity & supervisory registration | **Built, `v0.33.0`.** A deployment's one identity in the store, never a node's, with its version set (software, contract, north-bound API) and tenant set; health at the deployment, each node and each tenant's fleet, every value timestamped, absent never healthy, a rolling upgrade `in_progress` rather than a fault, computed through a pool of its own at a bounded rate; the north-bound API version (`Hoplock-Api-Version`, version `1`) negotiated on `policy_version`'s principle, a member added later left out for an older client only while it holds its absent value and a `5xx` otherwise; an opt-in outbound registration, a cluster singleton through `ext.ClusterCoordinator`, carrying identity, health and a coarse event feed out in 0009's stream shape with replay from a store-held log, and nothing that acts in; supervisor tokens attributed in the local audit trail, listed and revocable per tenant; local revocation without a restart (M19, M18, M2, M11, M15, M23, M25, M26, M12) |
 | 0047 | Management console | operator web UI served from the binary, inside the console namespace 0038 reserves and nowhere else, with a host's screens under the host's: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's finding with the builds it names (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
 | 0048 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
 | 0049 | CA custody through the key store | the certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |

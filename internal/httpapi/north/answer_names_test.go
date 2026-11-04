@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -139,6 +140,14 @@ func walkAnswer(v reflect.Value, path string, zeros map[reflect.Type]bool, recor
 				at = joinPath(path, name)
 				if !ok {
 					record(fmt.Sprintf("%s.%s at %s", t.String(), f.Name, at))
+				}
+			}
+			// A member introduced after a version names it, and the
+			// version it names is one this server serves (0046, M19).
+			if since, has := f.Tag.Lookup("since"); has {
+				if n, err := strconv.Atoi(since); err != nil || n < 2 || n > north.APIVersion {
+					record(fmt.Sprintf("%s.%s at %s: since %q is not a version after the first and at most %d",
+						t.String(), f.Name, at, since, north.APIVersion))
 				}
 			}
 			walkAnswer(v.Field(i), at, zeros, record)

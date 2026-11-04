@@ -948,6 +948,20 @@ type TokenRequest struct {
 	// TTL bounds the token's life. Zero means it does not expire, which an
 	// operator must choose explicitly.
 	TTL time.Duration
+	// Supervisor marks the token as a supervisor's (0046, M19): its id is
+	// `sup-…` rather than `tok-…`, so every act taken through it is
+	// attributed to a supervisor in this deployment's own audit trail, and
+	// it is listed — and revocable — under the tenant's supervisors. Its
+	// scope is the grammar every token's is; it is no new credential type.
+	Supervisor bool
+}
+
+// SupervisorPrincipalPrefix begins a supervisor token's principal id.
+const SupervisorPrincipalPrefix = "sup-"
+
+// IsSupervisor reports whether a principal id is a supervisor's token.
+func IsSupervisor(principalID string) bool {
+	return strings.HasPrefix(principalID, SupervisorPrincipalPrefix)
 }
 
 // IssueToken mints a scoped API token.
@@ -978,8 +992,12 @@ func (f *Federation) IssueToken(ctx context.Context, tenant store.Tenant, req To
 		return Credential{}, nil, err
 	}
 
+	prefix := "tok-"
+	if req.Supervisor {
+		prefix = SupervisorPrincipalPrefix
+	}
 	row := store.NorthPrincipal{
-		ID:          "tok-" + id,
+		ID:          prefix + id,
 		Kind:        store.PrincipalToken,
 		DisplayName: req.DisplayName,
 		Source:      SourceLocal,

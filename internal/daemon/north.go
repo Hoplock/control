@@ -23,6 +23,7 @@ import (
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
+	"github.com/hoplock/control/internal/instance"
 	"github.com/hoplock/control/internal/report"
 	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/standing"
@@ -60,6 +61,9 @@ type northDeps struct {
 	// recalc brings directory subjects onto a newly written claim mapping
 	// (0043). It is always built.
 	recalc north.MappingRecalculation
+	// instance is the deployment's identity and health (0046). It is
+	// always built.
+	instance *instance.Service
 }
 
 // buildNorth assembles the federation service, the policy lifecycle and the
@@ -98,6 +102,7 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 
 	handler, err := north.New(north.Options{
 		Federation:           federation,
+		Instance:             d.instance,
 		CA:                   d.ca,
 		Grants:               d.grants,
 		AccessContext:        d.pushes,

@@ -95,7 +95,23 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 		// tenant): it must be the record's, one transaction for both.
 		row string
 	}
+	// A supervisor whose credential the revoke route ends (0046).
+	_, supervisor, err := f.federation.IssueToken(ctx, "tenant-a", identity.TokenRequest{
+		DisplayName: "supervisor", Supervisor: true,
+		Scopes: map[store.Tenant]identity.RoleSet{"tenant-a": {identity.RoleAuditor}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	writes := map[string]write{
+		"POST /instance/supervisors/{principal}/revoke": {
+			row:   `SELECT xmin::text FROM north_principals WHERE tenant = $1 AND principal_id = '` + supervisor.ID + `'`,
+			event: audit.EventSupervisorRevoked, method: "POST", path: "/instance/supervisors/" + supervisor.ID + "/revoke",
+			status: http.StatusOK,
+			state: func(t *testing.T) string {
+				return count(t, `SELECT count(*) FROM north_principals WHERE tenant = $1 AND revoked_at IS NOT NULL`)
+			},
+		},
 		"POST /policy/bundles": {
 			row:   `SELECT xmin::text FROM policy_bundles WHERE tenant = $1 AND version = 1`,
 			event: audit.EventPolicyUploaded, method: "POST", path: "/policy/bundles",

@@ -606,6 +606,9 @@ var exemptRoutes = map[string]string{
 	"GET /api/v1/tenants/{tenant}/audit/records/{record}":                      "one object",
 	"GET /api/v1/tenants/{tenant}/audit/sessions/{session}/loss":               "one row per gap cause, of which the contract names two",
 	"GET /api/v1/tenants/{tenant}/reports":                                     "one entry per registered report provider; its size is set by the binary's registrations and each provider's catalogue, never by the estate",
+	"GET /api/v1/tenants/{tenant}/instance":                                    "one object; its tenant set is the deployment's tenants the caller may read",
+	"GET /api/v1/tenants/{tenant}/instance/health":                             "one object; its nodes are the deployment's members, set by how the deployment is run, and its fleet is a summary whose drill-down is the paged fleet view",
+	"GET /api/v1/tenants/{tenant}/instance/supervisors":                        "one per supervisor credential an operator issued in the tenant with `identity token-issue --supervisor`, never by the estate",
 }
 
 // seedSampleSession stores, in tenant-a, one provisioning record of the

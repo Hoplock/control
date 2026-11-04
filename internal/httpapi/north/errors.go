@@ -5,7 +5,9 @@ package north
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"reflect"
 
 	"github.com/hoplock/control/internal/accessctx"
 )
@@ -208,6 +210,15 @@ const (
 	// (`north.max_concurrent_reports`), answered with Retry-After before
 	// the provider is asked anything. The listing is never refused for it.
 	CodeReportGenerationBusy = "report_generation_busy"
+
+	// CodeAPIVersionUnsupported refuses a declared north-bound API version
+	// this server does not answer in (0046, M19). Its parameters name the
+	// range it does: `min` and `max`.
+	CodeAPIVersionUnsupported = "api_version_unsupported"
+	// CodeAPIVersionUnexpressible is the 5xx for an answer holding a value
+	// the declared version has no way to say (0046, M19): never a thinned
+	// body, and never a 401 (M11).
+	CodeAPIVersionUnexpressible = "api_version_unexpressible"
 )
 
 // AllCodes is every code this surface defines, so a test can assert that adding
@@ -227,6 +238,7 @@ var AllCodes = []string{
 	CodeConfigKeyNotFleetOwned, CodeConfigValueInvalid, CodeHostKeyUnresolved, CodeUnavailable,
 	CodeTargetQuarantined, CodeDenialUndelivered, CodeSubjectDirectoryManaged,
 	CodeReportProviderUnavailable, CodeReportProviderFailed, CodeReportGenerationBusy,
+	CodeAPIVersionUnsupported, CodeAPIVersionUnexpressible,
 }
 
 // writeJSON is this package's writer, so the content type cannot drift between
@@ -237,6 +249,26 @@ var AllCodes = []string{
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	if answerProbe != nil {
 		answerProbe(body)
+	}
+	// An answer to a client that declared an older API version is rendered
+	// as that version sees it (apiversion.go). The current version is
+	// encoded as it always was.
+	if vw, ok := servedVersion(w); ok && vw.version < vw.current {
+		projected, err := project(reflect.ValueOf(body), vw.version, "")
+		if err != nil {
+			slog.Error("an answer could not be expressed in the API version its client declared",
+				"event", "north_api_version_unexpressible", "correlation_id", vw.correlationID,
+				"declared", vw.version, "error", err.Error())
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(Error{
+				Code: CodeAPIVersionUnexpressible, CorrelationID: vw.correlationID,
+				Message:    "this answer cannot be expressed in the API version this request declared; declare a newer one",
+				Parameters: map[string]any{"declared": vw.version, "current": vw.current},
+			})
+			return
+		}
+		body = projected
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

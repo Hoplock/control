@@ -61,6 +61,10 @@ const (
 	// and of those whose groups or claims changed, and whether it left
 	// nothing stale. Its actor is the version's author: it finishes their act.
 	EventClaimMappingApplied = "operator.claim_mapping.applied"
+	// EventSupervisorRevoked is a supervisor's north-bound credential revoked
+	// in this tenant (0046, M19): what an operator does to stop a supervisor
+	// acting on them, from their own deployment.
+	EventSupervisorRevoked = "operator.supervisor.revoked"
 )
 
 // EventActionRefused is an inbound action Control refused (0039): malformed,

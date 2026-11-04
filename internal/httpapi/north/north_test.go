@@ -196,6 +196,7 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 		Revocations:          lifecycle.operator,
 		Standing:             lifecycle.standing,
 		Audit:                lifecycle.emitter,
+		Instance:             newInstance(t, st, lifecycle.fleet),
 		DefaultTenant:        "tenant-a",
 		InsecureCookies:      true,
 		HostProvider:         testHostProvider,
