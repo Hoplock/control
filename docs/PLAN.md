@@ -889,7 +889,7 @@ decision.
   Enterprise's (its E14). The line is the same one M16 draws — the seam and its
   honest default here, the packaged product on top of it there.
 
-  **The shapes, as they stand** (0046; `internal/instance`, §3):
+  **The shapes, as they stand** (0046, 0047; `internal/instance`, §3):
 
   - **Identity** is `GET …/instance`: `instance_id` (generated once, in the
     `deployment` row), `display_name` (`instance.display_name`), `versions`
@@ -913,17 +913,40 @@ decision.
   - **The registration** is one `POST` to `supervisor.endpoint` whose request
     and response bodies are both NDJSON: `hello`, then `resync` or the replay
     after the supervisor's `resume` id, then the feed's events and heartbeats
-    out; `resume`, `heartbeat` and `rereport` in, and nothing else is acted
-    on. The feed is `supervision_log`, with 0027's ids, epoch and floor, so
-    the registration resumes across a change of node. It is held by the
-    singleton `hoplock.supervision`.
+    out, and `revoked` last when the deployment's operator revoked it locally;
+    `resume`, `heartbeat` and `rereport` in, and nothing else is acted on. The
+    feed is `supervision_log`, with 0027's ids, epoch and floor, so the
+    registration resumes across a change of node. It is held by the singleton
+    `hoplock.supervision`.
+
+    `hello` says the **registration protocol** version, `2`. It is a number of
+    its own: nothing negotiates it, a supervisor skips a line kind or member it
+    does not recognise and refuses none, and a new line kind or member, either
+    way, moves it by one. A changed meaning is not covered. The rule and its
+    history are in `docs/API-VERSIONING.md`, beside the north-bound version,
+    which it never moves.
+
+    **`revoked`** is `{"kind":"revoked","id":…,"at":…}`: the heartbeat's id
+    form (a position named, not taken, never in the feed or replayed), `at`
+    the instant the `deployment` row records, which a second revocation does
+    not move, and no `by` — who revoked is the deployment's own record. A
+    node sends it only when its check sees a local revocation, and then ends
+    the request body cleanly and waits for the supervisor to end its response.
+    A shutdown, a dropped connection, a failed write, a lost singleton and a
+    silent supervisor send nothing, so its absence means nothing, and a
+    deployment revoked while not connected sends nothing either.
   - **The supervisor's credential** is a north-bound token minted with
     `identity token-issue --supervisor`: the ordinary scope grammar
     (`tenant=role[,role];…`), a principal id beginning `sup-`, listed under
     `GET …/instance/supervisors` and revoked by `POST
     …/instance/supervisors/{principal}/revoke`. The registration itself is
     revoked by the deployment's operator, `hoplock-control supervision
-    revoke`, on every node within one heartbeat.
+    revoke`. It takes hold on every node within one heartbeat, and no node
+    dials while it stands. The node holding the registration then delivers
+    `revoked` and the end of the body within one more heartbeat: a supervisor
+    that does not take them within it loses the connection at that bound,
+    with no line, and nothing about the line keeps the registration open,
+    waits on the supervisor, or dials again.
 
 - **M20 — The console is a product surface, and its design is specified rather
   than improvised (new; amended by M27, which places it under `/console/` and
@@ -2116,9 +2139,13 @@ for nothing.
   decision path needs (M5). It is a *client* of something above it, which makes
   it the only package here that dials outward on the management plane; it may
   never be reachable from the decision path, and a test drives authorize while
-  the supervisor is absent, unreachable, failing and hanging to hold that. The
-  north-bound API's version and its negotiation are `internal/httpapi/north`'s
-  (`apiversion.go`), and `docs/API-VERSIONING.md` is the promise.
+  the supervisor is absent, unreachable, failing and hanging, and while a
+  revoked registration ends to a supervisor that has stopped reading, to hold
+  that. The north-bound API's version and its negotiation are
+  `internal/httpapi/north`'s (`apiversion.go`); the registration protocol's
+  version is this package's (`ProtocolVersion`, on `hello`); and
+  `docs/API-VERSIONING.md` is the promise for both, the registration
+  protocol's rule written beside the north-bound one.
 - **`ui`** — the operator console, a north-bound API client with no privilege of
   its own (M2) and no database access at all, built from embedded assets so a
   deployment stays one binary. Its visual design is governed by `ui/DESIGN.md`
@@ -4108,7 +4135,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0044 | Registered reports served | **Built, `v0.31.0`.** Every registered `ext.ReportProvider` served on Control's north-bound API for the tenant the middleware resolved, under `audit:read` (§7 "Reports"), by `internal/report`: `GET …/reports` lists each provider's `Reports(ctx, tenant)`, asked concurrently under the request's bound, a provider that failed or offered a descriptor Control cannot serve listed with its error rather than dropped (exempt from M26: sized by registrations); `POST …/reports/generate` takes `{provider, report, from, to, parameters, format}` in the body (a provider name is a module path, which a path segment cannot carry), asks `Reports` again and checks the request against the descriptor listed for that tenant before `Generate` is called, and streams the body in the format's own media type with `nosniff`, `attachment` and `no-store`, never the provider's; the route's own bound (`north.report_timeout`, 10 m, `Route.Timeout` chosen in `withLimits`) and a per-node ceiling (`north.max_concurrent_reports`, 2; past it `503 report_generation_busy` with `Retry-After`) beside the decision path (M5), a provider ignoring its context abandoned at the bound and keeping its place until it returns; a body that fails after its first byte aborts the response (`http.ErrAbortHandler`, let through by `withRecovery`, logged by the access log) rather than ending short; `server.CallerFrom` answering inside both calls, for attribution and never for authorisation, and nothing recorded of a generation; `ErrNotFound` `404`, `ErrInvalid` `400`, `ErrUnavailable` `503 report_provider_unavailable`, every other failure `502 report_provider_failed`, never a `401` or a `403` of a provider's. No `ext` or `server` signature changed (M11, M15, M18, M21, M2, M5, M23). Raised by `Hoplock/enterprise#26` |
 | 0045 | North-bound answer names | **Built, `v0.32.0`.** Every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, and a refused claim mapping's `rejections`, which rendered store, fleet and identity structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0046 makes the names a compatibility promise (M19, M26, M17, M23) |
 | 0046 | Instance identity & supervisory registration | **Built, `v0.33.0`.** A deployment's one identity in the store, never a node's, with its version set (software, contract, north-bound API) and tenant set; health at the deployment, each node and each tenant's fleet, every value timestamped, absent never healthy, a rolling upgrade `in_progress` rather than a fault, computed through a pool of its own at a bounded rate; the north-bound API version (`Hoplock-Api-Version`, version `1`) negotiated on `policy_version`'s principle, a member added later left out for an older client only while it holds its absent value and a `5xx` otherwise; an opt-in outbound registration, a cluster singleton through `ext.ClusterCoordinator`, carrying identity, health and a coarse event feed out in 0009's stream shape with replay from a store-held log, and nothing that acts in; supervisor tokens attributed in the local audit trail, listed and revocable per tenant; local revocation without a restart (M19, M18, M2, M11, M15, M23, M25, M26, M12) |
-| 0047 | A revoked registration says so | the supervisory registration's last line names a local revocation: before a node ends a registration because `supervision revoke` recorded it, it writes `revoked` (the heartbeat's id form, `at` the instant the store holds, no `by`) and then ends the request body cleanly, within one heartbeat interval, and never for a shutdown, a lost connection, a lost singleton or a silent supervisor; `hello` says registration protocol `2`, and the protocol's rule — a supervisor skips a line kind or member it does not recognise, `hello` names what can arrive, nothing negotiates it — is written in `docs/API-VERSIONING.md` beside the north-bound API's, whose version does not move (M19, M2, M11, M15, M23). Raised by `Hoplock/enterprise#64`, item 1; depends on 0046 |
+| 0047 | A revoked registration says so | **Built, `v0.34.0`.** The supervisory registration's last line names a local revocation: when a node's heartbeat check sees `supervision revoke`'s instant it writes `revoked` (the heartbeat's id form, `at` the instant the `deployment` row holds, the first if revoked again, no `by`), ends the request body cleanly and waits for the supervisor to end its response, all within one heartbeat of the check, after which the connection is cut; never for a shutdown, a dropped connection, a failed write, a lost singleton or a silent supervisor, and nothing while not connected. `supervision_revoked` logs `revoked_at` and `told_supervisor`, true only when the supervisor ended its response after the line. `hello` says registration protocol `2`; its rule — a supervisor skips a line kind or member it does not recognise, `hello` names what can arrive, a new kind or member moves it, nothing negotiates it, a changed meaning is not covered — and its history are in `docs/API-VERSIONING.md` beside the north-bound API's, whose version does not move (M19, M2, M11, M15, M23). Raised by `Hoplock/enterprise#64`, item 1; depends on 0046 |
 | 0048 | The supervising operator named in the instance's trail | a supervisor's north-bound call may name the operator it acts for: `Hoplock-Acting-Operator`, accepted only from a `sup-` principal (`400 invalid_request`, `not_supervisor`, otherwise), the name percent-encoded UTF-8, 1–128 printable characters with no control or format character (`invalid`, `too_long`), checked once in the middleware after authentication; recorded as `acting_operator` beside `principal_id` on every audit record the call writes, inside the hashed body, as the supervisor's word and never as an input to RBAC, tenancy, a subject or a decision, and on the access log line; `server.Caller.ActingOperator` for a host's records; the north-bound version `2` for the header, with `north_api_min` `1`, and `docs/API-VERSIONING.md` stating that a record's `attributes` is an open map whose keys are not members (M19, M2, M8, M18, M15, M23). Raised by `Hoplock/enterprise#64`, item 2; depends on 0046 |
 | 0049 | Management console | operator web UI served from the binary, inside the console namespace 0038 reserves and nowhere else, with a host's screens under the host's: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's finding with the builds it names (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
 | 0050 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
