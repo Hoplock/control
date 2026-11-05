@@ -25,25 +25,47 @@ import (
 // A supervised deployment sits behind NAT and the supervisor cannot dial in —
 // the situation proxy D11 solved one level down by having a downstream proxy
 // register outbound. So this deployment dials, and holds ONE connection on
-// which both directions are newline-delimited JSON:
+// which both directions are newline-delimited JSON. The number after each line
+// is the registration protocol version it arrived in:
 //
 //	deployment → supervisor (the request body):
-//	  {"kind":"hello","id":<head>,"protocol":1,"data":<identity>}
-//	  {"kind":"resync","id":<head>,"data":<report>}          when replay is impossible
-//	  {"kind":<event kind>,"id":"evt-<epoch>-<seq>","at":…,"origin":…,"data":…}
-//	  {"kind":"report","id":"evt-<epoch>-<seq>.<line>","data":<report>}  on request
-//	  {"kind":"heartbeat","id":"evt-<epoch>-<seq>.<line>"}
+//	  {"kind":"hello","id":<head>,"protocol":2,"data":<identity>}               1
+//	  {"kind":"resync","id":<head>,"data":<report>}                              1  when replay is impossible
+//	  {"kind":<event kind>,"id":"evt-<epoch>-<seq>","at":…,"origin":…,"data":…}  1
+//	  {"kind":"report","id":"evt-<epoch>-<seq>.<line>","data":<report>}         1  on request
+//	  {"kind":"heartbeat","id":"evt-<epoch>-<seq>.<line>"}                       1
+//	  {"kind":"revoked","id":"evt-<epoch>-<seq>.<line>","at":<revoked at>}       2  last, on a local revocation only
 //
 //	supervisor → deployment (the response body):
-//	  {"kind":"resume","last_event_id":"evt-…"}               first, always ("" when new)
-//	  {"kind":"heartbeat"}                                    liveness
-//	  {"kind":"rereport"}                                     send a report now
+//	  {"kind":"resume","last_event_id":"evt-…"}   1  first, always ("" when new)
+//	  {"kind":"heartbeat"}                         1  liveness
+//	  {"kind":"rereport"}                          1  send a report now
 //
 // The guarantees are 0009's: heartbeats on one interval, monotonic event ids,
 // replay from the supervisor's last event id, and `resync` — a full report —
 // when the id is under another epoch or below the feed's floor. Since the feed
 // is in the store (feed.go), a registration that moves to another node resumes
 // rather than resyncing.
+//
+// THE VERSION, AND THE SKIP RULE. hello's `protocol` is the version this
+// deployment speaks. It is informational: nothing negotiates it, every line of
+// that version can arrive, and a supervisor reads it to know which. A new line
+// kind or a new member on a line, in either direction, moves it by one. A
+// supervisor skips a line kind, or a member, it does not recognise, and never
+// refuses one, as this side ignores an inbound kind it does not act on. A
+// changed meaning of an existing line or member is not covered, because
+// skipping cannot make it safe. The rule is docs/API-VERSIONING.md's ("The
+// registration protocol"), and the north-bound API's version does not move
+// with this one.
+//
+// REVOKED. When the check each heartbeat runs sees that the deployment's
+// operator revoked the registration locally (`supervision revoke`), the
+// session writes `revoked` — the heartbeat's id form, `at` the instant the
+// store holds, no `by` — ends the request body cleanly, and waits for the
+// supervisor to end its response, all within one heartbeat of that check
+// (endRevoked). Nothing else ends with it: a shutdown, a dropped connection, a
+// failed write, a lost singleton and a silent supervisor send no line, so its
+// absence means nothing.
 //
 // INBOUND, NOTHING ACTS. A line that is not a heartbeat or a re-report request
 // is logged and ignored. Administrative action from a supervisor is a
@@ -52,10 +74,17 @@ import (
 // privileged inbound surface.
 
 // ProtocolVersion is the registration protocol's version, on the hello line.
-const ProtocolVersion = 1
+// docs/API-VERSIONING.md says what moves it.
+const ProtocolVersion = 2
 
 // SupervisionJob is the cluster singleton the registration holds.
 const SupervisionJob = "hoplock.supervision"
+
+// OutboundRevoked is the last line of a registration whose deployment's
+// operator revoked it locally (protocol 2). It names a position without
+// taking one, as a heartbeat does: it is not an event of the feed, is never
+// logged there, and is never replayed.
+const OutboundRevoked = "revoked"
 
 // Inbound line kinds.
 const (
@@ -153,22 +182,45 @@ func NewRegistration(svc *Service, feed *Feed, o RegistrationOptions) (*Registra
 // Sessions is how many connections reached the supervisor.
 func (r *Registration) Sessions() int64 { return r.sessions.Load() }
 
-// revoked reads the local revocation. An unreadable store reads as not
-// revoked for this check only: the session keeps the connection it has, and
-// the next check reads again.
-func (r *Registration) revoked(ctx context.Context) bool {
+// revoked reads the local revocation, and the instant the store holds for it.
+// The `revoked` line carries that instant and no other: never the time of
+// the check, and never a second read, which a restore in between would leave
+// with no time to send. An unreadable store reads as not revoked for this
+// check only: the session keeps the connection it has, and the next check
+// reads again.
+func (r *Registration) revoked(ctx context.Context) (time.Time, bool) {
 	d, err := r.svc.o.Store.Deployment().Identity(ctx)
-	return err == nil && !d.SupervisionRevokedAt.IsZero()
+	if err != nil || d.SupervisionRevokedAt.IsZero() {
+		return time.Time{}, false
+	}
+	return d.SupervisionRevokedAt, true
 }
 
+// revokedEnding is how a session ended when its check saw a local
+// revocation: the instant its `revoked` line carried, and whether the
+// supervisor was told.
+type revokedEnding struct {
+	at time.Time
+	// told is true when the line and the clean end of the request body were
+	// written and the supervisor then ended its response, within the bound.
+	// That is the only evidence this side has that the supervisor read them:
+	// a line written into a connection the supervisor has stopped reading is
+	// still written, and it was never told.
+	told bool
+}
+
+func (e *revokedEnding) Error() string { return errRevoked.Error() }
+func (e *revokedEnding) Unwrap() error { return errRevoked }
+
 // Run holds the registration until ctx ends. While the operator has revoked it
-// locally it does not connect, and it ends any connection it holds within one
-// heartbeat; when they restore it, it connects again — neither needs a
-// restart, and neither needs the supervisor.
+// locally it does not connect, and a connection it holds sees the revocation
+// within one heartbeat and is ended within one more, its last line saying so;
+// when they restore it, it connects again — neither needs a restart, and
+// neither needs the supervisor.
 func (r *Registration) Run(ctx context.Context) {
 	backoff := r.o.MinBackoff
 	for ctx.Err() == nil {
-		if r.revoked(ctx) {
+		if _, revoked := r.revoked(ctx); revoked {
 			sleep(ctx, r.o.Heartbeat)
 			continue
 		}
@@ -176,10 +228,12 @@ func (r *Registration) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		var ended *revokedEnding
 		switch {
-		case errors.Is(err, errRevoked):
+		case errors.As(err, &ended):
 			r.o.Logger.Info("the supervisory registration was revoked locally; disconnected",
-				"event", "supervision_revoked")
+				"event", "supervision_revoked", "revoked_at", ended.at.Format(time.RFC3339Nano),
+				"told_supervisor", ended.told)
 			backoff = r.o.MinBackoff
 			continue
 		case err != nil:
@@ -264,6 +318,10 @@ func (r *Registration) session(parent context.Context) error {
 	defer watchdog.Stop()
 
 	inbound := make(chan Line, 16)
+	// supervisorEnded is set before inbound closes, and read only after: true
+	// when the supervisor ended its response cleanly, rather than the
+	// connection failing or this session cancelling it.
+	var supervisorEnded bool
 	go func() {
 		defer close(inbound)
 		sc := bufio.NewScanner(resp.Body)
@@ -281,6 +339,7 @@ func (r *Registration) session(parent context.Context) error {
 				return
 			}
 		}
+		supervisorEnded = sc.Err() == nil
 	}()
 
 	// The first line says where to resume.
@@ -324,8 +383,12 @@ func (r *Registration) session(parent context.Context) error {
 					"event", "supervision_line_ignored", "kind", l.Kind)
 			}
 		case <-tick.C:
-			if r.revoked(ctx) {
-				return errRevoked
+			if at, revoked := r.revoked(ctx); revoked {
+				// The epoch is the deployment's, set once when its row is
+				// created, so the one this session read is the feed's
+				// current one: the ending needs no store read that could fail.
+				id := lineID(stream.Epoch, cursor, r.line.Add(1))
+				return r.endRevoked(ctx, cancel, w, pw, inbound, func() bool { return supervisorEnded }, id, at)
 			}
 			if cursor, err = r.send(ctx, w, cursor); err != nil {
 				return err
@@ -336,6 +399,52 @@ func (r *Registration) session(parent context.Context) error {
 			}
 			if err := w.write(Line{Kind: "heartbeat", ID: lineID(st.Epoch, cursor, r.line.Add(1))}); err != nil {
 				return err
+			}
+		}
+	}
+}
+
+// endRevoked ends a session whose check saw a local revocation (M19's first
+// rule), in an order that lets the supervisor read why:
+//
+//  1. the `revoked` line;
+//  2. a clean end of the request body (pw.Close, never CloseWithError), so the
+//     supervisor reads the line and then the end of the body;
+//  3. only then the response: this waits for the supervisor to end it, which
+//     the reference supervisor does when it reads the end of the body.
+//
+// The session's deferred teardown closes the response before the pipe, and
+// closing the response can tear the connection down before the transport has
+// written what is in the pipe. That is harmless when nothing more is to be
+// said, and it is why this ending closes the pipe itself and waits before it
+// returns to that teardown.
+//
+// The three together are bounded by one heartbeat from the check. A
+// supervisor that does not take them within it loses the connection at that
+// bound — the session is cancelled, which closes the pipe and aborts the
+// request — exactly as it lost it at the check before protocol 2, with no
+// line. Nothing here can keep a revoked registration open past the bound,
+// make it wait on the supervisor, or make any node dial again.
+func (r *Registration) endRevoked(ctx context.Context, cancel context.CancelCauseFunc, w *lineWriter, pw *io.PipeWriter,
+	inbound <-chan Line, supervisorEnded func() bool, id string, at time.Time) error {
+	bound := time.AfterFunc(r.o.Heartbeat, func() { cancel(errRevoked) })
+	defer bound.Stop()
+
+	ended := &revokedEnding{at: at}
+	if err := w.write(Line{Kind: OutboundRevoked, ID: id, At: &at}); err != nil {
+		return ended
+	}
+	_ = pw.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			return ended
+		case _, ok := <-inbound:
+			// A line the supervisor sends meanwhile is drained and not
+			// acted on; its end of the response is what this waits for.
+			if !ok {
+				ended.told = ctx.Err() == nil && supervisorEnded()
+				return ended
 			}
 		}
 	}
