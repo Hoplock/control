@@ -311,11 +311,10 @@ version support back needs the argument, not just the conclusion.
 - The **north-bound API version** and its negotiation (M19, phase 0046). It is a
   separate number with a separate lifecycle and a real installed base; leave it
   alone and say in the learnings that you did.
-- The **registration protocol's version** and its negotiation (M19, phase
-  0047: `hello`'s and `resume`'s `protocol`, promised in
-  `docs/API-VERSIONING.md`). It versions the supervisory registration's lines,
-  not the contract, and is as separate as the north-bound number; leave it
-  alone too.
+- The **registration protocol's version** (M19, phase 0047: `hello`'s
+  `protocol`, with its rule in `docs/API-VERSIONING.md`). It versions the
+  supervisory registration's lines, not the contract, and is as separate as
+  the north-bound number; leave it alone too.
 - Vendoring a new contract version. A downstream **sync** updates the text that
   says what is now true and **vendors nothing** — "it implements, enforces, and
   vendors nothing; those are that repository's own numbered phases"

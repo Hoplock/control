@@ -50,16 +50,15 @@ Control decided that the request did not ask for: the revoked line as asked
 (kind revoked, the heartbeat's id form, at the instant the deployment record
 holds, no by), sent only when a node ends the registration because of a
 local revocation, and never for a shutdown, a lost connection, a lost
-singleton or a silent supervisor; the registration protocol negotiated — the
-supervisor's resume line gains protocol, the newest it reads, absent meaning
-1; hello's protocol the newest the deployment speaks, 2; the session the
-lower of the two — so a supervisor is sent revoked only when its resume
-declares "protocol":2, and one that declares nothing is sent exactly what
-v0.33.0 sends; the promise written in Control's docs/API-VERSIONING.md beside
-the north-bound one, whose version does not move; the line followed by a
-clean end of the request body, on which the supervisor ends its response, all
-within one heartbeat interval, so an instance revoked while the plane is not
-reading ends with no line. Do not describe any of it as existing (§2): 0012
+singleton or a silent supervisor; hello saying "protocol":2, as the request
+proposed, and nothing negotiating it — the supervisor's resume line is
+unchanged; the protocol's rule written in Control's docs/API-VERSIONING.md
+beside the north-bound one, whose version does not move: a supervisor skips
+any line kind or member it does not recognise, never refusing one, and
+hello's protocol says which lines can arrive, so an instance at 1 never sends
+revoked; the line followed by a clean end of the request body, on which the
+supervisor ends its response, all within one heartbeat interval, so an
+instance revoked while the plane is not reading ends with no line. Do not describe any of it as existing (§2): 0012
 keeps its revoked state unwired, and a revoked instance shows as
 unreachable, until its pin carries 0047's release. Rewriting 0012 from what
 merges is the sync 0047 owes when it merges.
