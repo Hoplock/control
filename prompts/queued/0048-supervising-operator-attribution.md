@@ -229,7 +229,7 @@ members.
 - **`attributes` is the contract's open map** (`LogRecord.attributes`,
   `additionalProperties: string`). A proxy adds keys as the contract moves, and
   the contract's version and the north-bound one move independently
-  (`docs/API-VERSIONING.md`, "Three numbers"; M1). So a proxy's new key cannot be
+  (`docs/API-VERSIONING.md`, "Four numbers"; M1). So a proxy's new key cannot be
   a north-bound member. Control's own records add keys the same way, as 0039's
   `action_id` and its four companions did. Treating a key as a `since` member
   would answer `500
@@ -317,9 +317,9 @@ release a MINOR with nothing under `### Breaking` (M23, `docs/PROTOCOL.md` §3).
   its encoding and its checks, the refusals, that it is recorded as
   `acting_operator` as the supervisor's word, that it changes no answer, and
   that it is honoured at any declared version.
-- The history table gains row `2`: this release, `Hoplock-Acting-Operator`
+- The north-bound history table (`## History`) gains row `2`: this release, `Hoplock-Acting-Operator`
   and the `acting_operator` attribute.
-- If 0047's registration-protocol section and "Three numbers" row are there,
+- If 0047's registration-protocol section and "Four numbers" row are there,
   leave them as they are. This phase does not move the registration protocol.
 
 ### 5. The version

@@ -26,6 +26,35 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.34.0
+
+Phase 0047, a revoked registration says so (M19). The supervisory
+registration's protocol moves to `2`, and nothing else changes. No migration.
+No exported identifier in `ext` or `server` is added, removed or changed, and
+the north-bound API version stays `1`.
+
+- **Registration protocol `2`**: `hello` says `"protocol":2`. When the
+  deployment's operator revokes the registration locally (`hoplock-control
+  supervision revoke`), the node holding it writes
+  `{"kind":"revoked","id":…,"at":…}` as the connection's last line. `id` is a
+  heartbeat's, `at` is the instant the deployment records (the first one, if
+  it is revoked again), and there is no `by`. The node then ends the request
+  body cleanly and waits for the supervisor to end its response, all within
+  one heartbeat of the check that saw the revocation. A supervisor that does
+  not take them within it loses the connection at that bound. Nothing else
+  sends the line: a shutdown, a dropped connection, a failed write, a lost
+  singleton and a silent supervisor end the connection as before, and a
+  deployment revoked while not connected still sends nothing.
+- **The rule a supervisor is held to**, written in `docs/API-VERSIONING.md`:
+  skip a line kind or member it does not recognise, and never refuse one; read
+  `hello`'s `protocol` to know which lines can arrive (a deployment at `1`,
+  `v0.33.0`, never sends `revoked`). Nothing negotiates the number. A
+  supervisor that ends its response when it reads the end of the request
+  body, as the reference one in `internal/instance/register_test.go` does,
+  receives the line.
+- **Log**: `supervision_revoked` gains `revoked_at` and `told_supervisor`,
+  which is true only when the supervisor ended its response after the line.
+
 ## v0.33.0
 
 Phase 0046, instance identity and supervisory registration (M19). A
