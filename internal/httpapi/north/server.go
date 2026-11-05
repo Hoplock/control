@@ -247,7 +247,7 @@ type Options struct {
 
 	// Consoles are the consoles this listener serves (M27): Control's under
 	// [ConsolePrefix], and the host's screens under its [HostConsoleRoot].
-	// Nothing mounts one before 0049 builds Control's, and a console is
+	// Nothing mounts one before 0050 builds Control's, and a console is
 	// refused at New if any of its patterns leaves its own prefix.
 	Consoles []Console
 }

@@ -8,7 +8,7 @@
 - **Protocol:** `ProtocolVersion` = `2` on `hello`. Informational, never negotiated. Skip rule: a supervisor skips an unknown line kind or member and refuses none. A new kind or member, either direction, moves it by one; a changed meaning is not covered. Rule and history: `docs/API-VERSIONING.md`, "The registration protocol"; the head comment of `register.go` lists every line with the version it arrived in.
 - **Log:** `supervision_revoked` gains `revoked_at` and `told_supervisor` — true only when the supervisor ended its response after the line, within the bound (a line written into an unread socket is not "told").
 - **Reference far end:** the test `supervisor` in `register_test.go` enables full duplex, records each connection's clean/unclean body end, and ends its response when the body ends. That last step is what a supervisor must do to receive the line before the bound.
-- **NEXT:** 0048 does not move the registration protocol; leave the "Four numbers" row and the registration section in `docs/API-VERSIONING.md` alone. Downstream sync for `hoplock/enterprise` is queued (see the PR).
+- **NEXT:** 0048 does not move the registration protocol; leave the "Four numbers" row and the registration section in `docs/API-VERSIONING.md` alone. **0049 (queued here) closes a gap this phase found:** a supervisor that sends but never reads can block a write before the check runs. 0049 bounds every write and gates them so nothing is written after a revocation commits. Queued prompts 0049–0053 moved to 0050–0054. Downstream sync for `hoplock/enterprise` is queued (see the PR).
 
 ## Details
 
@@ -66,17 +66,22 @@ that could fail. The heartbeat still re-reads it each tick, as 0046 wrote it.
 - Every test in `internal/instance` and `internal/daemon` passes
   `-race -count=3`.
 
-### A gap noticed and not closed (follow-up, not queued)
+### A gap noticed and not closed (queued as 0049)
 The heartbeat check runs between writes in the session loop. A supervisor
 that keeps sending heartbeats (so the liveness watchdog never fires) but never
 reads will, once its socket buffer fills, block a heartbeat write forever. The
 loop then never reaches the check, and revocation would never take hold on
 that connection. At one heartbeat a few seconds apart, the buffer takes hours
 to fill. This phase's bound starts at the check, so it does not cover that
-case. The fix is small: bound every write in the loop, for example by
-Liveness, and drop the connection when a write takes longer. It changes
-0046's behaviour for all writes, not only this line, so it is left for a phase
-that owns it.
+case. Worse, a supervisor that later resumes reading is sent every event
+logged during its stall before the line that says revoked. The fix bounds
+every write by Liveness, and changes 0046's behaviour for every write, not
+only this line, so it is a phase of its own. At the user's direction it is
+queued as **0049, "No write after a revocation"**, with the user's further
+requirement: once a revocation commits, no write but `revoked` may begin. The
+prompt's mechanism is an advisory lock that the revocation takes exclusively
+and every write takes shared. Queued 0049–0053 were renumbered 0050–0054
+(PLAN §10, the revocation-gate note).
 
 ### Deviations
 None from the prompt. Two choices it left open:

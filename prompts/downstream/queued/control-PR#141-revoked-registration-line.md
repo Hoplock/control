@@ -1,4 +1,4 @@
-# control-PR#141 — a revoked registration says so
+# control-PR#141 — a revoked registration says so, and the revocation-gate renumbering
 
 ```
 Read docs/CROSS-REPO-PROTOCOL.md and follow it. You are doing a downstream
@@ -41,7 +41,16 @@ plane is not reading ends with no line it can see; no `by`, because who revoked
 is the supervised deployment's own record (M19's first rule). (4) Its PLAN §5
 "Supervising one of Control's deployments" gives the lines at protocol 2 and
 closes the gap it names from v0.34.0; its 0013 and 0017 where they assert the
-revocation. (5) Its pin: v0.34.0.
+revocation. (5) Its pin: v0.34.0. (6) Control's queued phases moved (revision
+revocation-gate): a new 0049, "No write after a revocation", is queued, not
+built. It will bound every registration write by the liveness interval and
+let nothing but `revoked` be written once a revocation commits, and it queues
+its own sync when it merges, so nothing about it lands now beyond its number.
+The management console is now 0050, E2E topology 0051, CA custody through the
+key store 0052, post-quantum posture 0053 and one contract version 0054. Cite
+each by name beside the number Control's docs/PLAN.md §10 mapping table gives
+when this runs. Hits that only recount a number's history are history and
+stay. Citations of merged Control phases do not move.
 
 Work on the branch this session was given, whatever it is named — if the name
 is yours to choose, claude/sync-<short-description>. Commit with the `sync`

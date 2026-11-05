@@ -848,9 +848,9 @@ decision.
      gets an explicit version, negotiated on the same principle as
      `policy_version` does south-bound (§4): the client names what it can read,
      and the server never answers outside it. **This retires an assumption
-     phase 0053 currently rests on** — "this product ships its proxy and its
+     phase 0054 currently rests on** — "this product ships its proxy and its
      server together and has no installed base" stops being true the moment
-     anyone operates a fleet of deployments, and 0053 must say so.
+     anyone operates a fleet of deployments, and 0054 must say so.
   3. **Outbound supervisory registration.** A supervised deployment sits behind
      NAT and the supervisor cannot dial in. Rather than invent a mechanism, use
      the one the fleet already proved one level down: proxy D11 has a downstream
@@ -950,7 +950,7 @@ decision.
 
 - **M20 — The console is a product surface, and its design is specified rather
   than improvised (new; amended by M27, which places it under `/console/` and
-  a host's screens under `/host-console/<provider>/`).** Phase 0049 builds an
+  a host's screens under `/host-console/<provider>/`).** Phase 0050 builds an
   operator console, and every acceptance criterion it carries is functional: does the screen work, does RBAC
   hold, does `make build` run without Node. Nothing in this plan said what the
   result should *look* like, and a phase whose criteria can all be met by
@@ -1156,7 +1156,7 @@ decision.
      `retract` directive in `go.mod`.
   7. **What it is not.** The module version is one of four version axes, and
      it is none of the other three: the vendored contract's (M1,
-     `contract/UPSTREAM`), `policy_version` (§4, 0053), and the north-bound API
+     `contract/UPSTREAM`), `policy_version` (§4, 0054), and the north-bound API
      version (M19, 0046). M19's "software version" **is** this one.
 
   `make release-check` holds every PR to this decision, and §8 says how. A
@@ -1438,7 +1438,7 @@ decision.
   | --- | --- | --- |
   | Control's API | `/api/v1/`, outside `/api/v1/hosts/` | every route of Control's |
   | a host's API | `/api/v1/hosts/<provider>/` | `tenants/{tenant}/<pattern>` (`AccessTenant`) and `cross-tenant/<pattern>` (`AccessCrossTenant`, M24) |
-  | Control's console | `/console/` | the console's shell, assets, deep links and catalogue (0049) |
+  | Control's console | `/console/` | the console's shell, assets, deep links and catalogue (0050) |
   | a host's console | `/host-console/<provider>/` | a host's screens, their assets, deep links and catalogue, loaded by Control's shell |
 
   1. **A tree of its own, carrying the provider.** `/api/v1/hosts/` is one
@@ -2246,7 +2246,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   added moved nothing (below). Neither did what `#69` and `#72` added to the
   request's `capabilities`, nor what `#69` added to the capability report,
   because the number governs none of it. Read both numbers out of
-  `contract/control.yaml`, never from this line (0053).
+  `contract/control.yaml`, never from this line (0054).
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -2327,7 +2327,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   route fit.
 
   So the drift check keys off the checksum in `contract/UPSTREAM` and never off
-  `policy_version` (0002, 0053). Nor may it assume the document version only
+  `policy_version` (0002, 0054). Nor may it assume the document version only
   rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
   `Hoplock/proxy#56` then moved it up to `4.1.0` for a field on the event
   stream, `Hoplock/proxy#65` to `4.2.0` for a new event type and two new
@@ -2363,7 +2363,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   present tense, and the tiers above are the server's half of the replacement.
   A session that reads "one
   vocabulary" as "there is nothing to negotiate" would delete the only thing
-  standing between a fleet mid-upgrade and a silently widened session; 0053
+  standing between a fleet mid-upgrade and a silently widened session; 0054
   narrows what this server *supports* to one value and explicitly may not remove
   the field.
 
@@ -2420,7 +2420,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   below its floor. It is what lets an author see, before raising a route's
   floor, which targets the raise would break: the publish-time report warns
   from it, and `GET …/fleet/target-observations/key-exchanges` serves it a
-  page at a time, beside the rung observations at `…/rungs` (M26.5; 0049
+  page at a time, beside the rung observations at `…/rungs` (M26.5; 0050
   renders it). The key-exchange observation is stored by host and port
   (`target_kex_observations`), never by platform, because the proxy's report
   names no platform.
@@ -2538,7 +2538,7 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   every entry in it can only cause a refusal, which is exactly why it is safe to
   accept from a caller. The authority on a leg is the previous hop's key, above.
 
-  Phases: 0007 and 0008 respectively; 0050 proves the pair against a real proxy.
+  Phases: 0007 and 0008 respectively; 0051 proves the pair against a real proxy.
 - **A certificate is minted per session, never carried on a decision.**
   Upstream `Hoplock/proxy#68` (merged) answered 0011's request for a way to
   reach a proxy with the certificate authority (§6). The shape it chose is the
@@ -2846,7 +2846,7 @@ the connection's lifetime (proxy D2):
   (`POST …/policy/apply`), then `cache_invalidate` with `all`, then
   `session_kill` for the running sessions found by what they negotiated
   (`GET …/audit/negotiated`, following `next` until `truncated` is false,
-  then `POST …/revocations` for every session listed; §7, 0049);
+  then `POST …/revocations` for every session listed; §7, 0050);
 - **additional device fields** on `ephemeral-account` routes — the open
   `device_field.<name>` namespace that sits beside the five
   `ephemeral-account` parameters (proxy phase 0016). Some devices are not one
@@ -3381,7 +3381,7 @@ not say why, and a grant the explanation names that the inputs do not hold.
   cross-tenant read, the set of tenants where the permission is held (M24) —
   and checks that permission before a handler runs. A handler is never asked,
   because M18's failure mode is not a wrong decision in the middleware — it is
-  one handler that read the tenant from the path itself, or chose its own set. The console (0049) reaches it through the
+  one handler that read the tenant from the path itself, or chose its own set. The console (0050) reaches it through the
   API, so there is no second enforcement point to keep in step.
 
   **"Own" is an access class, never a branch in a handler (0016).** A route
@@ -3486,7 +3486,7 @@ not say why, and a grant the explanation names that the inputs do not hold.
   ciphertext under a key-encryption key the database never sees. The daemon
   hands the CA that software custodian only: a registered `ext.KeyStore` holds
   the audit retention keys (§7) and is not yet consulted for the CA. 0024 found
-  it, and 0051 gives the CA the registered key store when there is one. Certificates are
+  it, and 0052 gives the CA the registered key store when there is one. Certificates are
   minted over a public key **the proxy generated** — no private key ever crosses
   this API — and are scoped to a principal, a target, a session and a window of
   minutes. What SSH can enforce is the principal, the window and the critical
@@ -3635,7 +3635,7 @@ not say why, and a grant the explanation names that the inputs do not hold.
   tampering: `audit-verify` reports a break, and the gap records report a hole.
   The gap records are stored and indexed by session, `gap_cause` and span
   (derived `gap_*` columns, with `gap_critical` a count), a session's loss is
-  summed across its reports (`Reader.SessionLoss`), and **0049** shows them.
+  summed across its reports (`Reader.SessionLoss`), and **0050** shows them.
 - **Storage** — append-only, hash-chained per tenant per stream; a verifier can
   prove no record was altered or removed, and reports the first break with the
   record, the position and both hashes. A **stream is the submitting proxy**:
@@ -4137,11 +4137,12 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0046 | Instance identity & supervisory registration | **Built, `v0.33.0`.** A deployment's one identity in the store, never a node's, with its version set (software, contract, north-bound API) and tenant set; health at the deployment, each node and each tenant's fleet, every value timestamped, absent never healthy, a rolling upgrade `in_progress` rather than a fault, computed through a pool of its own at a bounded rate; the north-bound API version (`Hoplock-Api-Version`, version `1`) negotiated on `policy_version`'s principle, a member added later left out for an older client only while it holds its absent value and a `5xx` otherwise; an opt-in outbound registration, a cluster singleton through `ext.ClusterCoordinator`, carrying identity, health and a coarse event feed out in 0009's stream shape with replay from a store-held log, and nothing that acts in; supervisor tokens attributed in the local audit trail, listed and revocable per tenant; local revocation without a restart (M19, M18, M2, M11, M15, M23, M25, M26, M12) |
 | 0047 | A revoked registration says so | **Built, `v0.34.0`.** The supervisory registration's last line names a local revocation: when a node's heartbeat check sees `supervision revoke`'s instant it writes `revoked` (the heartbeat's id form, `at` the instant the `deployment` row holds, the first if revoked again, no `by`), ends the request body cleanly and waits for the supervisor to end its response, all within one heartbeat of the check, after which the connection is cut; never for a shutdown, a dropped connection, a failed write, a lost singleton or a silent supervisor, and nothing while not connected. `supervision_revoked` logs `revoked_at` and `told_supervisor`, true only when the supervisor ended its response after the line. `hello` says registration protocol `2`; its rule — a supervisor skips a line kind or member it does not recognise, `hello` names what can arrive, a new kind or member moves it, nothing negotiates it, a changed meaning is not covered — and its history are in `docs/API-VERSIONING.md` beside the north-bound API's, whose version does not move (M19, M2, M11, M15, M23). Raised by `Hoplock/enterprise#64`, item 1; depends on 0046 |
 | 0048 | The supervising operator named in the instance's trail | a supervisor's north-bound call may name the operator it acts for: `Hoplock-Acting-Operator`, accepted only from a `sup-` principal (`400 invalid_request`, `not_supervisor`, otherwise), the name percent-encoded UTF-8, 1–128 printable characters with no control or format character (`invalid`, `too_long`), checked once in the middleware after authentication; recorded as `acting_operator` beside `principal_id` on every audit record the call writes, inside the hashed body, as the supervisor's word and never as an input to RBAC, tenancy, a subject or a decision, and on the access log line; `server.Caller.ActingOperator` for a host's records; the north-bound version `2` for the header, with `north_api_min` `1`, and `docs/API-VERSIONING.md` stating that a record's `attributes` is an open map whose keys are not members (M19, M2, M8, M18, M15, M23). Raised by `Hoplock/enterprise#64`, item 2; depends on 0046 |
-| 0049 | Management console | operator web UI served from the binary, inside the console namespace 0038 reserves and nowhere else, with a host's screens under the host's: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's finding with the builds it names (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
-| 0050 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
-| 0051 | CA custody through the key store | the certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |
-| 0052 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
-| 0053 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
+| 0049 | No write after a revocation | the supervisory registration's writes are bounded and gated. Every write to a supervisor completes within the registration's liveness interval or the session ends, so a supervisor that keeps sending and never reads is dropped rather than holding a revoked registration open. A gate in the store — an advisory lock `supervision revoke` takes exclusively in the transaction that records the revocation, and every write takes shared while it checks the revocation and writes — means that once a revocation commits, no node begins any write to a supervisor but the one `revoked` line: a write already in progress finishes or fails within the bound first, and the command waits for it. So no event logged, and no report computed, after a revocation ever reaches a supervisor. The gate holds a connection of its own, never the decision path's, and writes nothing when the store cannot be read. The registration protocol stays `2` (M19, M5, M11, M25, M23). Found by 0047; queued at the user's direction; depends on 0047 |
+| 0050 | Management console | operator web UI served from the binary, inside the console namespace 0038 reserves and nowhere else, with a host's screens under the host's: fleet, explain, audit, policy, inventory — built to `ui/DESIGN.md` and its enforcement (M20), localisable with English the only catalogue (M21); the algorithm floor's impact preview and fleet coverage view, and the emergency runbook as a guided workflow (`Hoplock/proxy#69`); each build's declared profile offers, and a ban's finding with the builds it names (`Hoplock/proxy#72`); the audit view shows where a proxy's stream has a hole and why (`Hoplock/proxy#71`) |
+| 0051 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
+| 0052 | CA custody through the key store | the certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |
+| 0053 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
+| 0054 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 
 > **Audits are not in this table, and not in the queue.**
 > `prompts/audit/` holds prompts that run repeatedly against the whole
@@ -4157,6 +4158,36 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 > the upstream author at merge time, and two of those looks have now described
 > text this repository did not contain. A check that runs once, from one side,
 > needs a compensating pass from this one.
+
+> **Renumbering note (revocation-gate revision).** Phase 0049 is new: the
+> supervisory registration's writes are bounded, and once `supervision revoke`
+> has committed no node begins any write to a supervisor but the one `revoked`
+> line, so nothing observed after a revocation leaves the deployment. 0047
+> found the gap (its learnings, "A gap noticed and not closed"). The
+> revocation check runs between writes, so a supervisor that keeps sending and
+> never reads can block a write indefinitely and keep a revoked registration
+> open. If it later reads again, it is sent the events logged during its stall
+> before the line that says revoked. It was queued at the user's direction in
+> control#141, with the requirement that no write be possible after a
+> revocation. Under `docs/PROTOCOL.md` §6 the queued prompts after it were
+> renumbered — **0049→0050, 0050→0051, 0051→0052, 0052→0053, 0053→0054** —
+> and no implemented prompt moved.
+>
+> - **After the supervising operator's attribution (0048).** It extends 0047
+>   and depends on it alone. 0048 was raised by `hoplock/enterprise`, which is
+>   waiting on it, and neither touches the other: 0048 is the north-bound
+>   API's attribution, this phase the registration's writes.
+> - **Before the console (0050).** The console says that a deployment is
+>   supervised and that a revocation stands, and depends on nothing about how
+>   the registration's writes are gated. A hole in M19's first rule, that
+>   supervision is revocable locally, should not wait behind the largest
+>   phase in the queue.
+> - **Before the E2E topology (0051), CA custody (0052), post-quantum posture
+>   (0053) and one contract version (0054).** None touches the registration.
+>
+> Anything written before this revision resolves through the table below. That
+> includes merged learnings and request files, which are never edited, and
+> `hoplock/enterprise`'s citations until its sync lands.
 
 > **Renumbering note (operator-attribution revision).** Phase 0048 is new: a
 > supervisor's north-bound call may name the operator it acts for, and the
@@ -4850,138 +4881,143 @@ Regenerate it in the PR that renumbers.
 | Revision | Written as | Is now | Phase |
 | --- | --- | --- | --- |
 | privileged-access | 0013 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
-| privileged-access | 0014 | 0049 | `0049-management-console` |
-| privileged-access | 0015 | 0050 | `0050-e2e-topology-and-ci` |
-| multi-instance | 0015 | 0049 | `0049-management-console` |
-| multi-instance | 0016 | 0050 | `0050-e2e-topology-and-ci` |
-| multi-instance | 0017 | 0053 | `0053-single-contract-version` |
+| privileged-access | 0014 | 0050 | `0050-management-console` |
+| privileged-access | 0015 | 0051 | `0051-e2e-topology-and-ci` |
+| multi-instance | 0015 | 0050 | `0050-management-console` |
+| multi-instance | 0016 | 0051 | `0051-e2e-topology-and-ci` |
+| multi-instance | 0017 | 0054 | `0054-single-contract-version` |
 | queue-order | 0014 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
 | queue-order | 0015 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| queue-order | 0016 | 0049 | `0049-management-console` |
-| queue-order | 0017 | 0050 | `0050-e2e-topology-and-ci` |
-| queue-order | 0018 | 0053 | `0053-single-contract-version` |
-| queue-order | 0019 | 0052 | `0052-post-quantum-posture` |
+| queue-order | 0016 | 0050 | `0050-management-console` |
+| queue-order | 0017 | 0051 | `0051-e2e-topology-and-ci` |
+| queue-order | 0018 | 0054 | `0054-single-contract-version` |
+| queue-order | 0019 | 0053 | `0053-post-quantum-posture` |
 | queue-order | 0020 | 0016 | `0016-self-service-grant-requests` |
 | queue-order | 0021 | 0015 | `0015-public-server-package-and-host-routes` |
 | queue-order | 0022 | 0017 | `0017-ending-external-windows` |
 | queue-order | 0023 | 0014 | `0014-tagged-releases` |
 | cross-tenant | 0018 | 0019 | `0019-northbound-api-and-policy-lifecycle` |
 | cross-tenant | 0019 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| cross-tenant | 0020 | 0049 | `0049-management-console` |
-| cross-tenant | 0021 | 0050 | `0050-e2e-topology-and-ci` |
-| cross-tenant | 0022 | 0052 | `0052-post-quantum-posture` |
-| cross-tenant | 0023 | 0053 | `0053-single-contract-version` |
+| cross-tenant | 0020 | 0050 | `0050-management-console` |
+| cross-tenant | 0021 | 0051 | `0051-e2e-topology-and-ci` |
+| cross-tenant | 0022 | 0053 | `0053-post-quantum-posture` |
+| cross-tenant | 0023 | 0054 | `0054-single-contract-version` |
 | session-audit | 0020 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| session-audit | 0021 | 0049 | `0049-management-console` |
-| session-audit | 0022 | 0050 | `0050-e2e-topology-and-ci` |
-| session-audit | 0023 | 0052 | `0052-post-quantum-posture` |
-| session-audit | 0024 | 0053 | `0053-single-contract-version` |
+| session-audit | 0021 | 0050 | `0050-management-console` |
+| session-audit | 0022 | 0051 | `0051-e2e-topology-and-ci` |
+| session-audit | 0023 | 0053 | `0053-post-quantum-posture` |
+| session-audit | 0024 | 0054 | `0054-single-contract-version` |
 | audit-findings | 0024 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| audit-findings | 0025 | 0049 | `0049-management-console` |
-| audit-findings | 0026 | 0050 | `0050-e2e-topology-and-ci` |
-| audit-findings | 0027 | 0052 | `0052-post-quantum-posture` |
-| audit-findings | 0028 | 0053 | `0053-single-contract-version` |
+| audit-findings | 0025 | 0050 | `0050-management-console` |
+| audit-findings | 0026 | 0051 | `0051-e2e-topology-and-ci` |
+| audit-findings | 0027 | 0053 | `0053-post-quantum-posture` |
+| audit-findings | 0028 | 0054 | `0054-single-contract-version` |
 | bounded-lists | 0026 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| bounded-lists | 0027 | 0049 | `0049-management-console` |
-| bounded-lists | 0028 | 0050 | `0050-e2e-topology-and-ci` |
-| bounded-lists | 0029 | 0052 | `0052-post-quantum-posture` |
-| bounded-lists | 0030 | 0053 | `0053-single-contract-version` |
-| ca-custody | 0030 | 0052 | `0052-post-quantum-posture` |
-| ca-custody | 0031 | 0053 | `0053-single-contract-version` |
+| bounded-lists | 0027 | 0050 | `0050-management-console` |
+| bounded-lists | 0028 | 0051 | `0051-e2e-topology-and-ci` |
+| bounded-lists | 0029 | 0053 | `0053-post-quantum-posture` |
+| bounded-lists | 0030 | 0054 | `0054-single-contract-version` |
+| ca-custody | 0030 | 0053 | `0053-post-quantum-posture` |
+| ca-custody | 0031 | 0054 | `0054-single-contract-version` |
 | host-namespace | 0027 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| host-namespace | 0028 | 0049 | `0049-management-console` |
-| host-namespace | 0029 | 0050 | `0050-e2e-topology-and-ci` |
-| host-namespace | 0030 | 0051 | `0051-ca-custody-through-the-key-store` |
-| host-namespace | 0031 | 0052 | `0052-post-quantum-posture` |
-| host-namespace | 0032 | 0053 | `0053-single-contract-version` |
+| host-namespace | 0028 | 0050 | `0050-management-console` |
+| host-namespace | 0029 | 0051 | `0051-e2e-topology-and-ci` |
+| host-namespace | 0030 | 0052 | `0052-ca-custody-through-the-key-store` |
+| host-namespace | 0031 | 0053 | `0053-post-quantum-posture` |
+| host-namespace | 0032 | 0054 | `0054-single-contract-version` |
 | action-executor | 0028 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| action-executor | 0029 | 0049 | `0049-management-console` |
-| action-executor | 0030 | 0050 | `0050-e2e-topology-and-ci` |
-| action-executor | 0031 | 0051 | `0051-ca-custody-through-the-key-store` |
-| action-executor | 0032 | 0052 | `0052-post-quantum-posture` |
-| action-executor | 0033 | 0053 | `0053-single-contract-version` |
+| action-executor | 0029 | 0050 | `0050-management-console` |
+| action-executor | 0030 | 0051 | `0051-e2e-topology-and-ci` |
+| action-executor | 0031 | 0052 | `0052-ca-custody-through-the-key-store` |
+| action-executor | 0032 | 0053 | `0053-post-quantum-posture` |
+| action-executor | 0033 | 0054 | `0054-single-contract-version` |
 | archive-before-retention | 0025 | 0027 | `0027-shared-event-plane` |
 | archive-before-retention | 0026 | 0028 | `0028-bounded-lists-audit-and-plan` |
 | archive-before-retention | 0027 | 0038 | `0038-host-route-namespace` |
 | archive-before-retention | 0028 | 0039 | `0039-action-executor-lock-and-quarantine` |
 | archive-before-retention | 0029 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| archive-before-retention | 0030 | 0049 | `0049-management-console` |
-| archive-before-retention | 0031 | 0050 | `0050-e2e-topology-and-ci` |
-| archive-before-retention | 0032 | 0051 | `0051-ca-custody-through-the-key-store` |
-| archive-before-retention | 0033 | 0052 | `0052-post-quantum-posture` |
-| archive-before-retention | 0034 | 0053 | `0053-single-contract-version` |
+| archive-before-retention | 0030 | 0050 | `0050-management-console` |
+| archive-before-retention | 0031 | 0051 | `0051-e2e-topology-and-ci` |
+| archive-before-retention | 0032 | 0052 | `0052-ca-custody-through-the-key-store` |
+| archive-before-retention | 0033 | 0053 | `0053-post-quantum-posture` |
+| archive-before-retention | 0034 | 0054 | `0054-single-contract-version` |
 | sink-delivery | 0026 | 0027 | `0027-shared-event-plane` |
 | sink-delivery | 0027 | 0028 | `0028-bounded-lists-audit-and-plan` |
 | sink-delivery | 0028 | 0038 | `0038-host-route-namespace` |
 | sink-delivery | 0029 | 0039 | `0039-action-executor-lock-and-quarantine` |
 | sink-delivery | 0030 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| sink-delivery | 0031 | 0049 | `0049-management-console` |
-| sink-delivery | 0032 | 0050 | `0050-e2e-topology-and-ci` |
-| sink-delivery | 0033 | 0051 | `0051-ca-custody-through-the-key-store` |
-| sink-delivery | 0034 | 0052 | `0052-post-quantum-posture` |
-| sink-delivery | 0035 | 0053 | `0053-single-contract-version` |
+| sink-delivery | 0031 | 0050 | `0050-management-console` |
+| sink-delivery | 0032 | 0051 | `0051-e2e-topology-and-ci` |
+| sink-delivery | 0033 | 0052 | `0052-ca-custody-through-the-key-store` |
+| sink-delivery | 0034 | 0053 | `0053-post-quantum-posture` |
+| sink-delivery | 0035 | 0054 | `0054-single-contract-version` |
 | identity-sync | 0031 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| identity-sync | 0032 | 0049 | `0049-management-console` |
-| identity-sync | 0033 | 0050 | `0050-e2e-topology-and-ci` |
-| identity-sync | 0034 | 0051 | `0051-ca-custody-through-the-key-store` |
-| identity-sync | 0035 | 0052 | `0052-post-quantum-posture` |
-| identity-sync | 0036 | 0053 | `0053-single-contract-version` |
+| identity-sync | 0032 | 0050 | `0050-management-console` |
+| identity-sync | 0033 | 0051 | `0051-e2e-topology-and-ci` |
+| identity-sync | 0034 | 0052 | `0052-ca-custody-through-the-key-store` |
+| identity-sync | 0035 | 0053 | `0053-post-quantum-posture` |
+| identity-sync | 0036 | 0054 | `0054-single-contract-version` |
 | report-provider | 0032 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| report-provider | 0033 | 0049 | `0049-management-console` |
-| report-provider | 0034 | 0050 | `0050-e2e-topology-and-ci` |
-| report-provider | 0035 | 0051 | `0051-ca-custody-through-the-key-store` |
-| report-provider | 0036 | 0052 | `0052-post-quantum-posture` |
-| report-provider | 0037 | 0053 | `0053-single-contract-version` |
+| report-provider | 0033 | 0050 | `0050-management-console` |
+| report-provider | 0034 | 0051 | `0051-e2e-topology-and-ci` |
+| report-provider | 0035 | 0052 | `0052-ca-custody-through-the-key-store` |
+| report-provider | 0036 | 0053 | `0053-post-quantum-posture` |
+| report-provider | 0037 | 0054 | `0054-single-contract-version` |
 | bounded-lists-chunks | 0029 | 0038 | `0038-host-route-namespace` |
 | bounded-lists-chunks | 0030 | 0039 | `0039-action-executor-lock-and-quarantine` |
 | bounded-lists-chunks | 0031 | 0040 | `0040-identity-sync-and-deprovisioning` |
 | bounded-lists-chunks | 0032 | 0044 | `0044-registered-reports-served` |
 | bounded-lists-chunks | 0033 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| bounded-lists-chunks | 0034 | 0049 | `0049-management-console` |
-| bounded-lists-chunks | 0035 | 0050 | `0050-e2e-topology-and-ci` |
-| bounded-lists-chunks | 0036 | 0051 | `0051-ca-custody-through-the-key-store` |
-| bounded-lists-chunks | 0037 | 0052 | `0052-post-quantum-posture` |
-| bounded-lists-chunks | 0038 | 0053 | `0053-single-contract-version` |
+| bounded-lists-chunks | 0034 | 0050 | `0050-management-console` |
+| bounded-lists-chunks | 0035 | 0051 | `0051-e2e-topology-and-ci` |
+| bounded-lists-chunks | 0036 | 0052 | `0052-ca-custody-through-the-key-store` |
+| bounded-lists-chunks | 0037 | 0053 | `0053-post-quantum-posture` |
+| bounded-lists-chunks | 0038 | 0054 | `0054-single-contract-version` |
 | answer-names | 0042 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| answer-names | 0043 | 0049 | `0049-management-console` |
-| answer-names | 0044 | 0050 | `0050-e2e-topology-and-ci` |
-| answer-names | 0045 | 0051 | `0051-ca-custody-through-the-key-store` |
-| answer-names | 0046 | 0052 | `0052-post-quantum-posture` |
-| answer-names | 0047 | 0053 | `0053-single-contract-version` |
+| answer-names | 0043 | 0050 | `0050-management-console` |
+| answer-names | 0044 | 0051 | `0051-e2e-topology-and-ci` |
+| answer-names | 0045 | 0052 | `0052-ca-custody-through-the-key-store` |
+| answer-names | 0046 | 0053 | `0053-post-quantum-posture` |
+| answer-names | 0047 | 0054 | `0054-single-contract-version` |
 | confined-action | 0041 | 0044 | `0044-registered-reports-served` |
 | confined-action | 0042 | 0045 | `0045-north-bound-answer-names` |
 | confined-action | 0043 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| confined-action | 0044 | 0049 | `0049-management-console` |
-| confined-action | 0045 | 0050 | `0050-e2e-topology-and-ci` |
-| confined-action | 0046 | 0051 | `0051-ca-custody-through-the-key-store` |
-| confined-action | 0047 | 0052 | `0052-post-quantum-posture` |
-| confined-action | 0048 | 0053 | `0053-single-contract-version` |
+| confined-action | 0044 | 0050 | `0050-management-console` |
+| confined-action | 0045 | 0051 | `0051-e2e-topology-and-ci` |
+| confined-action | 0046 | 0052 | `0052-ca-custody-through-the-key-store` |
+| confined-action | 0047 | 0053 | `0053-post-quantum-posture` |
+| confined-action | 0048 | 0054 | `0054-single-contract-version` |
 | directory-source | 0042 | 0044 | `0044-registered-reports-served` |
 | directory-source | 0043 | 0045 | `0045-north-bound-answer-names` |
 | directory-source | 0044 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| directory-source | 0045 | 0049 | `0049-management-console` |
-| directory-source | 0046 | 0050 | `0050-e2e-topology-and-ci` |
-| directory-source | 0047 | 0051 | `0051-ca-custody-through-the-key-store` |
-| directory-source | 0048 | 0052 | `0052-post-quantum-posture` |
-| directory-source | 0049 | 0053 | `0053-single-contract-version` |
+| directory-source | 0045 | 0050 | `0050-management-console` |
+| directory-source | 0046 | 0051 | `0051-e2e-topology-and-ci` |
+| directory-source | 0047 | 0052 | `0052-ca-custody-through-the-key-store` |
+| directory-source | 0048 | 0053 | `0053-post-quantum-posture` |
+| directory-source | 0049 | 0054 | `0054-single-contract-version` |
 | group-scope | 0043 | 0044 | `0044-registered-reports-served` |
 | group-scope | 0044 | 0045 | `0045-north-bound-answer-names` |
 | group-scope | 0045 | 0046 | `0046-instance-identity-and-supervisory-registration` |
-| group-scope | 0046 | 0049 | `0049-management-console` |
-| group-scope | 0047 | 0050 | `0050-e2e-topology-and-ci` |
-| group-scope | 0048 | 0051 | `0051-ca-custody-through-the-key-store` |
-| group-scope | 0049 | 0052 | `0052-post-quantum-posture` |
-| group-scope | 0050 | 0053 | `0053-single-contract-version` |
-| revoked-line | 0047 | 0049 | `0049-management-console` |
-| revoked-line | 0048 | 0050 | `0050-e2e-topology-and-ci` |
-| revoked-line | 0049 | 0051 | `0051-ca-custody-through-the-key-store` |
-| revoked-line | 0050 | 0052 | `0052-post-quantum-posture` |
-| revoked-line | 0051 | 0053 | `0053-single-contract-version` |
-| operator-attribution | 0048 | 0049 | `0049-management-console` |
-| operator-attribution | 0049 | 0050 | `0050-e2e-topology-and-ci` |
-| operator-attribution | 0050 | 0051 | `0051-ca-custody-through-the-key-store` |
-| operator-attribution | 0051 | 0052 | `0052-post-quantum-posture` |
-| operator-attribution | 0052 | 0053 | `0053-single-contract-version` |
+| group-scope | 0046 | 0050 | `0050-management-console` |
+| group-scope | 0047 | 0051 | `0051-e2e-topology-and-ci` |
+| group-scope | 0048 | 0052 | `0052-ca-custody-through-the-key-store` |
+| group-scope | 0049 | 0053 | `0053-post-quantum-posture` |
+| group-scope | 0050 | 0054 | `0054-single-contract-version` |
+| revoked-line | 0047 | 0050 | `0050-management-console` |
+| revoked-line | 0048 | 0051 | `0051-e2e-topology-and-ci` |
+| revoked-line | 0049 | 0052 | `0052-ca-custody-through-the-key-store` |
+| revoked-line | 0050 | 0053 | `0053-post-quantum-posture` |
+| revoked-line | 0051 | 0054 | `0054-single-contract-version` |
+| operator-attribution | 0048 | 0050 | `0050-management-console` |
+| operator-attribution | 0049 | 0051 | `0051-e2e-topology-and-ci` |
+| operator-attribution | 0050 | 0052 | `0052-ca-custody-through-the-key-store` |
+| operator-attribution | 0051 | 0053 | `0053-post-quantum-posture` |
+| operator-attribution | 0052 | 0054 | `0054-single-contract-version` |
+| revocation-gate | 0049 | 0050 | `0050-management-console` |
+| revocation-gate | 0050 | 0051 | `0051-e2e-topology-and-ci` |
+| revocation-gate | 0051 | 0052 | `0052-ca-custody-through-the-key-store` |
+| revocation-gate | 0052 | 0053 | `0053-post-quantum-posture` |
+| revocation-gate | 0053 | 0054 | `0054-single-contract-version` |
 
 No implemented prompt has ever moved: every row above renumbered a queued prompt
 only.
@@ -5002,11 +5038,11 @@ cross-tenant notes, above).
 Prompts may add or re-order later phases; any prompt that introduces new queued
 prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 
-> **On 0053 running last.** It is an audit, and an audit wants everything that
+> **On 0054 running last.** It is an audit, and an audit wants everything that
 > could hold a version number to exist first. The position is not an invitation
 > to build multi-version machinery in the meantime: this product ships its proxy
 > and its server together and has no installed base, so every phase before it
-> should already carry one version in one place, and 0053 should find little.
+> should already carry one version in one place, and 0054 should find little.
 > What it does own is the decision that a mismatch is a **loud refusal** rather
 > than a thinned answer, and the documents that still describe a mid-upgrade
 > fleet (§4 above among them).
@@ -5014,8 +5050,8 @@ prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 > 0019's tiers (§4) are not new machinery: `5` for `brokered-certificate`
 > (`Hoplock/proxy#68`) and `6` for a floor or a ban (`Hoplock/proxy#69`). They
 > are cases in the gate 0008 already built for the next vocabulary, and they
-> refuse rather than thin. 0053 may fold them into the single-version refusal,
-> because that refusal is stricter. What 0053 may not do is let a proxy be sent
+> refuse rather than thin. 0054 may fold them into the single-version refusal,
+> because that refusal is stricter. What 0054 may not do is let a proxy be sent
 > vocabulary above what it declared. Nor may it fold in the per-level floor
 > rule or the per-proxy ban refusal (`Hoplock/proxy#72`), each a capability
 > (M17) rather than a version.
