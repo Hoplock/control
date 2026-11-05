@@ -1,4 +1,4 @@
-# 0052 — One contract version, end to end
+# 0053 — One contract version, end to end
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, especially §3 ("never edit
@@ -308,9 +308,10 @@ version support back needs the argument, not just the conclusion.
 - **It may not delete the negotiation tests**, only re-aim them (above).
 
 ## Out of scope
-- The **north-bound API version** and its negotiation (M19, phase 0046). It is a
-  separate number with a separate lifecycle and a real installed base; leave it
-  alone and say in the learnings that you did.
+- The **north-bound API version** and its negotiation (M19, phase 0046; at `2`
+  since 0048, which added `Hoplock-Acting-Operator`). It is a separate number
+  with a separate lifecycle and a real installed base; leave it alone and say
+  in the learnings that you did.
 - The **registration protocol's version** (M19, phase 0047: `hello`'s
   `protocol`, with its rule in `docs/API-VERSIONING.md`). It versions the
   supervisory registration's lines, not the contract, and is as separate as
@@ -364,7 +365,7 @@ version support back needs the argument, not just the conclusion.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0052-single-contract-version-learnings.md`. The summary block
+`docs/learnings/0053-single-contract-version-learnings.md`. The summary block
 MUST give: where the supported version and the document version are defined and
 how they are tied to the vendored file, the exact refusal behaviour and status
 code, which conformance assertions are contract-level and which are this

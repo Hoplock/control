@@ -1,4 +1,4 @@
-# 0048 — Management console (web UI)
+# 0049 — Management console (web UI)
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -330,6 +330,13 @@ is written so that half can fail a review rather than merely disappoint one.
 - If the deployment is supervised, say so, name the supervisor, and link to the
   audit view filtered to that supervisor's actions. An operator must be able to
   see what was done to their deployment from above, in their own console.
+- Where a record of a supervisor's act carries `acting_operator` (0048), the
+  audit view shows that name beside the `sup-` principal. It labels the name
+  as the supervisor's word, and never as a person this deployment knows: it is
+  not a subject, it links to no subject, and nothing filters or authorises on
+  it (M19's shapes). A record without the key shows the principal alone, as
+  before. This is the open `attributes` rule `docs/API-VERSIONING.md` states:
+  render a key you know, and skip one you do not.
 
 ### Design and visual quality (M20)
 `ui/DESIGN.md` is the specification; this is what implementing it obliges, and
@@ -541,7 +548,7 @@ becomes a test that runs today.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0048-management-console-learnings.md`. Summary block MUST give
+`docs/learnings/0049-management-console-learnings.md`. Summary block MUST give
 the asset build/embed mechanism, the routes each screen consumes, the auth flow,
 and **how Hoplock Enterprise adds screens to this shell** without forking it —
 which, per M20, includes how it inherits the tokens and the component set rather

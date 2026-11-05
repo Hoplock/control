@@ -5,13 +5,12 @@
 > item 1, from its request file
 > `prompts/upstream/queued/enterprise-PR#64-registration-revoked-line.md`, and
 > answered here as one phase (`docs/CROSS-REPO-PROTOCOL.md` §3.2). The same
-> PR's item 2, the supervising operator named in the instance's trail, waits
-> in Enterprise's queue as a request of its own; whichever session answers it
-> places it.
+> PR's item 2, the supervising operator named in the instance's trail, is
+> answered as a phase of its own: 0048, queued right after this one.
 >
 > **Where it sits.** Right after instance identity and supervisory
 > registration (0046), which built everything this phase extends, and before
-> the console (0048) and everything after it. Nothing queued depends on it and
+> the console (0049) and everything after it. Nothing queued depends on it and
 > it depends on nothing queued, so the requesting repository's wait decides.
 > The revoked-line renumbering note in `docs/PLAN.md` §10 gives one line of
 > reasons for each neighbour.
@@ -253,8 +252,7 @@ is held to.
 - **Anything a supervisor can do in reply.** Nothing inbound acts (M19), and
   `revoked` invites no answer.
 - **Enterprise's item 2**, the supervising operator named in the instance's
-  trail (`prompts/upstream/queued/enterprise-PR#64-supervising-operator-attribution.md`
-  in `hoplock/enterprise`). It is a request of its own.
+  trail. It is a request of its own, answered by 0048.
 
 ## Acceptance criteria
 - A supervisor connected when `supervision revoke` runs reads one `revoked`
