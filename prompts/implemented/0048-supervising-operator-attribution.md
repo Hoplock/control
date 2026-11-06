@@ -9,7 +9,7 @@
 > before this one.
 >
 > **Where it sits.** Right after the revoked registration line (0047), and
-> before the console (0049) and everything after it. It depends on nothing
+> before the console (0049–0058) and everything after it. It depends on nothing
 > queued. It follows 0047 because both write `docs/API-VERSIONING.md` and were
 > raised together, and 0047 already holds the earlier place. It goes before the
 > console because the console shows what a supervisor did to a deployment, and

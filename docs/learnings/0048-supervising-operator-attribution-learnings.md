@@ -87,5 +87,5 @@ call: logins are anonymous routes, where the header is refused.
 - `server.Caller.ActingOperator` for a host's own records.
 
 ### Follow-ups (not queued)
-- None owed. The console (0049) already carries the obligation to render
+- None owed. The console's audit view (0051, Explain and the audit view) carries the obligation to render
   `acting_operator` as the supervisor's word (its prompt says so).
