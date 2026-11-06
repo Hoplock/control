@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -481,6 +482,12 @@ func TestTheHostCallerCarriesTheActingOperator(t *testing.T) {
 	body["format"] = "json" // what the pack's default Generate answers in
 	resp := sendNamed(t, f.http, "POST", generatePath("tenant-a"), sup, body, encodeOperator(operatorName))
 	mustStatus(t, resp, http.StatusOK)
+	// A generation streams its body, so its status reaches the client before
+	// the handler returns and the access log line is written. Its body ends
+	// only once that has happened: read it to the end before reading the log.
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("read the report: %v", err)
+	}
 
 	sox.mu.Lock()
 	callers := append(slices.Clone(sox.reportsCallers), sox.generateCallers...)
@@ -517,7 +524,11 @@ func TestTheHostCallerCarriesTheActingOperator(t *testing.T) {
 		t.Errorf("the refusal's line is %v", refusal)
 	}
 	// Unnamed, neither line carries the key.
-	mustStatus(t, sendNamed(t, f.http, "GET", reportsPath("tenant-a"), sup, nil), http.StatusOK)
+	listing := sendNamed(t, f.http, "GET", reportsPath("tenant-a"), sup, nil)
+	mustStatus(t, listing, http.StatusOK)
+	if _, err := io.ReadAll(listing.Body); err != nil {
+		t.Fatalf("read the listing: %v", err)
+	}
 	for _, l := range f.logs.lines("northbound_request") {
 		if l["path"] == reportsPath("tenant-a") {
 			if _, has := l["acting_operator"]; has {
