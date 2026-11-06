@@ -176,18 +176,26 @@ type grantOutcome struct {
 // actorFrom builds the actor an act is attributed to. It is read from the
 // principal the middleware authenticated and from nothing the caller sent: a
 // grant's creator is who presented the credential, not who the body says.
+//
+// The one thing it carries that the credential did not prove is the
+// supervising operator a supervisor's call named (0048), which the middleware
+// checked and only a supervisor can send. It rides beside the actor as that
+// credential's word, onto every record the act writes, and is never the
+// actor.
 func (s *Server) actorFrom(w http.ResponseWriter, r *http.Request) (access.Actor, bool) {
 	p, ok := PrincipalFrom(r.Context())
 	if !ok {
 		s.fail(w, r, "resolve actor", errNoPrincipal)
 		return access.Actor{}, false
 	}
+	acting, _ := ActingOperatorFrom(r.Context())
 	return access.Actor{
-		Principal:     p.ID,
-		Subject:       p.Subject,
-		DisplayName:   p.DisplayName,
-		BreakGlass:    p.BreakGlass,
-		CorrelationID: CorrelationIDFrom(r.Context()),
+		Principal:      p.ID,
+		Subject:        p.Subject,
+		DisplayName:    p.DisplayName,
+		BreakGlass:     p.BreakGlass,
+		CorrelationID:  CorrelationIDFrom(r.Context()),
+		ActingOperator: acting,
 	}, true
 }
 

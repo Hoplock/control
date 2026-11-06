@@ -104,6 +104,10 @@ type AuthEvent struct {
 	Reason string
 	// CorrelationID ties the record to the request log.
 	CorrelationID string
+	// ActingOperator is the supervising operator a supervisor's call named
+	// (0048), on the one record such a call can write here: a supervisor
+	// ending its own credential. The supervisor's word, never verified.
+	ActingOperator string
 }
 
 // FederationOption configures a Federation.
@@ -927,12 +931,14 @@ func (f *Federation) Authenticate(ctx context.Context, presented string) (*Princ
 	return p, true, nil
 }
 
-// EndSession revokes a session credential.
-func (f *Federation) EndSession(ctx context.Context, tenant store.Tenant, principalID string) error {
+// EndSession revokes the caller's own credential. actingOperator is the
+// supervising operator a supervisor's call named (0048), or empty: it is
+// written on the record and nowhere else.
+func (f *Federation) EndSession(ctx context.Context, tenant store.Tenant, principalID, actingOperator string) error {
 	if err := f.st.NorthPrincipals().Revoke(ctx, tenant, principalID, f.now()); err != nil {
 		return err
 	}
-	f.record(ctx, tenant, AuthEvent{Event: "logout", PrincipalID: principalID})
+	f.record(ctx, tenant, AuthEvent{Event: "logout", PrincipalID: principalID, ActingOperator: actingOperator})
 	return nil
 }
 

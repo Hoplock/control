@@ -332,7 +332,8 @@ func (s *Server) handleEndSession(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "end session", errNoPrincipal)
 		return
 	}
-	if err := s.federation.EndSession(r.Context(), p.Tenant, p.ID); err != nil {
+	acting, _ := ActingOperatorFrom(r.Context())
+	if err := s.federation.EndSession(r.Context(), p.Tenant, p.ID, acting); err != nil {
 		if store.IsNotFound(err) {
 			// The caller's intent is satisfied either way, and a
 			// session that is already gone is not an error worth

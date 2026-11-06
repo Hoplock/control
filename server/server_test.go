@@ -317,8 +317,37 @@ func TestAHostStartsWithItsExtensionItsSectionAndItsRoutes(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&caller); err != nil {
 		t.Fatalf("caller: %v", err)
 	}
-	if caller.Tenant != "default" || caller.Principal != principal.ID || caller.CorrelationID == "" || caller.BreakGlass {
+	if caller.Tenant != "default" || caller.Principal != principal.ID || caller.CorrelationID == "" || caller.BreakGlass ||
+		caller.ActingOperator != "" {
 		t.Errorf("CallerFrom gave %+v", caller)
+	}
+
+	// A supervisor's call that names the operator it acts for hands the
+	// host the name, decoded, beside the supervisor's principal (0048).
+	supCred, supervisor, err := federation.IssueToken(ctx, "default", identity.TokenRequest{
+		DisplayName: "msp", Supervisor: true,
+		Scopes: map[store.Tenant]identity.RoleSet{"default": {identity.RoleAuditor}},
+	})
+	if err != nil {
+		t.Fatalf("supervisor token: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodGet, hostAPI(base, "default", "licence"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+supCred.String())
+	req.Header.Set("Hoplock-Acting-Operator", "Jos%C3%A9 N%C3%BA%C3%B1ez")
+	named, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("named: %v", err)
+	}
+	defer func() { _ = named.Body.Close() }()
+	caller = server.Caller{}
+	if err := json.NewDecoder(named.Body).Decode(&caller); err != nil || named.StatusCode != http.StatusOK {
+		t.Fatalf("named host call: %d, %v", named.StatusCode, err)
+	}
+	if caller.ActingOperator != "José Núñez" || caller.Principal != supervisor.ID {
+		t.Errorf("a named supervisor's call gave the host %+v", caller)
 	}
 
 	for _, c := range []struct {

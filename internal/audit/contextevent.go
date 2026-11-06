@@ -111,6 +111,7 @@ func (e *Emitter) ContextEvent(ctx context.Context, tx *store.Store, tenant stor
 	actor := ev.Actor
 	attrs[AttrBreakGlass] = strconv.FormatBool(actor.BreakGlass)
 	put(attrs, AttrPrincipalID, actor.Principal)
+	put(attrs, AttrActingOperator, actor.ActingOperator)
 	put(attrs, AttrActorSubject, actor.Subject)
 	put(attrs, AttrCorrelationID, actor.CorrelationID)
 

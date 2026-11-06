@@ -47,11 +47,19 @@ import (
 // JSON: it moves the version AND MinAPIVersion, after the deprecation window
 // docs/API-VERSIONING.md states. The bounded-list shape (M26) — the limit,
 // the cursor and how an answer says it stopped short — is part of what is
-// promised, list by list.
+// promised, list by list. A key of an audit record's `attributes` is NOT a
+// member: that map is open, its keys are its writer's (the proxy's under the
+// contract, or this server's for its own records), a reader skips one it does
+// not know, and a new key moves nothing.
+//
+// The history is docs/API-VERSIONING.md's: 1 is the surface as 0046 left it,
+// and 2 adds the Hoplock-Acting-Operator request header (0048, acting.go). A
+// new request header is additive, like a new route, and it still moves the
+// version, so that a client can tell whether a deployment honours it.
 const (
 	// APIVersion is the version this server serves by default and the
 	// newest it answers in.
-	APIVersion = 1
+	APIVersion = 2
 	// MinAPIVersion is the oldest version it still answers in.
 	MinAPIVersion = 1
 	// APIVersionHeader carries the declared version in, and the served one

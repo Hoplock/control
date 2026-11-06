@@ -121,11 +121,19 @@ const (
 
 // OperatorActor is who performed an act, from the credential and never from
 // the request body.
+//
+// One field is not the credential's proof but its word: ActingOperator, the
+// supervising operator a supervisor's call named (0048). It is carried beside
+// the actor, never in its place — the record still names the credential that
+// acted, and a reader sees both and can tell which is which.
 type OperatorActor struct {
 	Principal     string
 	Subject       string
 	BreakGlass    bool
 	CorrelationID string
+	// ActingOperator is the supervisor's assertion of who it acted for,
+	// empty unless Principal is a supervisor's and the call named one.
+	ActingOperator string
 }
 
 // OperatorAct is one act on the north-bound surface.
@@ -173,6 +181,7 @@ func (e *Emitter) OperatorEvent(ctx context.Context, tx *store.Store, tenant sto
 		AttrBreakGlass: strconv.FormatBool(act.Actor.BreakGlass),
 	}
 	put(attrs, AttrPrincipalID, act.Actor.Principal)
+	put(attrs, AttrActingOperator, act.Actor.ActingOperator)
 	put(attrs, AttrActorSubject, act.Actor.Subject)
 	put(attrs, AttrCorrelationID, act.Actor.CorrelationID)
 	put(attrs, AttrBefore, act.Before)

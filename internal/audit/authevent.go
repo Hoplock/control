@@ -51,6 +51,13 @@ const (
 	// secret: the credential itself never appears in a record, because an
 	// audit record of a credential is a credential in the audit store.
 	AttrPrincipalID = "principal_id"
+	// AttrActingOperator is the supervising operator a supervisor's call
+	// named (0048), beside AttrPrincipalID on every record the call writes.
+	// It is the supervisor's assertion, not this server's verification: the
+	// principal is what was verified. It is never AttrActorSubject, which
+	// names a subject this deployment knows, and never the record's subject,
+	// which names whom the act concerned. Absent when the call named nobody.
+	AttrActingOperator = "acting_operator"
 	// AttrDenyReason is this server's own refusal vocabulary. It is written
 	// here and NEVER disclosed to the caller (M4).
 	AttrDenyReason = "deny_reason"
@@ -134,6 +141,7 @@ func (e *Emitter) AuthEvent(ctx context.Context, tenant store.Tenant, ev identit
 	if ev.PrincipalID != "" {
 		attrs[AttrPrincipalID] = ev.PrincipalID
 	}
+	put(attrs, AttrActingOperator, ev.ActingOperator)
 	if ev.Reason != "" {
 		attrs[AttrDenyReason] = ev.Reason
 	}

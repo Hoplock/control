@@ -5,6 +5,7 @@ package north
 
 import (
 	"net/http"
+	"reflect"
 	"time"
 )
 
@@ -52,3 +53,9 @@ func (s *Server) ReportTimeout() time.Duration { return s.reportTimeout }
 // about to render (0045). It is for TestMain alone: set once, before any test
 // runs, and never reset.
 func SetAnswerProbe(probe func(body any)) { answerProbe = probe }
+
+// Project renders body as a client declaring version sees it: what writeJSON
+// sends that client in place of body (0046, 0048).
+func Project(body any, version int) (any, error) {
+	return project(reflect.ValueOf(body), version, "")
+}

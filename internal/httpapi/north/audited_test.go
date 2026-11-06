@@ -34,6 +34,111 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 	ctx := t.Context()
 	const tenant = store.Tenant("tenant-a")
 
+	writes, others := everyWrite(t, f, admin)
+	requireEveryWriteListed(t, f, writes, others)
+
+	if _, err := f.st.Pool().Exec(ctx, `
+		CREATE FUNCTION refuse_record() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.event = TG_ARGV[0] THEN
+				RAISE EXCEPTION 'the record of % cannot be written', TG_ARGV[0];
+			END IF;
+			RETURN NEW;
+		END $$`); err != nil {
+		t.Fatal(err)
+	}
+	// In a fixed order: some writes act on what an earlier one stored.
+	keys := []string{
+		"POST /policy/bundles", "POST /policy/bundles/{version}/activate", "POST /policy/apply",
+	}
+	for key := range writes {
+		if !slices.Contains(keys, key) {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys[3:])
+	for _, key := range keys {
+		w := writes[key]
+		t.Run(key, func(t *testing.T) {
+			if w.setup != nil {
+				w.setup(t)
+			}
+			was := w.state(t)
+			if _, err := f.st.Pool().Exec(ctx, fmt.Sprintf(
+				`CREATE TRIGGER refuse_record BEFORE INSERT ON audit_records FOR EACH ROW EXECUTE FUNCTION refuse_record('%s')`,
+				w.event)); err != nil {
+				t.Fatal(err)
+			}
+			resp := f.send(t, w.method, api+w.path, admin, w.body)
+			if _, err := f.st.Pool().Exec(ctx, `DROP TRIGGER refuse_record ON audit_records`); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode < 500 {
+				t.Errorf("with its record refused, the write answered %d", resp.StatusCode)
+			}
+			if now := w.state(t); now != was {
+				t.Errorf("with its record refused, the write happened anyway:\n was %s\n now %s", was, now)
+			}
+
+			recorded := len(f.operatorRecords(t, w.event))
+			mustStatus(t, f.send(t, w.method, api+w.path, admin, w.body), w.status)
+			recs := f.operatorRecords(t, w.event)
+			if len(recs) <= recorded {
+				t.Fatalf("the write recorded no %s", w.event)
+			}
+			attrs := recs[0].Attributes
+			if attrs[audit.AttrPrincipalID] == "" {
+				t.Errorf("the record names no actor: %v", attrs)
+			}
+			if w.before != "" && attrs[audit.AttrBefore] != w.before {
+				t.Errorf("before = %q, want %q", attrs[audit.AttrBefore], w.before)
+			}
+			if w.after != "" && attrs[audit.AttrAfter] != w.after {
+				t.Errorf("after = %q, want %q", attrs[audit.AttrAfter], w.after)
+			}
+			if w.row != "" {
+				var act, rec string
+				if err := f.st.Pool().QueryRow(ctx, w.row, string(tenant)).Scan(&act); err != nil {
+					t.Fatalf("%s: %v", w.row, err)
+				}
+				if err := f.st.Pool().QueryRow(ctx, `SELECT xmin::text FROM audit_records WHERE tenant = $1 AND record_id = $2`,
+					string(tenant), recs[0].RecordID).Scan(&rec); err != nil {
+					t.Fatal(err)
+				}
+				if act != rec {
+					t.Errorf("the act was committed by transaction %s and its record by %s", act, rec)
+				}
+			}
+		})
+	}
+}
+
+// write is one write on this surface: the event it records, how to reach
+// it, what it leaves, and what its record says.
+type write struct {
+	event         string
+	setup         func(t *testing.T)
+	method, path  string
+	body          any
+	status        int
+	state         func(t *testing.T) string
+	before, after string // the record's attributes, when the act has them
+	// row selects the xmin of the row the act leaves ($1 is the
+	// tenant): it must be the record's, one transaction for both.
+	row string
+}
+
+// everyWrite is every write Control's tenant routes serve, and every other
+// non-GET tenant route with the reason it is not one (0023). Setups that put
+// in place what a write acts on are sent with setup. Both
+// TestEveryWriteCommitsWithItsRecordOrNotAtAll and
+// TestEveryWriteNamesTheActingOperator run it, so a write added to one is
+// added to both.
+func everyWrite(t *testing.T, f *serverFixture, setup string) (writes map[string]write, others map[string]string) {
+	t.Helper()
+	ctx := t.Context()
+	const tenant = store.Tenant("tenant-a")
+
 	render := func(t *testing.T, v any, err error) string {
 		switch {
 		case store.IsNotFound(err):
@@ -71,7 +176,7 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 	}
 	mustSend := func(t *testing.T, method, path string, body any, want int) {
 		t.Helper()
-		mustStatus(t, f.send(t, method, api+path, admin, body), want)
+		mustStatus(t, f.send(t, method, api+path, setup, body), want)
 	}
 	ingest := func(t *testing.T, records ...contract.LogRecord) {
 		t.Helper()
@@ -83,18 +188,6 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	type write struct {
-		event         string
-		setup         func(t *testing.T)
-		method, path  string
-		body          any
-		status        int
-		state         func(t *testing.T) string
-		before, after string // the record's attributes, when the act has them
-		// row selects the xmin of the row the act leaves ($1 is the
-		// tenant): it must be the record's, one transaction for both.
-		row string
-	}
 	// A supervisor whose credential the revoke route ends (0046).
 	_, supervisor, err := f.federation.IssueToken(ctx, "tenant-a", identity.TokenRequest{
 		DisplayName: "supervisor", Supervisor: true,
@@ -103,7 +196,7 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writes := map[string]write{
+	writes = map[string]write{
 		"POST /instance/supervisors/{principal}/revoke": {
 			row:   `SELECT xmin::text FROM north_principals WHERE tenant = $1 AND principal_id = '` + supervisor.ID + `'`,
 			event: audit.EventSupervisorRevoked, method: "POST", path: "/instance/supervisors/" + supervisor.ID + "/revoke",
@@ -311,7 +404,7 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 			},
 		},
 	}
-	others := map[string]string{
+	others = map[string]string{
 		"POST /policy/validate":                               "a read: compiles and reports, stores nothing",
 		"POST /policy/diff":                                   "a read: diffs a source against a stored version",
 		"POST /policy/simulate":                               "a read: simulation stores nothing",
@@ -327,6 +420,14 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 		"POST /me/grant-requests":                             "0016's, audited by internal/access",
 		"POST /me/grant-requests/{request}/cancel":            "0016's, audited by internal/access",
 	}
+	return writes, others
+}
+
+// requireEveryWriteListed fails t for every non-GET tenant or self route of
+// Control's that is neither in writes nor in others, so a write added later
+// fails the tests that run the list until it is listed.
+func requireEveryWriteListed(t *testing.T, f *serverFixture, writes map[string]write, others map[string]string) {
+	t.Helper()
 	for _, route := range f.server.Routes() {
 		if route.Method == http.MethodGet || route.Provider != "" || (route.Access != "tenant" && route.Access != "self") {
 			continue
@@ -335,80 +436,5 @@ func TestEveryWriteCommitsWithItsRecordOrNotAtAll(t *testing.T) {
 		if _, ok := writes[key]; !ok && others[key] == "" {
 			t.Errorf("%s is neither a write this test checks nor listed with a reason", key)
 		}
-	}
-
-	if _, err := f.st.Pool().Exec(ctx, `
-		CREATE FUNCTION refuse_record() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.event = TG_ARGV[0] THEN
-				RAISE EXCEPTION 'the record of % cannot be written', TG_ARGV[0];
-			END IF;
-			RETURN NEW;
-		END $$`); err != nil {
-		t.Fatal(err)
-	}
-	// In a fixed order: some writes act on what an earlier one stored.
-	keys := []string{
-		"POST /policy/bundles", "POST /policy/bundles/{version}/activate", "POST /policy/apply",
-	}
-	for key := range writes {
-		if !slices.Contains(keys, key) {
-			keys = append(keys, key)
-		}
-	}
-	slices.Sort(keys[3:])
-	for _, key := range keys {
-		w := writes[key]
-		t.Run(key, func(t *testing.T) {
-			if w.setup != nil {
-				w.setup(t)
-			}
-			was := w.state(t)
-			if _, err := f.st.Pool().Exec(ctx, fmt.Sprintf(
-				`CREATE TRIGGER refuse_record BEFORE INSERT ON audit_records FOR EACH ROW EXECUTE FUNCTION refuse_record('%s')`,
-				w.event)); err != nil {
-				t.Fatal(err)
-			}
-			resp := f.send(t, w.method, api+w.path, admin, w.body)
-			if _, err := f.st.Pool().Exec(ctx, `DROP TRIGGER refuse_record ON audit_records`); err != nil {
-				t.Fatal(err)
-			}
-			if resp.StatusCode < 500 {
-				t.Errorf("with its record refused, the write answered %d", resp.StatusCode)
-			}
-			if now := w.state(t); now != was {
-				t.Errorf("with its record refused, the write happened anyway:\n was %s\n now %s", was, now)
-			}
-
-			recorded := len(f.operatorRecords(t, w.event))
-			mustStatus(t, f.send(t, w.method, api+w.path, admin, w.body), w.status)
-			recs := f.operatorRecords(t, w.event)
-			if len(recs) <= recorded {
-				t.Fatalf("the write recorded no %s", w.event)
-			}
-			attrs := recs[0].Attributes
-			if attrs[audit.AttrPrincipalID] == "" {
-				t.Errorf("the record names no actor: %v", attrs)
-			}
-			if w.before != "" && attrs[audit.AttrBefore] != w.before {
-				t.Errorf("before = %q, want %q", attrs[audit.AttrBefore], w.before)
-			}
-			if w.after != "" && attrs[audit.AttrAfter] != w.after {
-				t.Errorf("after = %q, want %q", attrs[audit.AttrAfter], w.after)
-			}
-			if w.row != "" {
-				var act, rec string
-				if err := f.st.Pool().QueryRow(ctx, w.row, string(tenant)).Scan(&act); err != nil {
-					t.Fatalf("%s: %v", w.row, err)
-				}
-				if err := f.st.Pool().QueryRow(ctx, `SELECT xmin::text FROM audit_records WHERE tenant = $1 AND record_id = $2`,
-					string(tenant), recs[0].RecordID).Scan(&rec); err != nil {
-					t.Fatal(err)
-				}
-				if act != rec {
-					t.Errorf("the act was committed by transaction %s and its record by %s", act, rec)
-				}
-			}
-		})
 	}
 }

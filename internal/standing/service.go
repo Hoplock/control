@@ -61,6 +61,11 @@ type Actor struct {
 	BreakGlass bool
 	// CorrelationID ties the act to the request log line.
 	CorrelationID string
+	// ActingOperator is the supervising operator a supervisor's call named
+	// (0048): the supervisor's assertion, written on the act's records beside
+	// the credential and never on the denial's row. Empty unless Principal is
+	// a supervisor's and the call named one.
+	ActingOperator string
 	// Action is the inbound action performing the act, nil for an operator.
 	Action *access.ActionRef
 }
@@ -72,6 +77,7 @@ func (a Actor) stored() store.StandingActor {
 func (a Actor) audited() audit.OperatorActor {
 	return audit.OperatorActor{
 		Principal: a.Principal, Subject: a.Subject, BreakGlass: a.BreakGlass, CorrelationID: a.CorrelationID,
+		ActingOperator: a.ActingOperator,
 	}
 }
 

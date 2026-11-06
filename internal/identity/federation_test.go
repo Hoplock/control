@@ -601,7 +601,7 @@ func TestASessionCredentialAuthenticatesAndARevokedOneDoesNot(t *testing.T) {
 		t.Fatalf("the resolved principal is not the one that was minted: %+v", principal)
 	}
 
-	if err := f.federation.EndSession(ctx, "tenant-a", session.Principal.ID); err != nil {
+	if err := f.federation.EndSession(ctx, "tenant-a", session.Principal.ID, ""); err != nil {
 		t.Fatalf("end session: %v", err)
 	}
 	if _, ok, err := f.federation.Authenticate(ctx, session.Credential.String()); ok || err != nil {

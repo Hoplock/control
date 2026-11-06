@@ -45,6 +45,12 @@ type Actor struct {
 	BreakGlass bool
 	// CorrelationID ties the act to the request log line.
 	CorrelationID string
+	// ActingOperator is the supervising operator a supervisor's call named
+	// (0048): the supervisor's assertion, carried beside the credential that
+	// acted and never in its place. Empty unless Principal is a supervisor's
+	// and the call named one. It is written on the act's records and nowhere
+	// else: never on a grant's row, never matched, never decided on.
+	ActingOperator string
 }
 
 func (a Actor) grantActor() store.GrantActor {

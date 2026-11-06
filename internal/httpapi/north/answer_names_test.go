@@ -31,6 +31,16 @@ import (
 //
 // Map keys are data (labels, attributes, claims) and are never checked. A
 // type that marshals itself is its own answer and is not walked.
+//
+// EVERY ANSWER IS ALSO SERVED TO AN OLDER CLIENT AS IT WAS (0048). From
+// version 2, a client declaring 1 is answered through the reflective
+// projection (apiversion.go) rather than encoding/json, so the same walk
+// projects every body to every version this server serves and holds the
+// projection to what encoding/json writes for it. No view carries a `since`
+// member yet, so no answer may differ at any served version, nor fail to be
+// expressed in one. The phase that adds the first `since` member revisits
+// this check: from then on an older version's projection differs from
+// encoding/json by exactly the members it leaves out.
 
 // snakeCase is a member name an answer may carry.
 var snakeCase = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -43,6 +53,13 @@ var (
 // unnamed are the fields the probe found, keyed by type, field and the
 // answer path it was found on.
 var unnamed = struct {
+	sync.Mutex
+	found map[string]bool
+}{found: map[string]bool{}}
+
+// misprojected are the answers whose projection to a served version did not
+// encode as encoding/json does, keyed by type and version.
+var misprojected = struct {
 	sync.Mutex
 	found map[string]bool
 }{found: map[string]bool{}}
@@ -65,11 +82,28 @@ func TestMain(m *testing.M) {
 			"store, fleet or service struct directly.\n", len(found), strings.Join(found, "\n  "))
 		os.Exit(1)
 	}
+	misprojected.Lock()
+	wrong := slices.Sorted(func(yield func(string) bool) {
+		for k := range misprojected.found {
+			if !yield(k) {
+				return
+			}
+		}
+	})
+	misprojected.Unlock()
+	if len(wrong) > 0 {
+		fmt.Fprintf(os.Stderr, "north-bound answers are served differently to an older client (0048):\n  %s\n\n"+
+			"A client declaring an older version is answered through project (apiversion.go); make it "+
+			"agree with encoding/json for this answer.\n", strings.Join(wrong, "\n  "))
+		os.Exit(1)
+	}
 	os.Exit(code)
 }
 
-// probeAnswer records every unnamed member of one body.
+// probeAnswer records every unnamed member of one body, and every served
+// version it is not expressed in exactly as encoding/json writes it.
 func probeAnswer(body any) {
+	probeProjection(body)
 	found := map[string]bool{}
 	walkAnswer(reflect.ValueOf(body), "", map[reflect.Type]bool{}, func(rec string) { found[rec] = true })
 	if len(found) == 0 {
@@ -80,6 +114,43 @@ func probeAnswer(body any) {
 	for rec := range found {
 		unnamed.found[rec] = true
 	}
+}
+
+// probeProjection projects body to every version this server serves and
+// records each one that fails, or does not encode as encoding/json does.
+func probeProjection(body any) {
+	want, err := canonicalJSON(body)
+	if err != nil {
+		return // not an answer encoding/json can write; nothing to agree with
+	}
+	for v := north.MinAPIVersion; v <= north.APIVersion; v++ {
+		var problem string
+		if p, err := north.Project(body, v); err != nil {
+			problem = err.Error()
+		} else if got, err := canonicalJSON(p); err != nil || got != want {
+			problem = fmt.Sprintf("projected %s, encoding/json %s", got, want)
+		}
+		if problem != "" {
+			misprojected.Lock()
+			misprojected.found[fmt.Sprintf("%T at version %d: %s", body, v, problem)] = true
+			misprojected.Unlock()
+		}
+	}
+}
+
+// canonicalJSON is v encoded, decoded and encoded again, so two encodings of
+// the same value compare equal whatever order their members were written in.
+func canonicalJSON(v any) (string, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return "", err
+	}
+	out, err := json.Marshal(decoded)
+	return string(out), err
 }
 
 // marshalsItself is a type encoding/json does not walk.
