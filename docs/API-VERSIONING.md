@@ -51,6 +51,23 @@ what it was served before. Concretely:
   out would tell that client something false. (This is the south-bound rule:
   a restriction an old reader cannot see is not silently dropped.)
 - **A new route** is additive. An older client does not call it.
+- **A new request header** is additive, like a new route: an older client does
+  not send it, and is served exactly as before. It still moves the version, so
+  that a client can tell from `versions.north_api` whether a deployment honours
+  it. Without that, a header sent to a deployment that predates it is ignored
+  as any unknown header is, and nothing says so.
+- **A record's `attributes` is an open map, and its keys are not members.** An
+  audit record's `attributes` (the contract's `LogRecord.attributes`,
+  `additionalProperties: string`) holds its writer's keys: the proxy's under
+  the contract, which moves on its own version (M1), or this server's for its
+  own records. So:
+  - a reader skips a key it does not know, and refuses none;
+  - a new key moves nothing, here or anywhere else, and is never a `since`
+    member: an older client is served a record carrying it as it stands, never
+    `500 api_version_unexpressible`;
+  - a key whose meaning changes is a changed meaning (below).
+
+  This is the registration protocol's skip rule, applied to one map.
 - **A new error code**, or **a new value of a closed set** (a health state, a
   reason code, an event kind), moves the version: a client written against a
   closed set may refuse a value it does not know.
@@ -61,6 +78,56 @@ what it was served before. Concretely:
 
 Every change that moves the version moves it by one, and the release that does it
 says so in `CHANGELOG.md`.
+
+## The acting operator: `Hoplock-Acting-Operator`
+
+A supervisor holds one credential per deployment it supervises (M19), and its
+plane acts through it for many people. So a supervisor's call may name the
+supervising operator it acts for, and the deployment records that name, as the
+supervisor's word, on every audit record the call writes. Since version `2`.
+
+- **Who may send it.** A caller whose principal is a supervisor's (`sup-…`,
+  minted by `identity token-issue --supervisor`). From any other caller — an
+  ordinary token, a session, or nobody, on an anonymous route — it is `400
+  invalid_request` with `{"field": "Hoplock-Acting-Operator", "problem":
+  "not_supervisor"}`. An ordinary credential cannot put a name in a record.
+- **The encoding.** The value is the name's UTF-8, with every octet outside
+  printable ASCII, and `%` itself, percent-encoded (RFC 3986 §2.1): `José` is
+  `Jos%C3%A9`, and `100%` is `100%25`. Printable ASCII other than `%` may be
+  sent as it is. A raw octet outside printable ASCII is not a value this
+  header can carry.
+- **The checks**, on the decoded name: valid UTF-8; 1 to 128 characters
+  (runes); every character printable (Go's `unicode.IsPrint`: letters, marks,
+  numbers, punctuation, symbols and the ASCII space — no control or format
+  character, so a bidirectional override is refused); no leading or trailing
+  space. Over 128 is `problem: "too_long"` with `limit: "128"`. Anything else
+  wrong — a value that does not decode, an empty one, one sent twice — is
+  `problem: "invalid"`.
+- **When.** After the credential is authenticated and before anything the
+  request could change: a bad credential is `401` whatever the header says, and
+  a refused header changes nothing and records nothing.
+- **What is recorded.** The name, decoded and exactly as sent (no case
+  folding, no normalisation, no trimming), as `acting_operator` in the
+  `attributes` of every audit record the call writes, beside `principal_id`.
+  It is inside the hashed body, so it is as tamper-evident as the principal,
+  and every reader of the record sees it: `GET …/audit/records`, a sink, the
+  archive. Records written later by work the call started (a claim mapping's
+  `operator.claim_mapping.applied`, a sink's delivery) are not the call's, and
+  carry no name. The access log line (`northbound_request`) and
+  `northbound_refused` carry it beside `principal_id`.
+- **What it is.** The supervisor's assertion, not this server's verification.
+  What was verified is the `sup-` principal, and nothing about it changes. The
+  name is never a principal, a subject (`actor_subject`) or the record's
+  `subject`; it is never on a row (a grant's `created_by`, a standing
+  denial's actor, a binding's `updated_by`); it is never a filter; and nothing
+  — RBAC, tenant resolution, the decision path — reads it. **It changes no
+  answer**: the same call returns the same status and body with or without it.
+- **At any declared version.** It is honoured whatever version a call
+  declares, since it changes no answer. A client that relies on it reads
+  `versions.north_api` first: at `2` or later the name is recorded, and at `1`
+  (`v0.33.0`, `v0.34.0`) the header is ignored and the act is recorded with no
+  name — so a client sends none to such a deployment, and says that it cannot
+  record who acted.
 
 ## The bounded-list shape is promised list by list
 
@@ -88,6 +155,7 @@ by breaking.
 | Version | First served in | What it is |
 | --- | --- | --- |
 | 1 | `v0.33.0` | the surface as it stood at 0046: every route and member until then, plus `…/instance`, `…/instance/health` and `…/instance/supervisors` |
+| 2 | `v0.35.0` | the `Hoplock-Acting-Operator` request header, from a supervisor alone, with the problems `not_supervisor`, `invalid` and `too_long` on `invalid_request`; and the `acting_operator` attribute it writes on every record the call writes. No member, route or code is added, and `north_api_min` stays `1`: a client of `1` is served exactly as before, records carrying `acting_operator` included |
 
 ## The registration protocol
 
