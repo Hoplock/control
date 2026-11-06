@@ -889,7 +889,7 @@ decision.
   Enterprise's (its E14). The line is the same one M16 draws — the seam and its
   honest default here, the packaged product on top of it there.
 
-  **The shapes, as they stand** (0046, 0047; `internal/instance`, §3):
+  **The shapes, as they stand** (0046, 0047, 0048; `internal/instance`, §3):
 
   - **Identity** is `GET …/instance`: `instance_id` (generated once, in the
     `deployment` row), `display_name` (`instance.display_name`), `versions`
@@ -907,9 +907,14 @@ decision.
     (observed longer ago than its bound) and `left` (a node stopped on
     purpose, outside the roll-up). The roll-up is the worst state, and it
     never makes `unknown` or `stale` healthy.
-  - **The north-bound version** is one integer, `1`, carried in
-    `Hoplock-Api-Version` both ways; `docs/API-VERSIONING.md` is the promise:
-    what moves it, what "additive" means, and the deprecation window.
+  - **The north-bound version** is one integer, `2`, with `north_api_min`
+    `1`, carried in `Hoplock-Api-Version` both ways; `docs/API-VERSIONING.md`
+    is the promise: what moves it, what "additive" means, and the deprecation
+    window. `2` is the acting-operator header (below): a new request header is
+    additive, like a new route, and moves the version so that a supervisor can
+    tell whether a deployment honours it. A record's `attributes` is an open
+    map whose keys are their writer's and never members of this surface, so a
+    reader skips a key it does not know and a new key moves nothing.
   - **The registration** is one `POST` to `supervisor.endpoint` whose request
     and response bodies are both NDJSON: `hello`, then `resync` or the replay
     after the supervisor's `resume` id, then the feed's events and heartbeats
@@ -939,7 +944,26 @@ decision.
     `identity token-issue --supervisor`: the ordinary scope grammar
     (`tenant=role[,role];…`), a principal id beginning `sup-`, listed under
     `GET …/instance/supervisors` and revoked by `POST
-    …/instance/supervisors/{principal}/revoke`. The registration itself is
+    …/instance/supervisors/{principal}/revoke`.
+
+    A supervisor's call may name the supervising operator it acts for, in
+    `Hoplock-Acting-Operator`: the name's UTF-8, percent-encoded outside
+    printable ASCII and at `%`, decoded to 1–128 printable characters with no
+    control or format character and no leading or trailing space. It is
+    checked once, by the north-bound middleware after authentication, and is
+    `400 invalid_request` from any caller that is not a `sup-` principal
+    (`not_supervisor`) and for a value it cannot record faithfully (`invalid`,
+    `too_long`). The name is written as `acting_operator` beside
+    `principal_id` on every audit record the call writes, in the hashed body,
+    and on the access log line. It is the supervisor's word beside the
+    attribution the second rule requires, never in its place: never a principal or
+    a subject, never on a row, never a filter, and never read by RBAC, tenant
+    resolution (M18) or the decision path, so it changes no answer. One
+    credential per supervisor stays the shape: a token per person would
+    verify nothing more — the plane chooses which to present either way — and
+    would make every change to a provider's staff an act at every customer's
+    deployment. A customer may still issue one per person, and the header
+    names the operator on each. The registration itself is
     revoked by the deployment's operator, `hoplock-control supervision
     revoke`. It takes hold on every node within one heartbeat, and no node
     dials while it stands. The node holding the registration then delivers
@@ -1939,7 +1963,10 @@ for nothing.
   that makes the change wherever there is one, naming the actor, the before
   and after, and any warning accepted with it. An inbound action's records name
   the action (`action_id`, `action_kind`, `external_ref`, `reason_code`,
-  `provider`) with the handler as the actor (§7). The before is read in that
+  `provider`) with the handler as the actor (§7). A supervisor's call that
+  names the operator it acts for carries `acting_operator` beside
+  `principal_id` on every record it writes, as the supervisor's word and never
+  as the actor (M19). The before is read in that
   transaction under the tenant's lock on what the act replaces (a policy
   version, a target, a subject, the claim mapping), so two operators writing
   at once leave a chain of records rather than two that each claim the same
@@ -3990,6 +4017,12 @@ not say why, and a grant the explanation names that the inputs do not hold.
   of an action writes nothing. The decision a standing denial made is
   a decision record like any other (§5.3).
 
+- **A supervisor's named call is named on every record it writes** (M19,
+  0048): `acting_operator`, the operator its `Hoplock-Acting-Operator` header
+  named, beside the `sup-` `principal_id` that was verified, on the act's own
+  records whichever service writes them — and on none written later by work the
+  call started.
+
 - **Identity provisioning is audited on this server's own chain** (0040).
   Every applied call of the registered identity sync is recorded on the
   tenant's control stream, in the transaction that makes the change, with the
@@ -4137,7 +4170,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0045 | North-bound answer names | **Built, `v0.32.0`.** Every north-bound answer rendered through a view whose every member is named in snake_case: the showcase join's items (`record` an audit record's item), a session's loss rows, the fleet view's proxies (a zero instant absent) and its `liveness` in seconds, and a refused claim mapping's `rejections`, which rendered store, fleet and identity structs under Go field names; a probe over every answer the package's tests produce, so a type rendered without its names fails the build — before 0046 makes the names a compatibility promise (M19, M26, M17, M23) |
 | 0046 | Instance identity & supervisory registration | **Built, `v0.33.0`.** A deployment's one identity in the store, never a node's, with its version set (software, contract, north-bound API) and tenant set; health at the deployment, each node and each tenant's fleet, every value timestamped, absent never healthy, a rolling upgrade `in_progress` rather than a fault, computed through a pool of its own at a bounded rate; the north-bound API version (`Hoplock-Api-Version`, version `1`) negotiated on `policy_version`'s principle, a member added later left out for an older client only while it holds its absent value and a `5xx` otherwise; an opt-in outbound registration, a cluster singleton through `ext.ClusterCoordinator`, carrying identity, health and a coarse event feed out in 0009's stream shape with replay from a store-held log, and nothing that acts in; supervisor tokens attributed in the local audit trail, listed and revocable per tenant; local revocation without a restart (M19, M18, M2, M11, M15, M23, M25, M26, M12) |
 | 0047 | A revoked registration says so | **Built, `v0.34.0`.** The supervisory registration's last line names a local revocation: when a node's heartbeat check sees `supervision revoke`'s instant it writes `revoked` (the heartbeat's id form, `at` the instant the `deployment` row holds, the first if revoked again, no `by`), ends the request body cleanly and waits for the supervisor to end its response, all within one heartbeat of the check, after which the connection is cut; never for a shutdown, a dropped connection, a failed write, a lost singleton or a silent supervisor, and nothing while not connected. `supervision_revoked` logs `revoked_at` and `told_supervisor`, true only when the supervisor ended its response after the line. `hello` says registration protocol `2`; its rule — a supervisor skips a line kind or member it does not recognise, `hello` names what can arrive, a new kind or member moves it, nothing negotiates it, a changed meaning is not covered — and its history are in `docs/API-VERSIONING.md` beside the north-bound API's, whose version does not move (M19, M2, M11, M15, M23). Raised by `Hoplock/enterprise#64`, item 1; depends on 0046 |
-| 0048 | The supervising operator named in the instance's trail | a supervisor's north-bound call may name the operator it acts for: `Hoplock-Acting-Operator`, accepted only from a `sup-` principal (`400 invalid_request`, `not_supervisor`, otherwise), the name percent-encoded UTF-8, 1–128 printable characters with no control or format character (`invalid`, `too_long`), checked once in the middleware after authentication; recorded as `acting_operator` beside `principal_id` on every audit record the call writes, inside the hashed body, as the supervisor's word and never as an input to RBAC, tenancy, a subject or a decision, and on the access log line; `server.Caller.ActingOperator` for a host's records; the north-bound version `2` for the header, with `north_api_min` `1`, and `docs/API-VERSIONING.md` stating that a record's `attributes` is an open map whose keys are not members (M19, M2, M8, M18, M15, M23). Raised by `Hoplock/enterprise#64`, item 2; depends on 0046 |
+| 0048 | The supervising operator named in the instance's trail | **Built, `v0.35.0`.** A supervisor's north-bound call may name the operator it acts for in `Hoplock-Acting-Operator`: the name's UTF-8, percent-encoded outside printable ASCII and at `%`, decoded to 1–128 `unicode.IsPrint` characters with no leading or trailing space; checked once in the middleware after authentication, so a bad credential is `401` first and a refusal changes and records nothing; `400 invalid_request` on the header with `not_supervisor` from any caller that is not a `sup-` principal (a token, a session, an anonymous route), `too_long` (`limit` `128`), and `invalid` for anything else, a value sent twice included. Recorded as `acting_operator` beside `principal_id` on every record the call writes — `OperatorEvent`, `GrantEvent`, `ContextEvent`, and the `logout` of a supervisor ending its own token — inside the hashed body, carried from the one read in `actorFrom` on `access.Actor`, `audit.OperatorActor` and `standing.Actor`; never on a row, a filter, a subject or any input to RBAC, tenancy or a decision, so it changes no answer; logged on `northbound_request` and `northbound_refused`; `north.HostCaller` and `server.Caller` carry `ActingOperator` for a host's routes and a report provider's calls. North-bound version `2` for the header, `north_api_min` `1`; `docs/API-VERSIONING.md` states the header, that a new request header moves the version, and that a record's `attributes` is an open map whose keys are not members; every answer is held, in the package's tests, to project to each served version exactly as encoding/json writes it (M19, M2, M8, M18, M15, M23). Raised by `Hoplock/enterprise#64`, item 2; depends on 0046 |
 | 0049 | Management console 1: the shell, the build and the design machinery | the console's foundation, served from the binary inside the console namespace 0038 reserves and nowhere else, with a host's screens under the host's (M27): the toolchain inside `ui/DESIGN.md` §11, embedded assets so `make build` needs no Node, the mount through `north.Options.Consoles` with 0038's namespace tests run against the real console, OIDC sign-in on the API's own session, `tokens.css` with both themes and both densities, the ICU catalogue machinery with `en.json` the only catalogue and the `en-XA`/`en-XB` pseudolocale builds, the deployment and tenant chrome (M18, M19), and the static checks — token lint, contrast, string lint, catalogue keys, bundle budget (M20, M21, M2, M23) |
 | 0050 | Management console 2: the component set, the browser checks and Fleet | DESIGN.md §7's component inventory with every state designed, the one status component encoding M11, M17 and M19, the four-state frame, the data table paging through M26, the one typed-name confirmation and the error-from-code fallback; axe, the screenshot baseline, the offline test, reduced motion and both pseudolocale runs over a registry of screens; the seeded fixture, the RBAC harness that asserts the API's refusal and the route test; and Fleet, each proxy's configuration state as it reported it, a fleet with one unreachable node partial (M20, M21, M26, M11, M17, M19, M23) |
 | 0051 | Management console 3: Explain and the audit view | a session or decision id in and the whole story out, deep-linked from the audit view; the audit query, the blocked-command view and session replay, every list paged (M26) and every filter under `/console/`; the supervisor's actions one link from the chrome, and `acting_operator` shown as the supervisor's word, never as a subject (M4, M8, M19, M26, M23) |

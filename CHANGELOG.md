@@ -26,6 +26,47 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.35.0
+
+Phase 0048, the supervising operator named in the instance's trail (M19). A
+supervisor's call may say which of its operators made it, and the supervised
+deployment records that name on every audit record the call writes. No
+migration. One exported field is added to `server` (`Caller.ActingOperator`),
+and nothing in `ext` changes.
+
+- **North-bound API version `2`** (`versions.north_api`), with
+  `versions.north_api_min` still `1`: a client declaring `1` is served exactly
+  as before, and no deprecation window starts. Version `2` is the header
+  below. A new request header is additive, like a new route, and moves the
+  version so that a client can tell whether a deployment honours it.
+- **`Hoplock-Acting-Operator`**, a request header a supervisor's call may
+  carry: the name of the operator it acts for, as UTF-8 with every octet
+  outside printable ASCII and `%` itself percent-encoded (`José` is
+  `Jos%C3%A9`). Decoded, it must be 1–128 printable characters, with no
+  control or format character and no leading or trailing space. It is checked
+  after the credential, so a bad credential is still `401`. Refusals are `400
+  invalid_request` with `field: "Hoplock-Acting-Operator"` and `problem`:
+  `not_supervisor` from any caller that is not a supervisor's `sup-` token (an
+  ordinary token, a session, an anonymous route), `too_long` (`limit: "128"`),
+  or `invalid` (does not decode, empty, sent twice, a character refused). A
+  refused call changes and records nothing. It is honoured at any declared
+  version, and it changes no answer.
+- **`acting_operator`** on every audit record such a call writes, beside
+  `principal_id`, in the record's hashed body: an operator's act, a grant's,
+  an access-context push or binding, and a supervisor's `logout`. It is the
+  supervisor's word, not Control's verification, and it is never a principal,
+  a subject, a row's actor or a filter. Records written later by work the call
+  started (`operator.claim_mapping.applied`, a sink's delivery) carry none. The
+  access log line (`northbound_request`) and `northbound_refused` carry it
+  too.
+- **`server.Caller.ActingOperator`**: the name, decoded, on a host route's
+  caller and on a report provider's call that named one. Record it as the
+  supervisor's word beside `Principal`; never authorise on it.
+- **The rule a reader of a record is held to**, written in
+  `docs/API-VERSIONING.md`: a record's `attributes` is an open map whose keys
+  are their writer's, never members of this surface. Skip a key you do not
+  know, and refuse none; a new key moves no version.
+
 ## v0.34.0
 
 Phase 0047, a revoked registration says so (M19). The supervisory

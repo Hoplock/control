@@ -186,6 +186,7 @@ func (e *Emitter) GrantEvent(ctx context.Context, tx *store.Store, tenant store.
 	actor := ev.Actor
 	attrs[AttrBreakGlass] = strconv.FormatBool(actor.BreakGlass)
 	put(attrs, AttrPrincipalID, actor.Principal)
+	put(attrs, AttrActingOperator, actor.ActingOperator)
 	put(attrs, AttrActorSubject, actor.Subject)
 	put(attrs, AttrCorrelationID, actor.CorrelationID)
 	put(attrs, AttrWorkflow, ev.Workflow)

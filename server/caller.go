@@ -43,6 +43,15 @@ type Caller struct {
 	BreakGlass bool
 	// CorrelationID is the id the request is logged under (M11).
 	CorrelationID string
+	// ActingOperator is the supervising operator a supervisor's call named
+	// in its Hoplock-Acting-Operator header (0048), decoded. It is the
+	// supervisor's assertion, not Control's verification: what Control
+	// verified is Principal, a `sup-` id, and nothing else. It is empty
+	// unless Principal is a supervisor's and the call named one.
+	//
+	// A host records it as the supervisor's word, beside Principal, and
+	// never authorises on it, matches it, or puts it in Principal's place.
+	ActingOperator string
 }
 
 // CallerFrom returns who Control authenticated for the request ctx belongs to,
@@ -58,11 +67,12 @@ func CallerFrom(ctx context.Context) (Caller, bool) {
 		return Caller{}, false
 	}
 	return Caller{
-		Tenant:        c.Tenant,
-		Tenants:       slices.Clone(c.Tenants),
-		Subject:       c.Subject,
-		Principal:     c.Principal,
-		BreakGlass:    c.BreakGlass,
-		CorrelationID: c.CorrelationID,
+		Tenant:         c.Tenant,
+		Tenants:        slices.Clone(c.Tenants),
+		Subject:        c.Subject,
+		Principal:      c.Principal,
+		BreakGlass:     c.BreakGlass,
+		CorrelationID:  c.CorrelationID,
+		ActingOperator: c.ActingOperator,
 	}, true
 }

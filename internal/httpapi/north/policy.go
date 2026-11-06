@@ -52,6 +52,7 @@ func (s *Server) actorOf(w http.ResponseWriter, r *http.Request) (audit.Operator
 	}
 	return audit.OperatorActor{
 		Principal: a.Principal, Subject: a.Subject, BreakGlass: a.BreakGlass, CorrelationID: a.CorrelationID,
+		ActingOperator: a.ActingOperator,
 	}, true
 }
 

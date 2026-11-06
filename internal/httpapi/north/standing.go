@@ -127,6 +127,7 @@ func (s *Server) standingActor(w http.ResponseWriter, r *http.Request) (standing
 	}
 	return standing.Actor{
 		Principal: a.Principal, Subject: a.Subject, BreakGlass: a.BreakGlass, CorrelationID: a.CorrelationID,
+		ActingOperator: a.ActingOperator,
 	}, true
 }
 

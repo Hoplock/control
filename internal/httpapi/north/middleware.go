@@ -63,6 +63,7 @@ const (
 	ctxKeySubject
 	ctxKeyTenants
 	ctxKeyProviderCaller
+	ctxKeyActingOperator
 )
 
 // requestFacts is what the access log learns from a middleware INSIDE it.
@@ -77,8 +78,12 @@ const (
 // a set and no one tenant (M24).
 type requestFacts struct {
 	principal *identity.Principal
-	tenant    store.Tenant
-	tenants   []store.Tenant
+	// actingOperator is the supervising operator a supervisor's call named
+	// (0048), decoded: the supervisor's word, logged beside the principal
+	// it was verified as.
+	actingOperator string
+	tenant         store.Tenant
+	tenants        []store.Tenant
 	// report is what a report generation adds to the line (0044): what was
 	// asked for, how it ended and how much of it was written.
 	report *reportFacts
@@ -180,12 +185,23 @@ type Authenticator interface {
 // step's failure has its own code, because "you are not signed in", "you
 // cannot do that here", "that is not your tenant" and "there is nobody behind
 // this credential" are four different operator problems.
+//
+// Between the credential and the tenant, the supervising operator a
+// supervisor's call names (0048, acting.go) is checked and put beside the
+// principal. It is the supervisor's word, recorded and logged, and nothing
+// after it reads it to decide anything.
 func (s *Server) enforce(route Route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		id := CorrelationIDFrom(ctx)
 
 		if route.Access == AccessAnonymous {
+			// No credential, so no supervisor: nobody here can name
+			// who they act for.
+			if _, _, present := actingOperator(r); present {
+				refuseActingOperator(w, r, ProblemNotSupervisor)
+				return
+			}
 			route.Handler(w, r)
 			return
 		}
@@ -216,6 +232,25 @@ func (s *Server) enforce(route Route) http.Handler {
 		ctx = context.WithValue(ctx, ctxKeyPrincipal, principal)
 		if facts := factsFrom(ctx); facts != nil {
 			facts.principal = principal
+		}
+
+		// THE NAME IS CHECKED AFTER THE CREDENTIAL, so a bad one is a 401
+		// whatever the header says, and before anything the request could
+		// change. Only a supervisor may send it: an ordinary credential
+		// naming somebody would be a caller writing a name of its choosing
+		// into the trail.
+		if name, problem, present := actingOperator(r); present {
+			if !identity.IsSupervisor(principal.ID) {
+				problem = ProblemNotSupervisor
+			}
+			if problem != "" {
+				refuseActingOperator(w, r, problem)
+				return
+			}
+			ctx = context.WithValue(ctx, ctxKeyActingOperator, name)
+			if facts := factsFrom(ctx); facts != nil {
+				facts.actingOperator = name
+			}
 		}
 
 		if route.Access == AccessAuthenticated {
@@ -448,7 +483,10 @@ func newCorrelationID() string {
 // WHAT IT DOES NOT LOG IS THE POINT. No body, no header values, no query
 // string: the login route carries a password and every authenticated route
 // carries a credential in a header (0007's rule on the other listener, and the
-// same reason). The fields below are all safe to write down.
+// same reason). The fields below are all safe to write down. One is read from
+// a header, and only once enforce has checked it: the supervising operator a
+// supervisor named (0048), a name and never a secret, written here because
+// the trail carries it and an operator reading logs should see what it sees.
 func (s *Server) withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := s.now()
@@ -491,6 +529,9 @@ func (s *Server) logRequest(r *http.Request, rec *statusRecorder, facts *request
 			// log is what an operator is already reading (M7).
 			"break_glass", p.BreakGlass,
 		)
+	}
+	if facts.actingOperator != "" {
+		attrs = append(attrs, "acting_operator", facts.actingOperator)
 	}
 	if facts.tenant != "" {
 		attrs = append(attrs, "tenant", facts.tenant.String())
@@ -626,15 +667,21 @@ func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter 
 // because a precise refusal on this surface is an enumeration oracle for which
 // tenants exist.
 func (s *Server) logRefusal(ctx context.Context, r *http.Request, p *identity.Principal, tenant store.Tenant, code string) {
-	s.log.WarnContext(ctx, "north-bound request refused",
+	attrs := []any{
 		"event", "northbound_refused",
 		"code", code,
 		"path", r.URL.Path,
 		"method", r.Method,
 		"principal_id", p.ID,
 		"subject", p.Subject,
+	}
+	if name, ok := ActingOperatorFrom(ctx); ok {
+		attrs = append(attrs, "acting_operator", name)
+	}
+	attrs = append(attrs,
 		"requested_tenant", tenant.String(),
 		"scoped_tenants", tenantStrings(p.ScopedTenants()),
 		"correlation_id", CorrelationIDFrom(ctx),
 	)
+	s.log.WarnContext(ctx, "north-bound request refused", attrs...)
 }

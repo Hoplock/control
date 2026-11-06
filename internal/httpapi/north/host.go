@@ -102,6 +102,10 @@ type HostCaller struct {
 	BreakGlass bool
 	// CorrelationID is the id the request is logged under.
 	CorrelationID string
+	// ActingOperator is the supervising operator a supervisor's call named
+	// (0048): the supervisor's word, decoded, never verified. Empty unless
+	// Principal is a supervisor's and the call named one.
+	ActingOperator string
 }
 
 // hostRequest is what a host route's request carries beside the caller: the
@@ -401,6 +405,7 @@ func callerOf(ctx context.Context) HostCaller {
 	if p, ok := PrincipalFrom(ctx); ok {
 		caller.Principal = p.ID
 		caller.BreakGlass = p.BreakGlass
+		caller.ActingOperator, _ = ActingOperatorFrom(ctx)
 		if p.Subject != "" {
 			caller.Subject = ext.Subject{ID: p.Subject, Groups: slices.Clone(p.Groups)}
 		}
