@@ -1,7 +1,7 @@
 # Hoplock Control — Console Design System
 
-> This document is **binding on phase 0049** and on every change to `ui/`
-> afterwards. PLAN **M20** is the decision that makes it so. It exists because
+> This document is **binding on the console phases, 0049–0058,** and on every
+> change to `ui/` afterwards. PLAN **M20** is the decision that makes it so. It exists because
 > "make it look good" is not a requirement anybody can meet or fail, and a
 > console built to acceptance criteria that are all functional will be correct
 > and ugly — which, for the one screen an operator opens during an incident, is
@@ -9,7 +9,8 @@
 >
 > Read with `docs/PLAN.md` §2 (M20, M2, M18, M19, and **M21** — the console is
 > localisable from its first screen, and English is the only locale that ships)
-> and `prompts/queued/0049-management-console.md`.
+> and the console phases' prompts (PLAN §10: 0049–0057 build the console, and
+> 0058 audits every screen for one look and feel).
 
 ---
 
@@ -61,7 +62,7 @@ labels, a modal for anything consequential, and default component-kit blue.
   is broken in an air-gapped deployment and, worse, leaks operator activity to a
   third party from inside a security product. This is not a preference.
 - **Keyboard is a path, not an affordance.** Audit and Explain are fully
-  keyboard-navigable (0049), there is a global command palette (`⌘K`/`Ctrl-K`),
+  keyboard-navigable (0051), there is a global command palette (`⌘K`/`Ctrl-K`),
   and focus is always visible.
 
 ---
@@ -294,8 +295,10 @@ rather than guessing.
 
 ## 7. Components
 
-The inventory 0049 must ship, each with **every** state designed — default,
-hover, focus-visible, active, disabled, loading, error, empty, and both themes:
+The inventory the component set ships (0050; the timeline and the time range
+picker with 0051, the diff view with 0052), each with **every** state designed
+— default, hover, focus-visible, active, disabled, loading, error, empty, and
+both themes:
 
 **Primitives** — button (primary, secondary, ghost, danger), icon button (always
 with an accessible name), input, textarea, select, combobox, checkbox, radio,
@@ -412,7 +415,8 @@ the same reason.
 ## 10. How this is enforced
 
 A design system nobody checks is a mood board. Each of these is a CI job or a
-test, and 0049's acceptance criteria name them:
+test, and the console phases' acceptance criteria name them (0049 the static
+checks 1, 2 and 9; 0050 the browser checks 3–8):
 
 1. **Token lint.** No raw hex, `rgb()`, `px` font size, or `px` radius outside
    `tokens.css`. A stylelint rule; it fails the build.
@@ -460,7 +464,7 @@ test, and 0049's acceptance criteria name them:
   binding for the chosen framework, or equivalent). Catalogues are ICU JSON, one
   file per locale under `ui/src/locales/`, keys stable and never reused for a
   different sentence — a renamed key is a new key. `en.json` is the only one
-  committed in 0049.
+  committed in the console phases (0049–0058).
 - **No chart library until there is a third chart.** The two §7 allows are
   hand-written SVG; a charting dependency for two charts is a bundle cost and a
   second visual identity at once.
