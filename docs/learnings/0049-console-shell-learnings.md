@@ -9,7 +9,7 @@
 - **A later phase adds a screen:** one `SCREENS` entry in `ui/src/screens/registry.tsx` (path under `/console/`, `nav` catalogue key, density, permission) — the nav lists exactly these; its strings as flat keys in `ui/src/locales/en.json` (no `:`); its routes in `ROUTES` with the Go table's exact pattern and permission, called only through `ApiClient.call(name, …)`; links through `Link`/`consoleHref`, never a hand-written path.
 - **Enterprise's screens:** served by Control's mount under `/host-console/hoplock/enterprise/`, keys `hoplock/enterprise:<key>` (refused if equal to one of Control's, judged against the real `en.json`); they inherit the look by using `tokens.css`'s custom properties, which are on `:root` of the one page — never a token file of their own. **No `server.Options` field hands them over yet**: whoever needs it raises an upstream request for a field shaped as `north.Console` (Details).
 - **Decisions:** none added or amended; PLAN §3 revised in place; **`ui/DESIGN.md` corrected** (§3.2 dark `--bg-selected`, §3.5/§9 Latin-only faces, §5 stripe tokens, §10.1/§10.9 scope, §11 framework and `dist` location).
-- **NEXT (0050):** read Details' "What 0050 inherits": `Status` is the one status component to grow, `ErrorText` is a stand-in for its error component, `errorMessage()` is the helper, `ROUTES` is what its RBAC/route test reads, and the pseudolocale builds are CI artefacts (`console-pseudolocales`).
+- **NEXT (0050):** read Details' "What 0050 inherits": `Status` is the one status component to grow, `ErrorText` is a stand-in for its error component, `errorMessage()` is the helper, `ROUTES` is what its RBAC/route test reads, and the pseudolocale builds are CI artefacts (`console-pseudolocales`). Every console PR shows its screens and states as screenshots (`docs/PROTOCOL.md` §8).
 
 ## Details
 
@@ -109,7 +109,14 @@ zero requests to any other origin; no horizontal page scroll at 800 px (the
 hover panel had caused one; now capped). Two defects found that way and fixed:
 a stale `refused` session state bounced a fresh sign-in back to sign-in (sign-in
 now resets the session to loading), and a long build version pushed the page
-sideways. The `en-XA` and `en-XB` builds were rendered too: everything accented
+sideways. Taking the PR's screenshots of every state found two more: the
+navigation's surface stopped at one viewport's height on a long page, and at
+1280 px the top bar wrapped to two rows, taller than the offset the sticky
+navigation assumed. The shell is now an **app frame** — the top bar at
+whatever height it wraps to, then the navigation and the content each
+scrolling in their own row (`Shell.module.css`, `100dvh`) — and the theme and
+density preferences moved from the top bar to the navigation's foot
+(`shell/Preferences.tsx`), leaving the bar to identity. The `en-XA` and `en-XB` builds were rendered too: everything accented
 and padded, `dir="rtl"` mirrors the shell (navigation on the right), and
 identifiers stay LTR in mono. That is a smoke run, not 0050's checks.
 
@@ -137,6 +144,11 @@ identifiers stay LTR in mono. That is a smoke run, not 0050's checks.
   count with versions; click opens the Deployment view.
 
 ### What 0050 inherits, and what is a stand-in
+
+- **The page does not scroll; `main` does.** A whole-screen screenshot or a
+  scroll assertion acts on `main#content`, and Playwright's `fullPage` alone
+  captures one viewport: grow the viewport to `main`'s scroll height first.
+  Below 1024 px the navigation is a drawer over the content's grid row.
 
 - `ui/src/components/Status.tsx` is **the** status component (§6 glyphs and
   tones, glyph in the hue, label in text colour). Grow it into the pill; do

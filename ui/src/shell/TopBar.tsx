@@ -2,7 +2,8 @@
 // else on the page — its name, its short instance id in mono and its health,
 // on a chip in the deployment's configured stripe — then the tenant where
 // more than one is in scope, a badge for each supervisor, a break-glass
-// session said out loud, the display preferences, and the operator.
+// session said out loud, and the operator. The display preferences are at the
+// foot of the navigation: they are rarely changed, and the bar is for identity.
 //
 // Presentational: every fact arrives as a prop, so each rule is asserted by
 // rendering it (test/chrome.test.tsx).
@@ -11,7 +12,6 @@ import type { Health, Identity, Session, Supervisor } from "../api/types";
 import { Ident, shortInstanceId } from "../components/Ident";
 import { Status } from "../components/Status";
 import { useI18n } from "../i18n/I18n";
-import type { Density, Prefs, Theme } from "../prefs/prefs";
 import { Link } from "../router/router";
 import { healthStatus, showsTenant } from "./chrome";
 import type { Load } from "./load";
@@ -24,16 +24,11 @@ export interface TopBarProps {
   tenants: readonly string[];
   tenant: string | null;
   supervisors: readonly Supervisor[];
-  prefs: Prefs;
   navOpen: boolean;
   onNav(open: boolean): void;
   onTenant(tenant: string): void;
-  onPrefs(prefs: Prefs): void;
   onSignOut(): void;
 }
-
-const THEMES: readonly Theme[] = ["system", "light", "dark"];
-const DENSITIES: readonly Density[] = ["screen", "compact", "comfortable"];
 
 export function TopBar(p: TopBarProps) {
   const { t, f } = useI18n();
@@ -115,34 +110,6 @@ export function TopBar(p: TopBarProps) {
       ) : null}
 
       <div className={styles.end}>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>{t("prefs.theme.label")}</span>
-          <select
-            className={styles.select}
-            value={p.prefs.theme}
-            onChange={(e) => p.onPrefs({ ...p.prefs, theme: e.currentTarget.value as Theme })}
-          >
-            {THEMES.map((theme) => (
-              <option key={theme} value={theme}>
-                {t(theme === "system" ? "prefs.theme.system" : theme === "light" ? "prefs.theme.light" : "prefs.theme.dark")}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>{t("prefs.density.label")}</span>
-          <select
-            className={styles.select}
-            value={p.prefs.density}
-            onChange={(e) => p.onPrefs({ ...p.prefs, density: e.currentTarget.value as Density })}
-          >
-            {DENSITIES.map((d) => (
-              <option key={d} value={d}>
-                {t(d === "screen" ? "prefs.density.screen" : d === "compact" ? "prefs.density.compact" : "prefs.density.comfortable")}
-              </option>
-            ))}
-          </select>
-        </label>
         <span className={styles.operator}>{t("chrome.account.label", { name: operator })}</span>
         <button type="button" className={styles.button} onClick={p.onSignOut}>
           {t("chrome.signOut")}

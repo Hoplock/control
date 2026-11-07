@@ -1,11 +1,14 @@
+/* An app frame: the top bar, at whatever height its contents wrap to, then
+   the navigation and the content, each scrolling in its own row, so the
+   deployment's identity never scrolls away and nothing slides under it. */
 .shell {
   display: grid;
   grid-template-areas:
     "top top"
     "nav main";
   grid-template-columns: var(--shell-nav-width) minmax(0, 1fr);
-  grid-template-rows: auto 1fr;
-  min-block-size: 100vh;
+  grid-template-rows: auto minmax(0, 1fr);
+  block-size: 100dvh;
   padding-block-start: var(--stripe-height);
   background: var(--bg-canvas);
 }
@@ -27,6 +30,8 @@
 .main {
   grid-area: main;
   min-inline-size: 0;
+  min-block-size: 0;
+  overflow-y: auto;
   padding: var(--sp-24);
 }
 .main:focus {

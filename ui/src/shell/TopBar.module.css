@@ -1,8 +1,7 @@
 .bar {
   grid-area: top;
-  position: sticky;
-  inset-block-start: var(--stripe-height);
-  z-index: 2;
+  position: relative;
+  z-index: 4;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

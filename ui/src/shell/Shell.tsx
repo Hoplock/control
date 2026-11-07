@@ -17,6 +17,7 @@ import { NotFound } from "../screens/NotFound";
 import { currentTenant, holds, liveSupervisors, tenantsInScope } from "./chrome";
 import { useLoad, type Load } from "./load";
 import { Nav } from "./Nav";
+import { Preferences } from "./Preferences";
 import { TopBar } from "./TopBar";
 import styles from "./Shell.module.css";
 
@@ -127,14 +128,17 @@ export function Shell({ api, session, onSignedOut }: { api: ApiClient; session: 
           tenants={tenants}
           tenant={tenant}
           supervisors={liveSupervisors(key ? supervisors : forbidden)}
-          prefs={prefs}
           navOpen={navOpen}
           onNav={setNavOpen}
           onTenant={(next) => change({ ...prefs, tenant: next })}
-          onPrefs={change}
           onSignOut={signOut}
         />
-        <Nav path={location.path} open={navOpen} onNavigate={() => setNavOpen(false)} />
+        <Nav
+          path={location.path}
+          open={navOpen}
+          onNavigate={() => setNavOpen(false)}
+          footer={<Preferences prefs={prefs} onPrefs={change} />}
+        />
         <main id="content" className={styles.main} tabIndex={-1}>
           {content}
         </main>

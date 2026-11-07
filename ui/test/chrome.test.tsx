@@ -8,7 +8,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Health, Identity, Session, Supervisor } from "../src/api/types";
 import { I18nProvider } from "../src/i18n/I18n";
-import { DEFAULT_PREFS } from "../src/prefs/prefs";
 import { currentTenant, healthStatus, holds, liveSupervisors, showsTenant, tenantsInScope } from "../src/shell/chrome";
 import type { Load } from "../src/shell/load";
 import { TopBar, type TopBarProps } from "../src/shell/TopBar";
@@ -59,11 +58,9 @@ function render(p: Partial<TopBarProps> & { session: Session }): string {
     tenants,
     tenant: currentTenant(tenants, undefined),
     supervisors: [],
-    prefs: DEFAULT_PREFS,
     navOpen: false,
     onNav: () => {},
     onTenant: () => {},
-    onPrefs: () => {},
     onSignOut: () => {},
     ...p,
   };

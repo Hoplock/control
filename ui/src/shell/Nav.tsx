@@ -1,12 +1,23 @@
 // The navigation (DESIGN.md §4): fixed, labelled — never icon-only — and
 // listing only the screens that exist (../screens/registry).
 
+import type { ReactNode } from "react";
 import { useI18n } from "../i18n/I18n";
 import { Link, match } from "../router/router";
 import { SCREENS } from "../screens/registry";
 import styles from "./Nav.module.css";
 
-export function Nav({ path, open, onNavigate }: { path: string; open: boolean; onNavigate(): void }) {
+export function Nav({
+  path,
+  open,
+  onNavigate,
+  footer,
+}: {
+  path: string;
+  open: boolean;
+  onNavigate(): void;
+  footer?: ReactNode;
+}) {
   const { t } = useI18n();
   return (
     <nav id="console-nav" className={styles.nav} data-open={open || undefined} aria-label={t("shell.nav.label")}>
@@ -28,6 +39,7 @@ export function Nav({ path, open, onNavigate }: { path: string; open: boolean; o
           );
         })}
       </ul>
+      <div className={styles.footer}>{footer}</div>
     </nav>
   );
 }
