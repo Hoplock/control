@@ -26,6 +26,44 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.36.0
+
+Phase 0049, the operator console's shell (M20, M21, M27). The north-bound
+listener now serves a console at `/console/`, built into the binary: `make
+build` and `go build` need no Node. No migration, and nothing in `ext` or
+`server` changes.
+
+- **`/console/`** serves the console: its shell, its assets under
+  `/console/assets/` (cached as immutable, gzip-compressed for a browser that
+  accepts it), its English catalogue at `/console/locales/en.json`, the font
+  licences under `/console/licenses/`, and the shell for every other path
+  under `/console/`, which the console routes. Only `GET` and `HEAD` are
+  served there. A missing asset is a `404`, never the shell.
+- **`/` redirects to `/console/`** (`302`). Any other path outside
+  `/console/`, `/host-console/` and `/api/v1/` is still Control's `404`
+  envelope, and no API path is ever answered with the console.
+- **What the console shows so far:** sign-in, through the north-bound API's
+  own session — the identity providers `GET /api/v1/session/methods` lists for
+  OIDC, and the break-glass local login, marked as such; then, in the chrome
+  of every page, which deployment this is (display name, short instance id,
+  health), the tenant where more than one is in scope, a badge for each live
+  supervisor credential and a break-glass session; and a Deployment view of
+  `…/instance` and `…/instance/health`. Light and dark themes, two densities,
+  English only. It calls nothing the API does not serve and holds no
+  privilege of its own.
+- **Signing in to the console through OIDC** needs the connector's
+  `redirect_uri` to be `https://<north listener>/console/sign-in/callback/<connector>`;
+  the console hands the provider's answer to
+  `GET /api/v1/session/federated/{connector}/callback`, which sets the session
+  cookie as before. A connector whose `redirect_uri` names that API route
+  still works for a client that is not the console. SAML connectors are
+  listed but cannot complete a sign-in from the console yet.
+- **New configuration:** `console.stripe`, the deployment's colour in the
+  console — `accent` (the default), `magenta`, `teal`, `orange` or `slate`.
+  Any other value refuses to start.
+- **The console's responses carry a `Content-Security-Policy`** that allows
+  only this origin, so a browser fetches nothing for it from anywhere else.
+
 ## v0.35.0
 
 Phase 0048, the supervising operator named in the instance's trail (M19). A

@@ -264,6 +264,9 @@ type Config struct {
 	// its opt-in outbound registration (0046, M19).
 	Instance   InstanceConfig   `yaml:"instance"`
 	Supervisor SupervisorConfig `yaml:"supervisor"`
+
+	// Console is the operator console's (0049, M20).
+	Console ConsoleConfig `yaml:"console"`
 }
 
 // PolicyConfig is what the publish-time report reads beyond the bundle (0019).
@@ -649,6 +652,7 @@ func (c *Config) applyDefaults() {
 		c.Tenant = DefaultTenant
 	}
 	c.applyInstanceDefaults()
+	c.applyConsoleDefaults()
 	if c.Log.Level == "" {
 		c.Log.Level = DefaultLogLevel
 	}
@@ -1067,6 +1071,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Supervisor.validate(); err != nil {
+		return err
+	}
+	if err := c.Console.validate(); err != nil {
 		return err
 	}
 	return c.UIDs.validate()

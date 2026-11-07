@@ -69,10 +69,13 @@ labels, a modal for anything consequential, and default component-kit blue.
 
 ## 3. Tokens
 
-All values live in **one** file (`ui/src/styles/tokens.css`, or the equivalent
-for the chosen framework) as CSS custom properties. Nothing else in `ui/` may
-contain a raw colour, a raw font size, or a raw radius — §10 makes that a check
-rather than a hope.
+All values live in **one** file, `ui/src/styles/tokens.css`, as CSS custom
+properties. Each colour is declared once for both themes as
+`light-dark(<light>, <dark>)`, so a theme is the page's colour scheme — the
+system's, or the operator's override as `data-theme` on `<html>` — and never a
+second copy of the palette. Nothing else in `ui/` may contain a raw colour, a
+raw font size, a raw radius, an off-scale space or a raw duration — §10 makes
+that a check rather than a hope.
 
 ### 3.1 Neutrals
 
@@ -109,7 +112,7 @@ remapping rather than a rewrite.
 | `--bg-raised` | `--n-0` | `--n-200` | popovers, dropdowns, command palette |
 | `--bg-sunken` | `--n-100` | `--n-50` | code, diff gutters, log bodies |
 | `--bg-hover` | `--n-100` | `--n-200` | row and control hover |
-| `--bg-selected` | `--a-50` | `--a-900` | selected row |
+| `--bg-selected` | `--a-50` | `--a-100` | selected row |
 | `--border-subtle` | `--n-200` | `--n-300` | table rules, dividers — **decorative** |
 | `--border-default` | `--n-400` | `--n-400` | inputs and control boundaries (≥ 3:1) |
 | `--border-strong` | `--n-500` | `--n-500` | emphasis (≥ 3:1) |
@@ -117,8 +120,10 @@ remapping rather than a rewrite.
 | `--text-secondary` | `--n-600` | `--n-600` | labels, metadata |
 | `--text-tertiary` | `--n-500` | `--n-500` | placeholders, disabled |
 | `--text-on-accent` | `#ffffff` | `--n-0` | text on filled accent |
+| `--accent` | `--a-500` | `--a-500` | the primary action, the active navigation mark, selection |
+| `--focus-ring` | `--a-500` | `--a-500` | the focus ring (§8) |
 
-Two of those rows carry an argument rather than a value:
+Three of those rows carry an argument rather than a value:
 
 - **`--border-subtle` is decorative and exempt from 3:1.** WCAG 1.4.11 governs
   the boundary you need in order to *identify a control*; a table rule is not
@@ -129,6 +134,10 @@ Two of those rows carry an argument rather than a value:
   accent is a light lavender, and white on it is 3.2:1 — it fails, and it also
   simply looks wrong. Flipping the foreground rather than darkening the accent
   keeps the accent recognisably one colour across themes.
+- **`--bg-selected` is `--a-100` in dark.** The dark accent ramp runs the
+  other way, so its `--a-900` is the light lavender `#dee3fd`, on which body
+  text would be 1.05:1; `--a-100` is the dark ramp's tint, as `--a-50` is the
+  light one's.
 
 ### 3.3 Accent
 
@@ -158,6 +167,9 @@ vocabulary — matching the domain rather than a generic palette:
 | `--s-outage` | unreachable, 5xx, an outage — **never a deny** | `#6d31d9` | `#a78bfa` |
 | `--s-info` | informational, pending, in progress | `#175cc4` | `#58a6ff` |
 
+`--s-unknown` (`--n-400`) is the glyph of *not reported* (§6): a neutral, so
+that it is never read as any of the five.
+
 **`--s-deny` and `--s-outage` are different colours on purpose**, and this is the
 one place the design system is enforcing an architectural decision rather than a
 taste: PLAN **M11** says a deny is a decision this server made and everything
@@ -177,9 +189,12 @@ hostnames, policy source, and log bodies are monospace, because they are read
 character by character and compared by eye — and they stay LTR, unsubstituted
 Latin digits in every locale (§9).
 
-Inter covers Latin, Greek and Cyrillic. A locale needing another script needs
-another bundled face, which §9 treats as a deliberate size decision rather than
-a download.
+Each face is bundled as its **Latin subset** (Inter 48 KB, JetBrains Mono
+40 KB, under `unicode-range`), every accent the `en-XA` pseudolocale uses
+included. The faces themselves cover Greek and Cyrillic too, but those subsets
+would add about 38 KB and take the fonts past §11's 120 KB, so text in them
+falls back to the system stack until a locale needs it — and then bundling them
+is that locale's size decision (§9), never a download.
 
 | Token | Size / line-height | Weight | Use |
 | --- | --- | --- | --- |
@@ -207,6 +222,10 @@ in a column. Uppercase is for `--t-caption` only, never for headings.
   `--e-1` dropdowns, `--e-2` popovers/palette, `--e-3` dialogs. In dark mode
   elevation is a lighter surface plus a subtle border, not a heavier shadow —
   shadows do not read on a dark ground.
+- **Layout dimensions** — the navigation's width, the top bar's height, a
+  control's height, a status glyph's size, a border's width — are tokens as
+  well (`--shell-nav-width`, `--shell-topbar-height`, `--control-height`,
+  `--glyph-size`, `--border-width`), so no component carries a magic number.
 - **Motion** — `--m-fast 120ms` (hover, focus, checkbox), `--m-base 180ms`
   (dropdown, popover, tab), `--m-slow 240ms` (dialog, drawer, page transition),
   all `cubic-bezier(0.2, 0, 0, 1)`. Nothing animates longer than 240ms.
@@ -261,10 +280,24 @@ never confuse them, and that the distinction survives a screenshot. Design side:
   mono, and its health dot. Hovering gives version, contract version and node
   membership; clicking opens the instance view.
 - Each deployment carries an **operator-assigned accent stripe** — a 3px bar
-  along the top edge of the viewport plus a matching chip behind the deployment
-  name. It is configuration, not inference: the console must never guess
-  "production" from a hostname. Default is the accent colour; a deployment that
-  sets nothing looks normal.
+  along the top edge of the viewport, on every page including sign-in, plus a
+  matching chip behind the deployment name. It is configuration, not
+  inference: the console must never guess "production" from a hostname. It is
+  `console.stripe` in the server's configuration, one of the five below, and
+  the server writes it onto `<html>` as `data-stripe` before the first paint.
+  Default is the accent colour; a deployment that sets nothing looks normal.
+  None is a status hue, because a deployment's colour is not a status:
+
+  | Stripe | Bar, light / dark | Chip tint, light / dark |
+  | --- | --- | --- |
+  | `accent` (default) | `#4f5ae3` / `#7c86ef` | `#eef1fe` / `#1b1f3d` |
+  | `magenta` | `#b5179e` / `#e879d0` | `#fbeaf7` / `#3a1534` |
+  | `teal` | `#0f766e` / `#2dd4bf` | `#e3f6f4` / `#0f2e2b` |
+  | `orange` | `#c2410c` / `#fb923c` | `#fdeee6` / `#3a1d0c` |
+  | `slate` | `#475569` / `#94a3b8` | `#eef1f5` / `#1c2430` |
+
+  Each bar is ≥ 3:1 on the canvas and the name and id on each tint ≥ 4.5:1, in
+  both themes (§10.2).
 - **Tenant** appears in the chrome only where more than one is in scope (M18).
   Switching is an explicit control, never a URL the operator edits by hand.
 - **Supervised** deployments show a badge naming the supervisor, linking to the
@@ -401,8 +434,9 @@ the same reason.
 - **Script coverage is a bundle decision, not a download.** §2 forbids runtime
   network fetches, so a locale whose script the bundled faces do not cover — CJK,
   Arabic, Devanagari — means bundling another face, which is a real size decision
-  someone makes on purpose. Inter covers Latin, Greek and Cyrillic; the stack
-  falls back to system fonts beyond that. Pretending a new script is a free
+  someone makes on purpose. The bundled subsets are Latin (§3.5): Greek
+  and Cyrillic, which the faces cover, fall back to system fonts until a
+  locale bundles their subsets. Pretending a new script is a free
   `<link>` is how an air-gapped deployment ends up rendering tofu.
 - **The server does not localise.** North-bound errors arrive as a stable code
   and typed parameters and the console owns the sentence (M21, 0019); compiler
@@ -418,8 +452,11 @@ A design system nobody checks is a mood board. Each of these is a CI job or a
 test, and the console phases' acceptance criteria name them (0049 the static
 checks 1, 2 and 9; 0050 the browser checks 3–8):
 
-1. **Token lint.** No raw hex, `rgb()`, `px` font size, or `px` radius outside
-   `tokens.css`. A stylelint rule; it fails the build.
+1. **Token lint.** No raw hex, named colour, `rgb()`/`hsl()`/`light-dark()`,
+   font size, radius, `px` margin, padding or gap, or transition duration
+   outside `tokens.css`; and no physical property (`margin-left`, `left`,
+   `border-right`, a four-value margin or padding, `text-align: left`) anywhere
+   (§9). Stylelint's own rules, in `ui/.stylelintrc.json`; it fails the build.
 2. **Contrast test.** Every semantic foreground/background pair asserted against
    its AA ratio, in both themes, as a unit test over the token file. A token
    change that breaks contrast fails before review.
@@ -444,15 +481,19 @@ checks 1, 2 and 9; 0050 the browser checks 3–8):
    asserts nothing leaks a physical CSS property. No RTL locale ships; this is
    what keeps adding one cheap.
 9. **String and format lint.** No literal user-visible string in a component, and
-   no `Date`/`Intl`/number formatting outside the locale helpers.
+   no `Date`/`Intl`/number formatting outside the locale helpers
+   (`ui/src/i18n/`). It reads the TypeScript syntax tree
+   (`ui/scripts/lint-strings.mjs`), and it also refuses an inline `style` and a
+   raw colour in a string, the two ways a value escapes the token lint.
 
 ---
 
 ## 11. Constraints on the implementation
 
-- **Typed components with a real build.** TypeScript, Vite. The framework choice
-  (React, Svelte, Vue) stays with the implementing session; the tokens, the
-  component inventory and §10 do not.
+- **Typed components with a real build.** TypeScript, Vite. The framework is
+  **React** (chosen in 0049, inherited by every later phase): the headless
+  primitives below are written for it first, which is the deciding reason; the
+  tokens, the component inventory and §10 bind whatever it renders.
 - **Headless primitives are encouraged; visual kits are forbidden.** Radix, Ark,
   Headless UI, TanStack Table, cmdk — accessible behaviour with no imposed
   identity — are exactly right. Material, Bootstrap, Ant, Chakra and anything
@@ -471,9 +512,13 @@ checks 1, 2 and 9; 0050 the browser checks 3–8):
 - **Bundle budget**: ≤ 350 KB gzipped JS for the active locale on first load, fonts ≤ 120 KB. The
   binary is shipped to self-hosters who may serve it over a VPN from a small
   instance.
-- **Assets are built in CI and committed** under `ui/dist/`, so `make build`
-  works on a machine with no Node (0049). The build is reproducible and a drift
-  check proves `dist/` matches `src/`.
+- **Assets are built in CI and committed** under `internal/console/dist/`, so
+  `make build` works on a machine with no Node (0049). Not `ui/dist/`:
+  `go:embed` cannot reach outside its own package's directory, and a Go package
+  in `ui/` would be a public package of the module — a compatibility promise to
+  Enterprise (PLAN M15, M23), which a directory of built files has no business
+  being. The build is reproducible from `ui/package-lock.json`, and a drift
+  check rebuilds it in CI and fails on any difference.
 
 ---
 

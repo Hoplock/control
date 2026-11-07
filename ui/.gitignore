@@ -1,0 +1,4 @@
+node_modules/
+# The pseudolocale builds (en-XA, en-XB) are CI artefacts, never committed:
+# en.json is the only catalogue in the tree (PLAN M21).
+build/

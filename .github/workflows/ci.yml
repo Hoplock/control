@@ -161,6 +161,91 @@ jobs:
       - name: Prove the release check refuses what it must
         run: make release-check-guard
 
+  # The console's static checks (ui/DESIGN.md §10, PLAN M20, M21): each its
+  # own job, so a failure names the rule it broke. None needs Go or a
+  # database, and none is needed by `make build`, which embeds the committed
+  # build in internal/console/dist and runs no Node.
+  console-checks:
+    name: console ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # §10.1: no colour, font size, radius or physical property outside
+          # ui/src/styles/tokens.css.
+          - check: token lint
+            run: npm run lint:tokens
+          # §10.2: every semantic pair, both themes, at the threshold that
+          # applies to it, over the token file itself.
+          - check: contrast
+            run: npm run test:contrast
+          # §10.9: no user-visible literal in a component, no formatting
+          # outside the locale helpers; and the lint shown failing.
+          - check: string lint
+            run: npm run lint:strings
+          # M21: en.json is the only catalogue, every key is referenced and
+          # every referenced key exists, and en-XA accents and pads it all.
+          - check: catalogue keys
+            run: npm run test:catalogue
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ui/.nvmrc
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install the locked toolchain
+        run: npm ci
+      - name: Check ${{ matrix.check }}
+        run: ${{ matrix.run }}
+
+  # The console's build: typed, unit-tested, rebuilt from source and compared
+  # with the committed internal/console/dist (§11's drift check), held to the
+  # bundle budget, and built again under both pseudolocales (§10.7, §10.8),
+  # whose builds 0050 renders. The pseudolocale builds are artefacts, never
+  # committed: en.json is the only catalogue in the tree.
+  console-build:
+    name: console build, drift and budget
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ui/.nvmrc
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install the locked toolchain
+        run: npm ci
+      - name: Type-check
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build the console from source
+        run: npm run build
+      - name: Prove the committed build is this source's
+        run: |
+          if ! git diff --quiet -- ../internal/console/dist || [ -n "$(git status --porcelain -- ../internal/console/dist)" ]; then
+            git status --short -- ../internal/console/dist
+            echo "internal/console/dist is not what ui/ builds: run 'npm run build' in ui/ and commit the result" >&2
+            exit 1
+          fi
+      - name: Hold the bundle budget (§11)
+        run: npm run budget
+      - name: Build the pseudolocales (en-XA, en-XB)
+        run: npm run build:pseudo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: console-pseudolocales
+          path: ui/build/
+          retention-days: 14
+
   license:
     name: license headers
     runs-on: ubuntu-latest
@@ -384,7 +469,7 @@ jobs:
   release:
     name: release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, lint, release-check, license, contract, conform, conform-self]
+    needs: [test, lint, release-check, license, contract, conform, conform-self, console-checks, console-build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
