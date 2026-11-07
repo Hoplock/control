@@ -1,0 +1,44 @@
+/* The page ground and the rules every element shares. Values are tokens. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  min-block-size: 100vh;
+  overflow-x: hidden;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font: var(--t-body);
+  font-feature-settings: "cv11";
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+/* DESIGN.md §8: focus is always visible, a 2px accent ring, 2px offset. */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+a {
+  color: inherit;
+}
+code {
+  font: var(--t-mono);
+}

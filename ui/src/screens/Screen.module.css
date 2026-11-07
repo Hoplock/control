@@ -1,0 +1,108 @@
+.screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-32);
+  max-inline-size: var(--content-max);
+}
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-16);
+}
+.title {
+  margin: 0;
+  font: var(--t-h1);
+  color: var(--text-primary);
+}
+.lede {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.sectionTitle {
+  margin: 0;
+  font: var(--t-h2);
+  color: var(--text-primary);
+}
+.fields {
+  display: grid;
+  grid-template-columns: minmax(max-content, auto) minmax(0, 1fr);
+  gap: var(--sp-8) var(--sp-24);
+  margin: 0;
+}
+.fields dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.fields dd {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.reasons {
+  display: grid;
+  gap: var(--sp-6);
+  margin: 0;
+  padding-inline-start: var(--sp-20);
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.tableWrap {
+  overflow-x: auto;
+}
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font: var(--t-cell);
+  font-variant-numeric: tabular-nums;
+}
+.table th,
+.table td {
+  block-size: var(--row-height);
+  padding: var(--cell-pad-block) var(--cell-pad-inline);
+  border-block-end: var(--border-width) solid var(--border-subtle);
+  text-align: start;
+  vertical-align: top;
+}
+.table th {
+  white-space: nowrap;
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.skeleton {
+  block-size: var(--sp-64);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+}
+.link {
+  color: var(--text-primary);
+  text-decoration-color: var(--accent);
+  text-underline-offset: var(--sp-2);
+}
+.empty {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.button {
+  min-block-size: var(--control-height);
+  padding: 0 var(--sp-12);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: var(--t-body);
+}
+.button:hover {
+  background: var(--bg-hover);
+}

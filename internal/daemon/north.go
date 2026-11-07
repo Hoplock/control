@@ -18,6 +18,7 @@ import (
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/authoring"
 	"github.com/hoplock/control/internal/config"
+	"github.com/hoplock/control/internal/console"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/extdefault"
 	"github.com/hoplock/control/internal/fleet"
@@ -100,6 +101,13 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 		return nil, nil, err
 	}
 
+	// The operator console (0049), mounted inside its own namespace (M27):
+	// files and a history fallback under /console/, and nothing else.
+	shell, err := console.New(console.Options{Stripe: cfg.Console.Stripe})
+	if err != nil {
+		return nil, nil, err
+	}
+
 	handler, err := north.New(north.Options{
 		Federation:           federation,
 		Instance:             d.instance,
@@ -130,6 +138,11 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 		HostProvider:   h.Provider,
 		HostRoutes:     h.Routes,
 		HostErrorCodes: h.ErrorCodes,
+		Consoles: []north.Console{{
+			Patterns:  shell.Patterns(),
+			Catalogue: shell.Catalogue(),
+			Handler:   shell,
+		}},
 	})
 	if err != nil {
 		return nil, nil, err

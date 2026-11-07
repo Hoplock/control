@@ -1693,12 +1693,13 @@ control/
 │   ├── notify/             # operator notifications: the webhook, registered notifiers (M15)
 │   ├── extdefault/         # Control's own implementations behind the ext/ seam (M15)
 │   ├── instance/           # deployment identity, supervisory registration (M19)
+│   ├── console/            # the console's committed build (dist/), embedded and served under /console/ (M20, M27)
 │   └── httpapi/
 │       ├── south/          # proxy-facing handlers (the contract)
 │       └── north/          # admin/operator/CI handlers
 ├── ext/                    # PUBLIC extension points — the seam Enterprise implements (M15)
 ├── server/                 # PUBLIC: how a host binary starts Control, adds config and routes (M15)
-├── ui/                     # management console, embedded into the binary
+├── ui/                     # the operator console's source; built into internal/console/dist
 │   └── DESIGN.md           # the console's design system — binding, not advisory (M20)
 ├── contract/               # VENDORED from the Hoplock Proxy repository — read-only (M1)
 ├── deploy/                 # docker-compose: this server + Postgres + a proxy
@@ -2176,7 +2177,12 @@ for nothing.
   protocol's rule written beside the north-bound one.
 - **`ui`** — the operator console, a north-bound API client with no privilege of
   its own (M2) and no database access at all, built from embedded assets so a
-  deployment stays one binary. Its visual design is governed by `ui/DESIGN.md`
+  deployment stays one binary. Its source is `ui/` (TypeScript, React, Vite);
+  its build is committed to `internal/console/dist`, which `internal/console`
+  embeds and serves under `/console/` (M27) — files and a history fallback,
+  never a route — so `make build` needs no Node, and CI rebuilds it and fails
+  on any difference. Every call it makes names a route of the north-bound
+  table (`ui/src/api/routes.ts`), with the operator's own session cookie. Its visual design is governed by `ui/DESIGN.md`
   and is enforced rather than reviewed by eye (M20); where the design encodes a
   decision from this plan — a deny and an outage are different things (M11), a
   rolling upgrade is in progress and not a fault (M19) — the design document

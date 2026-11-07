@@ -47,7 +47,7 @@ GOLANGCI_LINT  ?= golangci-lint
 APIDIFF_VERSION ?= v0.0.0-20261007192929-f45ad48fbe92
 
 .PHONY: all build test vet lint exhaustive-guard fmt license-check tidy clean run migrate \
-        contract-check contract-sync conform release-check release-check-guard check help
+        contract-check contract-sync conform release-check release-check-guard ui ui-check check help
 
 all: build
 
@@ -104,7 +104,20 @@ migrate:
 	$(GO) run ./cmd/hoplock-control migrate --config $(CONFIG) $(MIGRATE_FLAGS)
 
 ## check: everything CI runs on a pull request, in CI's order.
-check: build vet test lint license-check release-check
+check: build vet test lint license-check release-check ui-check
+
+# --- The operator console (PLAN M20, M21; ui/DESIGN.md) -----------------------
+#
+# `make build` embeds the committed internal/console/dist and needs no Node.
+# These two are for changing the console, and they need Node (ui/.nvmrc).
+
+## ui: rebuild the console from ui/ into internal/console/dist. Commit the result.
+ui:
+	cd ui && npm ci && npm run build
+
+## ui-check: the console's static checks, tests, build, budget and pseudolocale builds.
+ui-check:
+	cd ui && npm ci && npm run check
 
 # --- The vendored contract (M1) and the conformance suite -------------------
 

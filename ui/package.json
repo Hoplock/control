@@ -1,0 +1,40 @@
+{
+  "name": "hoplock-control-console",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The Hoplock Control operator console. Built into internal/console/dist and embedded in the server binary (PLAN M20, ui/DESIGN.md).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12 <23"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p . && vite build",
+    "build:pseudo": "vite build --mode en-XA && vite build --mode en-XB",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "test:contrast": "vitest run test/contrast.test.ts",
+    "test:catalogue": "vitest run test/catalogue.test.ts test/pseudo.test.ts",
+    "lint:tokens": "stylelint \"src/**/*.css\"",
+    "lint:strings": "node scripts/lint-strings.mjs && vitest run test/lint-strings.test.ts",
+    "budget": "node scripts/budget.mjs",
+    "check": "npm run typecheck && npm run lint:tokens && npm run lint:strings && npm test && npm run build && npm run budget && npm run build:pseudo"
+  },
+  "dependencies": {
+    "@formatjs/icu-messageformat-parser": "3.5.22",
+    "intl-messageformat": "12.1.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "stylelint": "18.0.0",
+    "typescript": "6.0.3",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}

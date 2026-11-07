@@ -1,0 +1,42 @@
+{
+  "reportNeedlessDisables": true,
+  "reportInvalidScopeDisables": true,
+  "rules": {
+    "color-no-hex": true,
+    "color-named": "never",
+    "function-disallowed-list": ["rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix", "light-dark"],
+    "declaration-property-unit-disallowed-list": {
+      "/^font(-size)?$/": ["px", "pt", "pc", "rem", "em", "ex", "ch", "%", "vw", "vh", "cm", "mm", "in", "q"],
+      "/radius$/": ["px", "rem", "em", "%"],
+      "/^(margin|padding|gap|row-gap|column-gap)(-.*)?$/": ["px", "rem", "em"],
+      "/^(transition|animation)(-duration|-delay)?$/": ["ms", "s"]
+    },
+    "property-disallowed-list": [
+      "/^(margin|padding)-(left|right)$/",
+      "left", "right",
+      "/^border-(left|right)(-.*)?$/",
+      "/^border-(top|bottom)-(left|right)-radius$/",
+      "/^scroll-(margin|padding)-(left|right)$/"
+    ],
+    "declaration-property-value-disallowed-list": {
+      "/^(float|clear)$/": ["left", "right"],
+      "/^text-align$/": ["left", "right"],
+      "/^resize$/": ["horizontal"],
+      "/^box-shadow$/": ["/\\d+px/"]
+    },
+    "declaration-property-value-allowed-list": {
+      "/^(margin|padding|scroll-margin|scroll-padding)$/": ["/^\\S+$/", "/^\\S+\\s+\\S+$/", "/^\\S+\\s+\\S+\\s+\\S+$/"]
+    }
+  },
+  "overrides": [
+    {
+      "files": ["src/styles/tokens.css"],
+      "rules": {
+        "color-no-hex": null,
+        "function-disallowed-list": null,
+        "declaration-property-unit-disallowed-list": null,
+        "declaration-property-value-disallowed-list": null
+      }
+    }
+  ]
+}

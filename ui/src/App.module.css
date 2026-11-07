@@ -1,0 +1,27 @@
+/* The operator-assigned stripe (DESIGN.md §5): along the top edge of the
+   viewport, on every page, sign-in included, so that it survives a
+   screenshot of any of them. */
+.stripe {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  z-index: 20;
+  block-size: var(--stripe-height);
+  background: var(--stripe);
+}
+.alone {
+  display: grid;
+  gap: var(--sp-16);
+  justify-items: start;
+  max-inline-size: var(--content-max);
+  padding: var(--sp-64) var(--sp-24);
+}
+.retry {
+  min-block-size: var(--control-height);
+  padding: 0 var(--sp-12);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: var(--t-body);
+}
