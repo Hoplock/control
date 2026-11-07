@@ -124,6 +124,10 @@ Enterprise feature that is not installed is not shown as broken.
 - 0049's static checks stay green, the catalogue key test among them.
 
 ## Definition of Done & hand-off
+**Screenshots in the PR** (`docs/PROTOCOL.md` §8, "A console phase shows what
+it built"): the description shows every screen and every state this phase
+builds or changes, light and dark side by side.
+
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`; add
 `docs/learnings/0055-console-extensions-and-reports-learnings.md`. Its summary
 block MUST give the routes each screen consumes, the lag component's place in

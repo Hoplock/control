@@ -183,6 +183,15 @@ fixtures, and by nothing else:
 - 0049's static checks stay green.
 
 ## Definition of Done & hand-off
+**Screenshots in the PR** (`docs/PROTOCOL.md` §8, "A console phase shows what
+it built"): the description shows every screen and every state this phase
+builds or changes, light and dark side by side. Every component of the set is
+shown in each state it defines, as well as Fleet. The baseline this phase
+commits (DESIGN.md §10.4) is in the module's tree, so every `go get` of the
+module carries it (M23): keep it to one scale and compressed, and give its size
+in the learnings. From this phase on, a screen the baseline covers is shown by
+the baseline's own files.
+
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`; add
 `docs/learnings/0050-console-components-and-fleet-learnings.md`. Its summary
 block MUST give the routes Fleet consumes, where the component set lives, and

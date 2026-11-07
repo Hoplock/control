@@ -188,6 +188,11 @@ written into DESIGN.md where it belongs, so a reviewer can point at it.
   attached to the PR.
 
 ## Definition of Done & hand-off
+**Screenshots in the PR** (`docs/PROTOCOL.md` §8, "A console phase shows what
+it built"): the description shows every screen and every state this phase
+builds or changes, light and dark side by side. For each inconsistency fixed,
+the screen before and after.
+
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
 `docs/learnings/0058-console-consistency-audit-learnings.md`.
 

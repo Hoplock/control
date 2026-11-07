@@ -664,3 +664,15 @@ supervisor:
   # Permits an http:// endpoint, for a lab. Never in production: the
   # connection carries a credential.
   insecure_transport: false
+
+# The operator console, served at /console/ on the north-bound listener (phase
+# 0049, PLAN M20, M27). It is a client of the north-bound API with the
+# operator's own session and has no privilege of its own. To sign in through
+# an OIDC connector from it, set the connector's redirect_uri to
+# https://<this listener>/console/sign-in/callback/<connector name>.
+console:
+  # The deployment's colour: a bar along the top of every page and the chip
+  # behind the deployment's name, so that staging and production open side
+  # by side cannot be mistaken, in a screenshot too. One of accent (the
+  # default), magenta, teal, orange or slate. Never a status colour.
+  stripe: accent

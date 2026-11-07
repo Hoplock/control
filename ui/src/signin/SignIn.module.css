@@ -1,0 +1,107 @@
+.page {
+  display: grid;
+  place-items: start center;
+  min-block-size: 100vh;
+  padding: var(--sp-64) var(--sp-16);
+  background: var(--bg-canvas);
+}
+.card {
+  display: grid;
+  gap: var(--sp-16);
+  inline-size: min(100%, calc(var(--sp-64) * 7));
+  padding: var(--sp-32);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: var(--bg-surface);
+}
+.title {
+  margin: 0;
+  font: var(--t-h1);
+  color: var(--text-primary);
+}
+.heading {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.help {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.methods {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.form {
+  display: grid;
+  gap: var(--sp-12);
+}
+.field {
+  display: grid;
+  gap: var(--sp-4);
+}
+.label {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.input {
+  min-block-size: var(--control-height);
+  padding: 0 var(--sp-8);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: var(--t-body);
+}
+.primary,
+.warning,
+.quiet {
+  min-block-size: var(--control-height);
+  padding: var(--sp-6) var(--sp-16);
+  border-radius: var(--r-md);
+  font: var(--t-body);
+  text-align: start;
+  transition: background-color var(--m-fast) var(--ease);
+}
+.primary {
+  inline-size: 100%;
+  border: var(--border-width) solid var(--accent);
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+.warning {
+  border: var(--border-width) solid var(--s-warn);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.quiet {
+  justify-self: start;
+  padding: var(--sp-4) 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: var(--sp-2);
+}
+.quiet:hover {
+  color: var(--text-primary);
+}
+.primary:disabled,
+.warning:disabled {
+  opacity: 0.6;
+}
+.breakGlass {
+  display: grid;
+  gap: var(--sp-12);
+  padding-block-start: var(--sp-16);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+}
+.skeleton {
+  block-size: var(--sp-40);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+}

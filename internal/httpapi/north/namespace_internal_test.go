@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoplock/control/internal/console"
 	"github.com/hoplock/control/internal/identity"
 )
 
@@ -96,19 +97,23 @@ func stubConsole(name string) http.Handler {
 	})
 }
 
-// testConsoles are a stub for each console, shaped as a single-page app is:
-// an index at the root, assets, a catalogue, and a history fallback over the
-// rest of the prefix.
+// realConsole is Control's console as the daemon mounts it (0049): the
+// embedded build, its own patterns and its real en.json keys, so that these
+// tests hold the namespace against what ships rather than against a stub.
+func realConsole() Console {
+	c, err := console.New(console.Options{})
+	if err != nil {
+		panic(err)
+	}
+	return Console{Patterns: c.Patterns(), Catalogue: c.Catalogue(), Handler: c}
+}
+
+// testConsoles are Control's real console and a stub of a host's, shaped as
+// a single-page app is: an index at the root, assets, a catalogue, and a
+// history fallback over the rest of the prefix.
 func testConsoles() []Console {
 	return []Console{
-		{
-			Patterns: []string{
-				ConsolePrefix + "{$}", ConsolePrefix + "assets/", ConsolePrefix + "locales/en.json",
-				ConsolePrefix + "{deep...}",
-			},
-			Catalogue: []string{"audit.title", "nav.fleet"},
-			Handler:   stubConsole("control"),
-		},
+		realConsole(),
 		{
 			Provider:  testProvider,
 			Patterns:  []string{HostConsoleRoot(testProvider) + "screens.js", HostConsoleRoot(testProvider) + "{deep...}"},
@@ -152,7 +157,8 @@ func TestEveryPathIsInsideItsOwnNamespaceAndNoOther(t *testing.T) {
 	for _, m := range all {
 		owners[m.owner]++
 	}
-	if owners["Control's API"] < 70 || owners["a host's API"] != 3 || owners["Control's console"] != 4 || owners["a host's console"] != 2 {
+	if owners["Control's API"] < 70 || owners["a host's API"] != 3 ||
+		owners["Control's console"] != len(realConsole().Patterns) || owners["Control's console"] < 4 || owners["a host's console"] != 2 {
 		t.Fatalf("walked %v, so this asserted little", owners)
 	}
 	for _, p := range namespaceProblems(testProvider, all) {
@@ -206,6 +212,8 @@ func TestEachNamespaceAnswersOnlyInsideItsOwnPrefix(t *testing.T) {
 		{"/console/", "control"},
 		{"/console/audit/records?subject=alice", "control"},
 		{"/console/fleet/proxies/p-1", "control"},
+		{"/console/sign-in/callback/corp?code=c&state=s", "control"},
+		{"/console/index.html", "control"},
 		{HostConsoleRoot(testProvider) + "approvals/1", "host"},
 		{HostConsoleRoot(testProvider) + "screens.js", "host"},
 		{"/nowhere", "not_found"},
@@ -227,8 +235,23 @@ func TestEachNamespaceAnswersOnlyInsideItsOwnPrefix(t *testing.T) {
 			if rec.Code != http.StatusNotFound || decodeCode(t, rec) != CodeNotFound {
 				t.Errorf("%s answered %d %q, want Control's 404 envelope", c.path, rec.Code, got)
 			}
+		case c.want == "control":
+			// Control's real shell: the page its app mounts into.
+			if rec.Code != http.StatusOK || !strings.Contains(got, `<div id="root">`) || !strings.Contains(got, `/console/assets/`) {
+				t.Errorf("%s answered %d %q, want Control's console", c.path, rec.Code, got)
+			}
 		case !strings.Contains(got, "<title>"+c.want+"</title>"):
 			t.Errorf("%s answered %d %q, want %s's console", c.path, rec.Code, got, c.want)
+		}
+	}
+
+	// A missing script is a 404 inside the console, never the shell: a
+	// module answered with HTML fails as a puzzle rather than as a 404.
+	for _, path := range []string{"/console/assets/missing.js", "/console/licenses/missing.txt"} {
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), `<div id="root">`) {
+			t.Errorf("%s answered %d %q, want a 404 and not the shell", path, rec.Code, rec.Body.String())
 		}
 	}
 
@@ -288,8 +311,8 @@ func TestAConsoleOutsideItsPrefixIsRefused(t *testing.T) {
 		"a console with no handler":                    {{Patterns: []string{ConsolePrefix}}},
 		"a console that mounts nothing":                {{Handler: stubConsole("x")}},
 		"two consoles on one pattern":                  {control, with(control, ConsolePrefix+"assets/")},
-		"a host key equal to Control's":                {control, keys(host, "audit.title")},
-		"a host key equal to Control's, mounted first": {keys(host, "nav.fleet"), control},
+		"a host key equal to Control's":                {control, keys(host, "nav.deployment")},
+		"a host key equal to Control's, mounted first": {keys(host, "app.name"), control},
 		"a host key outside its provider":              {keys(host, "approvals.title")},
 		"a host key under another provider":            {keys(host, "other/host:approvals.title")},
 		"a host key that is only its provider":         {keys(host, testProvider+":")},

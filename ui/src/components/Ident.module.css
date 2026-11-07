@@ -1,0 +1,7 @@
+.ident {
+  font: var(--t-mono);
+  font-variant-numeric: tabular-nums;
+  unicode-bidi: isolate;
+  color: inherit;
+  overflow-wrap: anywhere;
+}

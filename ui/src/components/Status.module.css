@@ -1,0 +1,41 @@
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  font: var(--t-label);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.glyph {
+  inline-size: var(--glyph-size);
+  block-size: var(--glyph-size);
+  flex: none;
+  fill: currentcolor;
+  overflow: visible;
+}
+.hollow {
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.4;
+}
+.label {
+  color: var(--text-primary);
+}
+.status[data-tone="allow"] .glyph {
+  color: var(--s-allow);
+}
+.status[data-tone="deny"] .glyph {
+  color: var(--s-deny);
+}
+.status[data-tone="warn"] .glyph {
+  color: var(--s-warn);
+}
+.status[data-tone="outage"] .glyph {
+  color: var(--s-outage);
+}
+.status[data-tone="info"] .glyph {
+  color: var(--s-info);
+}
+.status[data-tone="unknown"] .glyph {
+  color: var(--s-unknown);
+}

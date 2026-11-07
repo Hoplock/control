@@ -399,6 +399,34 @@ Any prompt must be runnable by a **fresh** session with no prior context. It mus
 - Do not create a PR for work the user hasn't asked to be turned into a PR; the
   normal implementation flow above does open one.
 
+### A console phase shows what it built
+
+A reviewer cannot judge a screen from its diff, and M20 makes how a screen
+looks part of done. So the PR of every phase that builds or changes the
+console (0049–0058, and any later change under `ui/`) shows, in its
+description, a screenshot of **every screen and every state it builds or
+changes**:
+
+- light and dark side by side, at 2×, 1280 px wide unless the state is about
+  width;
+- each state the screen defines (loading, empty, error, partial —
+  `ui/DESIGN.md` §7), each density where it has a table, below 1024 px where its
+  layout changes, and the `en-XA` and `en-XB` builds;
+- a state one server cannot produce (a cluster mid-upgrade, an outage) made by
+  substituting the API's answer **in the browser**, and captioned as
+  substituted — never by a route the server binds (§3's debug-endpoint rule);
+- for a changed screen, the base's image beside the head's.
+
+The images are linked by commit SHA —
+`https://github.com/Hoplock/control/blob/<sha>/<path>?raw=true` — so they do
+not move with the branch. Images that only document the PR are committed in one
+commit and deleted in the next: the module's tree is what every `go get`
+downloads, so a host pays for every file in it (M23), while the PR's commits
+stay reachable on GitHub. Once 0050's screenshot baseline is committed
+(`ui/DESIGN.md` §10.4), a screen it covers is shown by the baseline's own
+files, so the PR shows exactly what CI diffs. When review changes a screen, the
+images are retaken and the description updated in the same push.
+
 ### Say each thing once
 
 A phase produces three records, with three different readers:

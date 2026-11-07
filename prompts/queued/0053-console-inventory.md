@@ -87,6 +87,10 @@ access for a while.
 - 0049's static checks stay green, the catalogue key test among them.
 
 ## Definition of Done & hand-off
+**Screenshots in the PR** (`docs/PROTOCOL.md` §8, "A console phase shows what
+it built"): the description shows every screen and every state this phase
+builds or changes, light and dark side by side.
+
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`; add
 `docs/learnings/0053-console-inventory-learnings.md`. Its summary block MUST
 give the routes each screen consumes, its deep links, and where 0054 adds the

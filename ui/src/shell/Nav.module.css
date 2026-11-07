@@ -1,0 +1,64 @@
+/* The navigation fills its row of the shell, so its surface runs the page's
+   full height, and scrolls on its own when it is longer than the row. */
+.nav {
+  grid-area: nav;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  overflow-y: auto;
+  padding: var(--sp-16) var(--sp-12);
+  background: var(--bg-surface);
+  border-inline-end: var(--border-width) solid var(--border-subtle);
+}
+.product {
+  margin: 0 0 var(--sp-16);
+  padding: 0 var(--sp-8);
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.list {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.item {
+  display: block;
+  padding: var(--sp-6) var(--sp-8);
+  border-radius: var(--r-sm);
+  border-inline-start: var(--sp-2) solid transparent;
+  color: var(--text-secondary);
+  font: var(--t-body);
+  text-decoration: none;
+  transition: background-color var(--m-fast) var(--ease);
+}
+.item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.item[aria-current="page"] {
+  background: var(--bg-selected);
+  border-inline-start-color: var(--accent);
+  color: var(--text-primary);
+}
+.footer {
+  margin-block-start: auto;
+  padding: var(--sp-16) var(--sp-8) 0;
+}
+
+/* Below the floor the navigation is a drawer over the content's row, opened
+   from the top bar's Menu. */
+@media (width < 1024px) {
+  .nav {
+    grid-area: main;
+    z-index: 3;
+    display: none;
+    justify-self: start;
+    inline-size: var(--shell-nav-width);
+    box-shadow: var(--e-2);
+  }
+  .nav[data-open] {
+    display: flex;
+  }
+}
