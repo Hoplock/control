@@ -1,4 +1,4 @@
-# 0054 — Management console 6: locks, quarantines and the directory's subjects
+# 0055 — Management console 7: locks, quarantines and the directory's subjects
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -10,7 +10,7 @@
 - **`ui/DESIGN.md` — in full.** §6 is the status vocabulary every state below
   is rendered through.
 - `docs/learnings/` — read summaries; open `0049-console-shell`,
-  `0050-console-components-and-fleet` and `0053-console-inventory` **in
+  `0050-console-components-and-fleet` and `0054-console-inventory` **in
   full**: the shell, the component set, how a screen is registered with every
   harness, and the inventory screens this phase adds to. Read the summary of
   `0051-console-explain-and-audit` for where Explain shows the mapping
@@ -44,7 +44,8 @@
   record's subject, and explain's `mapping`, carry `directory_source`.
 
 ## The series
-The console is ten phases (PLAN §10, the console-split note), each a release
+The console is eleven phases (PLAN §10, the console-split and console-look
+notes), each a release
 and a PR of its own:
 
 | Phase | Builds |
@@ -52,13 +53,14 @@ and a PR of its own:
 | 0049 | the shell: build and embed, the mount under `/console/`, sign-in, tokens and themes, the catalogue machinery, the deployment and tenant chrome, and the static checks |
 | 0050 | the component set, the browser checks, the seeded fixture and the RBAC harness, and Fleet |
 | 0051 | Explain and the audit view |
-| 0052 | Policy |
-| 0053 | Inventory |
-| **0054** | locks, quarantines and the directory's subjects (this phase) |
-| 0055 | Extensions and Reports |
-| 0056 | stream gaps, the archive's lag and retention, in the audit view |
-| 0057 | algorithm posture and the emergency runbook |
-| 0058 | the consistency audit of every screen |
+| 0052 | the console's look: three directions in screenshots, then an interview with the operator, round by round, until one is chosen and applied through the tokens |
+| 0053 | Policy |
+| 0054 | Inventory |
+| **0055** | locks, quarantines and the directory's subjects (this phase) |
+| 0056 | Extensions and Reports |
+| 0057 | stream gaps, the archive's lag and retention, in the audit view |
+| 0058 | algorithm posture and the emergency runbook |
+| 0059 | the consistency audit of every screen |
 
 Build only this phase's row. It adds to screens earlier phases built — the
 inventory's subjects and targets, Explain, the sign-in page — through 0050's
@@ -127,7 +129,7 @@ never be told they can lift what only the directory can.
 
 ## Out of scope
 - The identity sync's row on the extensions screen (`started`, `start_error`):
-  0055's.
+  0056's.
 - Every other screen: the series table's.
 - Re-opening the design, and any locale other than English.
 
@@ -178,7 +180,7 @@ it built"): the description shows every screen and every state this phase
 builds or changes, light and dark side by side.
 
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`; add
-`docs/learnings/0054-console-standing-denials-and-directory-learnings.md`. Its
+`docs/learnings/0055-console-standing-denials-and-directory-learnings.md`. Its
 summary block MUST give the routes and fields each screen now consumes, and
 the states this phase added to the vocabulary. Details MUST record **any
 change made to `ui/DESIGN.md` in this PR**, with the reason.

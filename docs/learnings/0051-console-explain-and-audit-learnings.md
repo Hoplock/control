@@ -8,7 +8,7 @@
 - **Supervisor (M19):** badge → `/console/audit/records?principal=<sup-…>`; `acting_operator` rendered beside its `sup-` principal as "the supervisor's word", never linked or filtered (`auditModel.actorOf`). Fixture: `sup-acme-ops` (`seed.yaml` `api_tokens`).
 - **Decisions:** none added or amended; register unchanged. PLAN M19, §7 (Query) and §10 (0051's row) revised in place; `docs/API-VERSIONING.md` row `3`; **`ui/DESIGN.md` §3.6, §6, §7, §8, §10, §11 changed** (Details).
 - **Gotchas:** the e2e server embeds `dist` at build — rebuild, then restart it; decision and grant ids are random per run (`data-volatile`); a decision record's `inputs.context` holds `proxy_id`/`hop_trail`, `inputs.connection` holds `session_id` — the reverse of what the Go field names suggest.
-- **NEXT (0052):** the diff view joins the set; `useLoad` is now loading from the render whose key changed (Details). 0056 adds gaps to replay's `Terminal`, which already marks a missing capture where it falls.
+- **NEXT (0052):** the console's look is chosen with the operator, through `tokens.css` alone; then (0053) the diff view joins the set. `useLoad` is loading from the render whose key changed; 0057 adds gaps to replay's `Terminal`, which already marks a missing capture where it falls.
 
 ## Details
 
@@ -58,7 +58,7 @@ request parameter moves it, `apiversion.go`).
   each proxy with the decision it took where this server holds one, the next
   proxy a lone edge decision routed to, and the target last. `standing` (M28)
   reads as "a standing denial applied above policy". The directory a subject's
-  groups came from is left for 0054, as the prompt says.
+  groups came from is left for 0055, as the prompt says.
 - **Audit records** reads one page (`limit` 100 unless the URL names one) and
   resets its page trail and the instant a relative range resolves against
   whenever the selection changes (`useSelectionState`), because a cursor binds
@@ -77,7 +77,7 @@ request parameter moves it, `apiversion.go`).
   drops CSI/OSC escapes, and applies CR, BS and LF (`terminalText`); it is a
   reading of the bytes, beside their digest. A capture gone or unreadable is
   shown where it falls and ends the run before it, so nothing is joined across
-  it — the rule 0056 extends to stream gaps.
+  it — the rule 0057 extends to stream gaps.
 - **Counts** are of the page, never the tenant, and say so (caption names the
   page and whether the answer was cut). A table with figures beside one-ink
   bars: greyscale needs nothing more.
@@ -148,7 +148,7 @@ replay.
 
 - A deny's 401 carries no decision id, so a proxy's record of a denied
   session names none; Explain finds it by session, which is the point (M4).
-- The prompt's "0054 adds the directory" is still true: `mapping.directory_source`
+- The prompt's "0055 adds the directory" is still true: `mapping.directory_source`
   is in the answer and not rendered.
 - 0050's note stands: preferences are keyed by the session's principal id.
 
