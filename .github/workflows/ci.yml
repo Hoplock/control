@@ -250,7 +250,9 @@ jobs:
   # so a failure names its rule, every one over the registry of screens in
   # ui/e2e/screens.ts and against a real server on a seeded database
   # (ui/e2e/fixture/serve.sh, which Playwright starts). A later phase's screen
-  # is covered by registering it there and by nothing else. A failing job
+  # is covered by the design checks by registering it there; its own
+  # acceptance spec runs only where an entry below names it, and
+  # TestEveryConsoleSpecRunsInCI fails on a spec no entry names. A failing job
   # uploads its report and the actual, expected and diff images.
   console-e2e:
     name: console ${{ matrix.check }}
@@ -284,6 +286,11 @@ jobs:
           - check: fleet and RBAC
             args: e2e/fleet.spec.ts e2e/rbac.spec.ts --project checks
             then: npx playwright test e2e/mutations.spec.ts --project mutations --no-deps
+          # Explain and the audit view against the seeded database (0051): the
+          # whole story for an allow and a deny, deep links, paging to the
+          # last page, the supervisor's word, replay, keyboard and 768px.
+          - check: explain and audit
+            args: e2e/explain-audit.spec.ts --project checks
     services:
       postgres:
         image: postgres:16

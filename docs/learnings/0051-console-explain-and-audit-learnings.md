@@ -118,6 +118,12 @@ so every baseline changed.
 
 ### Changes outside the new screens
 
+- **CI runs a console spec only where a `console-e2e` entry names it.** The
+  matrix lists spec files per job, and `explain-audit.spec.ts` was in none, so
+  this phase's acceptance checks first ran only locally. It now has an entry
+  (`explain and audit`), and `TestEveryConsoleSpecRunsInCI`
+  (`console_ci_test.go`) fails on any `ui/e2e/*.spec.ts` no entry names.
+
 - `shell/load.ts`: an answer is held with the key it answers; a read whose key
   changed returns loading from that render. Before, for one frame the pager
   named the next page over the last page's rows (the paging spec read rows
