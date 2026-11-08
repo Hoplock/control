@@ -31,6 +31,11 @@ function pairs(): Pair[] {
     out.push({ fg: "--text-tertiary", bg, min: TEXT, why: "placeholder" });
   }
   out.push({ fg: "--text-on-accent", bg: "--accent", min: TEXT, why: "text on the filled accent" });
+  out.push({ fg: "--text-on-accent", bg: "--a-600", min: TEXT, why: "a primary button, hovered" });
+  out.push({ fg: "--n-0", bg: "--a-900", min: TEXT, why: "a primary button, pressed" });
+  out.push({ fg: "--text-on-accent", bg: "--s-deny", min: TEXT, why: "a danger button, hovered" });
+  out.push({ fg: "--text-inverse", bg: "--bg-inverse", min: TEXT, why: "a tooltip" });
+  out.push({ fg: "--a-600", bg: "--bg-sunken", min: TEXT, why: "a JSON viewer's numbers and literals" });
   for (const bg of CONTROL_GROUNDS) {
     out.push({ fg: "--border-default", bg, min: NON_TEXT, why: "an input's boundary" });
     out.push({ fg: "--border-strong", bg, min: NON_TEXT, why: "emphasis boundary" });

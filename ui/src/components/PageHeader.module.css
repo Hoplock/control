@@ -1,0 +1,34 @@
+.header {
+  display: grid;
+  gap: var(--sp-8);
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8) var(--sp-16);
+}
+.heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+  min-inline-size: 0;
+}
+.title {
+  margin: 0;
+  font: var(--t-h1);
+  color: var(--text-primary);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.lede {
+  margin: 0;
+  max-inline-size: 80ch;
+  font: var(--t-body);
+  color: var(--text-secondary);
+}

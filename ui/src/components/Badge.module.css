@@ -1,0 +1,112 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-inline-size: var(--sp-20);
+  padding: 0 var(--sp-6);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-full);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  font: var(--t-caption);
+  font-variant-numeric: tabular-nums;
+  justify-content: center;
+  white-space: nowrap;
+}
+.badge[data-tone="accent"] {
+  border-color: var(--accent);
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.badge[data-tone="info"] {
+  border-color: var(--s-info);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-inline-size: 100%;
+  padding: var(--sp-2) var(--sp-6);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: var(--t-label);
+}
+.chip[data-data] .chipText {
+  font: var(--t-mono);
+}
+.chipText {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--sp-16);
+  block-size: var(--sp-16);
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+}
+.remove:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.remove svg {
+  inline-size: var(--sp-8);
+  block-size: var(--sp-8);
+  stroke: currentcolor;
+  stroke-width: 1.5;
+}
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--sp-24);
+  block-size: var(--sp-24);
+  border-radius: var(--r-full);
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  font: var(--t-caption);
+}
+.kbdGroup {
+  display: inline-flex;
+  gap: var(--sp-2);
+}
+.kbd {
+  min-inline-size: var(--sp-20);
+  padding: 0 var(--sp-4);
+  border: var(--border-width) solid var(--border-default);
+  border-block-end-width: var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font: var(--t-caption);
+  text-align: center;
+}
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.crumb + .crumb::before {
+  content: "/";
+  margin-inline-end: var(--sp-6);
+  color: var(--text-tertiary);
+}
+.crumbLink {
+  color: var(--text-secondary);
+}
+.crumbLink:hover {
+  color: var(--text-primary);
+}

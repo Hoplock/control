@@ -56,10 +56,11 @@ export function TopBar(p: TopBarProps) {
           <Link
             to="deployment"
             className={styles.chip}
-            aria-label={t("chrome.deployment.open", { name, id: id.instance_id, state: t(status.label) })}
             aria-describedby="deployment-details"
           >
-            <span className={styles.name}>{name}</span>
+            <span className={styles.name} translate={id.display_name ? "no" : undefined}>
+              {name}
+            </span>
             <Ident value={id.instance_id} short={shortInstanceId(id.instance_id)} />
             <Status tone={status.tone} label={t(status.label)} />
           </Link>

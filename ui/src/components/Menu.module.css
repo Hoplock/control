@@ -1,0 +1,111 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  min-block-size: var(--control-height);
+  min-inline-size: var(--control-height);
+  padding: 0 var(--sp-8);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: var(--t-body);
+  transition: background-color var(--m-fast) var(--ease);
+}
+.trigger:hover {
+  background: var(--bg-hover);
+}
+.trigger:active {
+  background: var(--bg-sunken);
+}
+.trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+.trigger svg {
+  inline-size: var(--icon-size);
+  block-size: var(--icon-size);
+}
+.menu {
+  inset: auto;
+  position-area: block-end span-inline-start;
+  position-try-fallbacks: flip-block, flip-inline;
+  margin: var(--sp-4) 0 0;
+  min-inline-size: var(--menu-width);
+  max-inline-size: var(--drawer-width);
+  padding: var(--sp-4);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  box-shadow: var(--e-1);
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  inline-size: 100%;
+  min-block-size: var(--control-height);
+  padding: 0 var(--sp-8);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--t-body);
+  text-align: start;
+}
+.item:hover:not(:disabled),
+.item:focus-visible {
+  background: var(--bg-hover);
+}
+.item:active:not(:disabled) {
+  background: var(--bg-selected);
+}
+.item:disabled {
+  color: var(--text-tertiary);
+}
+.item[data-danger] {
+  color: var(--s-deny);
+}
+.check {
+  display: inline-flex;
+  inline-size: var(--sp-12);
+  block-size: var(--sp-12);
+  flex: none;
+}
+.check svg {
+  inline-size: 100%;
+  block-size: 100%;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+}
+.tipWrap {
+  position: relative;
+  display: inline-flex;
+}
+.tip {
+  position: absolute;
+  inset-block-end: calc(100% + var(--sp-6));
+  inset-inline-start: 0;
+  z-index: 10;
+  inline-size: max-content;
+  max-inline-size: var(--menu-width);
+  padding: var(--sp-4) var(--sp-8);
+  border-radius: var(--r-sm);
+  background: var(--bg-inverse);
+  color: var(--text-inverse);
+  font: var(--t-caption);
+  box-shadow: var(--e-2);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--m-fast) var(--ease),
+    visibility var(--m-fast) var(--ease);
+}
+.tipWrap:hover .tip,
+.tipWrap:focus-within .tip {
+  opacity: 1;
+  visibility: visible;
+}

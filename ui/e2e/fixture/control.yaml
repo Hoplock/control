@@ -1,0 +1,23 @@
+# The server the console's browser checks run against (0050, DESIGN.md §10).
+# serve.sh writes @DSN@ from HOPLOCK_E2E_DSN. Plain HTTP on loopback only, so
+# the session cookie drops Secure; nothing else here differs from a
+# deployment an operator would run.
+tenant: default
+listeners:
+  south: 127.0.0.1:18080
+  north: 127.0.0.1:18081
+database:
+  dsn: "@DSN@"
+log:
+  level: warn
+north:
+  insecure_cookies: true
+# Long enough that what the seed heard from stays live for the whole run, so
+# the fixture's health is the seed's and not the clock's.
+fleet:
+  heartbeat_ttl: 24h
+  relay_registration_ttl: 24h
+instance:
+  display_name: Staging EU
+console:
+  stripe: teal

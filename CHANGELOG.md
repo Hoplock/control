@@ -26,6 +26,42 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.37.0
+
+Phase 0050, the console's component set, its browser checks, and Fleet (M20,
+M21, M26, M11, M17, M19). No migration, and nothing in `ext`, `server` or the
+contract changes.
+
+- **Fleet at `/console/fleet`.** One page at a time of
+  `GET …/proxies` (by proxy id, `?limit=` 100 unless the URL names another,
+  following the answer's own `next`): each proxy's zone, health, last
+  heartbeat, contract version, live relay registrations, session count, and
+  its configuration as the proxy **reported** it — `Applied`, `In progress`
+  (an older document applied while a newer is desired), `Pending restart`
+  (with the settings waiting), `Rejected` and `Fetch failed` (with the
+  proxy's `last_error`), and `Not reported` for a proxy that has never
+  reported, which is never shown as applied. A proxy enrolled but never
+  heard from is `Unreachable` and makes the page *partial*, naming it,
+  rather than an error. A chart of the whole tenant's fleet by health, from
+  `…/instance/health`'s fleet summary. Filters, the zone/table view and the
+  open proxy are in the URL.
+- **Withdrawing a proxy from the console** (`POST …/proxies/{proxy}/withdraw`)
+  is offered only to a role holding `fleet:write`, and confirms by typing the
+  proxy's id; a refusal or an outage is reported inside the dialog.
+- **The console never offers a call the operator's role cannot make**: every
+  control that calls the API is shown only when the session holds that
+  route's permission in the tenant. The API's RBAC is unchanged and is what
+  refuses.
+- **Every screen has a loading, empty, error and partial state.** An outage is
+  labelled an outage and a refusal a refusal, in different colours and words;
+  an error code the console has no sentence for names the code and the
+  correlation id. The Deployment view now reads this way too: a health that
+  cannot be read beside a readable identity is partial.
+- **A command palette** (`Ctrl-K` / `⌘K`) goes to each screen and sets the
+  theme and density.
+- The deployment chip's accessible name is now its visible text (name, short
+  instance id, health); the versions stay its description.
+
 ## v0.36.0
 
 Phase 0049, the operator console's shell (M20, M21, M27). The north-bound

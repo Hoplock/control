@@ -122,6 +122,9 @@ remapping rather than a rewrite.
 | `--text-on-accent` | `#ffffff` | `--n-0` | text on filled accent |
 | `--accent` | `--a-500` | `--a-500` | the primary action, the active navigation mark, selection |
 | `--focus-ring` | `--a-500` | `--a-500` | the focus ring (§8) |
+| `--bg-inverse` | `--n-900` | `--n-900` | a tooltip's ground |
+| `--text-inverse` | `--n-0` | `--n-0` | a tooltip's text |
+| `--scrim` | `--n-50` at 70% | `--n-0` at 70% | behind a modal dialog, a drawer, a busy overlay — never a text ground |
 
 Three of those rows carry an argument rather than a value:
 
@@ -225,10 +228,14 @@ in a column. Uppercase is for `--t-caption` only, never for headings.
 - **Layout dimensions** — the navigation's width, the top bar's height, a
   control's height, a status glyph's size, a border's width — are tokens as
   well (`--shell-nav-width`, `--shell-topbar-height`, `--control-height`,
-  `--glyph-size`, `--border-width`), so no component carries a magic number.
+  `--glyph-size`, `--border-width`, `--icon-size`, and the widths of a
+  dialog, a drawer, a menu and a search field, a table's and a list's
+  greatest height), so no component carries a magic number.
 - **Motion** — `--m-fast 120ms` (hover, focus, checkbox), `--m-base 180ms`
   (dropdown, popover, tab), `--m-slow 240ms` (dialog, drawer, page transition),
-  all `cubic-bezier(0.2, 0, 0, 1)`. Nothing animates longer than 240ms.
+  all `cubic-bezier(0.2, 0, 0, 1)`. Nothing animates longer than 240ms. A
+  busy indicator is a loop, not a transition: one turn is `--m-spin` (900ms),
+  and reduced motion stops it as it stops everything else.
   `@media (prefers-reduced-motion: reduce)` collapses every duration to `0ms`
   and removes transforms — this is a requirement, not a nicety.
 
@@ -312,12 +319,24 @@ One component renders all of it, so a status looks identical everywhere:
 
 | State | Colour | Glyph | Label |
 | --- | --- | --- | --- |
-| allowed / healthy / active | `--s-allow` | filled circle | `Allowed`, `Healthy` |
-| denied / revoked / expired | `--s-deny` | filled square | `Denied`, `Revoked` |
-| degraded / stale / expiring | `--s-warn` | filled triangle | `Degraded`, `Stale` |
-| unreachable / outage | `--s-outage` | hollow circle, dashed | `Unreachable` |
-| pending / in progress | `--s-info` | half-filled circle | `Pending` |
-| unknown / not reported | `--n-400` | hollow circle, dotted | `Not reported` |
+| allowed / healthy / active / applied | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied` |
+| denied / revoked / expired | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired` |
+| degraded / stale / expiring / rejected | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected` |
+| unreachable / outage / fetch failed | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed` |
+| pending / in progress / pending restart | `--s-info` | half-filled circle | `Pending`, `In progress`, `Pending restart` |
+| unknown / not reported / left | `--n-400` | hollow circle, dotted | `Not reported`, `Left` |
+
+The component is `Status` in `ui/src/components/Status.tsx`, and every row
+above is a named entry of its `STATUS` map: a screen names a status, it never
+picks a colour. As a pill it sits on a bordered ground (dashed for an outage,
+dotted for not reported), for a status that heads a page or a detail.
+
+A proxy's configuration is read as the proxy **reported** it (proxy D18):
+`Rejected` is the proxy refusing a document and keeping the one it runs —
+degraded, not a deny; `Fetch failed` is the proxy not reaching Control for it
+— an outage; an older document applied while a newer one is desired is a
+rollout `In progress`. A proxy that has never reported is `Not reported`,
+never `Applied`.
 
 A rolling upgrade reads as **`Pending` / in progress**, never as a fault (M19).
 `Not reported` is its own state and never renders as healthy — PLAN §4 is
@@ -353,8 +372,19 @@ is not, the one action), error (what failed, the correlation id, retry — and i
 says *outage*, never *denied*, per M11), and partial (some data, a named gap —
 a fleet where one node is unreachable is not an error page).
 
+**Where it lives.** One family per file in `ui/src/components/`; the four
+states are one frame (`States.tsx`: `ScreenFrame`, `ErrorState`, `EmptyState`,
+`PartialNotice`, `Skeleton`). A data table shows **one page** of a bounded
+list (PLAN M26): it says so beside its rows when the answer was cut, its sort
+and filters act on that page, and `Pagination` moves by the answer's own
+cursor. Saved views are named URLs, kept per operator in the browser. The
+overlays are the platform's own: `<dialog>` opened modal (the browser traps
+and restores focus), and a menu is a popover in the top layer anchored to its
+button. A test-only gallery (`ui/gallery/`, never built into the console)
+renders every component in every state, and the browser checks run over it.
+
 **Form and mutation rules.** Destructive actions confirm by typing the object
-name. A failed mutation reports inline at the field or the form, never by a toast
+name, through the one `ConfirmDialog`. A failed mutation reports inline at the field or the form, never by a toast
 alone — a toast is not a record. Toasts are for successful, reversible things and
 auto-dismiss; errors persist until dismissed.
 
@@ -480,6 +510,31 @@ checks 1, 2 and 9; 0050 the browser checks 3–8):
 8. **RTL smoke.** A mirrored pseudolocale (`en-XB`) renders the same set and
    asserts nothing leaks a physical CSS property. No RTL locale ships; this is
    what keeps adding one cheap.
+Checks 3–8 run in CI as `console-e2e`, one job per rule, over **one
+registry of screens** (`ui/e2e/screens.ts`), against a real server on a seeded
+database (`ui/e2e/fixture/`): a screen is checked by registering it — its
+path, how it is ready, how its loading, empty, error and partial states are
+made (an API answer substituted in the browser, never a route the server
+binds), and the calls it offers that change something. The gallery's pages
+are in the registry too. In detail:
+
+- §10.3 runs axe at WCAG 2.2 A and AA on every screen and state, both themes.
+- §10.4's baseline is `ui/e2e/baseline/`, at one scale (1×, 1280px wide),
+  times and build versions masked; `npm run e2e:update` rewrites it, and a
+  PR that changes a screen changes its images. Pseudo-classes are forced
+  through the browser's developer protocol, so a gallery image shows hover,
+  focus and active at once.
+- §10.5 aborts every request to another origin, asserts there was none, and
+  holds the page to the same baseline image.
+- §10.6 reads every element's computed transition and animation durations.
+- §10.7 fails on text, or a read-aloud attribute, with no accented letter
+  outside `translate="no"` (identifiers and operator data, §9) or a `<time>`;
+  on a box that clips its text; and on a page that scrolls sideways.
+- §10.8 fails on a page that is not `dir="rtl"`; on any rule or inline style
+  whose physical pair differs (the CSSOM writes a symmetric shorthand as
+  equal longhands, so only an asymmetric pair is a leak); and on any block
+  box that is not the mirror of its `en-XA` position.
+
 9. **String and format lint.** No literal user-visible string in a component, and
    no `Date`/`Intl`/number formatting outside the locale helpers
    (`ui/src/i18n/`). It reads the TypeScript syntax tree

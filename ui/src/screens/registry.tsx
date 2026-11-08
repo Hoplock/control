@@ -8,6 +8,7 @@
 import type { ReactNode } from "react";
 import type { MessageKey } from "../i18n/catalogue";
 import { DeploymentScreen } from "./Deployment";
+import { FleetScreen } from "./Fleet";
 
 export interface Screen {
   /** Its stable id, used in tests and in 0050's screen registry. */
@@ -31,6 +32,14 @@ export const SCREENS: readonly Screen[] = [
     density: "comfortable",
     permission: "instance:read",
     render: () => <DeploymentScreen />,
+  },
+  {
+    id: "fleet",
+    path: "fleet",
+    nav: "nav.fleet",
+    density: "compact",
+    permission: "fleet:read",
+    render: () => <FleetScreen />,
   },
 ];
 

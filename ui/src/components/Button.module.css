@@ -1,0 +1,111 @@
+/* Buttons (DESIGN.md §7). Every state is designed: default, hover, active,
+   focus-visible (base.css's ring), disabled, loading. */
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  min-block-size: var(--control-height);
+  padding: 0 var(--sp-12);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: var(--t-body);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color var(--m-fast) var(--ease),
+    border-color var(--m-fast) var(--ease);
+}
+.button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+.button:active:not(:disabled) {
+  background: var(--bg-sunken);
+}
+.button:disabled {
+  color: var(--text-tertiary);
+  background: var(--bg-sunken);
+  border-color: var(--border-subtle);
+}
+.button[data-variant="primary"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+.button[data-variant="primary"]:hover:not(:disabled) {
+  border-color: var(--a-600);
+  background: var(--a-600);
+}
+.button[data-variant="primary"]:active:not(:disabled) {
+  border-color: var(--a-900);
+  background: var(--a-900);
+  color: var(--n-0);
+}
+.button[data-variant="ghost"] {
+  border-color: transparent;
+  background: transparent;
+}
+.button[data-variant="ghost"]:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-hover);
+}
+.button[data-variant="danger"] {
+  border-color: var(--s-deny);
+  background: var(--bg-surface);
+  color: var(--s-deny);
+}
+.button[data-variant="danger"]:hover:not(:disabled) {
+  border-color: var(--s-deny);
+  background: var(--s-deny);
+  color: var(--text-on-accent);
+}
+.button[data-variant="danger"]:active:not(:disabled) {
+  background: var(--s-deny);
+  color: var(--text-on-accent);
+}
+.button[data-variant]:disabled {
+  color: var(--text-tertiary);
+  background: var(--bg-sunken);
+  border-color: var(--border-subtle);
+}
+.button[data-loading] .label,
+.button[data-loading] .icon {
+  opacity: 0;
+}
+.busy {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  inline-size: var(--sp-12);
+  block-size: var(--sp-12);
+  border: var(--border-width) solid currentcolor;
+  border-block-start-color: transparent;
+  border-radius: var(--r-full);
+  color: var(--text-secondary);
+  animation: spin var(--m-spin) linear infinite;
+}
+.icon {
+  display: inline-flex;
+  inline-size: var(--icon-size);
+  block-size: var(--icon-size);
+}
+.icon svg {
+  inline-size: 100%;
+  block-size: 100%;
+}
+.label {
+  display: inline-block;
+}
+.iconOnly {
+  inline-size: var(--control-height);
+  padding: 0;
+}
+@keyframes spin {
+  to {
+    rotate: 1turn;
+  }
+}

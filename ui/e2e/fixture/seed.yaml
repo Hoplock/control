@@ -1,0 +1,57 @@
+# The seeded database every console screen's browser checks work against
+# (0050). `hoplock-control seed` writes it; the north- and south-bound APIs
+# then move it into the states each screen must show (e2e/global-setup.ts).
+# A later phase adds its screen's data here, never through a route the server
+# binds for tests (docs/PROTOCOL.md §3).
+#
+# Three operators sign in by break-glass, one per role the RBAC harness
+# asserts: admin, auditor (reads everything, changes nothing) and
+# fleet-admin. Their passwords are fixture data, not secrets.
+subjects:
+  - id: ada
+    display_name: Ada Admin
+    source: local
+    principals: [ada]
+    password: e2e-admin-password
+  - id: avery
+    display_name: Avery Auditor
+    source: local
+    principals: [avery]
+    password: e2e-auditor-password
+  - id: fenn
+    display_name: Fenn Fleet
+    source: local
+    principals: [fenn]
+    password: e2e-fleet-password
+
+# Fleet (0050): one proxy per state the screen must show.
+#   px-core-01      live, applied and caught up, holds relay registrations
+#   px-core-02      live, pending_restart (settings waiting on a restart)
+#   px-dmz-03       live, rejected the document (last_error)
+#   px-dmz-04       live, fetch_failed (an outage, never a deny)
+#   px-edge-05      live, applied an older document: a rollout in progress
+#   px-edge-06      live, has never reported its configuration
+#   px-edge-07      enrolled, never heard from: unreachable (the partial gap)
+#   px-old-08       withdrawn: revoked
+#   px-spare-09     live; the RBAC harness withdraws it as fleet-admin
+# Each key is fixture material: a blob nothing verifies against (the console
+# reads none of it); seed requires one per proxy.
+proxies:
+  - { id: px-core-01, zone: core, heartbeat: true, relays: [px-dmz-03, px-dmz-04], key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtY29yZS0wMQ== } }
+  - { id: px-core-02, zone: core, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtY29yZS0wMg== } }
+  - { id: px-dmz-03, zone: dmz, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtZG16LTAz } }
+  - { id: px-dmz-04, zone: dmz, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtZG16LTA0 } }
+  - { id: px-edge-05, zone: edge, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtZWRnZS0wNQ== } }
+  - { id: px-edge-06, zone: edge, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtZWRnZS0wNg== } }
+  - { id: px-edge-07, zone: edge, heartbeat: false, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtZWRnZS0wNw== } }
+  - { id: px-old-08, zone: edge, heartbeat: false, state: revoked, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtb2xkLTA4 } }
+  - { id: px-spare-09, zone: core, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtc3BhcmUtMDk= } }
+
+# Each reporting proxy's own south-bound credential, presented as
+# `default.<secret>`: the fixture reports configuration as the proxy would.
+tokens:
+  - { secret: e2e-px-core-01, proxy_id: px-core-01, label: e2e }
+  - { secret: e2e-px-core-02, proxy_id: px-core-02, label: e2e }
+  - { secret: e2e-px-dmz-03, proxy_id: px-dmz-03, label: e2e }
+  - { secret: e2e-px-dmz-04, proxy_id: px-dmz-04, label: e2e }
+  - { secret: e2e-px-edge-05, proxy_id: px-edge-05, label: e2e }
