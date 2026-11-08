@@ -133,6 +133,17 @@ so every baseline changed.
   its three paths.
 - `e2e/harness.ts`: `data-force-child` now names its state (it forced only
   hover), and the `patch` substitute.
+- **A screenshot must not depend on when or where it is taken.** A masked
+  `<time>` still has its text's width, so an 11 PM run widened the audit
+  table's first column past a 6 PM baseline and failed CI. `steady()`
+  (`e2e/harness.ts`), called before every baseline screenshot, gives every
+  `<time>` one fixed instant and replaces what a run mints and no mask
+  covers — session principals (`sess-` and 16 characters), decision and grant
+  ids in text, the build's commit and commit time — with same-length
+  placeholders. A new screen showing another run-minted value adds it there.
+- `e2e/open.ts` forces a gallery cell's pseudo-classes **before** waiting for
+  transitions, not after: forced last, axe could read a button mid-fade and
+  fail it on contrast (22 transitions were still running when axe began).
 
 ### Verified in a browser
 
