@@ -148,6 +148,16 @@
 .versions {
   color: var(--text-secondary);
 }
+.arrow {
+  inline-size: var(--sp-12);
+  block-size: var(--sp-12);
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.4;
+}
+:root[dir="rtl"] .arrow {
+  scale: -1 1;
+}
 .selection {
   margin: 0;
   font: var(--t-label);

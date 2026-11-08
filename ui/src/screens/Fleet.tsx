@@ -218,7 +218,9 @@ export function FleetScreen() {
             <span className={styles.versions}>
               <Version v={p.config.running_version} />
               {p.config.running_version && p.config.running_version !== p.config.desired_version ? (
-                <span aria-hidden="true">{"→"}</span>
+                <svg className={styles.arrow} viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+                  <path d="M2 6h8M7 3l3 3-3 3" />
+                </svg>
               ) : null}
               {p.config.running_version !== p.config.desired_version ? <Version v={p.config.desired_version} /> : null}
             </span>

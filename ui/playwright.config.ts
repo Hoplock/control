@@ -36,6 +36,10 @@ export default defineConfig({
     },
   },
   use: {
+    // Text rasterised the same on every machine: Chromium on Linux otherwise
+    // takes hinting and LCD anti-aliasing from the host's fontconfig, and a
+    // baseline taken on one host then differs on another in every glyph.
+    launchOptions: { args: ["--font-render-hinting=none", "--disable-lcd-text", "--disable-font-subpixel-positioning"] },
     baseURL: NORTH,
     viewport: { width: 1280, height: 800 },
     deviceScaleFactor: 1,

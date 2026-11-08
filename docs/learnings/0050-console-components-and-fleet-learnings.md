@@ -7,7 +7,7 @@
 - **A later phase registers a screen with every harness:** (1) its `SCREENS` entry in `src/screens/registry.tsx` and its routes in `src/api/routes.ts` (the route test reads them); (2) ONE entry in `ui/e2e/screens.ts` — `path`, `ready`, `states` (an API answer substituted in the browser, or `seeded`), `densities`, and `mutations` (route, path, permission, `reveal`, `control`), which the RBAC harness asserts hidden and API-refused per role; (3) its data in `ui/e2e/fixture/seed.yaml`, or a function in `SEEDS` that drives the real APIs; (4) its baseline: `HOPLOCK_E2E_DSN=… npm run e2e:update` in `ui/` (or `make ui-e2e UPDATE=1`), images committed in `ui/e2e/baseline/`.
 - **A host's screens use this set, not their own (M20):** they build from Control's `ui/src/components/` at the pinned module version (aliased into their build), take every status from `STATUS` (one Control lacks is an upstream request to add it to DESIGN.md §6 and `STATUS`), and are held to the same six checks over their own registry.
 - **Decisions:** none added or amended. `ui/DESIGN.md` §3.2, §3.6, §6, §7, §10 and PLAN §3, §10 (0050's row) revised in place (Details).
-- **Gotchas:** `main` scrolls, not the page (grow the viewport, `fitContent`); a table skeleton also has `tbody tr`, so `ready` names data rows; a run needs a FRESH server (the `mutations` project withdraws `px-spare-09`; `serve.sh` empties the database); the fixture pins the instance id and the software version, or screenshots reflow.
+- **Gotchas:** the browser checks launch Chromium with fixed text rendering, and no screen may show a glyph outside the bundled subsets (Details, "The baseline"); `main` scrolls, not the page (grow the viewport, `fitContent`); a table skeleton also has `tbody tr`, so `ready` names data rows; a run needs a FRESH server (the `mutations` project withdraws `px-spare-09`; `serve.sh` empties the database); the fixture pins the instance id and the software version, or screenshots reflow.
 - **NEXT (0051):** add the timeline and time range picker to the set (and the gallery), and register Explain and Audit in `ui/e2e/screens.ts`.
 
 ## Details
@@ -71,14 +71,21 @@ beat the pattern attribute).
 
 ### The baseline
 
-`ui/e2e/baseline/`: **56 PNGs, 2.54 MB**, 1×, 1280 px wide, full content
+`ui/e2e/baseline/`: **56 PNGs, 2.53 MB**, 1×, 1280 px wide, full content
 height. Compressed losslessly with `oxipng -o4 --strip safe` (about 3.3 MB as
 Playwright writes them); recompressing after an update is optional, and
 Playwright reads either. Masked: `<time>` and `[data-volatile]` (correlation
 ids). Not masked, because the fixture pins them: the instance id
 (`inst-0050e2e0…`, inserted before first start — the server keeps an identity
 it finds) and the software version (`-X …/internal/daemon.version=v0.0.0-e2e`).
-Pseudo-classes in the gallery are forced through CDP
+**Text is rasterised the same on every host**: Chromium on Linux takes hinting
+and LCD anti-aliasing from the host's fontconfig, so a baseline taken in one
+container differed in CI in every glyph (2–3% of a dense page, invisible on
+the sparse gallery pages). `playwright.config.ts` launches with
+`--font-render-hinting=none --disable-lcd-text
+--disable-font-subpixel-positioning`. For the same reason no screen may
+render a glyph outside the bundled Latin subsets (it falls back to whatever
+the host has): Fleet's `→` is an SVG. Pseudo-classes in the gallery are forced through CDP
 (`CSS.forcePseudoState` on `[data-force]`), so one image shows hover, focus and
 active. Tolerance: `maxDiffPixelRatio 0.01`, `threshold 0.2`. Generated in
 this repository's cloud container (Ubuntu 24.04, Playwright 1.63.0's
