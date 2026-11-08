@@ -246,6 +246,87 @@ jobs:
           path: ui/build/
           retention-days: 14
 
+  # The console's browser checks (0050; DESIGN.md §10.3–§10.8), one job each
+  # so a failure names its rule, every one over the registry of screens in
+  # ui/e2e/screens.ts and against a real server on a seeded database
+  # (ui/e2e/fixture/serve.sh, which Playwright starts). A later phase's screen
+  # is covered by registering it there and by nothing else. A failing job
+  # uploads its report and the actual, expected and diff images.
+  console-e2e:
+    name: console ${{ matrix.check }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # §10.3: zero axe violations at serious or above, both themes, every state.
+          - check: axe
+            args: e2e/design.spec.ts --project checks -g "axe"
+          # §10.4: the committed baseline, both themes and densities, loading,
+          # empty and error; and two deployments told apart from the chrome.
+          - check: screenshot baseline
+            args: e2e/design.spec.ts e2e/identity.spec.ts --project checks -g "baseline|deployments"
+          # §10.5: every external origin blocked; renders as the baseline does.
+          - check: no network at runtime
+            args: e2e/design.spec.ts --project checks -g "external origin"
+          # §10.6: no transition or animation longer than 0ms under reduced motion.
+          - check: reduced motion
+            args: e2e/design.spec.ts --project checks -g "reduced motion"
+          # §10.7: nothing unaccented, nothing clipped at +40%.
+          - check: en-XA pseudolocale
+            args: e2e/pseudo.spec.ts --project checks -g "en-XA"
+          # §10.8: right-to-left, no physical property, every block mirrored.
+          - check: en-XB mirrored
+            args: e2e/pseudo.spec.ts --project checks -g "en-XB"
+          # Fleet against the seeded database, and RBAC asserted at the API.
+          - check: fleet and RBAC
+            args: e2e/fleet.spec.ts e2e/rbac.spec.ts e2e/mutations.spec.ts
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hoplock_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CI: "true"
+      HOPLOCK_E2E_DSN: postgres://postgres:postgres@127.0.0.1:5432/hoplock_e2e?sslmode=disable
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ui/.nvmrc
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install the locked toolchain
+        run: npm ci
+      # The browser the pinned @playwright/test drives, with its system
+      # libraries: the baseline was taken with this build.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run ${{ matrix.check }}
+        run: npm run e2e -- ${{ matrix.args }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: console-e2e-${{ strategy.job-index }}
+          path: |
+            ui/build/e2e/results/
+            ui/build/e2e/report/
+          retention-days: 14
+
   license:
     name: license headers
     runs-on: ubuntu-latest
@@ -469,7 +550,7 @@ jobs:
   release:
     name: release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, lint, release-check, license, contract, conform, conform-self, console-checks, console-build]
+    needs: [test, lint, release-check, license, contract, conform, conform-self, console-checks, console-build, console-e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: write

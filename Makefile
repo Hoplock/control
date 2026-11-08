@@ -47,7 +47,7 @@ GOLANGCI_LINT  ?= golangci-lint
 APIDIFF_VERSION ?= v0.0.0-20261007192929-f45ad48fbe92
 
 .PHONY: all build test vet lint exhaustive-guard fmt license-check tidy clean run migrate \
-        contract-check contract-sync conform release-check release-check-guard ui ui-check check help
+        contract-check contract-sync conform release-check release-check-guard ui ui-check ui-e2e check help
 
 all: build
 
@@ -109,7 +109,7 @@ check: build vet test lint license-check release-check ui-check
 # --- The operator console (PLAN M20, M21; ui/DESIGN.md) -----------------------
 #
 # `make build` embeds the committed internal/console/dist and needs no Node.
-# These two are for changing the console, and they need Node (ui/.nvmrc).
+# These are for changing the console, and they need Node (ui/.nvmrc).
 
 ## ui: rebuild the console from ui/ into internal/console/dist. Commit the result.
 ui:
@@ -118,6 +118,13 @@ ui:
 ## ui-check: the console's static checks, tests, build, budget and pseudolocale builds.
 ui-check:
 	cd ui && npm ci && npm run check
+
+## ui-e2e: the console's browser checks (DESIGN.md §10.3–§10.8) against a seeded
+## server. Needs Go, Chromium (npx playwright install chromium) and an empty
+## Postgres database in HOPLOCK_E2E_DSN, which the run empties and seeds.
+## UPDATE=1 rewrites the screenshot baseline after a deliberate design change.
+ui-e2e:
+	cd ui && npm ci && npm run $(if $(UPDATE),e2e:update,e2e)
 
 # --- The vendored contract (M1) and the conformance suite -------------------
 
