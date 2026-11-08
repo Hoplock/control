@@ -278,9 +278,12 @@ jobs:
           # §10.8: right-to-left, no physical property, every block mirrored.
           - check: en-XB mirrored
             args: e2e/pseudo.spec.ts --project checks -g "en-XB"
-          # Fleet against the seeded database, and RBAC asserted at the API.
+          # Fleet against the seeded database, and RBAC asserted at the API;
+          # then the one mutation, on a fresh server of its own (--no-deps:
+          # the mutations project otherwise runs every check before it).
           - check: fleet and RBAC
-            args: e2e/fleet.spec.ts e2e/rbac.spec.ts e2e/mutations.spec.ts
+            args: e2e/fleet.spec.ts e2e/rbac.spec.ts --project checks
+            then: npx playwright test e2e/mutations.spec.ts --project mutations --no-deps
     services:
       postgres:
         image: postgres:16
@@ -318,6 +321,9 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run ${{ matrix.check }}
         run: npm run e2e -- ${{ matrix.args }}
+      - name: Then
+        if: matrix.then
+        run: ${{ matrix.then }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
