@@ -16,6 +16,7 @@
 // `npm run e2e:update` rewrites it after a deliberate change.
 
 import type { APIRequestContext, Page } from "@playwright/test";
+import { seedAudit } from "./fixture/audit";
 import { seedFleet } from "./fixture/fleet";
 import { TENANT, type Role, type Substitute } from "./harness";
 
@@ -68,7 +69,7 @@ const outage = (correlation: string): Substitute => ({
 const main = (page: Page) => page.locator("main#content");
 
 /** Fixture steps that run after the seed, before any check (global-setup.ts). */
-export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [seedFleet];
+export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [seedFleet, seedAudit];
 
 const GALLERY_PAGES = [
   "buttons",
@@ -78,6 +79,7 @@ const GALLERY_PAGES = [
   "feedback",
   "navigation",
   "data",
+  "time",
   "overlay-dialog",
   "overlay-confirm",
   "overlay-confirm-failed",
@@ -101,6 +103,11 @@ const GALLERY: E2EScreen[] = GALLERY_PAGES.map((section) => ({
       await page.locator("dialog [role=alert]").waitFor();
     }
     if (section === "overlay-confirm") await page.locator("[data-confirm-input]").fill("px-spare");
+    if (section === "time") {
+      // An absolute range whose start is after its end, applied: refused at the field.
+      await page.locator("[data-range-invalid] form button[type=submit]").click();
+      await page.locator("[data-range-invalid] [role=alert]").waitFor();
+    }
     if (section === "overlay-menu") {
       await page.locator('button[aria-haspopup="menu"]').click();
       await page.locator("[role=menu]:popover-open").waitFor();
@@ -210,6 +217,162 @@ export const SCREENS: readonly E2EScreen[] = [
         control: (page) => page.locator("[role=menu]:popover-open [role=menuitem][data-danger]"),
       },
     ],
+  },
+  // Explain (0051): a session crossing two hops under a grant, opened on its
+  // innermost decision; the start (no id yet) and a deny are entries of their
+  // own, so each is in the baseline and every check.
+  {
+    id: "explain",
+    kind: "console",
+    path: "/console/explain/sessions/sess-e2e-hops",
+    densities: false,
+    ready: (page) => main(page).locator("[data-story-section=explain-hops-path] [role=tree]").waitFor(),
+    states: {
+      loading: {
+        substitute: [[`${API}/sessions/sess-e2e-hops/decisions`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-state=loading]").waitFor(),
+      },
+      // A 404 is the answer "this server took no decision under that id".
+      empty: {
+        substitute: [
+          [
+            `${API}/sessions/sess-e2e-hops/decisions`,
+            { kind: "answer", status: 404, body: { code: "not_found", message: "substituted", correlation_id: "corr-e2e-explain-404" } },
+          ],
+        ],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/sessions/sess-e2e-hops/decisions`, outage("corr-e2e-explain")]],
+        ready: (page) => main(page).locator("[data-state=error]").waitFor(),
+      },
+      // More decisions than one answer holds: the server's own answer, cut.
+      partial: {
+        substitute: [[`${API}/sessions/sess-e2e-hops/decisions`, { kind: "patch", patch: (b) => ({ ...(b as object), truncated: true }) }]],
+        ready: (page) => main(page).locator("[data-state=partial] [data-story-section]").first().waitFor(),
+      },
+    },
+  },
+  {
+    id: "explain-deny",
+    kind: "console",
+    path: "/console/explain/sessions/sess-e2e-rule-deny",
+    densities: false,
+    ready: (page) => main(page).locator("article[data-effect=deny]").waitFor(),
+    states: {},
+  },
+  {
+    id: "explain-start",
+    kind: "console",
+    path: "/console/explain",
+    densities: false,
+    ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+    states: {},
+  },
+  // Audit (0051): the records, a supervisor's acts, the blocked commands and
+  // a recorded session's replay — four views of one screen, each a deep link.
+  {
+    id: "audit-records",
+    kind: "console",
+    path: "/console/audit/records",
+    densities: true,
+    ready: (page) => main(page).locator("table tbody tr[data-row]").first().waitFor(),
+    states: {
+      loading: {
+        substitute: [[`${API}/audit/records`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-state=loading]").waitFor(),
+      },
+      empty: {
+        substitute: [[`${API}/audit/records`, { kind: "answer", status: 200, body: { records: [], truncated: false } }]],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/audit/records`, outage("corr-e2e-audit")]],
+        ready: (page) => main(page).locator("[data-state=error]").waitFor(),
+      },
+    },
+  },
+  {
+    id: "audit-supervisor",
+    kind: "console",
+    path: "/console/audit/records?principal=sup-acme-ops",
+    densities: false,
+    ready: (page) => main(page).locator("[data-acting-operator]").first().waitFor(),
+    states: {},
+  },
+  {
+    id: "audit-blocked",
+    kind: "console",
+    path: "/console/audit/blocked-commands?label=env%3Dprod",
+    densities: true,
+    ready: (page) => main(page).locator("table tbody tr[data-row]").first().waitFor(),
+    states: {
+      loading: {
+        substitute: [[`${API}/audit/blocked-commands`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-state=loading]").waitFor(),
+      },
+      empty: {
+        substitute: [[`${API}/audit/blocked-commands`, { kind: "answer", status: 200, body: { blocked: [], truncated: false } }]],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/audit/blocked-commands`, outage("corr-e2e-blocked")]],
+        ready: (page) => main(page).locator("[data-state=error]").waitFor(),
+      },
+      // A decision retention took from the store: the command stays, its access is a named gap.
+      partial: {
+        substitute: [
+          [
+            `${API}/audit/blocked-commands`,
+            {
+              kind: "patch",
+              patch: (b) => {
+                const body = b as { blocked: Record<string, unknown>[] };
+                return {
+                  ...body,
+                  blocked: body.blocked.map((x) => ({ ...x, decision_found: false, matched_rule: undefined, route_type: undefined, decided_at: undefined })),
+                };
+              },
+            },
+          ],
+        ],
+        ready: (page) => main(page).locator("[data-state=partial] table tbody tr[data-row]").first().waitFor(),
+      },
+    },
+  },
+  {
+    id: "audit-replay",
+    kind: "console",
+    path: "/console/audit/sessions/sess-e2e-allow/replay",
+    densities: false,
+    ready: async (page) => {
+      await main(page).locator("pre").first().waitFor();
+      await main(page).locator("[aria-busy=true]").waitFor({ state: "detached" });
+    },
+    states: {
+      loading: {
+        substitute: [[`${API}/audit/records`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-state=loading]").waitFor(),
+      },
+      empty: {
+        substitute: [[`${API}/audit/records`, { kind: "answer", status: 200, body: { records: [], truncated: false } }]],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/audit/records`, outage("corr-e2e-replay")]],
+        ready: (page) => main(page).locator("[data-state=error]").waitFor(),
+      },
+      // A capture a retention pass emptied: shown where it falls, nothing joined across it.
+      partial: {
+        substitute: [
+          [
+            `${API}/audit/records/rec-e2e-allow-05/capture`,
+            { kind: "patch", patch: (b) => ({ ...(b as object), retained: true, payload: undefined }) },
+          ],
+        ],
+        ready: (page) => main(page).locator("[data-state=partial] [data-capture-gap=retained]").waitFor(),
+      },
+    },
   },
   ...GALLERY,
 ];

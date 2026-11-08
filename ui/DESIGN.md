@@ -229,8 +229,9 @@ in a column. Uppercase is for `--t-caption` only, never for headings.
   control's height, a status glyph's size, a border's width — are tokens as
   well (`--shell-nav-width`, `--shell-topbar-height`, `--control-height`,
   `--glyph-size`, `--border-width`, `--icon-size`, and the widths of a
-  dialog, a drawer, a menu and a search field, a table's and a list's
-  greatest height), so no component carries a magic number.
+  dialog, a drawer, a menu, a search field and the rail a timeline stands in
+  beside what it explains (`--rail-width`), a table's and a list's greatest
+  height), so no component carries a magic number.
 - **Motion** — `--m-fast 120ms` (hover, focus, checkbox), `--m-base 180ms`
   (dropdown, popover, tab), `--m-slow 240ms` (dialog, drawer, page transition),
   all `cubic-bezier(0.2, 0, 0, 1)`. Nothing animates longer than 240ms. A
@@ -322,7 +323,7 @@ One component renders all of it, so a status looks identical everywhere:
 | allowed / healthy / active / applied | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied` |
 | denied / revoked / expired | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired` |
 | degraded / stale / expiring / rejected | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected` |
-| unreachable / outage / fetch failed | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed` |
+| unreachable / outage / fetch failed / unserved | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved` |
 | pending / in progress / pending restart | `--s-info` | half-filled circle | `Pending`, `In progress`, `Pending restart` |
 | unknown / not reported / left | `--n-400` | hollow circle, dotted | `Not reported`, `Left` |
 
@@ -337,6 +338,10 @@ degraded, not a deny; `Fetch failed` is the proxy not reaching Control for it
 — an outage; an older document applied while a newer one is desired is a
 rollout `In progress`. A proxy that has never reported is `Not reported`,
 never `Applied`.
+
+A decision is read as its effect: `Allowed`, `Denied`, or **`Unserved`** — an
+allow the server could not answer (PLAN §5.6), which is an outage and never a
+deny (M11). A session reads as its worst hop: a deny anywhere denies it.
 
 A rolling upgrade reads as **`Pending` / in progress**, never as a fault (M19).
 `Not reported` is its own state and never renders as healthy — PLAN §4 is
@@ -372,6 +377,21 @@ is not, the one action), error (what failed, the correlation id, retry — and i
 says *outage*, never *denied*, per M11), and partial (some data, a named gap —
 a fleet where one node is unreachable is not an error page).
 
+**The timeline** (`Timeline.tsx`) is an ordered list, oldest first, along one
+rule: each event an instant (`<time>`, UTC on hover), a marker — the status
+vocabulary's glyph beside its word, or a plain dot — a title and facts. When
+events can be chosen it is one tab stop: the arrows move between events, Home
+and End go to the ends, and the chosen one is `aria-current="step"`. Its
+loading state is `TimelineSkeleton`; an event that cannot be read is
+disabled. **The time range picker** (`TimeRange.tsx`) is all time, relative
+(the last 15 minutes, hour, day, week or 30 days, `range=` in the URL,
+resolved when the screen reads so a pasted link still means "the last day"),
+or absolute (`from=`/`to=`, ISO-8601 UTC, edited in the operator's zone,
+applied explicitly, and a start not before its end refused at the field). A
+filter bar's field is a choice or typed text, which applies on Enter or on
+leaving the field so a half-typed value reads nothing. A tree may open every
+branch at first (`expandAll`), which a hop path, read whole, does.
+
 **Where it lives.** One family per file in `ui/src/components/`; the four
 states are one frame (`States.tsx`: `ScreenFrame`, `ErrorState`, `EmptyState`,
 `PartialNotice`, `Skeleton`). A data table shows **one page** of a bounded
@@ -403,8 +423,8 @@ Not a separate pass; part of "done".
 - Every control has an accessible name; icon-only buttons carry `aria-label`.
 - Tables are real `<table>` markup with `<th scope>`; live regions announce
   async results.
-- Status is never colour alone (§6). Charts — the two that exist — are readable
-  in greyscale.
+- Status is never colour alone (§6). Charts — the two that exist, Fleet's
+  health bar and the audit view's counts — are readable in greyscale.
 - `prefers-reduced-motion` honoured (§3.6). Theme follows the system by default
   and the override persists per operator.
 
@@ -514,8 +534,10 @@ Checks 3–8 run in CI as `console-e2e`, one job per rule, over **one
 registry of screens** (`ui/e2e/screens.ts`), against a real server on a seeded
 database (`ui/e2e/fixture/`): a screen is checked by registering it — its
 path, how it is ready, how its loading, empty, error and partial states are
-made (an API answer substituted in the browser, never a route the server
-binds), and the calls it offers that change something. The gallery's pages
+made (an API answer substituted in the browser — a fixed answer, a request
+held open, or the server's own answer changed, such as a page marked cut —
+never a route the server binds), and the calls it offers that change
+something. The gallery's pages
 are in the registry too. In detail:
 
 - §10.3 runs axe at WCAG 2.2 A and AA on every screen and state, both themes.
@@ -562,8 +584,10 @@ are in the registry too. In detail:
   different sentence — a renamed key is a new key. `en.json` is the only one
   committed in the console phases (0049–0058).
 - **No chart library until there is a third chart.** The two §7 allows are
-  hand-written SVG; a charting dependency for two charts is a bundle cost and a
-  second visual identity at once.
+  hand-written SVG — Fleet's health bar (0050) and the audit view's counts of
+  the records on a page (0051), a table whose bars are one neutral ink beside
+  their figures — and a charting dependency for two charts is a bundle cost
+  and a second visual identity at once.
 - **Bundle budget**: ≤ 350 KB gzipped JS for the active locale on first load, fonts ≤ 120 KB. The
   binary is shipped to self-hosters who may serve it over a VPN from a small
   instance.

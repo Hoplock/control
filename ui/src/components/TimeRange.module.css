@@ -1,0 +1,42 @@
+.picker {
+  display: grid;
+  gap: var(--sp-4);
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.legend {
+  padding: 0;
+  margin-block-end: var(--sp-4);
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-8);
+}
+.absolute {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-8);
+  margin: 0;
+}
+.field {
+  display: grid;
+  gap: var(--sp-4);
+  min-inline-size: 0;
+}
+.label {
+  font: var(--t-caption);
+  letter-spacing: var(--t-caption-tracking);
+  color: var(--text-secondary);
+}
+.error {
+  margin: 0;
+  font: var(--t-label);
+  color: var(--s-deny);
+}

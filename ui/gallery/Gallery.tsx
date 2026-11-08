@@ -22,6 +22,8 @@ import { EmptyState, ErrorMessage, ErrorState, PartialNotice, Skeleton, SpinnerO
 import { STATUS, Status, StatusGlyph, StatusOf, type StatusName, type Tone } from "../src/components/Status";
 import { Tabs } from "../src/components/Tabs";
 import { ToastRegion } from "../src/components/Toast";
+import { TimeRangePicker } from "../src/components/TimeRange";
+import { Timeline, TimelineSkeleton, type TimelineEvent } from "../src/components/Timeline";
 import { Tree } from "../src/components/Tree";
 import { useI18n } from "../src/i18n/I18n";
 import styles from "./Gallery.module.css";
@@ -531,6 +533,119 @@ function Overlay({ which }: { which: string }) {
   }
 }
 
+
+function Cell({ state, children }: { state: string; children: ReactNode }) {
+  return (
+    <div className={styles.panel} data-component-state={state}>
+      <div className={styles.stateName} translate="no">
+        {state}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+const EVENTS: TimelineEvent[] = [
+  {
+    id: "d-edge",
+    at: "2026-11-01T08:00:00Z",
+    title: <code dir="ltr" translate="no">{"px-core-01"}</code>,
+    status: { tone: "allow", label: "" },
+    meta: <code dir="ltr" translate="no">{"ops-shell:12"}</code>,
+  },
+  {
+    id: "d-inner",
+    at: "2026-11-01T08:00:01Z",
+    title: <code dir="ltr" translate="no">{"px-dmz-03"}</code>,
+    status: { tone: "deny", label: "" },
+  },
+  {
+    id: "d-unserved",
+    at: "2026-11-01T08:00:02Z",
+    title: <code dir="ltr" translate="no">{"px-dmz-04"}</code>,
+    status: { tone: "outage", label: "" },
+  },
+];
+
+/** The timeline and the time range picker (0051), every state. */
+function Time() {
+  const { t } = useI18n();
+  const [selected, setSelected] = useState("d-inner");
+  const labelled = (tone: string) =>
+    tone === "allow" ? t("status.allowed") : tone === "deny" ? t("status.denied") : t("status.unserved");
+  const events = EVENTS.map((e) => ({ ...e, status: e.status ? { ...e.status, label: labelled(e.status.tone) } : undefined }));
+  return (
+    <div className={styles.stack}>
+      <div className={styles.grid} data-component="timeline">
+        <Cell state="default">
+          <Timeline label={t("explain.timeline")} events={events} />
+        </Cell>
+        <Cell state="active">
+          <Timeline label={t("explain.timeline")} events={events} selected={selected} onSelect={setSelected} />
+        </Cell>
+        <Cell state="hover">
+          <div data-force-child="hover">
+            <Timeline label={t("explain.timeline")} events={events.slice(0, 1)} selected="none" onSelect={() => {}} />
+          </div>
+        </Cell>
+        <Cell state="focus-visible">
+          <div data-force-child="focus-visible">
+            <Timeline label={t("explain.timeline")} events={events.slice(0, 1)} selected="none" onSelect={() => {}} />
+          </div>
+        </Cell>
+        <Cell state="disabled">
+          <Timeline
+            label={t("explain.timeline")}
+            events={[events[0] as TimelineEvent, { ...(events[1] as TimelineEvent), disabled: true }]}
+            selected="d-edge"
+            onSelect={() => {}}
+          />
+        </Cell>
+        <Cell state="loading">
+          <TimelineSkeleton rows={3} />
+        </Cell>
+        <Cell state="error">
+          <Timeline label={t("explain.timeline")} events={events.slice(2)} />
+        </Cell>
+        <Cell state="empty">
+          <Timeline
+            label={t("explain.timeline")}
+            events={[]}
+            empty={<EmptyState title={t("replay.empty.title")} body={t("replay.empty.body")} />}
+          />
+        </Cell>
+      </div>
+      <div className={styles.grid} data-component="time range picker">
+        <Cell state="default">
+          <TimeRangePicker label={t("audit.filter.time")} value={{ kind: "all" }} onChange={() => {}} />
+        </Cell>
+        <Cell state="active">
+          <TimeRangePicker label={t("audit.filter.time")} value={{ kind: "relative", last: "24h" }} onChange={() => {}} />
+        </Cell>
+        <Cell state="absolute">
+          <TimeRangePicker
+            label={t("audit.filter.time")}
+            value={{ kind: "absolute", from: "2026-11-01T08:00:00Z", to: "2026-11-02T08:00:00Z" }}
+            onChange={() => {}}
+          />
+        </Cell>
+        <Cell state="error">
+          <div data-range-invalid>
+            <TimeRangePicker
+              label={t("audit.filter.time")}
+              value={{ kind: "absolute", from: "2026-11-02T08:00:00Z", to: "2026-11-01T08:00:00Z" }}
+              onChange={() => {}}
+            />
+          </div>
+        </Cell>
+        <Cell state="disabled">
+          <TimeRangePicker label={t("audit.filter.time")} value={{ kind: "relative", last: "7d" }} onChange={() => {}} disabled />
+        </Cell>
+      </div>
+    </div>
+  );
+}
+
 const SECTIONS: Record<string, () => ReactNode> = {
   buttons: () => <Buttons />,
   fields: () => <Fields />,
@@ -539,6 +654,7 @@ const SECTIONS: Record<string, () => ReactNode> = {
   feedback: () => <Feedback />,
   navigation: () => <Navigation />,
   data: () => <Data />,
+  time: () => <Time />,
 };
 
 /** The gallery's pages: one per section, and one per overlay state. */

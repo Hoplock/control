@@ -8,7 +8,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ApiClient } from "../api/client";
-import type { Health, Identity, Session, Supervisors } from "../api/types";
+import type { Health, Identity, Session, Supervisor, Supervisors } from "../api/types";
 import type { MessageKey } from "../i18n/catalogue";
 import { CommandPalette } from "../components/Combobox";
 import { ToastProvider } from "../components/Toast";
@@ -33,6 +33,8 @@ export interface DeploymentView {
   session: Session;
   identity: Load<Identity>;
   health: Load<Health>;
+  /** The live supervisor credentials in this tenant (M19): the chrome's badges, and who the audit view names. */
+  supervisors: readonly Supervisor[];
   refresh(): void;
   api: ApiClient;
 }
@@ -106,6 +108,7 @@ export function Shell({ api, session, onSignedOut }: { api: ApiClient; session: 
     session,
     identity: key ? identity : forbidden,
     health: key ? health : forbidden,
+    supervisors: liveSupervisors(key ? supervisors : forbidden),
     refresh: () => {
       refreshIdentity();
       refreshHealth();
@@ -130,7 +133,7 @@ export function Shell({ api, session, onSignedOut }: { api: ApiClient; session: 
           health={view.health}
           tenants={tenants}
           tenant={tenant}
-          supervisors={liveSupervisors(key ? supervisors : forbidden)}
+          supervisors={view.supervisors}
           navOpen={navOpen}
           onNav={setNavOpen}
           onTenant={(next) => change({ ...prefs, tenant: next })}

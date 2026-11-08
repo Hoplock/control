@@ -89,11 +89,17 @@ export async function serveBuild(context: BrowserContext | Page, dir: string): P
 /** An API answer substituted in the browser, for a state one server cannot produce. */
 export type Substitute =
   | { kind: "hang" }
-  | { kind: "answer"; status: number; body: unknown };
+  | { kind: "answer"; status: number; body: unknown }
+  /** The server's own answer, changed: a state the seeded data cannot reach, made from the data it holds. */
+  | { kind: "patch"; patch(body: unknown): unknown };
 
 export async function substitute(page: Page, path: string, s: Substitute): Promise<void> {
   await page.route(`${NORTH}${path}**`, async (route) => {
     if (s.kind === "hang") return; // never answered: the loading state, held
+    if (s.kind === "patch") {
+      const real = await route.fetch();
+      return route.fulfill({ response: real, contentType: "application/json", body: JSON.stringify(s.patch(await real.json())) });
+    }
     await route.fulfill({ status: s.status, contentType: "application/json", body: JSON.stringify(s.body) });
   });
 }
@@ -118,8 +124,11 @@ export async function forceStates(page: Page): Promise<void> {
   for (const state of ["hover", "focus-visible", "active"]) {
     for (const id of await nodes(`[data-force="${state}"]`)) await force(id, state);
   }
-  // A cell whose state belongs to a part it cannot reach: a child button, a parent wrapper.
-  for (const id of await nodes("[data-force-child] button")) await force(id, "hover");
+  // A cell whose state belongs to a part it cannot reach: a child button (in
+  // the state the wrapper names), a parent wrapper.
+  for (const state of ["hover", "focus-visible", "active"]) {
+    for (const id of await nodes(`[data-force-child="${state}"] button`)) await force(id, state);
+  }
   for (const id of await nodes(":has(> [data-force-parent])")) await force(id, "hover");
 }
 

@@ -31,6 +31,12 @@ export const ROUTES = {
   },
   proxies: { method: "GET", pattern: "/api/v1/tenants/{tenant}/proxies", permission: "fleet:read" },
   proxyWithdraw: { method: "POST", pattern: "/api/v1/tenants/{tenant}/proxies/{proxy}/withdraw", permission: "fleet:write" },
+  explainDecision: { method: "GET", pattern: "/api/v1/tenants/{tenant}/decisions/{decision}", permission: "decision:read" },
+  explainSession: { method: "GET", pattern: "/api/v1/tenants/{tenant}/sessions/{session}/decisions", permission: "decision:read" },
+  auditRecords: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/records", permission: "audit:read" },
+  auditRecord: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/records/{record}", permission: "audit:read" },
+  auditCapture: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/records/{record}/capture", permission: "audit:read" },
+  blockedCommands: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/blocked-commands", permission: "audit:read" },
 } as const satisfies Record<string, Route>;
 
 export type RouteName = keyof typeof ROUTES;

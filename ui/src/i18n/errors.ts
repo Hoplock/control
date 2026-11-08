@@ -33,6 +33,7 @@ export const ERROR_MESSAGES: Readonly<Record<string, MessageKey>> = {
   internal: "error.internal",
   unavailable: "error.unavailable",
   api_version_unsupported: "error.api_version_unsupported",
+  decision_unexplainable: "error.decision_unexplainable",
   [NETWORK_FAILURE]: "error.network",
 };
 

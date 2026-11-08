@@ -1,0 +1,77 @@
+# The policy the console's browser checks decide under (0051): enough rules to
+# give Explain an allow by a rule, a deny by a rule, the default deny, and a
+# session that crosses two hops. `seed.yaml` beside this file seeds the
+# subjects, targets and fleet it names; change them together. The hostnames
+# are fixtures, not anybody's estate.
+
+schema_version: 1
+tenant: default
+description: the console browser checks' fixture policy
+timezone: UTC
+
+labels:
+  env: [prod, dev]
+  kind: [db, vault, build]
+
+groups: [sre]
+
+rules:
+  # An SRE's recorded shell on a production database: the direct allow, with
+  # an obligation and a capture the replay reads.
+  - id: ops-db-shell
+    description: an SRE's recorded shell on a production database
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        labels: {env: [prod], kind: [db]}
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [pty-req, shell, exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+      require_session_capture: true
+    obligations:
+      - kind: record-session
+
+  # The vault sits in the DMZ: reached from the core through px-dmz-03, so a
+  # session to it is two decisions, one per hop, and only while a just-in-time
+  # grant covers it (M10), which the fixture creates.
+  - id: vault-through-dmz
+    description: the vault, reached through the DMZ relay, under a grant
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        zones: [dmz]
+      grant:
+        required: true
+        scopes: [vault-maintenance]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+
+  # A deny by a rule, with the reason an operator reads.
+  - id: no-shell-on-build-hosts
+    description: build hosts take no interactive sessions
+    effect: deny
+    reason: build hosts are reached by the pipeline only
+    match:
+      target:
+        labels: {env: [dev]}

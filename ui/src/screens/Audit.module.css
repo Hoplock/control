@@ -1,0 +1,326 @@
+.screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--sp-20);
+}
+.id {
+  font: var(--t-mono);
+  overflow-wrap: anywhere;
+}
+.quiet {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The views, as links that look like tabs: each is its own page. */
+.views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  border-block-end: var(--border-width) solid var(--border-subtle);
+}
+.view {
+  margin-block-end: calc(-1 * var(--border-width));
+  padding: var(--sp-8) var(--sp-12);
+  border-block-end: var(--focus-ring-width) solid transparent;
+  color: var(--text-secondary);
+  font: var(--t-body);
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    color var(--m-fast) var(--ease),
+    border-color var(--m-fast) var(--ease);
+}
+.view:hover {
+  color: var(--text-primary);
+  border-block-end-color: var(--border-strong);
+}
+.view[aria-current="page"] {
+  color: var(--text-primary);
+  border-block-end-color: var(--accent);
+}
+
+.control {
+  display: grid;
+  gap: var(--sp-4);
+  min-inline-size: 0;
+}
+.controlLabel {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+
+.link {
+  color: var(--text-primary);
+  text-decoration-color: var(--accent);
+  text-underline-offset: var(--sp-2);
+}
+.open {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: start;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: var(--sp-2);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.what,
+.links,
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-inline-size: 0;
+}
+.message {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.severity {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.severity[data-severity="warn"] {
+  color: var(--text-primary);
+}
+.severity[data-severity="critical"] {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+/* Who acted, and beside it a supervisor's word (M19): plainly not a link. */
+.actor {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2) var(--sp-6);
+  min-inline-size: 0;
+}
+.word {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2) var(--sp-4);
+  padding: 0 var(--sp-6);
+  border: var(--border-width) dashed var(--border-default);
+  border-radius: var(--r-sm);
+  color: var(--text-secondary);
+}
+.wordLabel {
+  font: var(--t-caption);
+  letter-spacing: var(--t-caption-tracking);
+}
+.wordName {
+  color: var(--text-primary);
+  font-style: italic;
+}
+
+.notice {
+  display: grid;
+  gap: var(--sp-6);
+  padding: var(--sp-12) var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-inline-start: var(--focus-ring-width) solid var(--s-info);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.noticeTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.noticeBody {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-4) var(--sp-12);
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+/* The record drawer. */
+.drawerBody {
+  display: grid;
+  gap: var(--sp-16);
+}
+.drawerSection {
+  display: grid;
+  gap: var(--sp-8);
+}
+.drawerTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.fields {
+  display: grid;
+  grid-template-columns: minmax(max-content, auto) minmax(0, 1fr);
+  gap: var(--sp-8) var(--sp-16);
+  margin: 0;
+}
+.fields dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.fields dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+/* The counts: a table, its bars in one neutral ink, readable in greyscale. */
+.counts {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: var(--sp-12) var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.countTable {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font: var(--t-cell);
+  font-variant-numeric: tabular-nums;
+}
+.countCaption {
+  padding-block-end: var(--sp-8);
+  font: var(--t-h3);
+  color: var(--text-primary);
+  text-align: start;
+}
+.countTable th,
+.countTable td {
+  padding: var(--sp-2) var(--sp-8);
+  text-align: start;
+  white-space: nowrap;
+}
+.countTable thead th {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.countTable tbody th {
+  font-weight: 400;
+  color: var(--text-primary);
+}
+.countNumber {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.countTable .countNumber {
+  text-align: end;
+}
+.countBarHead,
+.countBarCell {
+  inline-size: 60%;
+}
+.countBar {
+  display: block;
+  inline-size: 100%;
+  block-size: var(--sp-8);
+}
+.countTrack {
+  fill: var(--bg-sunken);
+}
+.countFill {
+  fill: var(--text-secondary);
+}
+.severities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-24);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.severities li {
+  display: inline-flex;
+  gap: var(--sp-6);
+  align-items: baseline;
+}
+
+/* Replay. */
+.replay {
+  display: grid;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-24);
+}
+.replayRail {
+  display: grid;
+  gap: var(--sp-8);
+  min-inline-size: 0;
+}
+.stepButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.terminalPanel {
+  display: grid;
+  gap: var(--sp-8);
+  min-inline-size: 0;
+  position: sticky;
+  inset-block-start: 0;
+}
+.terminalScroll {
+  display: grid;
+  gap: var(--sp-8);
+  max-block-size: var(--table-max-height);
+  overflow: auto;
+  padding: var(--sp-12);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+}
+.terminal {
+  margin: 0;
+  font: var(--t-mono);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.terminalGap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-12);
+  padding: var(--sp-6) var(--sp-8);
+  border: var(--border-width) dashed var(--border-default);
+  border-radius: var(--r-sm);
+}
+
+@media (width < 1024px) {
+  .replay {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .terminalPanel {
+    position: static;
+  }
+  .fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .countBarHead,
+  .countBarCell {
+    inline-size: 40%;
+  }
+}

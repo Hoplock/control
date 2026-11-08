@@ -1,7 +1,7 @@
-// TREE (DESIGN.md §7): the fleet graph's zones and proxies, a hop path. The
-// tree pattern: one tab stop, the arrows move between visible items and open
-// and close a branch (mirrored in a right-to-left page), Home and End go to
-// the ends.
+// TREE (DESIGN.md §7): the fleet graph's zones and proxies, and a hop path,
+// which Explain opens whole (`expandAll`). The tree pattern: one tab stop, the
+// arrows move between visible items and open and close a branch (mirrored in
+// a right-to-left page), Home and End go to the ends.
 
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useI18n } from "../i18n/I18n";
@@ -15,9 +15,25 @@ export interface TreeNode {
   children?: readonly TreeNode[];
 }
 
-export function Tree({ label, nodes, onOpen }: { label: string; nodes: readonly TreeNode[]; onOpen?(id: string): void }) {
+/** Every branch's id, at every depth. */
+function branches(nodes: readonly TreeNode[]): string[] {
+  return nodes.flatMap((n) => (n.children?.length ? [n.id, ...branches(n.children)] : []));
+}
+
+export function Tree({
+  label,
+  nodes,
+  onOpen,
+  expandAll = false,
+}: {
+  label: string;
+  nodes: readonly TreeNode[];
+  onOpen?(id: string): void;
+  /** Opens every branch at first, not only the roots: a path read whole, such as a hop path. */
+  expandAll?: boolean;
+}) {
   const { dir } = useI18n();
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(nodes.map((n) => n.id)));
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(expandAll ? branches(nodes) : nodes.map((n) => n.id)));
   const [active, setActive] = useState<string | null>(nodes[0]?.id ?? null);
   const root = useRef<HTMLUListElement>(null);
   const visible: { node: TreeNode; parent: string | null }[] = [];

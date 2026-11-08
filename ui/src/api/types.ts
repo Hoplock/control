@@ -201,3 +201,172 @@ export interface Withdrawn {
   state: string;
   tokens_revoked: number;
 }
+
+/** decision.MappingFacts: the claim mapping a decision was made under, beside the active one. */
+export interface MappingFacts {
+  version: number;
+  active: number;
+  changed: boolean;
+}
+
+/** decision.Story (0019): one decision, explained whole (PLAN M4, §5.6). */
+export interface Story {
+  decision_id: string;
+  session_id?: string;
+  proxy_id?: string;
+  effect: "allow" | "deny" | "unserved" | string;
+  decided_at: string;
+  rule?: string;
+  rule_line?: number;
+  mapping: MappingFacts;
+  obligations?: string[];
+  /** The `inputs.grants[]` entry the explanation names, whole. */
+  grant?: RecordedGrant;
+  /** The standing denials that decided, whole (M28). */
+  standing?: RecordedStanding[];
+  inputs: RecordedInputs;
+  explanation: RecordedExplanation;
+  /** The contract's AuthorizeResponse, as served: absent on a deny. */
+  snapshot?: Snapshot;
+  unserved?: string;
+}
+
+/** north explainSession's answer: a session's newest decisions, bounded (M26.3). */
+export interface SessionStories {
+  session_id: string;
+  decisions: Story[];
+  truncated: boolean;
+}
+
+/** decision.recordedInputs: what the engine saw. */
+export interface RecordedInputs {
+  now: string;
+  subject: {
+    id: string;
+    source?: string;
+    groups?: string[];
+    claims?: Record<string, string>;
+    auth_method?: string;
+    mfa: boolean;
+    known: boolean;
+    mapping_version?: number;
+    break_glass: boolean;
+  };
+  target: { hostname: string; port?: number; zone?: string; labels?: Record<string, string>; known: boolean };
+  /** Where the question came from: the proxy that asked, and the proxies before it. */
+  context: { proxy_id: string; source_addr?: string; hop_trail?: string[] };
+  connection?: { session_id?: string; client_version?: string; policy_version?: number };
+}
+
+/** decision.recordedGrant */
+export interface RecordedGrant {
+  id: string;
+  origin: string;
+  scope?: { name?: string; targets?: string[]; labels?: Record<string, string>; zones?: string[] };
+  not_before?: string;
+  expires_at?: string;
+  reason?: string;
+  reason_code?: string;
+  created_by?: { subject?: string; principal?: string; break_glass?: boolean };
+  request_id?: string;
+  workflow_ref?: string;
+  approvers?: string[];
+  external?: { system?: string; reference?: string; window_start?: string; window_end?: string };
+}
+
+/** decision.recordedStanding */
+export interface RecordedStanding {
+  code: string;
+  subject_id?: string;
+  target_id?: string;
+  placed_at: string;
+  placed_by?: { subject?: string; principal?: string };
+  reason_code?: string;
+  reason?: string;
+}
+
+/** decision.recordedExplanation: the engine's account, and the layers above it. */
+export interface RecordedExplanation {
+  effect: string;
+  basis?: string;
+  rule?: string;
+  rule_line?: number;
+  terms?: string[];
+  obligations?: string[];
+  deny_reason?: string;
+  grant?: string;
+  bundle_digest?: string;
+  rules_considered?: number;
+  standing?: string[];
+  route_type?: string;
+  next_proxy_id?: string;
+  unserved?: string;
+}
+
+/** contract.AuthorizeResponse, the part Explain reads. */
+export interface Snapshot {
+  route_type: string;
+  target: string;
+  target_port?: number;
+  permitted_channels?: string[];
+  hop?: { next_proxy_id?: string; final_target?: string; max_hops?: number; hop_trail?: string[] };
+  require_session_capture?: boolean;
+  session_deadline?: string;
+}
+
+/** north.recordView (0010, 0019): one audit record, with its place in its chain. */
+export interface AuditRecord {
+  record_id: string;
+  stream: string;
+  chain_seq: number;
+  prev_hash?: string;
+  hash: string;
+  session_id: string;
+  kind: string;
+  severity: "info" | "warn" | "critical" | string;
+  subject?: string;
+  login?: string;
+  target?: string;
+  message?: string;
+  event?: string;
+  decision_id?: string;
+  proxy_id?: string;
+  /** An open map: its keys are their writer's, and a key the console does not know is skipped. */
+  attributes?: Record<string, string>;
+  recorded_at: string;
+  received_at: string;
+  body: string;
+}
+
+/** north.auditRecordList */
+export interface AuditRecordPage extends Paged {
+  records: AuditRecord[];
+}
+
+/** north.blockedView: one row of the showcase join. */
+export interface BlockedCommand {
+  record: AuditRecord;
+  command: string;
+  action: string;
+  target_zone: string;
+  target_labels: Record<string, string>;
+  decision_found: boolean;
+  matched_rule?: string;
+  route_type?: string;
+  decided_at?: string;
+}
+
+/** north.blockedList */
+export interface BlockedPage extends Paged {
+  blocked: BlockedCommand[];
+}
+
+/** north.captureView (version 3): one record's session capture. */
+export interface Capture {
+  record_id: string;
+  session_id: string;
+  capture_bytes: number;
+  capture_sha256: string;
+  retained: boolean;
+  payload?: string;
+}
