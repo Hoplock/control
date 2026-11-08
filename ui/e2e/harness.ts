@@ -143,6 +143,37 @@ export async function fitContent(page: Page): Promise<void> {
   if (vp && height > vp.height) await page.setViewportSize({ width: vp.width, height: Math.min(height, 4000) });
 }
 
+/**
+ * Makes what differs on every run lay out the same, before a screenshot. A
+ * masked box still has the width of what it hides, so a time read at 11 PM is
+ * wider than one read at 6 PM and moves a table's columns: every <time> is
+ * given one fixed instant (it stays masked). And the identifiers a run mints
+ * and no mask covers — a sign-in's session principal (`sess-` and 16
+ * characters), a decision or grant id inside a sentence or a chip, the
+ * build's commit — become placeholders of their own length, and an instant
+ * written out as text becomes one fixed instant. The fixture's own ids are
+ * left alone.
+ */
+export async function steady(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    for (const t of Array.from(document.querySelectorAll("time"))) t.textContent = "Jan 1, 2026, 12:00:00 PM";
+    const minted = /\b(sess-|d_|g_)([A-Za-z0-9_-]{16})\b/g;
+    // The build's own commit and commit time, which Go stamps into the
+    // version the Deployment view shows: every push changes them.
+    const commit = /\b[0-9a-f]{40}\b/g;
+    const instant = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z\b/g;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const v = n.nodeValue ?? "";
+      const w = v
+        .replace(minted, (_, prefix: string, rest: string) => prefix + "x".repeat(rest.length))
+        .replace(commit, "x".repeat(40))
+        .replace(instant, "2026-01-01T12:00:00Z");
+      if (w !== v) n.nodeValue = w;
+    }
+  });
+}
+
 /** What differs on every run and is masked in a screenshot: times, generated ids. */
 export function volatile(page: Page) {
   return [page.locator("time"), page.locator("[data-volatile]"), page.locator("[data-instance-id]")];
