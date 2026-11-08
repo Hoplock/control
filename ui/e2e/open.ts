@@ -52,6 +52,17 @@ export async function openScreen(browser: Browser, screen: E2EScreen, o: OpenOpt
     await page.addStyleTag({ content: "* { font-kerning: none !important; font-variant-ligatures: none !important; }" });
   }
   await page.evaluate(() => document.fonts.ready);
+  // An overlay fades in (DESIGN.md §3.6): a check that reads colours or
+  // pixels mid-fade reads a colour that is not the design's. Loops (a busy
+  // indicator) never finish, so only finite animations are awaited.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
   if (screen.kind === "gallery") await forceStates(page);
   return page;
 }

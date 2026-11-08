@@ -17,26 +17,40 @@ export async function signIn(role: Role) {
 }
 
 /**
- * Waits for the deployment's health to settle — every node reported and the
- * fleet counted — so no screenshot catches the first seconds after start.
+ * Waits for the deployment's health to settle AFTER the fixture: every node
+ * reported, and the fleet counted, at an instant later than the fixture's
+ * last write. The server computes both on its own interval, so a summary
+ * read too early still describes the database before the fixture — and every
+ * screen that shows it differs from the baseline. The settled answer is
+ * printed on one line, so a CI log says what the screens were given.
  */
-async function settled(admin: Awaited<ReturnType<typeof signIn>>): Promise<void> {
-  for (let i = 0; i < 120; i++) {
+async function settled(admin: Awaited<ReturnType<typeof signIn>>, after: number): Promise<void> {
+  for (let i = 0; i < 240; i++) {
     const res = await admin.get(`/api/v1/tenants/${TENANT}/instance/health`);
     if (res.ok()) {
-      const h = (await res.json()) as { nodes: { members: { reported_at: string | null }[] }; fleet?: { summary: unknown }[] };
-      const reported = h.nodes.members.length > 0 && h.nodes.members.every((m) => m.reported_at);
-      if (reported && h.fleet?.every((f) => f.summary)) return;
+      const h = (await res.json()) as {
+        state: string;
+        reasons: { code: string }[];
+        nodes: { members: { reported_at: string | null }[] };
+        fleet?: { state: string; observed_at: string | null; summary: Record<string, unknown> | null }[];
+      };
+      const fleet = h.fleet ?? [];
+      const reported = h.nodes.members.length > 0 && h.nodes.members.every((m) => m.reported_at && Date.parse(m.reported_at) > after);
+      const counted = fleet.length > 0 && fleet.every((f) => f.summary && f.observed_at && Date.parse(f.observed_at) > after);
+      if (reported && counted) {
+        console.log(`[fixture] health ${h.state} (${h.reasons.map((r) => r.code).join(",")}); fleet ${fleet[0]?.state} ${JSON.stringify(fleet[0]?.summary)}`);
+        return;
+      }
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error("the deployment's health did not settle in a minute");
+  throw new Error("the deployment's health did not settle after the fixture in two minutes");
 }
 
 export default async function globalSetup(_: FullConfig): Promise<void> {
   const admin = await signIn("admin");
   for (const seed of SEEDS) await seed(admin);
-  await settled(admin);
+  await settled(admin, Date.now());
   await admin.dispose();
   for (const role of Object.keys(OPERATORS) as Role[]) {
     const ctx = await signIn(role);

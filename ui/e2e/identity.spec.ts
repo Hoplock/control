@@ -62,6 +62,7 @@ async function difference(page: Page, a: Buffer, b: Buffer): Promise<number> {
 test("two deployments are told apart from a screenshot of the chrome alone", async ({ browser }) => {
   const a = await openScreen(browser, fleet);
   await expect(a.locator("header").first()).toContainText("Staging EU");
+  console.log(`[chrome] ${(await a.locator("header").first().innerText()).replace(/\s+/g, " ")}`);
   await expect(a).toHaveScreenshot("identity-deployment-a.png", { clip: CHROME });
   const shotA = await a.screenshot({ clip: CHROME });
 
