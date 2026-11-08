@@ -26,6 +26,63 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.38.0
+
+Phase 0051, the console's Explain and audit view (M4, M8, M19, M26, M11, M20,
+M21). Run `hoplock-control migrate`: migration `0025` adds one partial index
+to `audit_records`, and while it builds, writes to that table wait — no
+proxy's log batch and no operator's record is stored until it commits, and a
+proxy buffers and resends meanwhile; reads continue. Nothing in `ext`,
+`server` or the contract changes.
+
+- **North-bound API version `3`** (`versions.north_api`), with
+  `versions.north_api_min` still `1`: a client declaring `1` or `2` is served
+  exactly as before. Version `3` is the route and the parameter below.
+- **`GET …/audit/records/{record}/capture`** (`audit:read`): one `stream`
+  record's session capture, for replay — `record_id`, `session_id`,
+  `capture_bytes` and `capture_sha256` (the size and digest the record's
+  hashed body carries, so the bytes can be checked against the chain),
+  `retained`, and `payload`, the bytes in base64 as the proxy sent them. A
+  capture a retention pass emptied is `retained: true` with no `payload`; a
+  record that never carried one, and a record that does not exist, are `404
+  not_found`.
+- **`?principal=` on `GET …/audit/records`**: the records naming that
+  principal as the actor (`attributes.principal_id`) — an operator's
+  session, an API token, or a supervisor's `sup-` credential, so an operator
+  can read what a supervisor did to their deployment. The cursor binds it. A
+  supervisor's `acting_operator` is never a filter.
+- **Explain at `/console/explain`.** Paste the session id a user was given,
+  or a decision id (`d_…`), and read the whole story: what the session came
+  to, its decisions hop by hop, and for each the outcome and why (a rule, the
+  default deny when no rule matched, a standing denial, or an allow the
+  server could not serve — an outage, never shown as a deny), the subject's
+  identity, the matched rule and terms, the claim mapping version beside the
+  active one, the grant, the obligations, the route, the hop path, and the
+  record as stored. Deep links: `/console/explain/sessions/<id>`,
+  `/console/explain/decisions/<id>`, and `?decision=` for the hop shown.
+- **The audit view at `/console/audit/records`**: records by subject, target,
+  session, decision, acting principal, kind, severity and time (all time, the
+  last 15 minutes to 30 days, or between two instants), newest or oldest
+  first, every filter in the URL; one page at a time, saying when the answer
+  was cut, with that page counted by kind and severity. A record opens at
+  `?record=<id>` with its chain position, hash and body, and links to its
+  explanation and its session's replay. Where a supervisor's record carries
+  `acting_operator`, the name is shown beside the `sup-` principal as the
+  supervisor's word, linked to nothing.
+- **Blocked commands at `/console/audit/blocked-commands?label=name=value`**,
+  each with the rule and route that let the session in, and a link to that
+  decision's explanation; one whose decision this server no longer holds says
+  so.
+- **Session replay at `/console/audit/sessions/<id>/replay`**: a session's
+  records in order, stepped through by keyboard, buttons or played, with the
+  terminal as its captures show it at that step. A capture removed by
+  retention or unreadable is marked where it falls, and nothing either side
+  of it is joined.
+- **The supervised badge in the top bar is a link** to the audit view of that
+  supervisor's acts.
+- A screen's read whose selection changed is shown loading from the moment it
+  changes, so a pager never names the next page over the last page's rows.
+
 ## v0.37.0
 
 Phase 0050, the console's component set, its browser checks, and Fleet (M20,

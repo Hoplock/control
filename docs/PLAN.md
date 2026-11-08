@@ -907,12 +907,14 @@ decision.
     (observed longer ago than its bound) and `left` (a node stopped on
     purpose, outside the roll-up). The roll-up is the worst state, and it
     never makes `unknown` or `stale` healthy.
-  - **The north-bound version** is one integer, `2`, with `north_api_min`
+  - **The north-bound version** is one integer, `3`, with `north_api_min`
     `1`, carried in `Hoplock-Api-Version` both ways; `docs/API-VERSIONING.md`
     is the promise: what moves it, what "additive" means, and the deprecation
-    window. `2` is the acting-operator header (below): a new request header is
-    additive, like a new route, and moves the version so that a supervisor can
-    tell whether a deployment honours it. A record's `attributes` is an open
+    window. `2` is the acting-operator header (below), and `3` a record's
+    capture read and the audit query's `principal` filter (§7), which is how
+    an operator reads what a supervisor did to them: a new route, request
+    header or query parameter is additive, and moves the version so that a
+    supervisor can tell whether a deployment honours it. A record's `attributes` is an open
     map whose keys are their writer's and never members of this surface, so a
     reader skips a key it does not know and a new key moves nothing.
   - **The registration** is one `POST` to `supervisor.endpoint` whose request
@@ -3718,8 +3720,9 @@ not say why, and a grant the explanation names that the inputs do not hold.
   something that happened, so refusing it would delete the evidence of the bug
   that produced it, and removing the value without saying so would be a record
   that lies by omission.
-- **Query** — by session, subject, target, decision id, proxy, time range,
-  kind, severity, event name, grant reference and device field. "Show me every
+- **Query** — by session, subject, target, decision id, proxy, the acting
+  principal, time range, kind, severity, event name, grant reference and
+  device field. "Show me every
   blocked command on `env=prod` last week, and who approved the access that
   made it possible" is one query joining audit to decisions and to targets —
   `env=prod` is a label, and labels live on the target rather than on the
@@ -3727,9 +3730,18 @@ not say why, and a grant the explanation names that the inputs do not hold.
   serves it all under `audit:read`: the general query over every projection
   (`GET …/audit/records`), one record by id with its chain position and hash
   (`GET …/audit/records/{record_id}`, the read-back the conformance suite's
-  durability assertion uses), the showcase join, the drift feed, the unmet
+  durability assertion uses), one `stream` record's session capture for
+  replay (`…/audit/records/{record_id}/capture`: the bytes in base64 beside
+  the size and digest the record's hashed body carries, `retained: true` and
+  no bytes once a retention pass emptied it, and a 404 for a record that
+  never carried one), the showcase join, the drift feed, the unmet
   algorithm policy, the negotiated-value questions, the gaps and a session's
-  loss, and the certificate join.
+  loss, and the certificate join. The acting principal is
+  `attributes.principal_id`, which every record this server writes for an
+  act carries and no proxy's record does: `?principal=` answers what one
+  operator, token or supervisor did here (M19), through a partial index of
+  its own (`audit_records_principal_idx`) in the audit order. It is never the
+  supervisor's `acting_operator`, which nothing filters on.
 
   Each of those lists is bounded by its caller (M26). The general query, the
   showcase join, the drift feed, the unmet policy, the gaps and the
@@ -4180,7 +4192,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0048 | The supervising operator named in the instance's trail | **Built, `v0.35.0`.** A supervisor's north-bound call may name the operator it acts for in `Hoplock-Acting-Operator`: the name's UTF-8, percent-encoded outside printable ASCII and at `%`, decoded to 1–128 `unicode.IsPrint` characters with no leading or trailing space; checked once in the middleware after authentication, so a bad credential is `401` first and a refusal changes and records nothing; `400 invalid_request` on the header with `not_supervisor` from any caller that is not a `sup-` principal (a token, a session, an anonymous route), `too_long` (`limit` `128`), and `invalid` for anything else, a value sent twice included. Recorded as `acting_operator` beside `principal_id` on every record the call writes — `OperatorEvent`, `GrantEvent`, `ContextEvent`, and the `logout` of a supervisor ending its own token — inside the hashed body, carried from the one read in `actorFrom` on `access.Actor`, `audit.OperatorActor` and `standing.Actor`; never on a row, a filter, a subject or any input to RBAC, tenancy or a decision, so it changes no answer; logged on `northbound_request` and `northbound_refused`; `north.HostCaller` and `server.Caller` carry `ActingOperator` for a host's routes and a report provider's calls. North-bound version `2` for the header, `north_api_min` `1`; `docs/API-VERSIONING.md` states the header, that a new request header moves the version, and that a record's `attributes` is an open map whose keys are not members; every answer is held, in the package's tests, to project to each served version exactly as encoding/json writes it (M19, M2, M8, M18, M15, M23). Raised by `Hoplock/enterprise#64`, item 2; depends on 0046 |
 | 0049 | Management console 1: the shell, the build and the design machinery | the console's foundation, served from the binary inside the console namespace 0038 reserves and nowhere else, with a host's screens under the host's (M27): the toolchain inside `ui/DESIGN.md` §11, embedded assets so `make build` needs no Node, the mount through `north.Options.Consoles` with 0038's namespace tests run against the real console, OIDC sign-in on the API's own session, `tokens.css` with both themes and both densities, the ICU catalogue machinery with `en.json` the only catalogue and the `en-XA`/`en-XB` pseudolocale builds, the deployment and tenant chrome (M18, M19), and the static checks — token lint, contrast, string lint, catalogue keys, bundle budget (M20, M21, M2, M23) |
 | 0050 | Management console 2: the component set, the browser checks and Fleet | **Built, `v0.37.0`.** The component set in `ui/src/components/` — DESIGN.md §7's primitives and composites with every state, the one status component whose vocabulary (`STATUS`) encodes M11, M17 and M19, the four-state `ScreenFrame`, a `DataTable` showing one page of a bounded list and a cursor `Pagination` (M26), the one typed-name `ConfirmDialog`, and errors rendered from code and parameters with a fallback naming the code and the correlation id — shown in a test-only gallery (`ui/gallery/`, never in the product build). The browser checks run in CI as `console-e2e`, one job per rule, over the screen registry `ui/e2e/screens.ts` against a real server on a seeded database (`ui/e2e/fixture/`): axe, the committed screenshot baseline (`ui/e2e/baseline/`), every external origin blocked, reduced motion, `en-XA` (unaccented text, clipping at +40%) and `en-XB` (no physical property, every block mirrored). RBAC asserted at the API for each registered screen and role, and the route test holding `ui/src/api/routes.ts` against the server's table and every role (`ui/test/north-routes.json`, kept current by `TestTheConsolesRouteTableIsTheServers`). Fleet at `/console/fleet`: proxies by page, health, heartbeat, contract version, relay registrations, each configuration state as reported (never-reported its own state), one unreachable proxy partial, a hand-written SVG health chart, and withdrawing a proxy behind `fleet:write` (M20, M21, M26, M11, M17, M19, M23) |
-| 0051 | Management console 3: Explain and the audit view | a session or decision id in and the whole story out, deep-linked from the audit view; the audit query, the blocked-command view and session replay, every list paged (M26) and every filter under `/console/`; the supervisor's actions one link from the chrome, and `acting_operator` shown as the supervisor's word, never as a subject (M4, M8, M19, M26, M23) |
+| 0051 | Management console 3: Explain and the audit view | **Built, `v0.38.0`.** Explain at `/console/explain`: a pasted session id (`…/sessions/{session}/decisions`) or decision id (`d_…`, `…/decisions/{decision}`) is a deep link — `/console/explain/sessions/<id>`, `/console/explain/decisions/<id>`, `?decision=` for the hop a session opens on — and the whole story out: the session's outcome, a timeline of its decisions hop by hop, and for each the outcome and why (a rule, the default deny, a standing denial, or an unserved allow, which is an outage and never drawn as a deny), identity, matched rule and terms, the claim mapping version beside the active one, the grant, the obligations, the route, the hop path as a tree, and the stored record; a 404 is the empty state and `decision_unexplainable` an outage. Audit at `/console/audit/records` (by subject, target, session, decision, acting principal, kind, severity and an absolute or relative time range, newest or oldest first, every filter in the URL), a record drawer at `?record=`, the blocked-command view at `/console/audit/blocked-commands?label=`, and session replay at `/console/audit/sessions/<id>/replay` stepping through a session's records with each capture read as a terminal; every list one page of a bounded list (M26), with the page's counts by kind as hand-written SVG, the second of DESIGN.md §11's two charts. The supervised badge opens the audit view at `?principal=<sup-…>`, and `acting_operator` is shown beside its `sup-` principal as the supervisor's word, linked to nothing. The timeline and the time range picker joined the component set. To serve it, north-bound version `3`: `GET …/audit/records/{record}/capture` and the `principal` filter on `…/audit/records`, through `audit_records_principal_idx` (migration `0025`) (M4, M8, M19, M26, M11, M20, M21, M23) |
 | 0052 | Management console 4: Policy | versions, diff, compiler errors inline at their lines from their codes, simulation against recorded traffic, activation and rollback through the typed confirmation, and the publish-time report with accept-by-id (M3, M4, M21, M26, M23) |
 | 0053 | Management console 5: Inventory | targets and labels, identities, groups, roles and grants, each paged, every write offered only to a role the API lets make it and asserted at the API, grant creation and revocation end to end (M2, M7, M10, M26, M23) |
 | 0054 | Management console 6: locks, quarantines and the directory's subjects | a lock, a quarantine and a deactivation shown wherever their subject or target is, as deny-class states (M11) and never an outage; lock, unlock, quarantine and release offered to a holder of `session:revoke` and nobody else; a directory-managed subject shown with its provider, `directory.source` and external id, never editable here; the claim mapping's directory-scoped entries; a connector's `directory_claim` and `directory_source` on the sign-in page (M28, M7, M2, M23) |
