@@ -1,0 +1,117 @@
+/* Form controls (DESIGN.md §7, §8). Boundaries are --border-default (≥ 3:1). */
+.field {
+  display: grid;
+  gap: var(--sp-4);
+  min-inline-size: 0;
+}
+.label {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.hint {
+  margin: 0;
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+.error {
+  margin: 0;
+  font: var(--t-label);
+  color: var(--s-deny);
+}
+.control {
+  min-block-size: var(--control-height);
+  min-inline-size: 0;
+  padding: var(--sp-4) var(--sp-8);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: var(--t-body);
+  transition: border-color var(--m-fast) var(--ease);
+}
+.control::placeholder {
+  color: var(--text-tertiary);
+}
+.control:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.control:disabled {
+  border-color: var(--border-subtle);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+.control[aria-invalid="true"] {
+  border-color: var(--s-deny);
+}
+.mono {
+  font: var(--t-mono);
+}
+.textarea {
+  min-block-size: var(--sp-64);
+  resize: vertical;
+}
+.select {
+  padding-inline-end: var(--sp-4);
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  font: var(--t-body);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.check:has(:disabled) {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+.box {
+  inline-size: var(--sp-16);
+  block-size: var(--sp-16);
+  margin: 0;
+  accent-color: var(--accent);
+}
+.radio {
+  border-radius: var(--r-full);
+}
+.switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  inline-size: var(--sp-32);
+  block-size: var(--sp-20);
+  margin: 0;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-full);
+  background: var(--bg-sunken);
+  transition: background-color var(--m-fast) var(--ease);
+}
+.switch::before {
+  content: "";
+  position: absolute;
+  inset-block: var(--sp-2);
+  inset-inline-start: var(--sp-2);
+  inline-size: var(--sp-12);
+  border-radius: var(--r-full);
+  background: var(--text-secondary);
+  transition: inset-inline-start var(--m-fast) var(--ease);
+}
+.switch:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.switch:checked::before {
+  inset-inline-start: var(--sp-16);
+  background: var(--text-on-accent);
+}
+.switch:disabled {
+  opacity: 0.5;
+}
+.choices {
+  display: grid;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}

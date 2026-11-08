@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import type { ApiClient } from "./api/client";
 import type { Session } from "./api/types";
-import { ErrorText } from "./components/ErrorText";
+import { ErrorMessage } from "./components/States";
 import { VisuallyHidden } from "./components/VisuallyHidden";
 import { useI18n } from "./i18n/I18n";
 import { consoleHref, safeReturn } from "./router/paths";
@@ -71,7 +71,7 @@ export function App({ api }: { api: ApiClient }) {
   } else if (session.state === "outage") {
     page = (
       <main className={styles.alone} id="content">
-        <ErrorText error={session.error} kind="outage" />
+        <ErrorMessage error={session.error} kind="outage" />
         <button type="button" className={styles.retry} onClick={reload}>
           {t("common.retry")}
         </button>

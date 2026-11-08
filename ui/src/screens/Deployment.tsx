@@ -5,15 +5,14 @@
 // could not be read is an outage, never a denial.
 
 import type { Health, Identity, Reason } from "../api/types";
-import { ErrorText } from "../components/ErrorText";
+import { PageHeader } from "../components/PageHeader";
+import { EmptyState, ErrorState, ScreenFrame, Skeleton } from "../components/States";
 import { Ident } from "../components/Ident";
 import { Status } from "../components/Status";
-import { VisuallyHidden } from "../components/VisuallyHidden";
 import type { MessageKey } from "../i18n/catalogue";
 import { useI18n } from "../i18n/I18n";
 import type { Translate } from "../i18n/messages";
 import { HEALTH_STATUS } from "../shell/chrome";
-import type { Load } from "../shell/load";
 import { useDeployment } from "../shell/Shell";
 import styles from "./Screen.module.css";
 
@@ -44,25 +43,6 @@ export function reasonText(t: Translate, r: Reason): string {
   return key ? t(key, values) : t("reason.unknown", { code: r.code });
 }
 
-function Failed<T>({ load, onRetry }: { load: Load<T>; onRetry(): void }) {
-  const { t } = useI18n();
-  if (load.state === "refused" && load.status === 403) return <p className={styles.empty}>{t("deployment.forbidden")}</p>;
-  if (load.state === "refused") return <ErrorText error={load.error} kind="refused" />;
-  if (load.state === "outage") {
-    return (
-      <div className={styles.section}>
-        <ErrorText error={load.error} kind="outage" />
-        <p>
-          <button type="button" className={styles.button} onClick={onRetry}>
-            {t("common.retry")}
-          </button>
-        </p>
-      </div>
-    );
-  }
-  return null;
-}
-
 function IdentitySection({ identity, tenantsShown }: { identity: Identity; tenantsShown: boolean }) {
   const { t, f } = useI18n();
   const v = identity.versions;
@@ -74,7 +54,7 @@ function IdentitySection({ identity, tenantsShown }: { identity: Identity; tenan
         </h2>
         <dl className={styles.fields}>
           <dt>{t("deployment.name")}</dt>
-          <dd>{identity.display_name || t("chrome.deployment.unnamed")}</dd>
+          <dd translate={identity.display_name ? "no" : undefined}>{identity.display_name || t("chrome.deployment.unnamed")}</dd>
           <dt>{t("deployment.instanceId")}</dt>
           <dd>
             <Ident value={identity.instance_id} />
@@ -137,7 +117,7 @@ function HealthSection({ health }: { health: Health }) {
       )}
       <h3 className={styles.sectionTitle}>{t("deployment.nodes")}</h3>
       {members.length === 0 ? (
-        <p className={styles.empty}>{t("deployment.nodes.none")}</p>
+        <EmptyState title={t("deployment.nodes")} body={t("deployment.nodes.none")} />
       ) : (
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -183,39 +163,52 @@ function HealthSection({ health }: { health: Health }) {
   );
 }
 
-function Skeleton() {
-  const { t } = useI18n();
+function Loading() {
   return (
-    <div className={styles.skeleton} aria-busy="true">
-      <VisuallyHidden>{t("common.loading")}</VisuallyHidden>
+    <div className={styles.screen}>
+      <div className={styles.section}>
+        <Skeleton shape="title" size="s" />
+        <Skeleton size="l" />
+        <Skeleton size="m" />
+        <Skeleton size="l" />
+      </div>
+      <div className={styles.section}>
+        <Skeleton shape="title" size="s" />
+        <Skeleton size="m" />
+        <Skeleton size="m" />
+      </div>
     </div>
   );
 }
 
+/**
+ * The four states (DESIGN.md §7): loading is the sections' own skeleton; an
+ * identity that cannot be read is the error state (refused or outage, never
+ * conflated, M11); a health that cannot be read beside a readable identity
+ * is partial, the gap named; a deployment no node has reported for is the
+ * nodes' empty state, inside the health section.
+ */
 export function DeploymentScreen() {
   const { t } = useI18n();
   const { identity, health, tenants, refresh } = useDeployment();
+  const gaps = health.state === "outage" ? [t("deployment.partial.health")] : [];
   return (
     <section className={styles.screen} aria-labelledby="deployment-title">
-      <div className={styles.header}>
-        <h1 id="deployment-title" className={styles.title}>
-          {t("deployment.title")}
-        </h1>
-      </div>
-      {identity.state === "ok" ? (
-        <IdentitySection identity={identity.data} tenantsShown={tenants.length > 1} />
-      ) : identity.state === "loading" ? (
-        <Skeleton />
-      ) : (
-        <Failed load={identity} onRetry={refresh} />
-      )}
-      {health.state === "ok" ? (
-        <HealthSection health={health.data} />
-      ) : health.state === "loading" ? (
-        <Skeleton />
-      ) : identity.state === "ok" ? (
-        <Failed load={health} onRetry={refresh} />
-      ) : null}
+      <PageHeader title={<span id="deployment-title">{t("deployment.title")}</span>} />
+      <ScreenFrame load={identity} onRetry={refresh} loading={<Loading />} isEmpty={() => false} empty={null} gaps={gaps}>
+        {(data) => (
+          <>
+            <IdentitySection identity={data} tenantsShown={tenants.length > 1} />
+            {health.state === "ok" ? (
+              <HealthSection health={health.data} />
+            ) : health.state === "loading" ? (
+              <Loading />
+            ) : health.state === "refused" ? (
+              <ErrorState error={health.error} kind="refused" />
+            ) : null}
+          </>
+        )}
+      </ScreenFrame>
     </section>
   );
 }

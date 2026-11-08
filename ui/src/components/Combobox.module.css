@@ -1,0 +1,90 @@
+.combo {
+  position: relative;
+  display: grid;
+  gap: var(--sp-4);
+}
+.label {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.input {
+  min-block-size: var(--control-height);
+  padding: var(--sp-4) var(--sp-8);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: var(--t-body);
+}
+.input:hover {
+  border-color: var(--border-strong);
+}
+.input:disabled {
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+}
+.list {
+  max-block-size: var(--list-max-height);
+  margin: 0;
+  padding: var(--sp-4);
+  overflow-y: auto;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  list-style: none;
+}
+.option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-12);
+  min-block-size: var(--control-height);
+  padding: 0 var(--sp-8);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  font: var(--t-body);
+  cursor: pointer;
+}
+.option[aria-selected="true"] {
+  background: var(--bg-selected);
+}
+.hint {
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+.none {
+  padding: var(--sp-8);
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.opener {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  inline-size: 100%;
+  min-block-size: var(--control-height);
+  padding: 0 var(--sp-8);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font: var(--t-label);
+}
+.opener:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.palette {
+  inline-size: min(var(--dialog-width), calc(100vw - var(--sp-32)));
+  margin-block-start: 12vh;
+  padding: var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  box-shadow: var(--e-2);
+}
+.palette::backdrop {
+  background: var(--scrim);
+}

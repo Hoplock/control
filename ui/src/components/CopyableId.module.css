@@ -1,0 +1,50 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+.id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--t-mono);
+  color: var(--text-primary);
+  unicode-bidi: isolate;
+}
+.copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--sp-24);
+  block-size: var(--sp-24);
+  padding: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  transition: background-color var(--m-fast) var(--ease);
+}
+.copy:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.copy:active {
+  background: var(--bg-sunken);
+}
+.copy svg {
+  inline-size: var(--sp-12);
+  block-size: var(--sp-12);
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+}
+.announce {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}

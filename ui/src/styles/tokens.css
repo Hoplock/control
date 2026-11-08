@@ -65,6 +65,10 @@
   --text-on-accent: light-dark(#ffffff, var(--n-0));
   --accent: var(--a-500);
   --focus-ring: var(--a-500);
+  /* The ground behind a modal overlay, and the inverted pair a tooltip uses. */
+  --scrim: light-dark(#f7f8fab3, #0d1117b3);
+  --bg-inverse: var(--n-900);
+  --text-inverse: var(--n-0);
 
   /* §3.4 Status — reserved for status, never decoration. */
   --s-allow: light-dark(#16753e, #3fbd77);
@@ -139,6 +143,8 @@
   --m-base: 180ms;
   --m-slow: 240ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
+  /* One turn of a busy indicator: a loop, not a transition (§3.6). */
+  --m-spin: 900ms;
 
   /* §4 Layout */
   --shell-nav-width: 200px;
@@ -148,6 +154,13 @@
   --focus-ring-offset: 2px;
   --border-width: 1px;
   --control-height: 32px;
+  --icon-size: 16px;
+  --dialog-width: 560px;
+  --drawer-width: 520px;
+  --menu-width: 240px;
+  --search-width: 220px;
+  --table-max-height: 70dvh;
+  --list-max-height: 320px;
   --glyph-size: 10px;
   --floor-width: 1024px;
 
@@ -189,6 +202,7 @@
     --m-fast: 0ms;
     --m-base: 0ms;
     --m-slow: 0ms;
+    --m-spin: 0ms;
   }
   *,
   *::before,

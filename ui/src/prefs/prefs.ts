@@ -64,3 +64,28 @@ export function applyTheme(theme: Theme, root: HTMLElement = document.documentEl
   if (theme === "system") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", theme);
 }
+
+const VIEWS_KEY = "hoplock.console.views";
+
+/** A screen's saved views: named URLs, per operator, in this browser only. */
+export function loadViews(principal: string, screen: string): { name: string; query: string }[] {
+  try {
+    const raw = window.localStorage.getItem(VIEWS_KEY);
+    const all = raw ? (JSON.parse(raw) as Record<string, { name: string; query: string }[]>) : {};
+    const list = all[`${principal}|${screen}`];
+    return Array.isArray(list) ? list.filter((v) => typeof v?.name === "string" && typeof v?.query === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveViews(principal: string, screen: string, views: { name: string; query: string }[]): void {
+  try {
+    const raw = window.localStorage.getItem(VIEWS_KEY);
+    const all = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    all[`${principal}|${screen}`] = views;
+    window.localStorage.setItem(VIEWS_KEY, JSON.stringify(all));
+  } catch {
+    // Not remembered; the view is still the URL.
+  }
+}

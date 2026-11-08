@@ -1,0 +1,61 @@
+.tree,
+.group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.group {
+  padding-inline-start: var(--sp-20);
+}
+.item {
+  border-radius: var(--r-sm);
+}
+.item:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-block-size: var(--row-height);
+  padding: 0 var(--sp-8);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background-color var(--m-fast) var(--ease);
+}
+.line:hover {
+  background: var(--bg-hover);
+}
+.item[aria-selected="true"] > .line {
+  background: var(--bg-selected);
+}
+.twisty {
+  display: inline-flex;
+  inline-size: var(--sp-12);
+  block-size: var(--sp-12);
+  flex: none;
+  color: var(--text-secondary);
+}
+.twisty svg {
+  inline-size: 100%;
+  block-size: 100%;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+}
+.twisty[data-open="true"] svg {
+  rotate: 90deg;
+}
+:root[dir="rtl"] .twisty[data-open="false"] svg {
+  rotate: 180deg;
+}
+.label {
+  min-inline-size: 0;
+  font: var(--t-cell);
+  color: var(--text-primary);
+}
+.meta {
+  display: inline-flex;
+  gap: var(--sp-8);
+  margin-inline-start: auto;
+}

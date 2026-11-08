@@ -9,6 +9,9 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ApiClient } from "../api/client";
 import type { Health, Identity, Session, Supervisors } from "../api/types";
+import type { MessageKey } from "../i18n/catalogue";
+import { CommandPalette } from "../components/Combobox";
+import { ToastProvider } from "../components/Toast";
 import { useI18n } from "../i18n/I18n";
 import { applyTheme, loadPrefs, savePrefs, type Prefs } from "../prefs/prefs";
 import { match, navigate, useLocation } from "../router/router";
@@ -137,11 +140,36 @@ export function Shell({ api, session, onSignedOut }: { api: ApiClient; session: 
           path={location.path}
           open={navOpen}
           onNavigate={() => setNavOpen(false)}
-          footer={<Preferences prefs={prefs} onPrefs={change} />}
+          footer={
+            <>
+              <CommandPalette
+                commands={[
+                  ...SCREENS.filter((s) => s.nav).map((s) => ({
+                    id: `go:${s.path}`,
+                    label: t("palette.go", { screen: t(s.nav as MessageKey) }),
+                  })),
+                  { id: "theme:light", label: t("palette.theme", { theme: t("prefs.theme.light") }) },
+                  { id: "theme:dark", label: t("palette.theme", { theme: t("prefs.theme.dark") }) },
+                  { id: "theme:system", label: t("palette.theme", { theme: t("prefs.theme.system") }) },
+                  { id: "density:compact", label: t("palette.density", { density: t("prefs.density.compact") }) },
+                  { id: "density:comfortable", label: t("palette.density", { density: t("prefs.density.comfortable") }) },
+                ]}
+                onRun={(o) => {
+                  const [kind, value] = o.id.split(":") as [string, string];
+                  if (kind === "go") navigate(value);
+                  else if (kind === "theme") change({ ...prefs, theme: value as Prefs["theme"] });
+                  else if (kind === "density") change({ ...prefs, density: value as Prefs["density"] });
+                }}
+              />
+              <Preferences prefs={prefs} onPrefs={change} />
+            </>
+          }
         />
-        <main id="content" className={styles.main} tabIndex={-1}>
-          {content}
-        </main>
+        <ToastProvider>
+          <main id="content" className={styles.main} tabIndex={-1}>
+            {content}
+          </main>
+        </ToastProvider>
       </div>
     </DeploymentContext.Provider>
   );

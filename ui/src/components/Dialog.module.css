@@ -1,0 +1,95 @@
+.dialog,
+.drawer {
+  padding: 0;
+  border: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  box-shadow: var(--e-3);
+}
+.dialog {
+  inline-size: min(var(--dialog-width), calc(100vw - var(--sp-32)));
+  max-block-size: calc(100dvh - var(--sp-64));
+  border-radius: var(--r-lg);
+}
+.dialog[data-tone="danger"] {
+  border-block-start: var(--sp-4) solid var(--s-deny);
+}
+.dialog::backdrop,
+.drawer::backdrop {
+  background: var(--scrim);
+}
+.drawer {
+  inset-block: 0;
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  inline-size: min(var(--drawer-width), 100vw);
+  max-inline-size: 100vw;
+  block-size: 100dvh;
+  max-block-size: 100dvh;
+  margin: 0;
+  border-block: 0;
+  border-inline-end: 0;
+}
+.dialog[open] .panel,
+.drawer[open] .drawerPanel {
+  animation: enter var(--m-slow) var(--ease);
+}
+.panel {
+  display: grid;
+  gap: var(--sp-16);
+  padding: var(--sp-16) var(--sp-24) var(--sp-24);
+}
+.drawerPanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  block-size: 100%;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-12);
+}
+.drawerPanel .head {
+  padding: var(--sp-12) var(--sp-16);
+  border-block-end: var(--border-width) solid var(--border-subtle);
+}
+.title {
+  margin: 0;
+  font: var(--t-h2);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.body {
+  display: grid;
+  gap: var(--sp-12);
+  font: var(--t-body);
+}
+.drawerBody {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-16);
+  padding: var(--sp-16);
+  overflow-y: auto;
+}
+.foot,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+}
+.form {
+  display: grid;
+  gap: var(--sp-16);
+}
+.warning {
+  display: grid;
+  gap: var(--sp-8);
+  font: var(--t-body);
+}
+@keyframes enter {
+  from {
+    opacity: 0;
+  }
+}

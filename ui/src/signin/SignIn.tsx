@@ -15,7 +15,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { ApiClient } from "../api/client";
 import type { FederationStart, SessionIssued, SignInMethods } from "../api/types";
-import { ErrorText } from "../components/ErrorText";
+import { ErrorMessage } from "../components/States";
 import { VisuallyHidden } from "../components/VisuallyHidden";
 import { useI18n } from "../i18n/I18n";
 import { loadPrefs, savePrefs } from "../prefs/prefs";
@@ -192,11 +192,11 @@ export function SignIn({ api, onSignedIn }: { api: ApiClient; onSignedIn(): void
             ) : null}
           </>
         ) : (
-          <ErrorText error={methods.error} kind={methods.state} />
+          <ErrorMessage error={methods.error} kind={methods.state} />
         )}
 
         {failure && failure.state !== "loading" && failure.state !== "ok" ? (
-          <ErrorText error={failure.error} kind={failure.state} />
+          <ErrorMessage error={failure.error} kind={failure.state} />
         ) : null}
       </section>
     </main>
@@ -243,7 +243,7 @@ export function SignInCallback({ api, connector, onSignedIn }: { api: ApiClient;
             {t("signIn.callback.working")}
           </p>
         ) : (
-          <ErrorText error={result.error} kind={result.state} />
+          <ErrorMessage error={result.error} kind={result.state} />
         )}
         {result === "expired" || result.state === "refused" || result.state === "outage" ? (
           <button type="button" className={styles.primary} onClick={again}>

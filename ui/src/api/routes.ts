@@ -29,6 +29,8 @@ export const ROUTES = {
     pattern: "/api/v1/tenants/{tenant}/instance/supervisors",
     permission: "instance:read",
   },
+  proxies: { method: "GET", pattern: "/api/v1/tenants/{tenant}/proxies", permission: "fleet:read" },
+  proxyWithdraw: { method: "POST", pattern: "/api/v1/tenants/{tenant}/proxies/{proxy}/withdraw", permission: "fleet:write" },
 } as const satisfies Record<string, Route>;
 
 export type RouteName = keyof typeof ROUTES;
