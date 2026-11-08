@@ -53,7 +53,15 @@ answer changed (the harness's `patch` substitute) for a state the seeded data
 cannot reach; (4) an Enterprise screen that links to an explanation or an
 audit view names Control's prefix and these deep links
 (/console/explain/sessions/<id>, /console/audit/records?<filters>), never a
-path of its own (M27).
+path of its own (M27); (5) Control's queued prompts were renumbered by the
+console-look revision: a new 0052 chooses the console's look with the
+operator, and 0052→0053, 0053→0054, 0054→0055, 0055→0056, 0056→0057,
+0057→0058, 0058→0059, 0059→0060, 0060→0061, 0061→0062, 0062→0063 — the console
+is now 0049–0059, its consistency audit 0059, the E2E topology 0060 and one
+contract version 0063. Update every citation of those numbers in this
+repository's prompts and plan, resolving each through Control's PLAN §10
+table, and note that the console's look will change at the release 0052 cuts,
+which this repository's screens inherit through the tokens.
 
 Work on the branch this session was given, whatever it is named — if the name
 is yours to choose, claude/sync-<short-description>. Commit with the `sync`

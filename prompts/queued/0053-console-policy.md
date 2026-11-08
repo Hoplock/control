@@ -1,4 +1,4 @@
-# 0052 — Management console 4: Policy
+# 0053 — Management console 5: Policy
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -20,7 +20,8 @@
   at most 100 targets or proxies beside `<name>_count` and `<name>_truncated`).
 
 ## The series
-The console is ten phases (PLAN §10, the console-split note), each a release
+The console is eleven phases (PLAN §10, the console-split and console-look
+notes), each a release
 and a PR of its own:
 
 | Phase | Builds |
@@ -28,13 +29,14 @@ and a PR of its own:
 | 0049 | the shell: build and embed, the mount under `/console/`, sign-in, tokens and themes, the catalogue machinery, the deployment and tenant chrome, and the static checks |
 | 0050 | the component set, the browser checks, the seeded fixture and the RBAC harness, and Fleet |
 | 0051 | Explain and the audit view |
-| **0052** | Policy (this phase) |
-| 0053 | Inventory |
-| 0054 | locks, quarantines and the directory's subjects |
-| 0055 | Extensions and Reports |
-| 0056 | stream gaps, the archive's lag and retention, in the audit view |
-| 0057 | algorithm posture and the emergency runbook |
-| 0058 | the consistency audit of every screen |
+| 0052 | the console's look: three directions in screenshots, then an interview with the operator, round by round, until one is chosen and applied through the tokens |
+| **0053** | Policy (this phase) |
+| 0054 | Inventory |
+| 0055 | locks, quarantines and the directory's subjects |
+| 0056 | Extensions and Reports |
+| 0057 | stream gaps, the archive's lag and retention, in the audit view |
+| 0058 | algorithm posture and the emergency runbook |
+| 0059 | the consistency audit of every screen |
 
 Build only this phase's row. Build the screen from 0050's component set and
 register it with 0050's harnesses; a component this phase needs that the set
@@ -60,7 +62,7 @@ roll back deliberately.
   that names at most 100 targets or proxies saying how many there are (0035),
   and the override 0019 serves for a warning the author has read: accepting a
   finding by its id (0022), which the record names. The floor's impact
-  preview and a ban's per-build finding are 0057's, added to this view there.
+  preview and a ban's per-build finding are 0058's, added to this view there.
 - **Activating a bundle** is a destructive action and confirms as one, by
   typing the object's name (0050's confirm). A rollback activates a version,
   so it confirms the same way. A failed activation reports inline, never by a
@@ -68,7 +70,7 @@ roll back deliberately.
 
 ## Out of scope
 - The algorithm floor's impact preview, a ban's per-build warning and the
-  emergency runbook (0057).
+  emergency runbook (0058).
 - Every other screen: the series table's.
 - Re-opening the design, and any locale other than English.
 
@@ -103,8 +105,8 @@ it built"): the description shows every screen and every state this phase
 builds or changes, light and dark side by side.
 
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`; add
-`docs/learnings/0052-console-policy-learnings.md`. Its summary block MUST give
-the routes the screen consumes, its deep links, and what 0057 builds on (where
+`docs/learnings/0053-console-policy-learnings.md`. Its summary block MUST give
+the routes the screen consumes, its deep links, and what 0058 builds on (where
 the publish-time report renders, so the floor preview and the per-build ban
 finding join it rather than sit beside it). Details MUST record **any change
 made to `ui/DESIGN.md` in this PR**, with the reason, and any compiler or API

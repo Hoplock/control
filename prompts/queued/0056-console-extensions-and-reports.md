@@ -1,4 +1,4 @@
-# 0055 — Management console 7: Extensions and Reports
+# 0056 — Management console 8: Extensions and Reports
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -21,7 +21,8 @@
   shares the sinks' names.
 
 ## The series
-The console is ten phases (PLAN §10, the console-split note), each a release
+The console is eleven phases (PLAN §10, the console-split and console-look
+notes), each a release
 and a PR of its own:
 
 | Phase | Builds |
@@ -29,13 +30,14 @@ and a PR of its own:
 | 0049 | the shell: build and embed, the mount under `/console/`, sign-in, tokens and themes, the catalogue machinery, the deployment and tenant chrome, and the static checks |
 | 0050 | the component set, the browser checks, the seeded fixture and the RBAC harness, and Fleet |
 | 0051 | Explain and the audit view |
-| 0052 | Policy |
-| 0053 | Inventory |
-| 0054 | locks, quarantines and the directory's subjects |
-| **0055** | Extensions and Reports (this phase) |
-| 0056 | stream gaps, the archive's lag and retention, in the audit view |
-| 0057 | algorithm posture and the emergency runbook |
-| 0058 | the consistency audit of every screen |
+| 0052 | the console's look: three directions in screenshots, then an interview with the operator, round by round, until one is chosen and applied through the tokens |
+| 0053 | Policy |
+| 0054 | Inventory |
+| 0055 | locks, quarantines and the directory's subjects |
+| **0056** | Extensions and Reports (this phase) |
+| 0057 | stream gaps, the archive's lag and retention, in the audit view |
+| 0058 | algorithm posture and the emergency runbook |
+| 0059 | the consistency audit of every screen |
 
 Build only this phase's row. Build every screen from 0050's component set and
 register it with 0050's harnesses; a component this phase needs that the set
@@ -56,7 +58,7 @@ Enterprise feature that is not installed is not shown as broken.
     from its registration's `lag` on `GET …/extensions`: `streams_behind`,
     `oldest_unconfirmed_at`, `failing` and `skipped_by_retention` — the same
     names as the archive's lag, so one component renders both. Ship that
-    component into the set here; 0056 renders the archive's lag with it. A
+    component into the set here; 0057 renders the archive's lag with it. A
     sink that is failing says so, and a sink that a retention pass overtook
     shows how many records it missed and that the pass's
     `operator.audit.retained` record explains the gap. Neither is an outage or
@@ -86,7 +88,7 @@ Enterprise feature that is not installed is not shown as broken.
   report.
 
 ## Out of scope
-- The archive's lag and retention's answers in the audit view (0056).
+- The archive's lag and retention's answers in the audit view (0057).
 - Enterprise screens: report schedules and history are Enterprise's own,
   served through the shell from `/host-console/<provider>/` (M27). Listing and
   generating a registered pack is this screen, and Control's.
@@ -129,9 +131,9 @@ it built"): the description shows every screen and every state this phase
 builds or changes, light and dark side by side.
 
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`; add
-`docs/learnings/0055-console-extensions-and-reports-learnings.md`. Its summary
+`docs/learnings/0056-console-extensions-and-reports-learnings.md`. Its summary
 block MUST give the routes each screen consumes, the lag component's place in
-the set (0056 uses it), and how a host's report names reach the catalogue.
+the set (0057 uses it), and how a host's report names reach the catalogue.
 Details MUST record **any change made to `ui/DESIGN.md` in this PR**, with the
 reason.
 

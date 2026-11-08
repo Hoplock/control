@@ -1,6 +1,6 @@
 # Hoplock Control — Console Design System
 
-> This document is **binding on the console phases, 0049–0058,** and on every
+> This document is **binding on the console phases, 0049–0059,** and on every
 > change to `ui/` afterwards. PLAN **M20** is the decision that makes it so. It exists because
 > "make it look good" is not a requirement anybody can meet or fail, and a
 > console built to acceptance criteria that are all functional will be correct
@@ -9,8 +9,9 @@
 >
 > Read with `docs/PLAN.md` §2 (M20, M2, M18, M19, and **M21** — the console is
 > localisable from its first screen, and English is the only locale that ships)
-> and the console phases' prompts (PLAN §10: 0049–0057 build the console, and
-> 0058 audits every screen for one look and feel).
+> and the console phases' prompts (PLAN §10: 0049–0058 build the console,
+> 0052 choosing its look with the operator, and 0059 audits every screen for
+> one look and feel).
 
 ---
 
@@ -359,7 +360,7 @@ rather than guessing.
 ## 7. Components
 
 The inventory the component set ships (0050; the timeline and the time range
-picker with 0051, the diff view with 0052), each with **every** state designed
+picker with 0051, the diff view with 0053), each with **every** state designed
 — default, hover, focus-visible, active, disabled, loading, error, empty, and
 both themes:
 
@@ -588,7 +589,7 @@ are in the registry too. In detail:
   binding for the chosen framework, or equivalent). Catalogues are ICU JSON, one
   file per locale under `ui/src/locales/`, keys stable and never reused for a
   different sentence — a renamed key is a new key. `en.json` is the only one
-  committed in the console phases (0049–0058).
+  committed in the console phases (0049–0059).
 - **No chart library until there is a third chart.** The two §7 allows are
   hand-written SVG — Fleet's health bar (0050) and the audit view's counts of
   the records on a page (0051), a table whose bars are one neutral ink beside

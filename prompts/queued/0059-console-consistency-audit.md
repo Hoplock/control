@@ -1,4 +1,4 @@
-# 0058 — Management console 10: one look and feel across every screen
+# 0059 — Management console 11: one look and feel across every screen
 
 ## Read first
 - `docs/PROTOCOL.md`: the session workflow, §3 (doing the work, and scope
@@ -12,20 +12,22 @@
   (`ui/`).
 - **`ui/DESIGN.md` — in full.** It is the standard every screen is audited
   against, and a claim to verify against the console as much as a source.
-- `docs/learnings/` — read every summary. Open the learnings of the nine
+- `docs/learnings/` — read every summary. Open the learnings of the ten
   console phases **in full** — `0049-console-shell`,
   `0050-console-components-and-fleet`, `0051-console-explain-and-audit`,
-  `0052-console-policy`, `0053-console-inventory`,
-  `0054-console-standing-denials-and-directory`,
-  `0055-console-extensions-and-reports`,
-  `0056-console-audit-gaps-and-retention` and
-  `0057-console-algorithm-posture-and-runbook` — and in each, the record of
+  `0052-console-design-direction` (the look the operator chose, and the
+  rounds that chose it: audit against that look, never re-open it),
+  `0053-console-policy`, `0054-console-inventory`,
+  `0055-console-standing-denials-and-directory`,
+  `0056-console-extensions-and-reports`,
+  `0057-console-audit-gaps-and-retention` and
+  `0058-console-algorithm-posture-and-runbook` — and in each, the record of
   every change it made to `ui/DESIGN.md`. They are the claim set this phase
   checks, not a source of truth.
 
 ## Why this phase exists
-The console was built in nine phases (PLAN §10, the console-split note), each
-in a session of its own that saw only its own screens. Each built to
+The console was built in ten phases (PLAN §10, the console-split and
+console-look notes), each in a session of its own that saw only its own screens. Each built to
 `ui/DESIGN.md` and to 0050's component set, and each passed the checks DESIGN.md
 §10 makes CI jobs.
 
@@ -40,10 +42,10 @@ for the object's name in one place and for a click in another. A screenshot
 baseline proves a screen did not change. It does not prove it matches its
 siblings.
 
-An operator does not use nine phases. They use one console, and M20 exists so
+An operator does not use ten phases. They use one console, and M20 exists so
 that it has one identity. This phase looks across the whole of it, once, after
 the last screen lands and before anything is built on top of it — the E2E
-topology (0059) signs a person in to it, and Enterprise's screens inherit it.
+topology (0060) signs a person in to it, and Enterprise's screens inherit it.
 
 ## Objective
 1. **Audit** every screen against `ui/DESIGN.md` and against every other
@@ -81,9 +83,9 @@ doc is never evidence.
    renders, the component that renders it, its colour, its glyph and its word.
    Each must be a row of DESIGN.md §6, rendered by the one status component
    (M11, M17, M19). The same state carries the same word on every screen. The
-   states later phases added — a lock, a quarantine and a deactivation (0054),
-   a refused gap (0056), a failing sink and an extension that did not start
-   (0055), a build that is not judged (0057) — are in §6, and nowhere else.
+   states later phases added — a lock, a quarantine and a deactivation (0055),
+   a refused gap (0057), a failing sink and an extension that did not start
+   (0056), a build that is not judged (0058) — are in §6, and nowhere else.
 3. **Page anatomy.** Every screen's page header (title, id, status, actions;
    DESIGN.md §7) carries the same parts in the same order and place. One
    primary action per view, in the same position. A list opens its detail the
@@ -147,7 +149,7 @@ doc is never evidence.
     finding with its image.
 14. **DESIGN.md and `ui/` agree.** Every rule in DESIGN.md is true of the
     console; §7's inventory is what the set ships; §3's tables are what
-    `tokens.css` holds; every change 0049–0057 made to DESIGN.md is recorded
+    `tokens.css` holds; every change 0049–0058 made to DESIGN.md is recorded
     in their learnings and still holds; and every claim those learnings make
     about the look and feel is true.
 
@@ -194,7 +196,7 @@ builds or changes, light and dark side by side. For each inconsistency fixed,
 the screen before and after.
 
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0058-console-consistency-audit-learnings.md`.
+`docs/learnings/0059-console-consistency-audit-learnings.md`.
 
 Its summary block MUST give:
 - the findings, by verdict and severity;
