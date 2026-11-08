@@ -366,6 +366,8 @@ func (s *Server) auditRoutes() []Route {
 			"records over every dimension and projection", s.handleAuditRecords),
 		tenantRoute("GET", "/audit/records/{record}", identity.PermAuditRead,
 			"one record by id, with its chain position and hash", s.handleAuditRecord),
+		tenantRoute("GET", "/audit/records/{record}/capture", identity.PermAuditRead,
+			"one record's session capture, for replay", s.handleAuditCapture),
 		tenantRoute("GET", "/audit/blocked-commands", identity.PermAuditRead,
 			"blocked commands on labelled targets, with the access that permitted them", s.handleBlockedCommands),
 		tenantRoute("GET", "/audit/drift", identity.PermAuditRead,

@@ -442,9 +442,13 @@ type AuditQuery struct {
 	Target     string
 	DecisionID string
 	ProxyID    string
-	Kinds      []string
-	Severities []string
-	Event      string
+	// PrincipalID selects the records naming this principal as the actor,
+	// `attributes.principal_id`: what an operator, a token or a supervisor
+	// did here (M19), whichever subject the act concerned.
+	PrincipalID string
+	Kinds       []string
+	Severities  []string
+	Event       string
 	// GrantSystem and GrantReference answer "every session that ran under
 	// this scan" (M16).
 	GrantSystem    string
@@ -692,6 +696,11 @@ func auditWhere(tenant Tenant, q AuditQuery) (string, []any) {
 	}
 	if q.ProxyID != "" {
 		add("proxy_id = $%d", q.ProxyID)
+	}
+	if q.PrincipalID != "" {
+		// audit_records_principal_idx (0025) is partial on this expression
+		// being present, which an equality on it implies.
+		add("(attributes->>'principal_id') = $%d", q.PrincipalID)
 	}
 	if len(q.Kinds) > 0 {
 		add("kind = ANY($%d)", q.Kinds)

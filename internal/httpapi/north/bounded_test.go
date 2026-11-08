@@ -604,6 +604,7 @@ var exemptRoutes = map[string]string{
 	"GET /api/v1/tenants/{tenant}/access-context/bindings":                     "one per configured provider in the tenant (primary key (tenant, provider))",
 	"GET /api/v1/tenants/{tenant}/access-context/providers/{provider}/binding": "one object",
 	"GET /api/v1/tenants/{tenant}/audit/records/{record}":                      "one object",
+	"GET /api/v1/tenants/{tenant}/audit/records/{record}/capture":              "one object: one record's capture, bounded by the ingest limit on a capture",
 	"GET /api/v1/tenants/{tenant}/audit/sessions/{session}/loss":               "one row per gap cause, of which the contract names two",
 	"GET /api/v1/tenants/{tenant}/reports":                                     "one entry per registered report provider; its size is set by the binary's registrations and each provider's catalogue, never by the estate",
 	"GET /api/v1/tenants/{tenant}/instance":                                    "one object; its tenant set is the deployment's tenants the caller may read",
