@@ -1,5 +1,6 @@
 // What the console remembers for an operator (DESIGN.md §3.7, §8, §9): the
-// theme, the density and the tenant, per principal, in this browser. Before
+// theme, the density and the tenant, per operator (operatorKey), in this
+// browser. Before
 // anyone has signed in, the last operator's theme applies, so the sign-in page
 // does not flash the other theme. Storage that throws (a private window, a
 // policy) leaves the defaults; nothing here is a control.
@@ -15,6 +16,17 @@ export interface Prefs {
 }
 
 export const DEFAULT_PREFS: Prefs = { theme: "system", density: "screen" };
+
+/**
+ * Whose preferences these are: the operator, not the sign-in. A session's
+ * principal id (`sess-…`) is new at every sign-in, so keying by it forgot an
+ * operator's theme, density and saved views each time they signed in again;
+ * the subject is the person. A credential with no subject (an API token) is
+ * its own principal, which does not change.
+ */
+export function operatorKey(session: { subject?: string; principal_id: string }): string {
+  return session.subject ? `subject:${session.subject}` : session.principal_id;
+}
 
 const KEY = "hoplock.console.prefs";
 

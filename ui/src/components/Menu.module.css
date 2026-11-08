@@ -22,6 +22,16 @@
 .trigger[aria-expanded="true"] {
   border-color: var(--accent);
 }
+.trigger[data-variant="quiet"] {
+  border-color: transparent;
+  background: transparent;
+}
+.trigger[data-variant="quiet"]:hover {
+  background: var(--bg-hover);
+}
+.trigger[data-variant="quiet"][aria-expanded="true"] {
+  border-color: var(--accent);
+}
 .trigger svg {
   inline-size: var(--icon-size);
   block-size: var(--icon-size);
@@ -79,6 +89,29 @@
   fill: none;
   stroke: currentcolor;
   stroke-width: 1.5;
+}
+.check circle {
+  fill: currentcolor;
+  stroke: none;
+}
+.heading {
+  padding: var(--sp-6) var(--sp-8) var(--sp-8);
+  border-block-end: var(--border-width) solid var(--border-subtle);
+  margin-block-end: var(--sp-4);
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.group + .group {
+  margin-block-start: var(--sp-4);
+  padding-block-start: var(--sp-4);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+}
+.groupLabel {
+  padding: var(--sp-4) var(--sp-8);
+  font: var(--t-caption);
+  letter-spacing: var(--t-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-secondary);
 }
 .tipWrap {
   position: relative;

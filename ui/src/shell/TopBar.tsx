@@ -3,16 +3,21 @@
 // on a chip in the deployment's configured stripe — then the tenant where
 // more than one is in scope, a badge for each supervisor (a link to the audit
 // view filtered to what it did here, M19), a break-glass
-// session said out loud, and the operator. The display preferences are at the
-// foot of the navigation: they are rarely changed, and the bar is for identity.
+// session said out loud, and the operator — whose name opens the account
+// menu: the display preferences (theme and density, remembered per operator)
+// and signing out. They hang off the operator's name because they are the
+// operator's, and the bar stays identity.
 //
 // Presentational: every fact arrives as a prop, so each rule is asserted by
 // rendering it (test/chrome.test.tsx).
 
 import type { Health, Identity, Session, Supervisor } from "../api/types";
+import { Avatar } from "../components/Badge";
 import { Ident, shortInstanceId } from "../components/Ident";
+import { Menu } from "../components/Menu";
 import { Status } from "../components/Status";
 import { useI18n } from "../i18n/I18n";
+import type { Density, Prefs, Theme } from "../prefs/prefs";
 import { Link } from "../router/router";
 import { healthStatus, showsTenant } from "./chrome";
 import type { Load } from "./load";
@@ -28,8 +33,14 @@ export interface TopBarProps {
   navOpen: boolean;
   onNav(open: boolean): void;
   onTenant(tenant: string): void;
+  /** The operator's display preferences, which the account menu sets. */
+  prefs: Prefs;
+  onPrefs(prefs: Prefs): void;
   onSignOut(): void;
 }
+
+const THEMES: readonly Theme[] = ["system", "light", "dark"];
+const DENSITIES: readonly Density[] = ["screen", "compact", "comfortable"];
 
 export function TopBar(p: TopBarProps) {
   const { t, f } = useI18n();
@@ -119,11 +130,42 @@ export function TopBar(p: TopBarProps) {
         </span>
       ) : null}
 
-      <div className={styles.end}>
-        <span className={styles.operator}>{t("chrome.account.label", { name: operator })}</span>
-        <button type="button" className={styles.button} onClick={p.onSignOut}>
-          {t("chrome.signOut")}
-        </button>
+      <div className={styles.end} data-testid="account">
+        <Menu
+          label={t("chrome.account.menu")}
+          variant="quiet"
+          heading={t("chrome.account.label", { name: operator })}
+          trigger={
+            <>
+              <Avatar name={operator} />
+              <span className={styles.operator} translate="no">
+                {operator}
+              </span>
+              <svg className={styles.chevron} viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path d="M2 3.5 5 6.5 8 3.5" />
+              </svg>
+            </>
+          }
+          items={[
+            ...THEMES.map((theme) => ({
+              id: `theme:${theme}`,
+              kind: "radio" as const,
+              group: t("prefs.theme.label"),
+              checked: p.prefs.theme === theme,
+              label: t(theme === "system" ? "prefs.theme.system" : theme === "light" ? "prefs.theme.light" : "prefs.theme.dark"),
+              onSelect: () => p.onPrefs({ ...p.prefs, theme }),
+            })),
+            ...DENSITIES.map((density) => ({
+              id: `density:${density}`,
+              kind: "radio" as const,
+              group: t("prefs.density.label"),
+              checked: p.prefs.density === density,
+              label: t(density === "screen" ? "prefs.density.screen" : density === "compact" ? "prefs.density.compact" : "prefs.density.comfortable"),
+              onSelect: () => p.onPrefs({ ...p.prefs, density }),
+            })),
+            { id: "sign-out", label: t("chrome.signOut"), onSelect: p.onSignOut },
+          ]}
+        />
       </div>
     </header>
   );

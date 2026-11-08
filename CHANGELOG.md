@@ -26,6 +26,15 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+- **The console's theme and density are in the account menu**: the
+  operator's name at the end of the top bar opens it, with each preference a
+  group of choices and signing out beneath. They are no longer at the foot of
+  the navigation.
+- **Display preferences and saved views are remembered for the operator**,
+  not for one sign-in: signing in again, in the same browser, finds them,
+  even after someone else signed in there. Before, each sign-in started from
+  whatever the browser's last operator had chosen.
+
 ## v0.38.0
 
 Phase 0051, the console's Explain and audit view (M4, M8, M19, M26, M11, M20,

@@ -421,5 +421,6 @@
   "replay.empty.body": "This deployment holds no record for that session in this tenant. Its proxy may not have delivered them yet.",
   "error.decision_unexplainable": "This decision's stored record does not carry its own explanation. That is an integrity fault in this deployment's records, not a denial; it was logged under the correlation id below.",
   "explain.documents.noSnapshot": "No answer was served: a deny is told only that access was denied, and the session id.",
-  "explain.documents.show": "Show the stored record"
+  "explain.documents.show": "Show the stored record",
+  "chrome.account.menu": "Account and display preferences"
 }

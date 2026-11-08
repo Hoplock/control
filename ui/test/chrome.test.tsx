@@ -11,6 +11,7 @@ import { I18nProvider } from "../src/i18n/I18n";
 import { currentTenant, healthStatus, holds, liveSupervisors, showsTenant, tenantsInScope } from "../src/shell/chrome";
 import type { Load } from "../src/shell/load";
 import { TopBar, type TopBarProps } from "../src/shell/TopBar";
+import { operatorKey } from "../src/prefs/prefs";
 
 const scope = { roles: ["auditor"], permissions: ["instance:read"] };
 
@@ -61,6 +62,8 @@ function render(p: Partial<TopBarProps> & { session: Session }): string {
     navOpen: false,
     onNav: () => {},
     onTenant: () => {},
+    prefs: { theme: "system", density: "screen" },
+    onPrefs: () => {},
     onSignOut: () => {},
     ...p,
   };
@@ -153,5 +156,32 @@ describe("health in the status vocabulary (DESIGN.md §6)", () => {
   it("reads a health it could not read as an outage, never a denial (M11)", () => {
     expect(healthStatus({ state: "outage", error: { code: "network" } }).tone).toBe("outage");
     expect(healthStatus({ state: "outage", error: { code: "network" } }).tone).not.toBe("deny");
+  });
+});
+
+describe("the account menu", () => {
+  it("is the operator's name, and holds the display preferences and signing out", () => {
+    const html = render({ session: session(["acme"]), prefs: { theme: "dark", density: "compact" } });
+    expect(html).toContain('data-testid="account"');
+    expect(html).toContain("Signed in as Alice");
+    // Each preference is a labelled group of choices, the current one checked.
+    expect(html).toMatch(/role="group" aria-label="Theme"/);
+    expect(html).toMatch(/role="group" aria-label="Density"/);
+    expect(html).toMatch(/role="menuitemradio" aria-checked="true"[^>]*>.*?Dark</);
+    expect(html).toMatch(/role="menuitemradio" aria-checked="false"[^>]*>.*?Light</);
+    expect(html).toMatch(/role="menuitemradio" aria-checked="true"[^>]*>.*?Compact</);
+    expect(html).toMatch(/role="menuitem"[^>]*>.*?Sign out</);
+  });
+});
+
+describe("preferences belong to the operator, not the sign-in", () => {
+  it("are keyed by the subject, so a new session finds them", () => {
+    const first = operatorKey({ principal_id: "sess-aaaa", subject: "alice" });
+    const again = operatorKey({ principal_id: "sess-bbbb", subject: "alice" });
+    expect(first).toBe(again);
+    expect(operatorKey({ principal_id: "sess-cccc", subject: "bob" })).not.toBe(first);
+  });
+  it("are keyed by the principal when there is no subject (an API token)", () => {
+    expect(operatorKey({ principal_id: "tok-1" })).toBe("tok-1");
   });
 });
