@@ -345,9 +345,11 @@ export const SCREENS: readonly E2EScreen[] = [
     kind: "console",
     path: "/console/audit/sessions/sess-e2e-allow/replay",
     densities: false,
+    // Ready once every capture up to the step has arrived: none still busy,
+    // however many were (a locator's waitFor takes exactly one element).
     ready: async (page) => {
       await main(page).locator("pre").first().waitFor();
-      await main(page).locator("[aria-busy=true]").waitFor({ state: "detached" });
+      await page.waitForFunction(() => document.querySelectorAll("main#content [aria-busy=true]").length === 0);
     },
     states: {
       loading: {
