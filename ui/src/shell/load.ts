@@ -32,22 +32,20 @@ export function useLoad<T>(
   read: (signal: AbortSignal) => Promise<Answer<T>>,
   every?: number,
 ): [Load<T>, () => void] {
-  const [load, setLoad] = useState<Load<T>>({ state: "loading" });
+  // Each answer is kept with the key it answers, so a read whose key has
+  // changed is loading from the render that changed it: a pager never names
+  // the next page over the last page's rows, even for a frame.
+  const [held, setHeld] = useState<{ key: string | null; load: Load<T> }>({ key: null, load: { state: "loading" } });
   const [tick, setTick] = useState(0);
   const readRef = useRef(read);
   readRef.current = read;
-  const lastKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (key === null) return;
-    if (lastKey.current !== key) {
-      lastKey.current = key;
-      setLoad({ state: "loading" });
-    }
     const abort = new AbortController();
     readRef.current(abort.signal).then(
       (a) => {
-        if (!abort.signal.aborted) setLoad(fromAnswer(a));
+        if (!abort.signal.aborted) setHeld({ key, load: fromAnswer(a) });
       },
       () => {
         // Aborted: a newer read owns the state.
@@ -65,5 +63,5 @@ export function useLoad<T>(
   }, [key, every]);
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
-  return [load, refresh];
+  return [held.key === key ? held.load : { state: "loading" }, refresh];
 }

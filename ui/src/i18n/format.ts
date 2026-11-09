@@ -44,3 +44,28 @@ export function formatters(locale: string, timeZone?: string): Formatters {
     },
   };
 }
+
+/** An instant as a datetime-local field's value, in the operator's own zone. */
+export function localInput(at: Date | string): string {
+  const d = instant(at);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}T${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+}
+
+/** A datetime-local field's value, read in the operator's own zone, as ISO-8601 UTC; undefined if it is not one. */
+export function fromLocalInput(value: string): string | undefined {
+  const t = new Date(value).getTime();
+  return Number.isNaN(t) ? undefined : isoUTC(new Date(t));
+}
+
+/** A parameter that should be an instant, as ISO-8601 UTC; undefined if it is not one. */
+export function parseInstant(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? undefined : isoUTC(new Date(t));
+}
+
+/** The instant `ms` milliseconds before `now`, as ISO-8601 UTC. */
+export function isoBefore(now: number, ms: number): string {
+  return isoUTC(new Date(now - ms));
+}

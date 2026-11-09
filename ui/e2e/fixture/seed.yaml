@@ -23,6 +23,24 @@ subjects:
     source: local
     principals: [fenn]
     password: e2e-fleet-password
+  # Explain and Audit (0051): the subjects the sessions are decided about.
+  # Neither signs in to the console.
+  - id: grace
+    display_name: Grace Ops
+    source: local
+    principals: [grace]
+    groups: [sre]
+  - id: mallory
+    display_name: Mallory Outside
+    source: local
+    principals: [mallory]
+
+# Explain and Audit (0051): the hosts the fixture's sessions reach. A label
+# lives on the target, which is what the blocked-command view joins on.
+targets:
+  - { id: db-01, hostname: db-01.core.internal, zone: core, labels: {env: prod, kind: db} }
+  - { id: vault-01, hostname: vault-01.dmz.internal, zone: dmz, labels: {env: prod, kind: vault} }
+  - { id: build-01, hostname: build-01.core.internal, zone: core, labels: {env: dev, kind: build} }
 
 # Fleet (0050): one proxy per state the screen must show.
 #   px-core-01      live, applied and caught up, holds relay registrations
@@ -37,7 +55,15 @@ subjects:
 # Each key is fixture material: a blob nothing verifies against (the console
 # reads none of it); seed requires one per proxy.
 proxies:
-  - { id: px-core-01, zone: core, heartbeat: true, relays: [px-dmz-03, px-dmz-04], key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtY29yZS0wMQ== } }
+  # px-core-01's edge into the DMZ is what makes a session to the vault two
+  # hops (0051).
+  - id: px-core-01
+    zone: core
+    heartbeat: true
+    relays: [px-dmz-03, px-dmz-04]
+    key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtY29yZS0wMQ== }
+    edges:
+      - { to_zone: dmz, direction: dial, address: px-dmz-03.dmz.internal:2222, next_proxy_id: px-dmz-03, cost: 1 }
   - { id: px-core-02, zone: core, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtY29yZS0wMg== } }
   - { id: px-dmz-03, zone: dmz, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtZG16LTAz } }
   - { id: px-dmz-04, zone: dmz, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtZG16LTA0 } }
@@ -46,6 +72,19 @@ proxies:
   - { id: px-edge-07, zone: edge, heartbeat: false, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtZWRnZS0wNw== } }
   - { id: px-old-08, zone: edge, heartbeat: false, state: revoked, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtb2xkLTA4 } }
   - { id: px-spare-09, zone: core, heartbeat: true, key: { type: ssh-ed25519, blob: aG9wbG9jay1lMmUtZml4dHVyZS1rZXktcHgtc3BhcmUtMDk= } }
+
+# The policy Explain's sessions are decided under (0051).
+policy:
+  file: policy.yaml
+
+# A supervisor's credential (M19, 0051): a north-bound token whose principal
+# is a supervisor's, so the chrome shows the supervised badge and the audit
+# view has a supervisor's acts to show. Fixture data, not a secret.
+api_tokens:
+  - id: sup-acme-ops
+    display_name: Acme Managed Ops
+    secret: e2e-supervisor-token
+    roles: [admin]
 
 # Each reporting proxy's own south-bound credential, presented as
 # `default.<secret>`: the fixture reports configuration as the proxy would.

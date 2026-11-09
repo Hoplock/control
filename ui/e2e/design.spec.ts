@@ -8,7 +8,7 @@
 
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { fitContent, NORTH, THEMES, volatile } from "./harness";
+import { fitContent, NORTH, steady, THEMES, volatile } from "./harness";
 import { openScreen, statesOf } from "./open";
 import { SCREENS, type E2EScreen } from "./screens";
 
@@ -21,6 +21,7 @@ function defaultDensity(screen: E2EScreen) {
 async function snap(page: import("@playwright/test").Page, name: string, settled = true) {
   // A loaded screen waits for its reads to finish; a loading state holds one open on purpose.
   if (settled) await page.waitForLoadState("networkidle");
+  await steady(page);
   await fitContent(page);
   await expect(page).toHaveScreenshot(`${name}.png`, { mask: volatile(page), fullPage: true });
 }

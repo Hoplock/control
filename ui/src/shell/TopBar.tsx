@@ -1,7 +1,8 @@
 // The top bar (DESIGN.md §4, §5): which deployment this is, before anything
 // else on the page — its name, its short instance id in mono and its health,
 // on a chip in the deployment's configured stripe — then the tenant where
-// more than one is in scope, a badge for each supervisor, a break-glass
+// more than one is in scope, a badge for each supervisor (a link to the audit
+// view filtered to what it did here, M19), a break-glass
 // session said out loud, and the operator. The display preferences are at the
 // foot of the navigation: they are rarely changed, and the bar is for identity.
 //
@@ -99,9 +100,17 @@ export function TopBar(p: TopBarProps) {
       ) : null}
 
       {p.supervisors.map((s) => (
-        <span key={s.principal_id} className={styles.badge} data-tone="info" data-testid="supervisor-badge">
+        <Link
+          key={s.principal_id}
+          to="audit/records"
+          query={{ principal: s.principal_id }}
+          className={styles.badge}
+          data-tone="info"
+          data-testid="supervisor-badge"
+          title={t("chrome.supervised.open")}
+        >
           {t("chrome.supervised", { name: s.display_name || s.principal_id })}
-        </span>
+        </Link>
       ))}
 
       {p.session.break_glass ? (

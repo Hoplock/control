@@ -156,6 +156,7 @@ by breaking.
 | --- | --- | --- |
 | 1 | `v0.33.0` | the surface as it stood at 0046: every route and member until then, plus `…/instance`, `…/instance/health` and `…/instance/supervisors` |
 | 2 | `v0.35.0` | the `Hoplock-Acting-Operator` request header, from a supervisor alone, with the problems `not_supervisor`, `invalid` and `too_long` on `invalid_request`; and the `acting_operator` attribute it writes on every record the call writes. No member, route or code is added, and `north_api_min` stays `1`: a client of `1` is served exactly as before, records carrying `acting_operator` included |
+| 3 | `v0.38.0` | `GET …/audit/records/{record}/capture`, one record's session capture for replay (`record_id`, `session_id`, `capture_bytes`, `capture_sha256`, `retained`, and `payload` in base64 unless `retained`), audit:read; and the `principal` query parameter on `GET …/audit/records`, the records naming that principal as their actor (`attributes.principal_id`), which the list's cursor binds. No member of an existing answer and no code is added, and `north_api_min` stays `1`: a client of `1` or `2` is served exactly as before |
 
 ## The registration protocol
 

@@ -4,6 +4,7 @@
 package north
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -153,6 +154,7 @@ func auditFilters(q store.AuditQuery) []string {
 	add("target", q.Target)
 	add("decision", q.DecisionID)
 	add("proxy", q.ProxyID)
+	add("principal", q.PrincipalID)
 	each("kind", q.Kinds)
 	each("severity", q.Severities)
 	add("event", q.Event)
@@ -247,7 +249,7 @@ func (s *Server) handleAuditRecords(w http.ResponseWriter, r *http.Request) {
 	q := store.AuditQuery{
 		SessionID: v.Get("session"), NoSession: boolParam(r, "no_session"),
 		Subject: v.Get("subject"), Login: v.Get("login"), Target: v.Get("target"),
-		DecisionID: v.Get("decision"), ProxyID: v.Get("proxy"),
+		DecisionID: v.Get("decision"), ProxyID: v.Get("proxy"), PrincipalID: v.Get("principal"),
 		Kinds: v["kind"], Severities: v["severity"], Event: v.Get("event"),
 		GrantSystem: v.Get("grant_system"), GrantReference: v.Get("grant_reference"),
 		Weakened: boolParam(r, "weakened"), Degraded: boolParam(r, "degraded"),
@@ -332,6 +334,60 @@ func (s *Server) handleAuditRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	answer(w, http.StatusOK, viewRecord(row))
+}
+
+// captureView is one record's session capture, for replay (since version 3).
+// The payload is the bytes the proxy sent, base64 as the contract's
+// `LogRecord.payload` carries them, and the size and digest are the record's
+// own, which its hashed body covers: a reader can check the bytes against the
+// chain without asking this server to vouch for them. A capture a retention
+// pass emptied is `retained: true` and no payload — the capture is gone, which
+// is a different answer from a record that never carried one (a 404).
+type captureView struct {
+	RecordID  string `json:"record_id"`
+	SessionID string `json:"session_id"`
+	Bytes     int32  `json:"capture_bytes"`
+	SHA256    string `json:"capture_sha256"`
+	Retained  bool   `json:"retained"`
+	Payload   string `json:"payload,omitempty"`
+}
+
+// handleAuditCapture serves the bytes of one `stream` record's capture: the
+// read a session replay is made of (0051). It is one object, read by record
+// id like the record itself, so a replay reads a session's records in order
+// through the paged query and each capture through here.
+func (s *Server) handleAuditCapture(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	row, err := s.reader.Get(r.Context(), tenant, r.PathValue("record"))
+	if err != nil {
+		s.auditFailure(w, r, "read audit record", err)
+		return
+	}
+	if row.CaptureBytes == 0 {
+		writeError(w, http.StatusNotFound, Error{
+			Code: CodeNotFound, CorrelationID: CorrelationIDFrom(r.Context()),
+			Message: "this record carries no session capture",
+		})
+		return
+	}
+	out := captureView{RecordID: row.RecordID, SessionID: row.SessionID, Bytes: row.CaptureBytes, SHA256: row.CaptureSHA256}
+	bytes, err := s.reader.Capture(r.Context(), tenant, row.RecordID)
+	switch {
+	case store.IsCaptureRetained(err):
+		out.Retained = true
+	case err != nil:
+		// The record names a capture this store cannot produce. Ingest stores
+		// the capture before the record that describes it, so a missing one
+		// is a fault here, never "nothing was captured" (M11).
+		s.fail(w, r, "read session capture", err)
+		return
+	default:
+		out.Payload = base64.StdEncoding.EncodeToString(bytes)
+	}
+	answer(w, http.StatusOK, out)
 }
 
 // handleBlockedCommands is the showcase join: blocked commands on targets

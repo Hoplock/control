@@ -35,6 +35,7 @@ export const STATUS = {
   rejected: { tone: "warn", label: "status.rejected" },
   unreachable: { tone: "outage", label: "status.unreachable" },
   fetchFailed: { tone: "outage", label: "status.fetchFailed" },
+  unserved: { tone: "outage", label: "status.unserved" },
   pending: { tone: "info", label: "status.pending" },
   inProgress: { tone: "info", label: "status.inProgress" },
   pendingRestart: { tone: "info", label: "status.pendingRestart" },

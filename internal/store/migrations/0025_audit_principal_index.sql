@@ -1,0 +1,44 @@
+-- 0025 — the records an actor wrote, found by its principal (prompt 0051;
+-- PLAN M19, M26, M8, M12, M18).
+--
+-- Scope: one partial index. No column, no table, no row rewritten.
+--
+-- ---------------------------------------------------------------------------
+-- WHY
+-- ---------------------------------------------------------------------------
+--
+-- `GET …/audit/records?principal=<id>` answers what one actor did here: an
+-- operator's session, an API token, a supervisor's credential (M19: "the
+-- operator being supervised must be able to read what was done to them"). The
+-- actor is `attributes.principal_id` on every record this server writes for
+-- an act — operator, grant, access-context and sign-in records — and on no
+-- record a proxy sends, so the records carrying it are the control stream's
+-- and a small part of the table.
+--
+-- Without an index, a page of that query walks `audit_records_order_idx`
+-- through every record of the tenant until it has filled, which for a
+-- supervisor that acted twice in a year is the whole tenant. This index holds
+-- only the records naming a principal, in the audit order after it (M26.4),
+-- so a page is read in order, from the first record of that principal.
+--
+-- It is PARTIAL on the expression being present. The query's predicate,
+-- `(attributes->>'principal_id') = $n`, implies it — `->>` and `=` are strict,
+-- so an equality holds only where the value is not null — and the planner
+-- proves that, so the index serves the query as written.
+--
+-- ---------------------------------------------------------------------------
+-- THE LOCK
+-- ---------------------------------------------------------------------------
+--
+-- As 0019: this file runs in one transaction, so CONCURRENTLY is not
+-- available, and a plain CREATE INDEX blocks writes to `audit_records` while
+-- it builds — no proxy's log batch and no operator's record is stored until
+-- it commits, and a proxy buffers to disk and resends meanwhile. Reads
+-- continue. The build reads every record but writes an entry only for those
+-- naming a principal. Migrations are applied by an explicit command, never on
+-- boot (PLAN §8), so the operator chooses when this runs; the changelog says
+-- so.
+
+CREATE INDEX audit_records_principal_idx
+    ON audit_records (tenant, (attributes->>'principal_id'), recorded_at DESC, stream DESC, chain_seq DESC)
+    WHERE (attributes->>'principal_id') IS NOT NULL;

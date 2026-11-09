@@ -1,0 +1,104 @@
+.timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.event {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--sp-24) minmax(0, 1fr);
+  align-items: start;
+}
+/* The rule the events hang on: from each marker down to the next. */
+.event::before {
+  content: "";
+  position: absolute;
+  inset-block: calc(var(--sp-6) + var(--sp-24)) 0;
+  inset-inline-start: calc(var(--sp-12) - var(--border-width) / 2);
+  border-inline-start: var(--border-width) solid var(--border-default);
+}
+.event:last-child::before {
+  display: none;
+}
+.marker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--sp-24);
+  block-size: var(--sp-24);
+  margin-block-start: var(--sp-6);
+}
+.dot {
+  display: block;
+  inline-size: var(--sp-8);
+  block-size: var(--sp-8);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--r-full);
+  background: var(--bg-surface);
+}
+.handle {
+  display: grid;
+  gap: var(--sp-2);
+  inline-size: 100%;
+  margin: 0;
+  padding: var(--sp-6) var(--sp-8);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text-primary);
+  font: var(--t-cell);
+  text-align: start;
+}
+button.handle {
+  cursor: pointer;
+  transition:
+    background-color var(--m-fast) var(--ease),
+    border-color var(--m-fast) var(--ease);
+}
+button.handle:hover {
+  background: var(--bg-hover);
+}
+button.handle:active {
+  border-color: var(--border-default);
+}
+button.handle:disabled {
+  cursor: default;
+  color: var(--text-tertiary);
+  background: none;
+}
+.event[data-selected] > .handle {
+  border-color: var(--accent);
+  background: var(--bg-selected);
+}
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+}
+.title {
+  min-inline-size: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.at {
+  font: var(--t-caption);
+  letter-spacing: var(--t-caption-tracking);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-inline-size: 0;
+  color: var(--text-secondary);
+}
+.empty {
+  padding: var(--sp-8) 0;
+}

@@ -103,6 +103,17 @@
 .badge[data-tone="warn"] {
   color: var(--s-warn);
 }
+/* A supervisor's badge is a link to what it did (M19): it reads as the badge
+   it is, and says it can be followed on hover. */
+a.badge {
+  text-decoration: none;
+  transition: background-color var(--m-fast) var(--ease);
+}
+a.badge:hover {
+  background: var(--bg-hover);
+  text-decoration: underline;
+  text-underline-offset: var(--sp-2);
+}
 .end {
   display: flex;
   flex-wrap: wrap;

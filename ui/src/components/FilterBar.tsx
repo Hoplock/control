@@ -1,11 +1,11 @@
-// THE FILTER BAR (DESIGN.md §4, §7): each filter is a field with a value, the
-// active ones are chips that remove themselves, and the whole state is the
-// screen's URL under /console/ — a filtered view is a link someone can paste
-// into an incident channel. Saved views are named URLs, kept per operator in
+// THE FILTER BAR (DESIGN.md §4, §7): each filter is a field with a value — a
+// choice, or a typed value applied on Enter — the active ones are chips that
+// remove themselves, and the whole state is the screen's URL under /console/:
+// a filtered view is a link someone can paste into an incident channel. Saved views are named URLs, kept per operator in
 // this browser. The bar changes nothing but the query: the screen reads its
 // filters back out of the location, so the URL is the one source of truth.
 
-import { useId, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { useI18n } from "../i18n/I18n";
 import { Chip } from "./Badge";
 import { Input, Select } from "./Field";
@@ -15,7 +15,46 @@ import styles from "./FilterBar.module.css";
 export interface FilterField {
   id: string;
   label: string;
-  options: readonly { value: string; label: string }[];
+  /** A select's choices; a text field has none. */
+  options?: readonly { value: string; label: string }[];
+  /**
+   * `text` is typed, and applies on Enter or on leaving the field, so a
+   * half-typed value reads nothing; `mono` sets it as an identifier (§3.5).
+   */
+  kind?: "select" | "text";
+  mono?: boolean;
+}
+
+/** A typed filter: its own draft, committed to the URL on Enter or blur. */
+function TextFilter({ id, field, value, onCommit }: { id: string; field: FilterField; value: string; onCommit(v: string): void }) {
+  const [draft, setDraft] = useState(value);
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    // The URL moved (a chip removed, a view applied): it wins over the draft.
+    setSeen(value);
+    setDraft(value);
+  }
+  const commit = () => {
+    if (draft.trim() !== value) onCommit(draft.trim());
+  };
+  return (
+    <Input
+      id={id}
+      mono={field.mono}
+      dir={field.mono ? "ltr" : undefined}
+      spellCheck={false}
+      autoComplete="off"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+      }}
+    />
+  );
 }
 
 export interface SavedView {
@@ -77,14 +116,18 @@ export function FilterBar({
             <label htmlFor={`${id}-${f.id}`} className={styles.label}>
               {f.label}
             </label>
-            <Select id={`${id}-${f.id}`} value={values[f.id] ?? ""} onChange={(e) => set(f.id, e.target.value)}>
-              <option value="">{t("component.filter.any")}</option>
-              {f.options.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+            {f.kind === "text" ? (
+              <TextFilter id={`${id}-${f.id}`} field={f} value={values[f.id] ?? ""} onCommit={(v) => set(f.id, v)} />
+            ) : (
+              <Select id={`${id}-${f.id}`} value={values[f.id] ?? ""} onChange={(e) => set(f.id, e.target.value)}>
+                <option value="">{t("component.filter.any")}</option>
+                {(f.options ?? []).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            )}
           </span>
         ))}
         {views ? (
@@ -109,7 +152,7 @@ export function FilterBar({
         <ul className={styles.chips} aria-label={t("component.filter.active")}>
           {active.map((f) => {
             const value = values[f.id] as string;
-            const option = f.options.find((o) => o.value === value);
+            const option = f.options?.find((o) => o.value === value);
             return (
               <li key={f.id}>
                 <Chip

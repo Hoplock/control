@@ -1,0 +1,227 @@
+.screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--sp-24);
+  max-inline-size: var(--content-max);
+}
+.lookup {
+  display: grid;
+  gap: var(--sp-6);
+  max-inline-size: calc(var(--dialog-width) * 1.4);
+}
+.lookupLabel {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.lookupRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.lookupInput {
+  flex: 1 1 var(--search-width);
+}
+.hint {
+  margin: 0;
+  font: var(--t-caption);
+  letter-spacing: var(--t-caption-tracking);
+  color: var(--text-secondary);
+}
+.summary {
+  display: grid;
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.summaryHead,
+.storyHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+}
+.summaryTitle,
+.railTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.storyTitle {
+  margin: 0;
+  font: var(--t-h2);
+  color: var(--text-primary);
+}
+.storyHead time {
+  font: var(--t-caption);
+  letter-spacing: var(--t-caption-tracking);
+  color: var(--text-secondary);
+}
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-12) var(--sp-32);
+  margin: 0;
+}
+.facts dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.facts dd {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8) var(--sp-24);
+  margin: 0;
+}
+.link {
+  color: var(--text-primary);
+  font: var(--t-body);
+  text-decoration-color: var(--accent);
+  text-underline-offset: var(--sp-2);
+}
+.layout {
+  display: grid;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-24);
+}
+.rail {
+  display: grid;
+  gap: var(--sp-8);
+  position: sticky;
+  inset-block-start: 0;
+}
+.story {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+  min-inline-size: 0;
+}
+.section {
+  display: grid;
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.sectionTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.sentence {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.fields {
+  display: grid;
+  grid-template-columns: minmax(max-content, auto) minmax(0, 1fr);
+  gap: var(--sp-8) var(--sp-24);
+  margin: 0;
+}
+.fields dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.fields dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-6);
+  min-inline-size: 0;
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.id {
+  font: var(--t-mono);
+  overflow-wrap: anywhere;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+}
+.quiet {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.list {
+  display: grid;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.standing,
+.window,
+.hop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+}
+.documents {
+  display: grid;
+  gap: var(--sp-8);
+}
+.documents[open] {
+  gap: var(--sp-12);
+}
+.summaryToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  list-style: none;
+  inline-size: fit-content;
+  padding: var(--sp-4) var(--sp-8);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-md);
+  color: var(--text-primary);
+  font: var(--t-body);
+  cursor: pointer;
+}
+.summaryToggle:hover {
+  background: var(--bg-hover);
+}
+/* The platform's disclosure triangle is a font glyph; this one is drawn. */
+.summaryToggle::-webkit-details-marker {
+  display: none;
+}
+.chevron {
+  inline-size: var(--sp-12);
+  block-size: var(--sp-12);
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  transition: rotate var(--m-fast) var(--ease);
+}
+.documents[open] .chevron {
+  rotate: 90deg;
+}
+:root[dir="rtl"] .documents:not([open]) .chevron {
+  rotate: 180deg;
+}
+@media (width < 1024px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rail {
+    position: static;
+  }
+  .fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .fields dd {
+    margin-block-end: var(--sp-4);
+  }
+}

@@ -1,0 +1,325 @@
+# 0060 — Cross-repo E2E topology, CI gate & hardening
+
+## Read first
+- `docs/PROTOCOL.md` — session workflow.
+- `docs/PLAN.md` — especially **§9 (test topology)**, §7 at "A gap in a
+  proxy's stream is a record" (for the refused-gap assertion under Audit,
+  below), **M17** and §5.2's algorithm bullet from "Refusing exactly what the
+  proxy refuses" (for the recorded declaration, below), and the learnings
+  summaries from **all** prior phases.
+- `docs/learnings/` — read every summary; open the ones whose setup you must
+  wire (esp. `0002` conformance, `0006` fleet enrollment, `0008` authorize,
+  `0009` events, `0010` audit assertions, `0012` grants, and
+  `0039` — the inbound action executor and the lock, `0040` — the
+  identity sync's sink and de-provisioning, `0042` — the directory
+  source every sink call and every tied connector names, and `0043` — the
+  claim mapping's directory-scoped group entries and the recalculation a
+  mapping write starts, for the scenarios below).
+  `docs/PLAN.md` **M28** says what a lock and a deactivation are and what each
+  owes the stream, and §6 at "The directory door" what a deactivation refuses.
+- In the **Hoplock Proxy repository**: its `deploy/` topology and its own e2e phase.
+  You are extending that idea across the repository boundary, not rebuilding it.
+
+## Objective
+Prove the thing neither repository can prove alone: a **real proxy** enforcing
+decisions from a **real PDP**. The proxy's own e2e proves it enforces what a
+mock tells it; this repo's unit and conformance tests prove this server decides
+correctly in isolation. Only here do "decides" and "enforces" meet — and that
+seam is where a product like this actually breaks.
+
+Then close the prototype out: supply-chain gate, hardening, and an honest list of
+what is left.
+
+## In scope
+
+### The topology (`deploy/`)
+`docker compose`, on a shared network, in one CI runner:
+
+1. **postgres** — stock image, migrated at start-up by an explicit step.
+2. **management** — `cmd/hoplock-control`, both listeners, seeded with a policy
+   bundle, targets and labels, identities, and fleet enrollment.
+3. **proxy** — built from the **Hoplock Proxy repository**, configured to point at
+   this server. Pin the proxy revision explicitly and record it, so a failure
+   is attributable to a change on one side or the other.
+4. **proxy-relay** — a second proxy in a "protected zone", reachable **only**
+   by its own outbound relay registration (proxy D11). Enforce the isolation in
+   the compose network so the scenario fails if anything else carried the
+   session.
+5. **target** — `sshd` with the provisioning account for `ephemeral-user` and a
+   plain pre-existing account standing in for an appliance (`brokered-key`).
+   It also has an account that trusts this server's tenant CA through
+   `TrustedUserCAKeys`, for `brokered-certificate` (`Hoplock/proxy#68`; wired
+   by 0019). The bundle to install is what `hoplock-control ca show` prints.
+6. **client** — runs the scenario SSH clients.
+
+### Scenario suite
+Each scenario is a product claim, proven across both components:
+
+- **Direct route**: exec and interactive shell succeed; the audit store holds a
+  replayable record and a decision record that explains the allow.
+- **Multi-hop through the relay zone**: succeeds, with **no inbound rule** into
+  the protected zone, and each hop's leg and direction visible in the audit
+  trail. Assert both halves of the chain contract this server owes (PLAN §4):
+  the inner proxy authenticated at `/v1/auth/cert` as a **chain leg** on its own
+  key and was answered with the *user's* identity (0007), and it called
+  `/v1/authorize` for itself carrying a `conn.hop_trail` naming the edge proxy
+  (0008). A scenario that only checks the session succeeded passes on a server
+  that hard-codes the inner route.
+- **Denied**: policy denies; the user sees the deliberately vague message; the
+  operator resolves the session id through `explain` to the exact rule (M4).
+  This pair — vague to the user, total to the auditor — is the disclosure story
+  end to end and it is the scenario worth demoing.
+- **Outage is not a deny**: stop this server; a connecting user is told it is an
+  outage and given a session id, not "access denied" (M11, proxy §4.3).
+- **An inbound action ends a session and locks its subject** (0039, M28). A
+  test host binary registers an `ext.ActionHandler` through
+  `server.Options.Registry`, whose only job is to call the executor it was
+  handed. Open a real session through the real proxy. Have the handler execute
+  `kill_session` for it: the proxy ends the session and the **user is told
+  Control's reason** (the handler's `ReasonText` verbatim, or "Your session was
+  ended as part of a security response." when it gave none), not a crash.
+  Have the handler execute `lock_subject` for the same subject: a new
+  connection by that user is denied and the user sees the deliberately vague
+  message, `explain` on its session id names `subject_locked` and the lock (who
+  placed it: `action-handler:<provider>`, the action id, the external
+  reference), and a session the subject still held is ended. Have the handler
+  execute `unlock_subject`: the user connects again where policy permits. The
+  audit store holds each act's record with the handler as actor and the action
+  id, and `audit-verify` passes. A scenario that only checks the executor's
+  return value passes on a server whose proxy never stopped the session.
+- **The directory de-provisions a person with a live session** (0040, M28). A
+  test host binary registers an `ext.IdentitySync` through
+  `server.Options.Registry`, a fake whose only job is to call the sink it was
+  handed. Have it provision a person (`UpsertSubject` with a `Source`, in a
+  group of that source the claim mapping names), open a real session as that
+  person through the real proxy, and sign them in to the console. Then have it
+  call `DeactivateSubject` with an `ext.DirectoryRef` naming that source: the
+  proxy ends the session and the **user is told Control's text** ("Your
+  account was deactivated by your organisation's directory."), never the
+  directory's reason code; a new connection by that person is denied with the
+  deliberately vague message, and `explain` on its session id names
+  `subject_deactivated` and the sync as who placed it
+  (`identity-sync:<provider>`); the console session stops authenticating and a
+  console login through a connector tied to the directory is refused
+  (`federation.subject_deactivated`). The audit store holds
+  `identity_sync.subject_deactivated` (carrying the `source`) and the
+  revocations with the sync as actor, and `audit-verify` passes.
+- **Two directories feed one tenant** (0042). The same fake sync provisions
+  two people from two sources with one `ExternalID` in common and different
+  usernames, and two connectors are tied with `identity connector-put
+  --directory-claim --directory-source`, one to each source. Show that they
+  are two subjects (two `dir-…` ids, each subject read showing its own
+  `directory.source`), that a console login through each tied connector,
+  carrying the shared id in its claim, reaches its own source's subject, and
+  that deactivating one through its `DirectoryRef` ends that person's session
+  through the real proxy and leaves the other's open and authorizing.
+  **Then the groups the two directories share** (0043): both directories hold
+  a group of one name (say `admins`), mapped differently per directory with
+  `directories: [<one source>]` on each entry, and a second group both hold
+  (say `BigCorporationAdmins`) mapped once by an entry listing both. Show that
+  each subject gets its own directory's mapping of `admins` and both get the
+  shared one. Then write a mapping that scopes an entry both directories had
+  reached (e.g. `groups.require_directories: true` with the shared entry
+  listing one source only), **with no directory call after it**, wait for
+  `stale_directory_subjects` on `GET …/identity/claim-mapping` to reach zero,
+  and show that the access it took away is refused through the real proxy,
+  that `operator.claim_mapping.applied` was recorded, and that the decision
+  record's subject carries `directory_source`.
+- **The three policy axes**: `sftp` denied while `shell` succeeds; a tunnel to
+  the permitted host:port succeeds while another is refused; `tcpip-forward`
+  refused with no listener created.
+- **Both filtering tiers**: a filtered-exec policy lets `sh -c '<denied>'`
+  through (the guardrail's honest limit) while restricted exec denies it. The
+  audit record names which tier decided.
+- **`ephemeral-user` and `brokered-key`** (`brokered-certificate` has a
+  scenario of its own, below): `ephemeral-user` creates and removes the target
+  user; `brokered-key` leaves the appliance-like target unmodified. The
+  `brokered-key` route in the fixture bundle **names the standing account** in
+  `username` — required on every credential method the contract defines —
+  because a route without it is refused by the
+  proxy at the first authorize call, and the scenario would then fail as an
+  outage instead of proving anything about the credential method.
+- **The uid floor survives a restart of both sides** (0007). Run
+  an `ephemeral-user` session, note the uid, then restart **the proxy** and run
+  another: the second uid is strictly above the first. Restart **this server**
+  and repeat: still strictly above. This is the scenario the upstream phase was
+  written for — an in-process floor looks perfect until a process dies — and
+  neither component can prove it alone, which is exactly what this topology is
+  for. Assert it on the uid, not on the lease call: a proxy holding a block
+  legitimately makes no call at all.
+- **A Control without the endpoint refuses `ephemeral-user`, and says it is an
+  outage.** Disable `/v1/uids/lease` (or let a block's range run out) and assert
+  the `ephemeral-user` session is refused **outage-class** — the user is told it
+  is an outage and given a session id, never "access denied" (M11) — while a
+  `brokered-key` session over the same topology still succeeds. The proxy fails
+  closed here by design, and a suite that never exercises it would let us ship a
+  server that silently refuses every ephemeral route in a fleet.
+- **A brokered certificate, minted for one session** (`Hoplock/proxy#68`;
+  wired by 0019). A route whose ladder names `brokered-certificate` logs the
+  user into the CA-trusting account with a certificate this server signed for
+  that session, and the target is left unmodified. The session's
+  `provisioning` record stores `credential_certificate_serial`, and that serial
+  resolves to the `ssh_certificates` row minted for the session. Two sessions
+  served by one **cached** decision present two different serials. Assert that
+  on the serials the records carry, not on the authorize calls.
+
+  **A failed issuance is an outage, and never a walk down the ladder.** Take a
+  route whose ladder is `brokered-certificate` then `brokered-key`. Cache its
+  decision, then stop this server: the proxy still holds the decision and
+  cannot get a certificate. The user is told it is an outage, and no
+  `brokered-key` session is opened. That is the case the rule exists for, a
+  weaker standing credential offered exactly when Control cannot say
+  otherwise. The proxy's own e2e and mock prove that it refuses a malformed,
+  expired or over-long certificate, so this suite does not prove that again.
+- **Fleet configuration round trip** (proxy D18; wired by 0019). Publish a zone
+  document through the north-bound API and assert on what the real proxy
+  **reports**, not on the publish response. A document changing only a live
+  setting is reported `applied`, with `running_*` equal to what was published.
+  One changing a startup-only setting is reported `pending_restart`, with
+  `restart_required` naming it. It is **not** shown as caught up in the fleet
+  view, and it becomes `applied` after that proxy restarts. A proxy that could
+  not be reached when the change was published fetches it on its next stream
+  connect. Test that by stopping the proxy, publishing, starting it again, and
+  asserting it reports the new document with no second publish. Throughout, a
+  session opened in the middle of the rollout succeeds, because configuration
+  is not on the data path. Publishing a bootstrap-only key must be impossible
+  from the north-bound API (0019 refuses it), so the `rejected` path is proved
+  by the proxy's own e2e and is not re-proved here. Use values equal to the
+  proxies' bootstrap values, as the proxy's own scenario does, so the rest of
+  the suite is unaffected.
+- **Revocation**: an operator kills a live session; the user is told why, and it
+  ends. A cached decision is invalidated and the next connection is re-decided.
+- **Cache + revocation interaction**: with the event stream unhealthy, this
+  server issues no hint and the proxy re-authorizes every connection.
+- **JIT**: a denied user requests access, an approver approves, the next
+  connection succeeds, and after expiry it is denied again.
+- **Audit**: the showcase query returns the blocked commands with the identity,
+  route, decision, and grant behind them. Also assert that the fields this
+  store indexes carry the names the real proxy emits (`Hoplock/proxy#66`,
+  indexed by 0019). An `ephemeral-user` session's `provisioning` record is
+  stored with `algorithm_profile` `default`, its `credential_method`, and,
+  where the route carries a ladder, `credential_rung` counting from 1. So a
+  session on the first-choice rung stores `1`, and the degradation query does
+  not return it. Its `target.algorithms_negotiated` record (`Hoplock/proxy#69`,
+  ingested by 0019) is stored with `target_kex_algorithm`, never
+  `kex_algorithm`, and the by-value query finds the session by it. Its target
+  ends up holding both observations the real proxy reports, the probe's rungs
+  and the separate key-exchange report, and neither overwrites the other.
+  The two components once spelled these fields differently
+  while each one's own tests passed (0010's learnings). This topology is the
+  one place that disagreement can fail a test. **It can also hide one since
+  `Hoplock/proxy#71`.** A record this server refuses no longer stalls the
+  proxy's delivery. The proxy sets it aside, reports it in a `logging.gap`, and
+  delivers everything around it, so every assertion above can pass while a
+  record the real proxy emits is refused. So end the suite by asserting that
+  the store holds no `logging.gap` with `gap_cause: refused`. Any such gap is
+  exactly that disagreement, and its `refusal_message` names the record (PLAN
+  §7).
+- **The default algorithm profile is the secure set** (`Hoplock/proxy#66`).
+  A route that names no profile no longer reaches a target speaking only SHA-1
+  key exchange, `ssh-rsa` or `ssh-dss`. So build every target in this topology
+  from an image that offers a modern key exchange and host key, or name the
+  legacy profile the route needs. Otherwise the scenarios above fail as
+  outages that have nothing to do with what they test. The proxy proves the
+  legacy profiles itself: its e2e drives a `legacy-device` route, and its
+  in-process handshake tests cover each stranded case and the
+  `target.algorithm_policy_unmet` record. So this suite does not stand up a
+  legacy target to prove either again. Floors and bans are the same
+  (`Hoplock/proxy#69`): the proxy's own e2e proves them, and 0062 extends this
+  suite with the post-quantum floor's scenarios. So build the main target from
+  an image whose OpenSSH is 9.9 or later, which offers
+  `mlkem768x25519-sha256`. The proxy's own target image, `debian:stable-slim`,
+  currently does. One fact about bans only this topology can check
+  (`Hoplock/proxy#72`, judged by 0019): the declaration this server records
+  for the real proxy (`capabilities.algorithm_profiles`) names every profile
+  the proxy accepts, each with every axis non-empty. Assert it. This server's decoder ignores a key it does not
+  know, so a misspelled key would turn every ban judgement into "unknown"
+  while each component's own tests passed.
+
+### CI
+- A job that builds both images, brings the topology up, runs the suite, tears
+  it down, and gates PRs. Keep it fast enough that people don't route around it;
+  say what it costs.
+- **`govulncheck ./...`** failing the build on any finding, with the same
+  reasoning the Hoplock Proxy repository records: this server holds credentials, terminates
+  TLS, and talks to a database, so "are our dependencies currently vulnerable?"
+  is a CI answer, not a periodic chore. Note in the job that it can go red with
+  no code change when a new advisory lands, and that the fix is an upgrade or a
+  dated justification — never deleting the job.
+- Verify the gate once by pinning a known-vulnerable dependency and confirming
+  it fails, then revert. A gate nobody has seen fail is not known to be a gate.
+- Keep `make conform` in CI against both this server and the proxy's mock.
+- **A scheduled job answering "is our vendored contract currently behind
+  upstream?"** — the same reasoning as `govulncheck` above, applied to M1. Today
+  nothing answers it. Both existing contract jobs are **pin-relative by
+  construction**: `make contract-check` is a local checksum against
+  `contract/UPSTREAM` and contacts nothing, and the `conform` job checks the
+  proxy out *at the commit in `contract/UPSTREAM`* — deliberately, because a mock
+  built from a different revision would make an upstream change look like a
+  conformance failure here. Both are right, and between them they mean a pin that
+  has fallen behind is **invisible to CI**: the tree stays internally consistent
+  and green while the two components drift, which is the exact failure vendoring
+  exists to prevent.
+
+  Three things this job must get right, and the first is what makes it
+  workable:
+
+  - **It does not gate PRs.** A pin that is behind is *legitimate* whenever a
+    prompt names the re-vendor (`prompts/audit/cross-repo-impact.md` §5) — that
+    is how a sync is supposed to work, since a sync vendors nothing (§3.1) and
+    the owning phase re-vendors. A blocking check would turn any proxy merge into
+    red CI on every unrelated Control PR, and the job would be deleted within a
+    week. Make it a scheduled notice, on its own trigger.
+  - **It reports the gap, not a verdict.** Name the pinned commit, the current
+    upstream `api/` head, and the PRs in between. Whether the gap is owed a sync
+    is a judgement about who owns the re-vendor, and the answer lives in the
+    prompts.
+  - **It is not a substitute for the audit.** It catches staleness of the
+    *artifact*; the audit catches drift of the *text*, which no checksum can see.
+
+  Note in the job that it can go amber with no change to this repository, exactly
+  as `govulncheck` can go red with no code change, and that the fix is a sync or a
+  phase that re-vendors — never deleting the job.
+
+### Hardening & close-out
+- Address TODOs from earlier phases that block a coherent prototype.
+- Tidy config, document every knob, and make `README.md` and `docs/PLAN.md`
+  reflect the built system, including how to run the topology locally.
+- Write the honest **known-gaps** list to seed the next set of prompts:
+  multi-node event fan-out, HA, external anchoring for the audit chain, device
+  posture, a UI, real scale and geo testing.
+
+## Out of scope
+- Real geo/anycast and scale testing (needs real infrastructure).
+- Performance tuning beyond the budgets already stated (M5, 0008).
+
+## Acceptance criteria
+- The topology comes up cleanly and the full suite passes locally and in CI.
+- The protected zone accepts **no** inbound connections and multi-hop still
+  works — assert the network restriction, not just the successful session.
+- The inbound-action scenario ends a real session with Control's reason on the
+  user's terminal, and a subject locked by the handler is refused by the real
+  proxy and unlocked again, with `explain` naming the lock in between.
+- The deny scenario resolves end to end: the user's vague message, the session
+  id, and `explain` naming the exact rule.
+- The outage scenario proves a stopped server is never reported as a denial.
+- No ephemeral users or keys leak after the suite; the appliance-like target and
+  the CA-trusting account are byte-identical afterwards.
+- After the whole suite the store holds no `logging.gap` with `gap_cause:
+  refused`: nothing the real proxy emitted was refused by this server.
+- The declaration this server recorded for the real proxy names every profile
+  that proxy accepts, each with every axis non-empty (`Hoplock/proxy#72`).
+- **No uid is ever issued twice across the whole suite run**, restarts of either
+  component included — collect every `ephemeral-user` uid the run produces and
+  assert the set is strictly increasing per target, not merely distinct.
+- `govulncheck` gates every PR, passes on the tree, and has been seen to fail on
+  a known-vulnerable input.
+- The pinned proxy revision is recorded, and the docs say how to move it.
+
+## Definition of Done & hand-off
+Per `docs/PROTOCOL.md`. Move to `implemented/`; add
+`docs/learnings/0060-e2e-topology-and-ci-learnings.md`. Summary block MUST
+document how to run the topology locally, the seed/fixture layout, each scenario
+and what it proves, how the proxy revision is pinned and bumped, how the
+`govulncheck` gate is wired and what to do when it goes red without a code
+change, and the known-gaps list.

@@ -24,7 +24,8 @@ export function Nav({
       <p className={styles.product}>{t("app.name")}</p>
       <ul className={styles.list}>
         {SCREENS.filter((s) => s.nav).map((s) => {
-          const active = match(s.path, path) !== null || path.startsWith(s.path + "/");
+          const section = s.section ?? s.path;
+          const active = match(s.path, path) !== null || path === section || path.startsWith(section + "/");
           return (
             <li key={s.id}>
               <Link

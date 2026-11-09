@@ -140,6 +140,12 @@
       "permission": "audit:read"
     },
     {
+      "method": "GET",
+      "pattern": "/api/v1/tenants/{tenant}/audit/records/{record}/capture",
+      "access": "tenant",
+      "permission": "audit:read"
+    },
+    {
       "method": "POST",
       "pattern": "/api/v1/tenants/{tenant}/audit/retention",
       "access": "tenant",

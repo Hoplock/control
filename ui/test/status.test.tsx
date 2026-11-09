@@ -28,7 +28,7 @@ const render = (node: React.ReactNode) => renderToStaticMarkup(<I18nProvider loc
 
 describe("M11: a deny and an outage are never drawn alike", () => {
   const deny = [STATUS.denied, STATUS.revoked, STATUS.expired];
-  const outage = [STATUS.unreachable, STATUS.fetchFailed, HEALTH_STATUS.unreachable];
+  const outage = [STATUS.unreachable, STATUS.fetchFailed, STATUS.unserved, HEALTH_STATUS.unreachable];
   it("have different tones and different words", () => {
     for (const d of deny) {
       for (const o of outage) {
