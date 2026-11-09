@@ -154,3 +154,12 @@ can shrink it with no pixel changed.
 - There is no GET for a stored version's publish-time report, so the version
   page validates its source. One call, and the same report activation
   recomputes, so it is right; a route would save a source round trip.
+
+### Cross-repo
+
+No shared surface changed (`ext`, `server`, the contract and the cross-repo
+protocol are untouched), but the release changes what Enterprise's binary
+serves and the component set its screens build from, and it fixes how a
+registered validator's finding reads in Control's console. A downstream sync
+for `hoplock/enterprise` is queued:
+`prompts/downstream/queued/control-PR#153-console-policy.md`. Proxy: none.
