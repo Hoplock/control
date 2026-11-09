@@ -129,10 +129,10 @@ export async function forceStates(page: Page): Promise<void> {
   for (const state of ["hover", "focus-visible", "active"]) {
     for (const id of await nodes(`[data-force="${state}"]`)) await force(id, state);
   }
-  // A cell whose state belongs to a part it cannot reach: a child button (in
-  // the state the wrapper names), a parent wrapper.
+  // A cell whose state belongs to a part it cannot reach: a child button or
+  // scrolling region (in the state the wrapper names), a parent wrapper.
   for (const state of ["hover", "focus-visible", "active"]) {
-    for (const id of await nodes(`[data-force-child="${state}"] button`)) await force(id, state);
+    for (const id of await nodes(`[data-force-child="${state}"] :is(button, [role=region])`)) await force(id, state);
   }
   for (const id of await nodes(":has(> [data-force-parent])")) await force(id, "hover");
 }

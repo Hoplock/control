@@ -18,6 +18,7 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { seedAudit } from "./fixture/audit";
 import { seedFleet } from "./fixture/fleet";
+import { candidates, seedPolicy } from "./fixture/policy";
 import { TENANT, type Role, type Substitute } from "./harness";
 
 export type StateName = "loading" | "empty" | "error" | "partial";
@@ -69,7 +70,7 @@ const outage = (correlation: string): Substitute => ({
 const main = (page: Page) => page.locator("main#content");
 
 /** Fixture steps that run after the seed, before any check (global-setup.ts). */
-export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [seedFleet, seedAudit];
+export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [seedFleet, seedAudit, seedPolicy];
 
 const GALLERY_PAGES = [
   "buttons",
@@ -80,6 +81,7 @@ const GALLERY_PAGES = [
   "navigation",
   "data",
   "time",
+  "diff",
   "overlay-dialog",
   "overlay-confirm",
   "overlay-confirm-failed",
@@ -217,6 +219,212 @@ export const SCREENS: readonly E2EScreen[] = [
         control: (page) => page.locator("[role=menu]:popover-open [role=menuitem][data-danger]"),
       },
     ],
+  },
+  // Policy (0053): the stored versions (v3 a candidate, v2 active, v1 older),
+  // one version's four views, the candidate editor, a refused candidate's
+  // rejections at their lines, and the activation dialog — each a deep link
+  // or a step from one, so each is in the baseline and every check.
+  {
+    id: "policy",
+    kind: "console",
+    path: "/console/policy",
+    densities: true,
+    ready: async (page) => {
+      await main(page).locator("table tbody tr[data-row]").first().waitFor();
+      await main(page).locator("[data-active-panel=ok]").waitFor();
+    },
+    states: {
+      loading: {
+        substitute: [[`${API}/policy/bundles`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-state=loading]").waitFor(),
+      },
+      // Nothing uploaded: no version stored and none active.
+      empty: {
+        substitute: [
+          [`${API}/policy/bundles`, { kind: "answer", status: 200, body: { versions: [], truncated: false } }],
+          [`${API}/policy/active`, { kind: "answer", status: 404, body: { code: "not_found", message: "substituted", correlation_id: "corr-e2e-policy-404" } }],
+        ],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/policy/bundles`, outage("corr-e2e-policy")]],
+        ready: (page) => main(page).locator("[data-state=error]").waitFor(),
+      },
+      // The versions read, the active one's details not: the gap is named.
+      partial: {
+        substitute: [[`${API}/policy/active`, outage("corr-e2e-policy-active")]],
+        ready: (page) => main(page).locator("[data-state=partial] table tbody tr[data-row]").first().waitFor(),
+      },
+    },
+    mutations: [
+      {
+        route: "policyActivate",
+        method: "POST",
+        path: `${API}/policy/bundles/3/activate`,
+        permission: "policy:publish",
+        reveal: async (page) => {
+          await page.locator('tr[data-row="3"] button[aria-haspopup="menu"]').click();
+          await page.locator("[role=menu]:popover-open").waitFor();
+        },
+        control: (page) => page.locator("[role=menu]:popover-open [role=menuitem][data-danger]"),
+      },
+      // A rollback is an activation of an older version (§5.6): the same route.
+      {
+        route: "policyActivate",
+        method: "POST",
+        path: `${API}/policy/bundles/1/activate`,
+        permission: "policy:publish",
+        reveal: async (page) => {
+          await page.locator('tr[data-row="1"] button[aria-haspopup="menu"]').click();
+          await page.locator("[role=menu]:popover-open").waitFor();
+        },
+        control: (page) => page.locator("[role=menu]:popover-open [role=menuitem][data-danger]"),
+      },
+    ],
+  },
+  {
+    id: "policy-version",
+    kind: "console",
+    path: "/console/policy/versions/3",
+    densities: false,
+    ready: (page) => main(page).locator("[data-source-view] tr[data-noted]").first().waitFor(),
+    states: {
+      loading: {
+        substitute: [[`${API}/policy/bundles/3`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-state=loading]").waitFor(),
+      },
+      // A version this tenant does not store.
+      empty: {
+        substitute: [
+          [`${API}/policy/bundles/3`, { kind: "answer", status: 404, body: { code: "not_found", message: "substituted", correlation_id: "corr-e2e-version-404" } }],
+        ],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/policy/bundles/3`, outage("corr-e2e-version")]],
+        ready: (page) => main(page).locator("[data-state=error]").waitFor(),
+      },
+      // The source read, its publish-time report not.
+      partial: {
+        substitute: [[`${API}/policy/validate`, outage("corr-e2e-version-report")]],
+        ready: (page) => main(page).locator("[data-state=partial] [data-source-view]").waitFor(),
+      },
+    },
+    mutations: [
+      {
+        route: "policyActivate",
+        method: "POST",
+        path: `${API}/policy/bundles/3/activate`,
+        permission: "policy:publish",
+        control: (page) => main(page).locator("[data-activate=activate]"),
+      },
+    ],
+  },
+  {
+    id: "policy-version-changes",
+    kind: "console",
+    path: "/console/policy/versions/3?tab=changes",
+    densities: false,
+    ready: (page) => main(page).locator("[data-changes] [data-diff=lines]").waitFor(),
+    states: {
+      loading: {
+        substitute: [[`${API}/policy/bundles/3/diff`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[role=tabpanel] [data-state=loading]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/policy/bundles/3/diff`, outage("corr-e2e-diff")]],
+        ready: (page) => main(page).locator("[role=tabpanel] [data-state=error]").waitFor(),
+      },
+    },
+  },
+  {
+    id: "policy-version-report",
+    kind: "console",
+    path: "/console/policy/versions/3?tab=report",
+    densities: false,
+    ready: (page) => main(page).locator("[data-report] [data-finding]").first().waitFor(),
+    states: {},
+  },
+  {
+    id: "policy-version-simulate",
+    kind: "console",
+    path: "/console/policy/versions/3?tab=simulate",
+    densities: false,
+    ready: (page) => main(page).locator("[data-simulate] [data-run-replay]").waitFor(),
+    states: {},
+    // A replay of the last seven days' recorded traffic: one allow flips to a deny, one deny to an allow.
+    prepare: async (page) => {
+      await main(page).locator("[data-run-replay]").click();
+      await main(page).locator("[data-replay]").waitFor();
+    },
+  },
+  {
+    id: "policy-activate",
+    kind: "console",
+    path: "/console/policy/versions/3",
+    densities: false,
+    ready: (page) => main(page).locator("[data-source-view] tr[data-noted]").first().waitFor(),
+    states: {},
+    // The dialog, its one warning listed to accept by id, and a refusal: the
+    // name typed, the warning not accepted, so the server answers 409 and the
+    // dialog says so where the author is (nothing is activated).
+    prepare: async (page) => {
+      // A role that cannot activate is offered no button (rbac.spec.ts holds that).
+      if ((await main(page).locator("[data-activate]").count()) === 0) return;
+      await main(page).locator("[data-activate]").click();
+      const dialog = page.locator("dialog[open]");
+      await dialog.locator("[data-activation-gate=ok] [data-finding]").waitFor();
+      await dialog.locator("[data-confirm-input]").fill("v3");
+      await dialog.locator("button[type=submit]").click();
+      await dialog.locator("[role=alert][data-error-code=findings_not_accepted]").waitFor();
+    },
+  },
+  {
+    id: "policy-candidate",
+    kind: "console",
+    path: "/console/policy/candidate",
+    densities: false,
+    ready: (page) => main(page).locator("[data-start=version]").waitFor(),
+    states: {
+      loading: {
+        substitute: [[`${API}/policy/active`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-start=loading]").waitFor(),
+      },
+      // No version active: an empty editor that says there is nothing to start from.
+      empty: {
+        substitute: [[`${API}/policy/active`, { kind: "answer", status: 404, body: { code: "not_found", message: "substituted", correlation_id: "corr-e2e-candidate-404" } }]],
+        ready: (page) => main(page).locator("[data-start=none]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/policy/active`, outage("corr-e2e-candidate")]],
+        ready: (page) => main(page).locator("[data-start=outage] [role=alert]").waitFor(),
+      },
+    },
+    mutations: [
+      {
+        route: "policyUpload",
+        method: "POST",
+        path: `${API}/policy/bundles`,
+        body: { source: "schema_version: 1\n" },
+        permission: "policy:write",
+        control: (page) => main(page).locator("[data-upload]"),
+      },
+    ],
+  },
+  // A candidate the compiler refuses: each rejection rendered from its code
+  // and parameters, beneath the line it names.
+  {
+    id: "policy-candidate-rejected",
+    kind: "console",
+    path: "/console/policy/candidate",
+    densities: false,
+    ready: (page) => main(page).locator("[data-start=version]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      await main(page).locator("[data-candidate-source]").fill(candidates().invalid);
+      await main(page).locator("[data-validate]").click();
+      await main(page).locator("[data-rejections] [data-source-view]").waitFor();
+    },
   },
   // Explain (0051): a session crossing two hops under a grant, opened on its
   // innermost decision; the start (no id yet) and a deny are entries of their
