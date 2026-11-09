@@ -498,10 +498,13 @@ function Overlay({ which }: { which: string }) {
           label={t("component.table.rowActions", { name: "px-core-01" })}
           triggerLabel={t("component.table.rowActions", { name: "px-core-01" })}
           trigger={Plus}
+          heading={t("chrome.account.label", { name: "Ada Admin" })}
           items={[
             { id: "a", label: t("fleet.action.details"), onSelect: () => {} },
             { id: "b", label: t("component.copy.button"), onSelect: () => {}, disabled: true },
             { id: "c", label: t("prefs.density.compact"), onSelect: () => {}, checked: true },
+            { id: "r1", kind: "radio", group: t("prefs.theme.label"), label: t("prefs.theme.light"), onSelect: () => {}, checked: false },
+            { id: "r2", kind: "radio", group: t("prefs.theme.label"), label: t("prefs.theme.dark"), onSelect: () => {}, checked: true },
             { id: "d", label: t("fleet.action.withdraw"), danger: true, onSelect: () => {} },
           ]}
         />

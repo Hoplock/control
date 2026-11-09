@@ -71,7 +71,6 @@
   color: var(--text-secondary);
 }
 .select,
-.button,
 .menu {
   min-block-size: var(--control-height);
   padding: 0 var(--sp-8);
@@ -82,7 +81,6 @@
   font: var(--t-body);
   transition: background-color var(--m-fast) var(--ease);
 }
-.button:hover,
 .menu:hover,
 .select:hover {
   background: var(--bg-hover);
@@ -123,7 +121,14 @@ a.badge:hover {
 }
 .operator {
   font: var(--t-label);
-  color: var(--text-secondary);
+  color: var(--text-primary);
+}
+.chevron {
+  inline-size: var(--sp-12);
+  block-size: var(--sp-12);
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 1.5;
 }
 
 @media (width < 1024px) {

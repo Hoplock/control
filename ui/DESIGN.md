@@ -312,6 +312,12 @@ never confuse them, and that the distinction survives a screenshot. Design side:
 - **Supervised** deployments show a badge naming the supervisor, linking to the
   audit view filtered to its actions. It is `--s-info`, never `--s-warn`: being
   supervised is a fact, not a fault.
+- **The operator** ends the bar: their name, which opens the account menu —
+  the display preferences, theme and density, each a group of choices, and
+  signing out. The preferences are the operator's, so they hang off the
+  operator's name rather than sitting in the navigation, and they are kept
+  for the person (their subject), never for one sign-in. The command palette
+  sets them too.
 
 ---
 

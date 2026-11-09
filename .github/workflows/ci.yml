@@ -291,6 +291,10 @@ jobs:
           # last page, the supervisor's word, replay, keyboard and 768px.
           - check: explain and audit
             args: e2e/explain-audit.spec.ts --project checks
+          # The account menu: theme and density chosen from the operator's
+          # name, held across a reload. Signing in and out is in mutations.
+          - check: account menu
+            args: e2e/account.spec.ts --project checks
     services:
       postgres:
         image: postgres:16

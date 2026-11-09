@@ -13,14 +13,13 @@ import type { MessageKey } from "../i18n/catalogue";
 import { CommandPalette } from "../components/Combobox";
 import { ToastProvider } from "../components/Toast";
 import { useI18n } from "../i18n/I18n";
-import { applyTheme, loadPrefs, savePrefs, type Prefs } from "../prefs/prefs";
+import { applyTheme, loadPrefs, operatorKey, savePrefs, type Prefs } from "../prefs/prefs";
 import { match, navigate, useLocation } from "../router/router";
 import { HOME, SCREENS, type Screen } from "../screens/registry";
 import { NotFound } from "../screens/NotFound";
 import { currentTenant, holds, liveSupervisors, tenantsInScope } from "./chrome";
 import { useLoad, type Load } from "./load";
 import { Nav } from "./Nav";
-import { Preferences } from "./Preferences";
 import { TopBar } from "./TopBar";
 import styles from "./Shell.module.css";
 
@@ -59,7 +58,7 @@ function resolveScreen(path: string): { screen: Screen; params: Record<string, s
 export function Shell({ api, session, onSignedOut }: { api: ApiClient; session: Session; onSignedOut(): void }) {
   const { t } = useI18n();
   const location = useLocation();
-  const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs(session.principal_id));
+  const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs(operatorKey(session)));
   const [navOpen, setNavOpen] = useState(false);
   const tenants = useMemo(() => tenantsInScope(session), [session]);
   const tenant = currentTenant(tenants, prefs.tenant);
@@ -88,7 +87,7 @@ export function Shell({ api, session, onSignedOut }: { api: ApiClient; session: 
 
   const change = (next: Prefs) => {
     setPrefs(next);
-    savePrefs(session.principal_id, next);
+    savePrefs(operatorKey(session), next);
   };
 
   const signOut = async () => {
@@ -137,6 +136,8 @@ export function Shell({ api, session, onSignedOut }: { api: ApiClient; session: 
           navOpen={navOpen}
           onNav={setNavOpen}
           onTenant={(next) => change({ ...prefs, tenant: next })}
+          prefs={prefs}
+          onPrefs={change}
           onSignOut={signOut}
         />
         <Nav
@@ -144,8 +145,7 @@ export function Shell({ api, session, onSignedOut }: { api: ApiClient; session: 
           open={navOpen}
           onNavigate={() => setNavOpen(false)}
           footer={
-            <>
-              <CommandPalette
+            <CommandPalette
                 commands={[
                   ...SCREENS.filter((s) => s.nav).map((s) => ({
                     id: `go:${s.path}`,
@@ -164,8 +164,6 @@ export function Shell({ api, session, onSignedOut }: { api: ApiClient; session: 
                   else if (kind === "density") change({ ...prefs, density: value as Prefs["density"] });
                 }}
               />
-              <Preferences prefs={prefs} onPrefs={change} />
-            </>
           }
         />
         <ToastProvider>

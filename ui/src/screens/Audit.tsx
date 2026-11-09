@@ -36,7 +36,7 @@ import { Pagination, type PageState } from "../components/Pagination";
 import { EmptyState, ErrorMessage, ScreenFrame, Skeleton } from "../components/States";
 import { rangeQuery, readRange, resolveRange, TimeRangePicker, type TimeRange } from "../components/TimeRange";
 import { useI18n } from "../i18n/I18n";
-import { loadViews, saveViews } from "../prefs/prefs";
+import { loadViews, operatorKey, saveViews } from "../prefs/prefs";
 import { Link, navigate, useLocation } from "../router/router";
 import { useLoad, type Load } from "../shell/load";
 import { useDeployment } from "../shell/Shell";
@@ -162,7 +162,7 @@ export function AuditRecordsScreen() {
   const { page, at, onPage, reanchor } = useSelectionState(selection, limit);
   const [sort, setSort] = useState<TableSort | null>(null);
   const [hidden, setHidden] = useState<string[]>([]);
-  const [views, setViews] = useState<SavedView[]>(() => loadViews(session.principal_id, "audit"));
+  const [views, setViews] = useState<SavedView[]>(() => loadViews(operatorKey(session), "audit"));
   const permissions = (tenant && session.scopes[tenant]?.permissions) || [];
   const may = offered("auditRecords", permissions);
   const after = page.trail[page.trail.length - 1];
@@ -297,11 +297,11 @@ export function AuditRecordsScreen() {
             const name = query ? decodeURIComponent(query.replaceAll("&", " · ")) : t("audit.view.all");
             const next = [...views.filter((x) => x.name !== name), { name, query }];
             setViews(next);
-            saveViews(session.principal_id, "audit", next);
+            saveViews(operatorKey(session), "audit", next);
           },
           onForget: () => {
             setViews([]);
-            saveViews(session.principal_id, "audit", []);
+            saveViews(operatorKey(session), "audit", []);
           },
         }}
         extra={

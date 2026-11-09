@@ -28,7 +28,7 @@ import { Tabs } from "../components/Tabs";
 import { useToast } from "../components/Toast";
 import { Tree, type TreeNode } from "../components/Tree";
 import { useI18n } from "../i18n/I18n";
-import { loadViews, saveViews } from "../prefs/prefs";
+import { loadViews, operatorKey, saveViews } from "../prefs/prefs";
 import { navigate, useLocation } from "../router/router";
 import { useLoad } from "../shell/load";
 import { useDeployment } from "../shell/Shell";
@@ -98,7 +98,7 @@ export function FleetScreen() {
   const [hidden, setHidden] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [withdrawing, setWithdrawing] = useState<Proxy | null>(null);
-  const [views, setViews] = useState<SavedView[]>(() => loadViews(session.principal_id, "fleet"));
+  const [views, setViews] = useState<SavedView[]>(() => loadViews(operatorKey(session), "fleet"));
   const permissions = (tenant && session.scopes[tenant]?.permissions) || [];
   const canWithdraw = offered("proxyWithdraw", permissions);
   const after = page.trail[page.trail.length - 1];
@@ -332,11 +332,11 @@ export function FleetScreen() {
                   const name = query ? decodeURIComponent(query.replaceAll("&", " · ")) : t("fleet.view.all");
                   const next = [...views.filter((v) => v.name !== name), { name, query }];
                   setViews(next);
-                  saveViews(session.principal_id, "fleet", next);
+                  saveViews(operatorKey(session), "fleet", next);
                 },
                 onForget: () => {
                   setViews([]);
-                  saveViews(session.principal_id, "fleet", []);
+                  saveViews(operatorKey(session), "fleet", []);
                 },
               }}
             />
