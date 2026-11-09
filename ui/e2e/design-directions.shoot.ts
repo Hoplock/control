@@ -82,7 +82,7 @@ async function shoot(browser: Browser, screen: E2EScreen, css: string, theme: Th
   });
   const page = await context.newPage();
   if (screen.kind === "gallery") await serveBuild(page, "build/gallery");
-  else if (density) await useDensity(page, density);
+  else await useDensity(page, density ?? "screen");
   await page.goto(screen.path);
   await screen.ready(page);
   if (screen.prepare) await screen.prepare(page);

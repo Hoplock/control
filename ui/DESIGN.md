@@ -1,6 +1,6 @@
 # Hoplock Control — Console Design System
 
-> This document is **binding on the console phases, 0049–0059,** and on every
+> This document is **binding on the console phases, 0049–0060,** and on every
 > change to `ui/` afterwards. PLAN **M20** is the decision that makes it so. It exists because
 > "make it look good" is not a requirement anybody can meet or fail, and a
 > console built to acceptance criteria that are all functional will be correct
@@ -9,8 +9,8 @@
 >
 > Read with `docs/PLAN.md` §2 (M20, M2, M18, M19, and **M21** — the console is
 > localisable from its first screen, and English is the only locale that ships)
-> and the console phases' prompts (PLAN §10: 0049–0058 build the console,
-> 0052 choosing its look with the operator, and 0059 audits every screen for
+> and the console phases' prompts (PLAN §10: 0049–0059 build the console,
+> 0052 choosing its look with the operator, and 0060 audits every screen for
 > one look and feel).
 
 ---
@@ -37,8 +37,12 @@ So "modern" is four concrete commitments, each of which a reviewer can check:
    as broken even when it is fast.
 
 **The calibration** — the class of tool this should sit beside without imitating
-any of them: Linear, Grafana, Tailscale's admin, Vercel's dashboard. **The
-anti-goal**, stated so it can be pointed at in review: a Bootstrap admin
+any of them: the dark, dense consoles security teams already live in (an
+operator's brief named CrowdStrike's, and 0052 chose the look with them),
+Linear, Grafana, Tailscale's admin, Vercel's dashboard. So the console is
+**dark first**: near-black grounds, flat panels a step above them, hairline
+borders and one vivid accent. Light is a designed theme too, not an inversion.
+**The anti-goal**, stated so it can be pointed at in review: a Bootstrap admin
 template. Card-in-a-card panels, a coloured page header, an icon sidebar with no
 labels, a modal for anything consequential, and default component-kit blue.
 
@@ -80,26 +84,26 @@ that a check rather than a hope.
 
 ### 3.1 Neutrals
 
-The structural ramp. Cool grey, so that the accent and the status hues stay warm
-against it. **Every value below is contrast-verified against the worst-case
+The structural ramp. Cool blue-grey, near black in dark (Carbon, 0052), so
+that the cyan accent and the status hues are the only colour on the page. **Every value below is contrast-verified against the worst-case
 background it is used on** (§10.2) — the steps are not evenly spaced in lightness
 because the ones that carry text and control borders are pinned to their WCAG
 threshold, and a ramp that looks tidier but fails is worth nothing.
 
 | Token | Light | Dark |
 | --- | --- | --- |
-| `--n-0` | `#ffffff` | `#0d1117` |
-| `--n-50` | `#f7f8fa` | `#12171f` |
-| `--n-100` | `#eef0f4` | `#161c26` |
-| `--n-200` | `#e2e5ea` | `#1e2632` |
-| `--n-300` | `#cbd1da` | `#2b3542` |
-| `--n-400` | `#828b9a` | `#66727f` |
-| `--n-500` | `#646e7b` | `#828d9c` |
-| `--n-600` | `#4c5561` | `#a3aebc` |
-| `--n-700` | `#363e49` | `#c2cad5` |
-| `--n-800` | `#232a33` | `#d7dde5` |
-| `--n-900` | `#161b22` | `#e6eaf0` |
-| `--n-950` | `#0d1117` | `#f7f8fa` |
+| `--n-0` | `#ffffff` | `#07090c` |
+| `--n-50` | `#f4f6f8` | `#0d1015` |
+| `--n-100` | `#eaedf1` | `#13181f` |
+| `--n-200` | `#dde2e8` | `#1b212a` |
+| `--n-300` | `#c5ccd5` | `#29313d` |
+| `--n-400` | `#7e8897` | `#667183` |
+| `--n-500` | `#5f6a79` | `#8590a1` |
+| `--n-600` | `#454f5d` | `#a2acba` |
+| `--n-700` | `#313a46` | `#c3cad4` |
+| `--n-800` | `#1f262f` | `#d9dee5` |
+| `--n-900` | `#11161c` | `#edf0f4` |
+| `--n-950` | `#080b0f` | `#f7f8fa` |
 
 ### 3.2 Semantic surface and text
 
@@ -135,28 +139,33 @@ Three of those rows carry an argument rather than a value:
   grid. `--border-default` is the one an input is recognised by, and it meets
   the threshold. §10.2 tests each against the rule that actually applies to it.
 - **`--text-on-accent` is white in light mode and near-black in dark.** The dark
-  accent is a light lavender, and white on it is 3.2:1 — it fails, and it also
+  accent is a bright cyan, and white on it is 1.8:1. It fails, and it also
   simply looks wrong. Flipping the foreground rather than darkening the accent
-  keeps the accent recognisably one colour across themes.
+  keeps the accent recognisably one colour across themes: near-black on it
+  is 11:1.
 - **`--bg-selected` is `--a-100` in dark.** The dark accent ramp runs the
-  other way, so its `--a-900` is the light lavender `#dee3fd`, on which body
-  text would be 1.05:1; `--a-100` is the dark ramp's tint, as `--a-50` is the
+  other way, so its `--a-900` is the pale cyan `#cffafe`, on which body
+  text would be 1.02:1. `--a-100` is the dark ramp's tint, as `--a-50` is the
   light one's.
 
 ### 3.3 Accent
 
 One. It marks the primary action, the active navigation item, and selection —
-nothing else. It is deliberately not blue-as-default and deliberately not any of
-the status hues.
+nothing else. It is an electric **cyan**, which the operator chose in 0052: vivid
+on the near-black ground, and in light a deep teal-cyan that carries white text.
+It is deliberately not blue-as-default and deliberately not any of the status
+hues. It sits between allow's green and info's blue, and info is tuned bluer
+(§3.4) so the two are not read as one. Red is never the accent, because red
+means denied (§3.4, M11), and every primary button would read as a denial.
 
 | Token | Light | Dark |
 | --- | --- | --- |
-| `--a-50` | `#eef1fe` | `#1b1f3d` |
-| `--a-100` | `#dee3fd` | `#232a55` |
-| `--a-300` | `#97a4f6` | `#4f5ae3` |
-| `--a-500` | `#4f5ae3` | `#7c86ef` |
-| `--a-600` | `#3e45c4` | `#97a1f4` |
-| `--a-900` | `#262a63` | `#dee3fd` |
+| `--a-50` | `#ebfcfe` | `#061b20` |
+| `--a-100` | `#cdf5fb` | `#0a2930` |
+| `--a-300` | `#5fcfe3` | `#0e7490` |
+| `--a-500` | `#0b7189` | `#22d3ee` |
+| `--a-600` | `#0b5a6e` | `#6fe6f8` |
+| `--a-900` | `#08313d` | `#cffafe` |
 
 ### 3.4 Status
 
@@ -165,11 +174,15 @@ vocabulary — matching the domain rather than a generic palette:
 
 | Token | Meaning in this product | Light | Dark |
 | --- | --- | --- | --- |
-| `--s-allow` | allowed, healthy, verified, active | `#16753e` | `#3fbd77` |
-| `--s-deny` | denied by policy, revoked, expired | `#c4342a` | `#f0736a` |
-| `--s-warn` | degraded, stale, expiring, unverified | `#8f5a00` | `#e0a33a` |
-| `--s-outage` | unreachable, 5xx, an outage — **never a deny** | `#6d31d9` | `#a78bfa` |
-| `--s-info` | informational, pending, in progress | `#175cc4` | `#58a6ff` |
+| `--s-allow` | allowed, healthy, verified, active | `#13753c` | `#3ccf80` |
+| `--s-deny` | denied by policy, revoked, expired | `#c4322a` | `#ff7a70` |
+| `--s-warn` | degraded, stale, expiring, unverified | `#8f5a00` | `#f0b03f` |
+| `--s-outage` | unreachable, 5xx, an outage — **never a deny** | `#6d31d9` | `#ad93ff` |
+| `--s-info` | informational, pending, in progress | `#1d55c9` | `#6a9dff` |
+
+The dark values are a step brighter than a mid-grey ground would need, so they
+hold on the near-black one. Info is a step bluer than a default blue, away from
+the cyan accent.
 
 `--s-unknown` (`--n-400`) is the glyph of *not reported* (§6): a neutral, so
 that it is never read as any of the five.
@@ -202,15 +215,19 @@ is that locale's size decision (§9), never a download.
 
 | Token | Size / line-height | Weight | Use |
 | --- | --- | --- | --- |
-| `--t-display` | 32 / 40 | 600 | one per page, at most |
-| `--t-h1` | 24 / 32 | 600 | page title |
-| `--t-h2` | 18 / 26 | 600 | section |
-| `--t-h3` | 15 / 22 | 600 | card header |
-| `--t-body` | 14 / 21 | 400 | default |
-| `--t-dense` | 13 / 18 | 400 | table cells, lists |
-| `--t-label` | 12 / 16 | 500 | field labels, column headers |
-| `--t-caption` | 11 / 15 | 500 | metadata, timestamps; letter-spacing `0.02em` |
-| `--t-mono` | 12.5 / 19 | 400 | ids, code, logs |
+| `--t-display` | 28 / 36 | 600 | one per page, at most |
+| `--t-h1` | 20 / 28 | 600 | page title |
+| `--t-h2` | 16 / 24 | 600 | section |
+| `--t-h3` | 14 / 20 | 600 | card header |
+| `--t-body` | 13 / 20 | 400 | default |
+| `--t-dense` | 12 / 18 | 400 | table cells, lists |
+| `--t-label` | 11 / 16 | 600 | field labels, column headers |
+| `--t-caption` | 11 / 15 | 500 | metadata, timestamps; letter-spacing `0.04em` |
+| `--t-mono` | 12 / 18 | 400 | ids, code, logs |
+
+The scale is a step denser than a document's, because tables are scanned (§1):
+body text is 13px, a table cell 12px, and a label is set semibold so that a
+small size still reads as a heading for its column.
 
 Tabular figures (`font-variant-numeric: tabular-nums`) on every number that sits
 in a column. Uppercase is for `--t-caption` only, never for headings.
@@ -299,14 +316,16 @@ never confuse them, and that the distinction survives a screenshot. Design side:
 
   | Stripe | Bar, light / dark | Chip tint, light / dark |
   | --- | --- | --- |
-  | `accent` (default) | `#4f5ae3` / `#7c86ef` | `#eef1fe` / `#1b1f3d` |
+  | `accent` (default) | `#0b7189` / `#22d3ee` | `#ebfcfe` / `#061b20` |
   | `magenta` | `#b5179e` / `#e879d0` | `#fbeaf7` / `#3a1534` |
   | `teal` | `#0f766e` / `#2dd4bf` | `#e3f6f4` / `#0f2e2b` |
   | `orange` | `#c2410c` / `#fb923c` | `#fdeee6` / `#3a1d0c` |
   | `slate` | `#475569` / `#94a3b8` | `#eef1f5` / `#1c2430` |
 
   Each bar is ≥ 3:1 on the canvas and the name and id on each tint ≥ 4.5:1, in
-  both themes (§10.2).
+  both themes (§10.2). `teal` is the stripe nearest the cyan accent, and so the
+  nearest to the default bar. A deployment that must never be taken for one
+  with no stripe set chooses another.
 - **Tenant** appears in the chrome only where more than one is in scope (M18).
   Switching is an explicit control, never a URL the operator edits by hand.
 - **Supervised** deployments show a badge naming the supervisor, linking to the
@@ -432,8 +451,10 @@ Not a separate pass; part of "done".
   async results.
 - Status is never colour alone (§6). Charts — the two that exist, Fleet's
   health bar and the audit view's counts — are readable in greyscale.
-- `prefers-reduced-motion` honoured (§3.6). Theme follows the system by default
-  and the override persists per operator.
+- `prefers-reduced-motion` honoured (§3.6). The console is **dark by
+  default** (the operator's choice in 0052; `DEFAULT_PREFS` in
+  `ui/src/prefs/prefs.ts`). An operator may choose light, or to follow the
+  system, and the choice persists per operator.
 
 ---
 
@@ -589,7 +610,7 @@ are in the registry too. In detail:
   binding for the chosen framework, or equivalent). Catalogues are ICU JSON, one
   file per locale under `ui/src/locales/`, keys stable and never reused for a
   different sentence — a renamed key is a new key. `en.json` is the only one
-  committed in the console phases (0049–0059).
+  committed in the console phases (0049–0060).
 - **No chart library until there is a third chart.** The two §7 allows are
   hand-written SVG — Fleet's health bar (0050) and the audit view's counts of
   the records on a page (0051), a table whose bars are one neutral ink beside
