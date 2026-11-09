@@ -34,6 +34,28 @@ subjects:
     display_name: Mallory Outside
     source: local
     principals: [mallory]
+  # Inventory (0054): identities in groups from both doors, a machine, and
+  # one the mutation test removes. None signs in to the console.
+  - id: lin
+    display_name: Lin Payments
+    source: local
+    principals: [lin]
+    groups: [payments, sre]
+    claims: {team: payments, region: eu}
+  - id: noor
+    display_name: Noor Contractor
+    source: oidc-acme
+    principals: [noor@acme.example]
+    groups: [contractors]
+  - id: svc-deploy
+    display_name: Deploy pipeline
+    source: local
+    principals: [svc-deploy]
+    groups: [deployers]
+  - id: temp-intern
+    display_name: Temporary Intern
+    source: local
+    principals: [temp-intern]
 
 # Explain and Audit (0051): the hosts the fixture's sessions reach. A label
 # lives on the target, which is what the blocked-command view joins on.
@@ -41,6 +63,11 @@ targets:
   - { id: db-01, hostname: db-01.core.internal, zone: core, labels: {env: prod, kind: db} }
   - { id: vault-01, hostname: vault-01.dmz.internal, zone: dmz, labels: {env: prod, kind: vault} }
   - { id: build-01, hostname: build-01.core.internal, zone: core, labels: {env: dev, kind: build} }
+  # Inventory (0054): a labelled estate the target list filters, and one the
+  # mutation test removes.
+  - { id: api-01, hostname: api-01.core.internal, zone: core, labels: {env: prod, kind: api, team: payments} }
+  - { id: cache-01, hostname: cache-01.edge.internal, zone: edge, labels: {env: staging, kind: cache} }
+  - { id: scratch-01, hostname: scratch-01.core.internal, zone: core, labels: {env: dev} }
 
 # Fleet (0050): one proxy per state the screen must show.
 #   px-core-01      live, applied and caught up, holds relay registrations

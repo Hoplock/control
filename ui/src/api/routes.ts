@@ -50,6 +50,24 @@ export const ROUTES = {
     pattern: "/api/v1/tenants/{tenant}/policy/bundles/{version}/activate",
     permission: "policy:publish",
   },
+  // Inventory (0054).
+  targets: { method: "GET", pattern: "/api/v1/tenants/{tenant}/targets", permission: "fleet:read" },
+  target: { method: "GET", pattern: "/api/v1/tenants/{tenant}/targets/{target}", permission: "fleet:read" },
+  targetPut: { method: "PUT", pattern: "/api/v1/tenants/{tenant}/targets/{target}", permission: "target:write" },
+  targetDelete: { method: "DELETE", pattern: "/api/v1/tenants/{tenant}/targets/{target}", permission: "target:write" },
+  subjects: { method: "GET", pattern: "/api/v1/tenants/{tenant}/subjects", permission: "identity:read" },
+  subject: { method: "GET", pattern: "/api/v1/tenants/{tenant}/subjects/{subject}", permission: "identity:read" },
+  subjectPut: { method: "PUT", pattern: "/api/v1/tenants/{tenant}/subjects/{subject}", permission: "identity:write" },
+  subjectDelete: { method: "DELETE", pattern: "/api/v1/tenants/{tenant}/subjects/{subject}", permission: "identity:write" },
+  groups: { method: "GET", pattern: "/api/v1/tenants/{tenant}/groups", permission: "identity:read" },
+  group: { method: "GET", pattern: "/api/v1/tenants/{tenant}/groups/{group}", permission: "identity:read" },
+  roleBindings: { method: "GET", pattern: "/api/v1/tenants/{tenant}/role-bindings", permission: "identity:read" },
+  roleBind: { method: "POST", pattern: "/api/v1/tenants/{tenant}/role-bindings", permission: "identity:write" },
+  roleUnbind: { method: "POST", pattern: "/api/v1/tenants/{tenant}/role-bindings/remove", permission: "identity:write" },
+  grants: { method: "GET", pattern: "/api/v1/tenants/{tenant}/grants", permission: "grant:read" },
+  grant: { method: "GET", pattern: "/api/v1/tenants/{tenant}/grants/{grant}", permission: "grant:read" },
+  grantCreate: { method: "POST", pattern: "/api/v1/tenants/{tenant}/grants", permission: "grant:write" },
+  grantRevoke: { method: "POST", pattern: "/api/v1/tenants/{tenant}/grants/{grant}/revoke", permission: "grant:write" },
 } as const satisfies Record<string, Route>;
 
 export type RouteName = keyof typeof ROUTES;

@@ -907,12 +907,13 @@ decision.
     (observed longer ago than its bound) and `left` (a node stopped on
     purpose, outside the roll-up). The roll-up is the worst state, and it
     never makes `unknown` or `stale` healthy.
-  - **The north-bound version** is one integer, `3`, with `north_api_min`
+  - **The north-bound version** is one integer, `4`, with `north_api_min`
     `1`, carried in `Hoplock-Api-Version` both ways; `docs/API-VERSIONING.md`
     is the promise: what moves it, what "additive" means, and the deprecation
-    window. `2` is the acting-operator header (below), and `3` a record's
+    window. `2` is the acting-operator header (below), `3` a record's
     capture read and the audit query's `principal` filter (§7), which is how
-    an operator reads what a supervisor did to them: a new route, request
+    an operator reads what a supervisor did to them, and `4` the group reads
+    and the holder filters the console's inventory reads (§6): a new route, request
     header or query parameter is additive, and moves the version so that a
     supervisor can tell whether a deployment honours it. A record's `attributes` is an open
     map whose keys are their writer's and never members of this surface, so a
@@ -1398,7 +1399,7 @@ decision.
      reads `limit+1` rows in one statement to learn whether the list continues,
      so a page is consistent with itself. The keys, by list:
      - **Inventory:** target id; subject id; role, holder kind and holder id
-       for role bindings.
+       for role bindings; the group name for groups.
      - **Fleet:** proxy id for proxies, rollouts and declarations; hostname,
        port and platform for rung observations; hostname and port for key
        exchanges.
@@ -1410,14 +1411,21 @@ decision.
      Where no index served the order, the phase that pages the list adds one
      in a new migration: role bindings, grants and grant requests (their
      indexes had no tiebreak), outstanding certificates, and the audit query
-     beyond its first key. One order has no index and is kept.
+     beyond its first key; and a filter that would otherwise walk the tenant
+     gets one too — a group's members (`subjects_groups_idx`, a GIN index on
+     the array, migration `0026`). Two orders have no index and are kept.
      `audit/negotiated` pages by each session's latest matching record,
      newest first, then the session id, an aggregate no index can serve, so
      each page re-reads the selection. Its two directions differ, so its
      keyset is written in `HAVING` rather than as a row comparison. That
      selection is a floor, a ban or a negotiated value over a window, narrow
      by construction, and ordering by session id instead would lose the
-     recency the runbook reads.
+     recency the runbook reads. `groups` pages the distinct group names of
+     the tenant — every name on a subject's groups, a role binding's group or
+     a group record — so each page re-reads the tenant's names and keeps
+     those after the position; that is bounded by the tenant's subjects
+     rather than by the caller, the cost of a list whose items no table
+     holds.
   5. **A list of two lists is two lists.** A target's rung observations and
      its key-exchange observations are keyed differently. One answer holding
      both would need two cursors and have no single `next`, and its two pages
@@ -1921,8 +1929,10 @@ for nothing.
   permission — the certificate authority; grants and grant requests; the access-context push and the providers and bindings that
   constrain it (`…/access-context/providers/{provider}/binding`); the policy
   lifecycle and simulation (`…/policy/…`, §5.6) and explain (`…/decisions/{id}`,
-  `…/sessions/{id}/decisions`); inventory — targets and their labels, subjects,
-  role bindings, the claim mapping, proxies and their enrollment and
+  `…/sessions/{id}/decisions`); inventory — targets and their labels, subjects
+  (a group's members with `?group=`), the tenant's group names (`…/groups`),
+  role bindings (one role's or one holder's with `?role=`, `?subject=`,
+  `?group=`), the claim mapping, proxies and their enrollment and
   withdrawal, fleet configuration with its rollouts and rollback, the
   algorithm declarations and the target observations; the audit query
   (`…/audit/…`, §7) and its retention; the operator actions (`…/revocations`,
@@ -3402,7 +3412,13 @@ not say why, and a grant the explanation names that the inputs do not hold.
   break-glass access exists when the IdP is down. Group membership from either
   source feeds policy identically — a rule cannot tell where a group came from,
   which is why the two are merged into one sorted list on the subject row and
-  nothing downstream records which half was which.
+  nothing downstream records which half was which. So an operator reads a
+  group the same way policy does, as a name: `GET …/groups` lists every name
+  on a subject's groups, a role binding's group or a group record, once, with
+  its members counted and its roles; `?group=` on `…/subjects` answers its
+  members, and `?group=`, `?subject=` and `?role=` on `…/role-bindings` what
+  a holder holds directly or who holds a role (0054). A group record is
+  reported where one exists, and its absence is not an error.
 
   **The role set is fixed and lives in code** (`internal/identity/rbac.go`):
   integration, requester, auditor, policy-author, grant-admin, fleet-admin,
@@ -4196,7 +4212,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0051 | Management console 3: Explain and the audit view | **Built, `v0.38.0`.** Explain at `/console/explain`: a pasted session id (`…/sessions/{session}/decisions`) or decision id (`d_…`, `…/decisions/{decision}`) is a deep link — `/console/explain/sessions/<id>`, `/console/explain/decisions/<id>`, `?decision=` for the hop a session opens on — and the whole story out: the session's outcome, a timeline of its decisions hop by hop, and for each the outcome and why (a rule, the default deny, a standing denial, or an unserved allow, which is an outage and never drawn as a deny), identity, matched rule and terms, the claim mapping version beside the active one, the grant, the obligations, the route, the hop path as a tree, and the stored record; a 404 is the empty state and `decision_unexplainable` an outage. Audit at `/console/audit/records` (by subject, target, session, decision, acting principal, kind, severity and an absolute or relative time range, newest or oldest first, every filter in the URL), a record drawer at `?record=`, the blocked-command view at `/console/audit/blocked-commands?label=`, and session replay at `/console/audit/sessions/<id>/replay` stepping through a session's records with each capture read as a terminal; every list one page of a bounded list (M26), with the page's counts by kind as hand-written SVG, the second of DESIGN.md §11's two charts. The supervised badge opens the audit view at `?principal=<sup-…>`, and `acting_operator` is shown beside its `sup-` principal as the supervisor's word, linked to nothing. The timeline and the time range picker joined the component set. To serve it, north-bound version `3`: `GET …/audit/records/{record}/capture` and the `principal` filter on `…/audit/records`, through `audit_records_principal_idx` (migration `0025`) (M4, M8, M19, M26, M11, M20, M21, M23) |
 | 0052 | Management console 4: the console's look, chosen with the operator | **Built, `v0.39.0`.** Three directions shown as the same five screenshots of screens already built, each a complete token file passing the contrast test, then an interview with the operator over three rounds until they approved one: **Carbon**, dark first — near-black blue-black grounds with panels lifted one step, hairline borders, the console's 4/6/10 px corners, type a step denser (body 13px, cells 12px, labels 11px semibold), and an electric cyan accent, with the five status hues retuned within their meanings. Applied through `tokens.css` and `ui/DESIGN.md` §1, §3, §5 and §8 alone, and dark the default theme; the baseline rewritten. The operator's ask to replace the health bar's patterns is phase 0059 (M20, M21, M11, M17, M19, M23) |
 | 0053 | Management console 5: Policy | **Built, `v0.40.0`.** Policy at `/console/policy`: the stored versions a page at a time, newest first (M26), with the active one named above them. A version at `/console/policy/versions/<n>` shows its source with each publish-time finding beneath its line; its changes against the active version, or `?against=` another, by rule and then line by line in the diff view the component set gained; its publish-time report by severity then id, each list a finding names cut at 100 beside its whole number; and a replay of recorded traffic over a window held in the URL. A candidate at `/console/policy/candidate[?from=<n>]` is validated — each compiler rejection rendered from its code and parameters beneath the line it names, never from the English — compared, simulated and uploaded. Activating and rolling back are one dialog: confirmed by typing the version's name, listing each warning to accept by its id, and reporting a refusal where the author is. It is offered only to a holder of `policy:publish` and refused by the API to anyone else. The console's sentences for every compiler and publish-time code are held to the server's codes by `ui/test/policy-codes.json`, which a Go test keeps current. What arrived as English only is phase 0065 (M3, M4, M11, M21, M26, M23) |
-| 0054 | Management console 6: Inventory | targets and labels, identities, groups, roles and grants, each paged, every write offered only to a role the API lets make it and asserted at the API, grant creation and revocation end to end (M2, M7, M10, M26, M23) |
+| 0054 | Management console 6: Inventory | **Built, `v0.41.0`.** Inventory under `/console/inventory/`: targets and their labels (`?label=`), identities (`?group=`), groups, the fixed roles and grants (`?subject=`, `?state=`), each a list one page of a bounded list (M26) and a detail — a target with its newest audit records, an identity with the roles it holds directly and its grants, a group with its members and roles, a role with its holders, a grant with the decisions it supplied — each linking to the others and to the audit view by subject or target. Writing and removing a target (`target:write`), writing and removing an identity and binding and withdrawing a role (`identity:write`), and creating and revoking a grant (`grant:write`) are offered only to a role the API lets make them, and every one is in the RBAC harness, refused by the API to the rest; removing, withdrawing and revoking confirm by typing the object's id, and a refused write reports at the field the API names. A create the approval workflow decides says so. To serve it, north-bound version `4`: `GET …/groups` and `…/groups/{group}`, `?group=` on `…/subjects` through `subjects_groups_idx` (migration `0026`), and `?role=`, `?subject=`, `?group=` on `…/role-bindings` — the user's choice over reading one page as the tenant. The view links and a title-sized identifier joined the component set, and `Scheduled` the status vocabulary (M2, M7, M10, M26, M11, M20, M21, M23) |
 | 0055 | Management console 7: locks, quarantines and the directory's subjects | a lock, a quarantine and a deactivation shown wherever their subject or target is, as deny-class states (M11) and never an outage; lock, unlock, quarantine and release offered to a holder of `session:revoke` and nobody else; a directory-managed subject shown with its provider, `directory.source` and external id, never editable here; the claim mapping's directory-scoped entries; a connector's `directory_claim` and `directory_source` on the sign-in page (M28, M7, M2, M23) |
 | 0056 | Management console 8: Extensions and Reports | which `ext` points are registered and whether each started, each sink's lag in the component the archive's lag shares, an absent point showing what Control does instead (M15); every registered report pack listed and generated from its descriptor, named through its host's `<provider>:` keys, a provider in error shown as unavailable (M15, M8, M21, M27, M23) |
 | 0057 | Management console 9: stream gaps, the archive's lag and retention, in the audit view | a `logging.gap` at its span, `evicted` read as an outage and `refused` as a state of its own decided in DESIGN.md §6, a session with a hole partial, replay that shows the hole and never splices across it, session-less gaps per proxy (`Hoplock/proxy#71`); the archive's lag, and retention's answers — held back, or refused with `retention_not_archived` having deleted nothing (M8, M11, M20, M23) |

@@ -1,0 +1,123 @@
+/* Inventory (0054): targets, identities, groups, roles and grants. Read more
+   than scanned, so comfortable by default (DESIGN.md §3.7); every table is
+   one page of a bounded list. */
+.screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-24);
+}
+.stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+}
+.panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8) var(--sp-12);
+}
+.panelTitle {
+  margin: 0;
+  font: var(--t-h2);
+  color: var(--text-primary);
+}
+.para {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.quiet {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.facts {
+  display: grid;
+  grid-template-columns: minmax(max-content, auto) minmax(0, 1fr);
+  gap: var(--sp-8) var(--sp-24);
+  margin: 0;
+}
+.facts dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.facts dd {
+  margin: 0;
+  min-inline-size: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+.open {
+  color: var(--text-primary);
+  font: var(--t-mono);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: var(--sp-2);
+}
+.open:hover {
+  color: var(--accent);
+}
+.link {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: var(--sp-2);
+}
+.link:hover {
+  color: var(--accent);
+}
+.ident {
+  font: var(--t-mono);
+  overflow-wrap: anywhere;
+}
+.operator {
+  overflow-wrap: anywhere;
+}
+.form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+  max-inline-size: var(--form-max);
+}
+.row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--form-column-min), 1fr));
+  gap: var(--sp-16);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+}
+.bind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-8) var(--sp-12);
+}
+.notice {
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border-inline-start: var(--sp-2) solid var(--s-info);
+  background: var(--bg-sunken);
+  font: var(--t-body);
+  color: var(--text-primary);
+}

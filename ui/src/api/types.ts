@@ -511,3 +511,183 @@ export interface Simulation {
   dry_run: DryRunResult[];
   replay?: Replay;
 }
+
+// ---------------------------------------------------------------------------
+// Inventory (0054): targets, subjects, groups, role bindings and grants, as
+// internal/httpapi/north/inventory.go and grants.go answer them.
+// ---------------------------------------------------------------------------
+
+/** targetView. `quarantined` and `quarantine` are 0055's to show. */
+export interface Target {
+  id: string;
+  hostname: string;
+  zone: string;
+  labels: Record<string, string>;
+  credential_method?: string;
+  created_at?: string;
+  updated_at?: string;
+  quarantined: boolean;
+}
+
+/** GET …/targets */
+export interface TargetPage extends Paged {
+  targets: Target[];
+}
+
+/** PUT …/targets/{target} */
+export interface TargetBody {
+  hostname: string;
+  zone: string;
+  labels: Record<string, string>;
+  credential_method: string;
+}
+
+/** subjectView. The lock, the directory and the deactivation are 0055's to show. */
+export interface Subject {
+  id: string;
+  source: string;
+  display_name: string;
+  principals: string[];
+  groups: string[];
+  claims: Record<string, string>;
+  break_glass: boolean;
+  mapping_version?: number;
+  locked: boolean;
+  directory_managed: boolean;
+  deactivated: boolean;
+  record_missing?: boolean;
+}
+
+/** GET …/subjects */
+export interface SubjectPage extends Paged {
+  subjects: Subject[];
+}
+
+/** PUT …/subjects/{subject} */
+export interface SubjectBody {
+  source: string;
+  display_name: string;
+  principals: string[];
+  groups: string[];
+  claims: Record<string, string>;
+  break_glass: boolean;
+}
+
+/** groupView (north-bound version 4). */
+export interface Group {
+  id: string;
+  member_count: number;
+  roles: string[];
+  record?: { display_name?: string; description?: string; source: string; created_at?: string; updated_at?: string };
+}
+
+/** GET …/groups */
+export interface GroupPage extends Paged {
+  groups: Group[];
+}
+
+/** roleBindingView. Exactly one of subject_id and group_id is set. */
+export interface RoleBinding {
+  subject_id?: string;
+  group_id?: string;
+  role: string;
+  granted_by?: string;
+  created_at?: string;
+}
+
+/** GET …/role-bindings. `roles` is the fixed role set, the same on every page. */
+export interface RoleBindingPage extends Paged {
+  bindings: RoleBinding[];
+  roles: string[];
+}
+
+/** grantScopeView */
+export interface GrantScope {
+  name: string;
+  targets?: string[] | null;
+  labels?: Record<string, string> | null;
+  zones?: string[] | null;
+}
+
+/** actorView */
+export interface Actor {
+  subject?: string;
+  principal_id: string;
+  break_glass: boolean;
+}
+
+/** store.GrantState, as a function of the instant except `revoked`. */
+export type GrantState = "scheduled" | "active" | "expired" | "revoked";
+
+/** grantView */
+export interface Grant {
+  id: string;
+  tenant: string;
+  subject: string;
+  scope: GrantScope;
+  not_before: string;
+  expires_at: string;
+  state: GrantState;
+  origin: string;
+  reason: string;
+  reason_code?: string;
+  external_ref?: string;
+  created_by: Actor;
+  created_at: string;
+  request_id?: string;
+  workflow_ref?: string;
+  approvers?: string[];
+  revoked_at?: string;
+  revoked_by?: Actor;
+  revoke_reason?: string;
+}
+
+/** GET …/grants */
+export interface GrantPage extends Paged {
+  tenant: string;
+  grants: Grant[];
+}
+
+/** grantDecisionView */
+export interface GrantDecision {
+  decision_id: string;
+  session_id?: string;
+  proxy_id?: string;
+  effect: string;
+  rule?: string;
+  decided_at: string;
+}
+
+/** GET …/grants/{grant}: the grant and a bounded sample of the decisions it supplied. */
+export interface GrantDetail {
+  grant: Grant;
+  decisions: GrantDecision[];
+  decisions_truncated: boolean;
+}
+
+/** POST …/grants */
+export interface GrantBody {
+  subject: string;
+  scope: GrantScope;
+  duration?: string;
+  not_before?: string;
+  expires_at?: string;
+  reason: string;
+  reason_code?: string;
+  external_ref?: string;
+}
+
+/** grantOutcome: 201 a grant, 202 a request the registered workflow is deciding. */
+export interface GrantOutcome {
+  grant?: Grant;
+  request?: { id: string; state: string; workflow: string };
+}
+
+/** revocationView */
+export interface GrantRevocation {
+  grant: Grant;
+  revoked: boolean;
+  sessions: { proxy_id: string; session_id: string }[];
+  widened: boolean;
+  events: string[];
+}

@@ -5,3 +5,10 @@
   color: inherit;
   overflow-wrap: anywhere;
 }
+.title {
+  font: var(--t-h1);
+  font-family: var(--font-mono);
+  unicode-bidi: isolate;
+  color: inherit;
+  overflow-wrap: anywhere;
+}

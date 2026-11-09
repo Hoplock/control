@@ -121,7 +121,7 @@ export function DataTable<T>({
   return (
     <div className={styles.wrap}>
       <div className={styles.toolbar}>
-        {partialNote ? <p className={styles.note}>{partialNote}</p> : <span />}
+        {partialNote ? <p className={styles.note} data-partial-note="">{partialNote}</p> : <span />}
         {onHidden ? (
           <Menu
             label={t("component.table.columns")}

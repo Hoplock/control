@@ -26,6 +26,46 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.41.0
+
+Phase 0054, the console's Inventory (M2, M7, M10, M26, M20, M21). Migration
+`0026` adds one index to `subjects`; it blocks writes to that table while it
+builds, so a sign-in waits for it, and authorize does not. North-bound API
+version `4`, additive: a client of `1` to `3` is served exactly as before.
+Nothing in `ext`, `server` or the contract changes.
+
+- **Inventory, at `/console/inventory/`.** Targets and their labels,
+  identities, groups, the fixed roles and grants, each a list a page at a
+  time and a detail, every filter in the URL: `targets?label=key=value`,
+  `subjects?group=`, `grants?subject=&state=`. A target's page shows its
+  newest audit records; an identity's, the roles it holds directly and its
+  grants; a group's, its members and roles; a role's, its holders; a
+  grant's, the decisions it supplied. Each links to the others and to the
+  audit view filtered by the identity or the host.
+- **Writing from the console is what the API allows the operator.** Adding,
+  editing and removing a target is offered to `target:write`; adding, editing
+  and removing an identity, and binding and withdrawing a role, to
+  `identity:write`; granting and revoking access to `grant:write`. Any other
+  role sees the read-only view, and the API refuses the call to it.
+  Removing, withdrawing a role and revoking a grant ask the operator to type
+  the object's id; revoking also asks for the reason the holder is shown. A
+  refused write is reported at the field the API names. With an approval
+  workflow registered, granting access says the request is pending rather
+  than showing a grant.
+- **`GET /api/v1/tenants/{tenant}/groups`** lists every group name in the
+  tenant once — on an identity, bound to a role, or recorded — with
+  `member_count`, `roles` and, where one exists, `record`, a page at a time;
+  **`GET …/groups/{group}`** answers one, `404 not_found` for a name the
+  tenant does not hold. Both need `identity:read`.
+- **`?group=` on `GET …/subjects`** answers a group's members.
+  **`?role=`, `?subject=` and `?group=` on `GET …/role-bindings`** answer one
+  role's holders, or what one holder holds directly; an undefined role is
+  `400 invalid_request` on `role`, and both holders at once
+  `{field: group, problem: at_most_one_of_subject_or_group}`. Each list's
+  cursor binds its filters, so a cursor carried across them is refused.
+- **A grant whose window has not opened reads `Scheduled`**, a new status
+  in the console's vocabulary, never a fault.
+
 ## v0.40.0
 
 Phase 0053, the console's Policy screens (M3, M4, M11, M20, M21, M26). No

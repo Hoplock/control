@@ -18,6 +18,7 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { seedAudit } from "./fixture/audit";
 import { seedFleet } from "./fixture/fleet";
+import { fixtureGrant, seedInventory } from "./fixture/inventory";
 import { candidates, seedPolicy } from "./fixture/policy";
 import { TENANT, type Role, type Substitute } from "./harness";
 
@@ -70,7 +71,7 @@ const outage = (correlation: string): Substitute => ({
 const main = (page: Page) => page.locator("main#content");
 
 /** Fixture steps that run after the seed, before any check (global-setup.ts). */
-export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [seedFleet, seedAudit, seedPolicy];
+export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [seedFleet, seedAudit, seedPolicy, seedInventory];
 
 const GALLERY_PAGES = [
   "buttons",
@@ -120,6 +121,340 @@ const GALLERY: E2EScreen[] = GALLERY_PAGES.map((section) => ({
     }
   },
 }));
+
+
+// ---------------------------------------------------------------------------
+// Inventory (0054). A list's states: loading held open, empty and error
+// substituted, and partial as the server's own page marked cut (M26) — one
+// page of a longer list, said beside its rows. A detail's partial is a second
+// read failing beside a first that answered.
+// ---------------------------------------------------------------------------
+
+const rows = (page: Page) => main(page).locator("table tbody tr[data-row]").first().waitFor();
+const cut: Substitute = { kind: "patch", patch: (b) => ({ ...(b as object), truncated: true, next: "e2e-cut" }) };
+const notFound = (correlation: string): Substitute => ({
+  kind: "answer",
+  status: 404,
+  body: { code: "not_found", message: "substituted", correlation_id: correlation },
+});
+const rowMenu = (row: string) => async (page: Page) => {
+  await main(page).locator(`tr[data-row="${row}"] button[aria-haspopup="menu"]`).first().click();
+  await page.locator("[role=menu]:popover-open").waitFor();
+};
+const dangerItem = (page: Page) => page.locator("[role=menu]:popover-open [role=menuitem][data-danger]");
+
+function listStates(route: string, member: string, extra: Record<string, unknown> = {}): E2EScreen["states"] {
+  return {
+    loading: { substitute: [[`${API}/${route}`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+    empty: {
+      substitute: [[`${API}/${route}`, { kind: "answer", status: 200, body: { [member]: [], truncated: false, ...extra } }]],
+      ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+    },
+    error: { substitute: [[`${API}/${route}`, outage(`corr-e2e-${route}`)]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+    partial: { substitute: [[`${API}/${route}`, cut]], ready: (page) => main(page).locator("[data-partial-note]").first().waitFor() },
+  };
+}
+
+function detailStates(route: string, gap: [string, string], ready: string): E2EScreen["states"] {
+  return {
+    loading: { substitute: [[`${API}/${route}`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+    empty: { substitute: [[`${API}/${route}`, notFound(`corr-e2e-${route}-404`)]], ready: (page) => main(page).locator("[data-state=empty]").waitFor() },
+    error: { substitute: [[`${API}/${route}`, outage(`corr-e2e-${route}`)]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+    partial: {
+      substitute: [[`${API}/${gap[0]}`, outage(`corr-e2e-${gap[1]}`)]],
+      ready: (page) => main(page).locator(`[data-state=partial] ${ready}`).first().waitFor(),
+    },
+  };
+}
+
+/** A create form's one call, offered as the form itself: a role without its permission is told so instead. */
+const formMutation = (route: string, method: "POST" | "PUT", path: string, permission: string, form: string): Mutation => ({
+  route,
+  method,
+  path,
+  permission,
+  control: (page) => main(page).locator(`form[${form}]`),
+});
+
+const INVENTORY: E2EScreen[] = [
+  {
+    id: "inventory-targets",
+    kind: "console",
+    path: "/console/inventory/targets",
+    densities: true,
+    ready: rows,
+    states: listStates("targets", "targets"),
+    mutations: [
+      { route: "targetPut", method: "PUT", path: `${API}/targets/api-01`, permission: "target:write", control: (page) => main(page).locator("[data-create]") },
+      { route: "targetDelete", method: "DELETE", path: `${API}/targets/scratch-01`, permission: "target:write", reveal: rowMenu("scratch-01"), control: dangerItem },
+    ],
+  },
+  {
+    id: "inventory-targets-filtered",
+    kind: "console",
+    path: "/console/inventory/targets?label=env%3Dprod",
+    densities: false,
+    ready: rows,
+    // A label no target carries: the filter's own empty state, which says how to clear it.
+    states: {
+      empty: {
+        substitute: [[`${API}/targets`, { kind: "answer", status: 200, body: { targets: [], truncated: false } }]],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+    },
+  },
+  {
+    id: "inventory-target",
+    kind: "console",
+    path: "/console/inventory/targets/db-01",
+    densities: true,
+    ready: (page) => main(page).locator("[data-activity=ok] table tbody tr[data-row]").first().waitFor(),
+    states: detailStates("targets/db-01", ["audit/records", "target-activity"], "[data-activity=outage]"),
+    mutations: [
+      { route: "targetPut", method: "PUT", path: `${API}/targets/db-01`, permission: "target:write", control: (page) => main(page).locator("[data-edit]") },
+      { route: "targetDelete", method: "DELETE", path: `${API}/targets/db-01`, permission: "target:write", control: (page) => main(page).locator("[data-remove]") },
+    ],
+  },
+  {
+    id: "inventory-target-edit",
+    kind: "console",
+    path: "/console/inventory/targets/api-01?edit=1",
+    densities: false,
+    ready: (page) => main(page).locator("form[data-target-form], [data-activity]").first().waitFor(),
+    states: {},
+  },
+  {
+    id: "inventory-target-new",
+    kind: "console",
+    path: "/console/inventory/new/targets",
+    densities: false,
+    ready: (page) => main(page).locator("form[data-target-form], [role=alert]").first().waitFor(),
+    states: {},
+    mutations: [formMutation("targetPut", "PUT", `${API}/targets/new-from-e2e`, "target:write", "data-target-form")],
+  },
+  {
+    id: "inventory-subjects",
+    kind: "console",
+    path: "/console/inventory/subjects",
+    densities: true,
+    ready: rows,
+    states: listStates("subjects", "subjects"),
+    mutations: [
+      { route: "subjectPut", method: "PUT", path: `${API}/subjects/lin`, permission: "identity:write", control: (page) => main(page).locator("[data-create]") },
+      { route: "subjectDelete", method: "DELETE", path: `${API}/subjects/temp-intern`, permission: "identity:write", reveal: rowMenu("temp-intern"), control: dangerItem },
+    ],
+  },
+  {
+    id: "inventory-subject",
+    kind: "console",
+    path: "/console/inventory/subjects/lin",
+    densities: true,
+    ready: async (page) => {
+      await main(page).locator("[data-bindings=ok] table tbody tr[data-row]").first().waitFor();
+      await main(page).locator("[data-grants=ok] table tbody tr[data-row]").first().waitFor();
+    },
+    states: detailStates("subjects/lin", ["grants", "subject-grants"], "[data-grants=outage]"),
+    mutations: [
+      { route: "subjectPut", method: "PUT", path: `${API}/subjects/lin`, permission: "identity:write", control: (page) => main(page).locator("[data-edit]") },
+      { route: "subjectDelete", method: "DELETE", path: `${API}/subjects/lin`, permission: "identity:write", control: (page) => main(page).locator("[data-remove]") },
+      {
+        route: "roleBind",
+        method: "POST",
+        path: `${API}/role-bindings`,
+        body: { subject_id: "lin", role: "auditor" },
+        permission: "identity:write",
+        control: (page) => main(page).locator("form[data-bind-form]"),
+      },
+      {
+        route: "roleUnbind",
+        method: "POST",
+        path: `${API}/role-bindings/remove`,
+        body: { subject_id: "lin", role: "policy-author" },
+        permission: "identity:write",
+        reveal: rowMenu("policy-author/subject/lin"),
+        control: dangerItem,
+      },
+    ],
+  },
+  {
+    id: "inventory-subject-new",
+    kind: "console",
+    path: "/console/inventory/new/subjects",
+    densities: false,
+    ready: (page) => main(page).locator("form[data-subject-form], [role=alert]").first().waitFor(),
+    states: {},
+    mutations: [formMutation("subjectPut", "PUT", `${API}/subjects/new-from-e2e`, "identity:write", "data-subject-form")],
+  },
+  {
+    id: "inventory-groups",
+    kind: "console",
+    path: "/console/inventory/groups",
+    densities: true,
+    ready: rows,
+    states: listStates("groups", "groups"),
+  },
+  {
+    id: "inventory-group",
+    kind: "console",
+    path: "/console/inventory/groups/sre",
+    densities: true,
+    ready: async (page) => {
+      await main(page).locator("[data-bindings=ok] table tbody tr[data-row]").first().waitFor();
+      await main(page).locator("[data-members=ok] table tbody tr[data-row]").first().waitFor();
+    },
+    states: detailStates("groups/sre", ["subjects", "group-members"], "[data-members=outage]"),
+    mutations: [
+      {
+        route: "roleBind",
+        method: "POST",
+        path: `${API}/role-bindings`,
+        body: { group_id: "sre", role: "admin" },
+        permission: "identity:write",
+        control: (page) => main(page).locator("form[data-bind-form]"),
+      },
+      {
+        route: "roleUnbind",
+        method: "POST",
+        path: `${API}/role-bindings/remove`,
+        body: { group_id: "sre", role: "auditor" },
+        permission: "identity:write",
+        reveal: rowMenu("auditor/group/sre"),
+        control: dangerItem,
+      },
+    ],
+  },
+  {
+    id: "inventory-roles",
+    kind: "console",
+    path: "/console/inventory/roles",
+    densities: true,
+    ready: rows,
+    states: {
+      loading: { substitute: [[`${API}/role-bindings`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+      empty: {
+        substitute: [[`${API}/role-bindings`, { kind: "answer", status: 200, body: { bindings: [], roles: [], truncated: false } }]],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: { substitute: [[`${API}/role-bindings`, outage("corr-e2e-roles")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+      // A newer server names a role this console has no words for: listed by its code, and named as a gap.
+      partial: {
+        substitute: [[`${API}/role-bindings`, { kind: "patch", patch: (b) => ({ ...(b as object), roles: [...(b as { roles: string[] }).roles, "auditor-plus"] }) }]],
+        ready: (page) => main(page).locator("[data-state=partial] table tbody tr[data-row]").first().waitFor(),
+      },
+    },
+  },
+  {
+    id: "inventory-role",
+    kind: "console",
+    path: "/console/inventory/roles/fleet-admin",
+    densities: true,
+    ready: (page) => main(page).locator("[data-bindings=ok] table tbody tr[data-row]").first().waitFor(),
+    states: {
+      loading: { substitute: [[`${API}/role-bindings`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+      // A role this release does not define: the API refuses the filter, and there is no such role.
+      empty: {
+        substitute: [
+          [
+            `${API}/role-bindings`,
+            {
+              kind: "answer",
+              status: 400,
+              body: { code: "invalid_request", parameters: { field: "role", problem: "invalid" }, message: "substituted", correlation_id: "corr-e2e-role-400" },
+            },
+          ],
+        ],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: { substitute: [[`${API}/role-bindings`, outage("corr-e2e-role")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+      partial: { substitute: [[`${API}/role-bindings`, cut]], ready: (page) => main(page).locator("[data-partial-note]").first().waitFor() },
+    },
+    mutations: [
+      {
+        route: "roleBind",
+        method: "POST",
+        path: `${API}/role-bindings`,
+        body: { subject_id: "mallory", role: "fleet-admin" },
+        permission: "identity:write",
+        control: (page) => main(page).locator("form[data-bind-form]"),
+      },
+      {
+        route: "roleUnbind",
+        method: "POST",
+        path: `${API}/role-bindings/remove`,
+        body: { subject_id: "fenn", role: "fleet-admin" },
+        permission: "identity:write",
+        reveal: rowMenu("fleet-admin/subject/fenn"),
+        control: dangerItem,
+      },
+    ],
+  },
+  {
+    id: "inventory-grants",
+    kind: "console",
+    path: "/console/inventory/grants",
+    densities: true,
+    ready: rows,
+    states: listStates("grants", "grants", { tenant: "default" }),
+    mutations: [
+      { route: "grantCreate", method: "POST", path: `${API}/grants`, permission: "grant:write", control: (page) => main(page).locator("[data-create]") },
+    ],
+  },
+  {
+    id: "inventory-grant",
+    kind: "console",
+    get path() {
+      return `/console/inventory/grants/${fixtureGrant("prod-db")}`;
+    },
+    densities: false,
+    ready: (page) => main(page).locator("[data-grant-state=active]").waitFor(),
+    states: {
+      loading: { substitute: [[`${API}/grants/`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+      empty: { substitute: [[`${API}/grants/`, notFound("corr-e2e-grant-404")]], ready: (page) => main(page).locator("[data-state=empty]").waitFor() },
+      error: { substitute: [[`${API}/grants/`, outage("corr-e2e-grant")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+      // More decisions used it than the server samples: the sample, and the gap named (M26.3).
+      partial: {
+        substitute: [[`${API}/grants/`, { kind: "patch", patch: (b) => ({ ...(b as object), decisions_truncated: true }) }]],
+        ready: (page) => main(page).locator("[data-state=partial] [data-grant-state]").waitFor(),
+      },
+    },
+    mutations: [
+      {
+        route: "grantRevoke",
+        method: "POST",
+        get path() {
+          return `${API}/grants/${fixtureGrant("prod-db")}/revoke`;
+        },
+        body: { reason: "refused before it is read" },
+        permission: "grant:write",
+        control: (page) => main(page).locator("[data-revoke]"),
+      },
+    ],
+  },
+  {
+    id: "inventory-grant-new",
+    kind: "console",
+    path: "/console/inventory/new/grants",
+    densities: false,
+    ready: (page) => main(page).locator("form[data-grant-form], [role=alert]").first().waitFor(),
+    states: {},
+    mutations: [formMutation("grantCreate", "POST", `${API}/grants`, "grant:write", "data-grant-form")],
+  },
+  // A create the API refused: each problem at the field it names, never a toast alone (DESIGN.md §7).
+  {
+    id: "inventory-grant-refused",
+    kind: "console",
+    path: "/console/inventory/new/grants",
+    densities: false,
+    ready: (page) => main(page).locator("form[data-grant-form], [role=alert]").first().waitFor(),
+    states: {},
+    prepare: async (page) => {
+      const form = main(page).locator("form[data-grant-form]");
+      if (!(await form.count())) return;
+      await form.locator("button[type=submit]").click();
+      await form.locator("[data-invalid]").first().waitFor();
+    },
+  },
+];
 
 export const SCREENS: readonly E2EScreen[] = [
   {
@@ -584,5 +919,6 @@ export const SCREENS: readonly E2EScreen[] = [
       },
     },
   },
+  ...INVENTORY,
   ...GALLERY,
 ];

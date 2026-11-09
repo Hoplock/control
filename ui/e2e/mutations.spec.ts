@@ -139,3 +139,76 @@ test("an author validates, simulates, compares, uploads and activates a candidat
   expect(active.version).toBe(2);
   await page.context().close();
 });
+
+// Inventory (0054), end to end, as an administrator: a grant is created
+// through the form — refused first at the field the API names — shown in the
+// list and its detail, and revoked through the typed confirmation, with the
+// reason its holder is shown; then the API says it is revoked.
+test("an administrator grants access, finds it in the list and its detail, and revokes it by typing its id", async ({ browser }) => {
+  const form = SCREENS.find((s) => s.id === "inventory-grant-new");
+  if (!form) throw new Error("inventory-grant-new is not registered");
+  const page = await openScreen(browser, form);
+  const main = page.locator("main#content");
+  const grant = main.locator("form[data-grant-form]");
+
+  // Refused at the field: no reason given.
+  await grant.locator("input[name=subject]").fill("mallory");
+  await grant.locator("input[name=scope]").fill("e2e-audit-read");
+  await grant.locator("textarea[name=targets]").fill("vault-01.dmz.internal");
+  await grant.locator("input[name=duration]").fill("45m");
+  await grant.locator("button[type=submit]").click();
+  await expect(grant.locator("textarea[name=reason][aria-invalid=true]")).toHaveCount(1);
+
+  // Created: the page is the grant's, and it is active.
+  await grant.locator("textarea[name=reason]").fill("Read the vault's audit log for the quarterly review");
+  await grant.locator("button[type=submit]").click();
+  await expect(page).toHaveURL(/\/console\/inventory\/grants\/[^/?]+$/);
+  const id = decodeURIComponent(new URL(page.url()).pathname.split("/").pop() as string);
+  await expect(main.locator("[data-grant-state=active]")).toBeVisible();
+  await expect(main.locator("header [data-tone]").first()).toHaveText("Active");
+
+  // In the list, filtered to its holder.
+  await page.goto("/console/inventory/grants?subject=mallory");
+  await expect(main.locator(`tr[data-row="${id}"]`)).toBeVisible();
+  await main.locator(`tr[data-row="${id}"] a`).first().click();
+  await expect(page).toHaveURL(new RegExp(`/console/inventory/grants/${encodeURIComponent(id)}$`));
+
+  // Revoked: the typed id, refusing a near miss, and the reason the holder reads.
+  await main.locator("[data-revoke]").click();
+  const dialog = page.locator("dialog[open]");
+  const confirm = dialog.locator("button[type=submit]");
+  await dialog.locator("textarea[name=revoke_reason]").fill("Review finished");
+  await dialog.locator("[data-confirm-input]").fill(id.slice(0, -1));
+  await expect(confirm).toBeDisabled();
+  await dialog.locator("[data-confirm-input]").fill(id);
+  await confirm.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(main.locator("[data-grant-state=revoked]")).toBeVisible();
+  await expect(main.locator("header [data-tone]").first()).toHaveText("Revoked");
+  const stored = (await (await page.request.get(`/api/v1/tenants/default/grants/${encodeURIComponent(id)}`)).json()) as {
+    grant: { state: string; revoke_reason: string };
+  };
+  expect(stored.grant.state).toBe("revoked");
+  expect(stored.grant.revoke_reason).toBe("Review finished");
+  await page.context().close();
+});
+
+// A fleet-admin removes a target, which is destructive: it confirms by typing
+// the target's id, and the row is gone from the list the API answers.
+test("a fleet-admin removes a target by typing its id", async ({ browser }) => {
+  const targets = SCREENS.find((s) => s.id === "inventory-targets");
+  if (!targets) throw new Error("inventory-targets is not registered");
+  const page = await openScreen(browser, { ...targets, role: "fleet-admin" });
+  const row = page.locator('tr[data-row="scratch-01"]');
+  await row.locator('button[aria-haspopup="menu"]').click();
+  await page.locator("[role=menu]:popover-open [role=menuitem][data-danger]").click();
+  const dialog = page.locator("dialog[open]");
+  await dialog.locator("[data-confirm-input]").fill("scratch-0");
+  await expect(dialog.locator("button[type=submit]")).toBeDisabled();
+  await dialog.locator("[data-confirm-input]").fill("scratch-01");
+  await dialog.locator("button[type=submit]").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(row).toHaveCount(0);
+  expect((await page.request.get("/api/v1/tenants/default/targets/scratch-01")).status()).toBe(404);
+  await page.context().close();
+});

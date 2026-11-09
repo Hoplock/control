@@ -168,6 +168,9 @@
   --search-width: 220px;
   /* The column a timeline stands in beside what it explains (Explain, replay). */
   --rail-width: 300px;
+  /* A form's greatest width, and the narrowest a field shares a row at (Inventory). */
+  --form-max: 760px;
+  --form-column-min: 220px;
   --table-max-height: 70dvh;
   --list-max-height: 320px;
   --glyph-size: 10px;

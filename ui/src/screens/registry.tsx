@@ -11,8 +11,11 @@ import { AuditRecordsScreen, BlockedCommandsScreen } from "./Audit";
 import { DeploymentScreen } from "./Deployment";
 import { ExplainScreen } from "./Explain";
 import { FleetScreen } from "./Fleet";
+import { GrantNewScreen, GrantScreen, GrantsScreen } from "./Grants";
+import { GroupScreen, GroupsScreen, RoleScreen, RolesScreen, SubjectNewScreen, SubjectScreen, SubjectsScreen } from "./Identities";
 import { PolicyCandidateScreen, PolicyScreen, PolicyVersionScreen } from "./Policy";
 import { ReplayScreen } from "./Replay";
+import { TargetNewScreen, TargetScreen, TargetsScreen } from "./Targets";
 
 export interface Screen {
   /** Its stable id, used in tests and in 0050's screen registry. */
@@ -73,6 +76,102 @@ export const SCREENS: readonly Screen[] = [
     density: "comfortable",
     permission: "policy:read",
     render: () => <PolicyCandidateScreen />,
+  },
+  // Inventory (0054): five lists, each a view of one navigation entry, and a
+  // detail for each. The create forms live under inventory/new/, a segment no
+  // list uses, so an object of any id has a detail path.
+  {
+    id: "inventory-targets",
+    path: "inventory/targets",
+    nav: "nav.inventory",
+    section: "inventory",
+    density: "comfortable",
+    permission: "fleet:read",
+    render: () => <TargetsScreen />,
+  },
+  {
+    id: "inventory-target",
+    path: "inventory/targets/:target",
+    density: "comfortable",
+    permission: "fleet:read",
+    render: (p) => <TargetScreen key={p.target} id={p.target as string} />,
+  },
+  {
+    id: "inventory-target-new",
+    path: "inventory/new/targets",
+    density: "comfortable",
+    permission: "target:write",
+    render: () => <TargetNewScreen />,
+  },
+  {
+    id: "inventory-subjects",
+    path: "inventory/subjects",
+    density: "comfortable",
+    permission: "identity:read",
+    render: () => <SubjectsScreen />,
+  },
+  {
+    id: "inventory-subject",
+    path: "inventory/subjects/:subject",
+    density: "comfortable",
+    permission: "identity:read",
+    render: (p) => <SubjectScreen key={p.subject} id={p.subject as string} />,
+  },
+  {
+    id: "inventory-subject-new",
+    path: "inventory/new/subjects",
+    density: "comfortable",
+    permission: "identity:write",
+    render: () => <SubjectNewScreen />,
+  },
+  {
+    id: "inventory-groups",
+    path: "inventory/groups",
+    density: "comfortable",
+    permission: "identity:read",
+    render: () => <GroupsScreen />,
+  },
+  {
+    id: "inventory-group",
+    path: "inventory/groups/:group",
+    density: "comfortable",
+    permission: "identity:read",
+    render: (p) => <GroupScreen key={p.group} id={p.group as string} />,
+  },
+  {
+    id: "inventory-roles",
+    path: "inventory/roles",
+    density: "comfortable",
+    permission: "identity:read",
+    render: () => <RolesScreen />,
+  },
+  {
+    id: "inventory-role",
+    path: "inventory/roles/:role",
+    density: "comfortable",
+    permission: "identity:read",
+    render: (p) => <RoleScreen key={p.role} role={p.role as string} />,
+  },
+  {
+    id: "inventory-grants",
+    path: "inventory/grants",
+    density: "comfortable",
+    permission: "grant:read",
+    render: () => <GrantsScreen />,
+  },
+  {
+    id: "inventory-grant",
+    path: "inventory/grants/:grant",
+    density: "comfortable",
+    permission: "grant:read",
+    render: (p) => <GrantScreen key={p.grant} id={p.grant as string} />,
+  },
+  {
+    id: "inventory-grant-new",
+    path: "inventory/new/grants",
+    density: "comfortable",
+    permission: "grant:write",
+    render: () => <GrantNewScreen />,
   },
   {
     id: "explain",
