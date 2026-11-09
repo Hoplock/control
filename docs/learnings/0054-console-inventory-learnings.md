@@ -43,7 +43,12 @@ groups to a new one. Version `4`:
   **directly**; a role it holds through a group is the group's, and the
   identity page says so rather than resolving groups itself.
   `store.RoleBindingQuery{Role, SubjectID, GroupID}`.
-- Each cursor binds its filters (`readPage(..., "group="+…)`), and
+- Each cursor binds its filters, **only those that are set**
+  (`setFilters`): an unfiltered list still mints cursors under the empty
+  digest it used before these filters existed, so a client's earlier cursor
+  continues it (M26.2; `server`'s host-list test hand-mints one, and
+  `TestAnUnfilteredListStillBindsNoFilter` holds it). A filter added to an
+  existing list later must do the same. And
   `TestEveryListIsBoundedOrSaysWhyNot` walks every filtered view
   (`bounded_test.go`: subjects `?group=`, groups, role-bindings `?role=`,
   `?subject=`, `?group=`). Answers are held in `groups_test.go`.

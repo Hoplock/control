@@ -4,6 +4,8 @@
 package north_test
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"slices"
 	"testing"
@@ -149,6 +151,36 @@ func TestTheRoleBindingListNarrowsByRoleAndHolder(t *testing.T) {
 		e := decode[north.Error](t, resp)
 		if e.Code != "invalid_request" || e.Parameters["field"] != field {
 			t.Errorf("?%s refused as %+v, want invalid_request on %s", query, e, field)
+		}
+	}
+}
+
+// A filter added to a list later binds only when it is used (M26.2: a
+// cursor never expires): the unfiltered subject and role-binding lists mint
+// cursors under the empty filter digest, as they did before `?group=`,
+// `?role=` and `?subject=` existed, so a client's cursor from an earlier
+// release still continues them.
+func TestAnUnfilteredListStillBindsNoFilter(t *testing.T) {
+	f := newServer(t)
+	token := adminToken(t, f, "tenant-a")
+	seedMembers(t, f, "tenant-a", map[string][]string{"zz-a@example.com": {"zz-sre"}, "zz-b@example.com": nil})
+	seedBindings(t, f, "tenant-a",
+		store.RoleBinding{SubjectID: "zz-a@example.com", Role: "auditor"},
+		store.RoleBinding{GroupID: "zz-sre", Role: "auditor"})
+	const none = "e3b0c44298fc1c149afbf4c8996fb924" // the digest of no filters
+	for _, path := range []string{"/api/v1/tenants/tenant-a/subjects?limit=1", "/api/v1/tenants/tenant-a/role-bindings?limit=1"} {
+		page := decode[struct {
+			Next string `json:"next"`
+		}](t, f.do(t, "GET", path, token, nil))
+		raw, err := base64.RawURLEncoding.DecodeString(page.Next)
+		if err != nil {
+			t.Fatalf("%s: cursor %q: %v", path, page.Next, err)
+		}
+		var c struct {
+			F string `json:"f"`
+		}
+		if err := json.Unmarshal(raw, &c); err != nil || c.F != none {
+			t.Errorf("%s binds filter digest %q (%v), want the empty one %q", path, c.F, err, none)
 		}
 	}
 }

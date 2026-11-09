@@ -554,9 +554,11 @@ func (s *Server) handleSubjectList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// `?group=` narrows the list to a group's members (0054). The cursor
-	// binds it, so a page of one group's members never continues another's.
+	// binds it, so a page of one group's members never continues another's;
+	// an unfiltered list binds nothing, so its cursors are the ones it
+	// minted before the filter existed (M26.2: a cursor never expires).
 	q := store.SubjectQuery{Group: strings.TrimSpace(r.URL.Query().Get("group"))}
-	p, ok := readPage(w, r, subjectList, "group="+q.Group)
+	p, ok := readPage(w, r, subjectList, setFilters("group", q.Group)...)
 	if !ok {
 		return
 	}
@@ -822,7 +824,7 @@ func (s *Server) handleRoleBindingList(w http.ResponseWriter, r *http.Request) {
 		s.invalid(w, r, "group", "at_most_one_of_subject_or_group", "")
 		return
 	}
-	p, ok := readPage(w, r, roleBindingList, "role="+q.Role, "subject="+q.SubjectID, "group="+q.GroupID)
+	p, ok := readPage(w, r, roleBindingList, setFilters("role", q.Role, "subject", q.SubjectID, "group", q.GroupID)...)
 	if !ok {
 		return
 	}
@@ -847,6 +849,20 @@ func (s *Server) handleRoleBindingList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.answerPage(w, r, p, "bindings", out, page.More, last, map[string]any{"roles": identity.AllRoles})
+}
+
+// setFilters is the filters a cursor binds, as name=value, for the names
+// whose value is set: a filter added to a list later binds only when it is
+// used, so the list's earlier cursors still continue it (M26.2). It takes
+// name, value pairs.
+func setFilters(pairs ...string) []string {
+	var out []string
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if pairs[i+1] != "" {
+			out = append(out, pairs[i]+"="+pairs[i+1])
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
