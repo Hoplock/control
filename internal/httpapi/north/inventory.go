@@ -553,11 +553,14 @@ func (s *Server) handleSubjectList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, ok := readPage(w, r, subjectList)
+	// `?group=` narrows the list to a group's members (0054). The cursor
+	// binds it, so a page of one group's members never continues another's.
+	q := store.SubjectQuery{Group: strings.TrimSpace(r.URL.Query().Get("group"))}
+	p, ok := readPage(w, r, subjectList, "group="+q.Group)
 	if !ok {
 		return
 	}
-	page, err := s.st.Subjects().Page(r.Context(), tenant, p.Page)
+	page, err := s.st.Subjects().Page(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.fail(w, r, "list subjects", err)
 		return
@@ -798,11 +801,32 @@ func (s *Server) handleRoleBindingList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, ok := readPage(w, r, roleBindingList)
+	// `?role=`, `?subject=` and `?group=` narrow the list (0054): one role's
+	// holders, or what one holder holds directly. A binding has one holder,
+	// so naming both is refused, and a role this build does not define is
+	// refused rather than answered empty. The cursor binds all three.
+	query := r.URL.Query()
+	q := store.RoleBindingQuery{
+		SubjectID: strings.TrimSpace(query.Get("subject")),
+		GroupID:   strings.TrimSpace(query.Get("group")),
+	}
+	if raw := strings.TrimSpace(query.Get("role")); raw != "" {
+		role, err := identity.ParseRole(raw)
+		if err != nil {
+			s.invalid(w, r, "role", access.ProblemInvalid, "")
+			return
+		}
+		q.Role = string(role)
+	}
+	if q.SubjectID != "" && q.GroupID != "" {
+		s.invalid(w, r, "group", "at_most_one_of_subject_or_group", "")
+		return
+	}
+	p, ok := readPage(w, r, roleBindingList, "role="+q.Role, "subject="+q.SubjectID, "group="+q.GroupID)
 	if !ok {
 		return
 	}
-	page, err := s.st.RoleBindings().Page(r.Context(), tenant, p.Page)
+	page, err := s.st.RoleBindings().Page(r.Context(), tenant, q, p.Page)
 	if err != nil {
 		s.fail(w, r, "list role bindings", err)
 		return
@@ -823,6 +847,86 @@ func (s *Server) handleRoleBindingList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.answerPage(w, r, p, "bindings", out, page.More, last, map[string]any{"roles": identity.AllRoles})
+}
+
+// ---------------------------------------------------------------------------
+// groups (0054)
+// ---------------------------------------------------------------------------
+
+// groupView is a group as an operator reads it: a name policy matches on,
+// with what holds it in this tenant. A group needs no record to exist —
+// a claim mapping produces names nobody wrote down — so `record` is present
+// only when one does, and its absence is not an error.
+type groupView struct {
+	ID      string           `json:"id"`
+	Members int              `json:"member_count"`
+	Roles   []string         `json:"roles"`
+	Record  *groupRecordView `json:"record,omitempty"`
+}
+
+type groupRecordView struct {
+	DisplayName string    `json:"display_name,omitempty"`
+	Description string    `json:"description,omitempty"`
+	Source      string    `json:"source"`
+	CreatedAt   time.Time `json:"created_at,omitzero"`
+	UpdatedAt   time.Time `json:"updated_at,omitzero"`
+}
+
+func viewGroup(g store.GroupSummary) groupView {
+	v := groupView{ID: g.ID, Members: g.Members, Roles: nonNilStrings(g.Roles)}
+	if g.Record != nil {
+		v.Record = &groupRecordView{
+			DisplayName: g.Record.DisplayName, Description: g.Record.Description, Source: g.Record.Source,
+			CreatedAt: g.Record.CreatedAt.UTC(), UpdatedAt: g.Record.UpdatedAt.UTC(),
+		}
+	}
+	return v
+}
+
+// groupList is the group list (M26): by name, the one key a distinct name
+// has.
+var groupList = list{name: "groups", key: []keyKind{keyString}}
+
+// handleGroupList lists every group name in the tenant, one page at a time
+// (M26): on a subject's groups, a role binding's holder, or a group record.
+func (s *Server) handleGroupList(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	p, ok := readPage(w, r, groupList)
+	if !ok {
+		return
+	}
+	page, err := s.st.Groups().Page(r.Context(), tenant, p.Page)
+	if err != nil {
+		s.fail(w, r, "list groups", err)
+		return
+	}
+	out := make([]groupView, 0, len(page.Rows))
+	for _, g := range page.Rows {
+		out = append(out, viewGroup(g))
+	}
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1].ID}
+	}
+	s.answerPage(w, r, p, "groups", out, page.More, last, nil)
+}
+
+// handleGroupGet answers one group. A name nothing in the tenant holds is
+// not found: there is no group to read.
+func (s *Server) handleGroupGet(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := s.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	g, err := s.st.Groups().Summary(r.Context(), tenant, r.PathValue("group"))
+	if err != nil {
+		s.inventoryFailure(w, r, "read group", err)
+		return
+	}
+	answer(w, http.StatusOK, viewGroup(g))
 }
 
 // bindingFrom validates a role binding: exactly one holder, and a role this

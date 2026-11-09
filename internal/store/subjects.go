@@ -5,6 +5,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 )
 
 type subjectRepo struct{ s *Store }
@@ -105,9 +106,16 @@ func (r subjectRepo) Delete(ctx context.Context, tenant Tenant, subjectID string
 // subjectOrder is the subject list's order: its primary key.
 var subjectOrder = order{columns: []string{"subject_id"}}
 
+// SubjectQuery narrows the subject list. Every set field must match.
+type SubjectQuery struct {
+	// Group keeps the subjects whose groups hold this name: the group's
+	// members, from either source (0054). subjects_groups_idx serves it.
+	Group string
+}
+
 // Page returns one page of the tenant's subjects, in id order: the identities
-// an operator administers (0019).
-func (r subjectRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[Subject], error) {
+// an operator administers (0019), or a group's members (0054).
+func (r subjectRepo) Page(ctx context.Context, tenant Tenant, q SubjectQuery, p Page) (Paged[Subject], error) {
 	const op = "store.Subjects.Page"
 	if err := checkTenant(op, tenant); err != nil {
 		return Paged[Subject]{}, err
@@ -119,11 +127,18 @@ func (r subjectRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[Sub
 	ctx, cancel := r.s.withTimeout(ctx)
 	defer cancel()
 
-	tail, args := subjectOrder.clause(p, []any{tenant})
+	where, args := "", []any{tenant}
+	if q.Group != "" {
+		// Containment, not `= ANY`: the GIN index serves @> and not the
+		// other.
+		args = append(args, []string{q.Group})
+		where = fmt.Sprintf(" AND groups @> $%d::text[]", len(args))
+	}
+	tail, args := subjectOrder.clause(p, args)
 	return queryPage(ctx, r.s.db, op, p, `
 		SELECT `+subjectColumns+`
 		FROM subjects
-		WHERE tenant = $1`+tail, args, scanSubject)
+		WHERE tenant = $1`+where+tail, args, scanSubject)
 }
 
 // scanSubject reads one subject row. It exists so the lookups and the list

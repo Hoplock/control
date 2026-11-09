@@ -64,7 +64,7 @@ var pagedReaders = map[string]pagedReader{
 			return st.Subjects().Delete(ctx, tenant, id)
 		},
 		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
-			got, err := st.Subjects().Page(ctx, tenant, p)
+			got, err := st.Subjects().Page(ctx, tenant, store.SubjectQuery{}, p)
 			ids := make([]string, 0, len(got.Rows))
 			for _, s := range got.Rows {
 				ids = append(ids, s.ID)
@@ -210,7 +210,7 @@ var pagedReaders = map[string]pagedReader{
 			return st.RoleBindings().Unbind(ctx, tenant, store.RoleBinding{SubjectID: id, Role: "auditor"})
 		},
 		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
-			got, err := st.RoleBindings().Page(ctx, tenant, p)
+			got, err := st.RoleBindings().Page(ctx, tenant, store.RoleBindingQuery{}, p)
 			ids := make([]string, 0, len(got.Rows))
 			for _, b := range got.Rows {
 				ids = append(ids, b.SubjectID)

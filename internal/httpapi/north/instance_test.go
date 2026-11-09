@@ -160,21 +160,21 @@ func TestTheAPIVersionIsNegotiated(t *testing.T) {
 	f := newServer(t)
 	token := f.roleToken(t, identity.RoleAuditor)
 
-	if north.APIVersion != 3 || north.MinAPIVersion != 1 {
-		t.Fatalf("the north-bound API is at %d (min %d); docs/API-VERSIONING.md says 3 (min 1)",
+	if north.APIVersion != 4 || north.MinAPIVersion != 1 {
+		t.Fatalf("the north-bound API is at %d (min %d); docs/API-VERSIONING.md says 4 (min 1)",
 			north.APIVersion, north.MinAPIVersion)
 	}
 	resp := versioned(t, f, token, api+"/instance", "")
-	if resp.StatusCode != http.StatusOK || resp.Header.Get(north.APIVersionHeader) != "3" {
+	if resp.StatusCode != http.StatusOK || resp.Header.Get(north.APIVersionHeader) != "4" {
 		t.Fatalf("undeclared: %d, served %q", resp.StatusCode, resp.Header.Get(north.APIVersionHeader))
 	}
 	var id inst.Identity
 	decodeInto(t, resp, &id)
-	if id.Versions.NorthAPI != 3 || id.Versions.NorthAPIMin != 1 {
-		t.Fatalf("GET …/instance reports north_api %d, north_api_min %d; want 3 and 1",
+	if id.Versions.NorthAPI != 4 || id.Versions.NorthAPIMin != 1 {
+		t.Fatalf("GET …/instance reports north_api %d, north_api_min %d; want 4 and 1",
 			id.Versions.NorthAPI, id.Versions.NorthAPIMin)
 	}
-	for _, declared := range []string{"0", "4", "one"} {
+	for _, declared := range []string{"0", "5", "one"} {
 		resp := versioned(t, f, token, api+"/instance", declared)
 		var e north.Error
 		decodeInto(t, resp, &e)

@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -40,6 +41,13 @@ type GroupRepository interface {
 	// claim mapping, because a membership this server did not decide is not
 	// one it may keep after the assertion that carried it has gone.
 	GroupsOf(ctx context.Context, tenant Tenant, subjectID string) ([]string, error)
+	// Page returns one page of the tenant's group names, in name order
+	// (M26): every name on a subject's groups, a role binding's group or a
+	// group record, once, each with its members counted and its roles.
+	Page(ctx context.Context, tenant Tenant, p Page) (Paged[GroupSummary], error)
+	// Summary returns one group as Page lists it. A name that appears
+	// nowhere in the tenant is ErrNotFound.
+	Summary(ctx context.Context, tenant Tenant, groupID string) (GroupSummary, error)
 }
 
 type groupRepo struct{ s *Store }
@@ -88,6 +96,99 @@ func (r groupRepo) List(ctx context.Context, tenant Tenant) ([]Group, error) {
 		out = append(out, g)
 	}
 	return out, wrap(op, rows.Err())
+}
+
+// groupOrder is the group list's order (M26.4): the name, unique by
+// construction because the list is of distinct names. No index serves it —
+// the names are the union of three sources, one of them an array on every
+// subject row — so a page re-reads the tenant's names and keeps those after
+// the position. That is bounded by the tenant's subjects rather than by the
+// caller, the cost M26.4 states for this list.
+var groupOrder = order{columns: []string{"group_id"}}
+
+// groupSummarySQL reads the summaries of the names the inner selection
+// yields, which must be a statement of `group_id` rows ending in its own
+// ORDER BY. $1 is the tenant.
+func groupSummarySQL(names string) string {
+	return `
+		WITH ids AS (` + names + `)
+		SELECT ids.group_id,
+			g.group_id IS NOT NULL,
+			coalesce(g.display_name, ''), coalesce(g.description, ''), coalesce(g.source, ''),
+			g.created_at, g.updated_at,
+			(SELECT count(*) FROM subjects s
+				WHERE s.tenant = $1 AND s.groups @> ARRAY[ids.group_id]),
+			coalesce((SELECT array_agg(b.role ORDER BY b.role) FROM identity_role_bindings b
+				WHERE b.tenant = $1 AND b.group_id = ids.group_id), '{}')
+		FROM ids
+		LEFT JOIN identity_groups g ON g.tenant = $1 AND g.group_id = ids.group_id
+		ORDER BY ids.group_id`
+}
+
+// groupNamesSQL is every group name in the tenant ($1), once.
+const groupNamesSQL = `
+	SELECT DISTINCT group_id FROM (
+		SELECT unnest(groups) AS group_id FROM subjects WHERE tenant = $1
+		UNION ALL
+		SELECT group_id FROM identity_role_bindings WHERE tenant = $1 AND group_id IS NOT NULL
+		UNION ALL
+		SELECT group_id FROM identity_groups WHERE tenant = $1
+	) names
+	WHERE true`
+
+func (r groupRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[GroupSummary], error) {
+	const op = "store.Groups.Page"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[GroupSummary]{}, err
+	}
+	if err := checkPage(op, groupOrder, p); err != nil {
+		return Paged[GroupSummary]{}, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	tail, args := groupOrder.clause(p, []any{tenant})
+	return queryPage(ctx, r.s.db, op, p, groupSummarySQL(groupNamesSQL+tail), args, scanGroupSummary)
+}
+
+func (r groupRepo) Summary(ctx context.Context, tenant Tenant, groupID string) (GroupSummary, error) {
+	const op = "store.Groups.Summary"
+	if err := checkTenant(op, tenant); err != nil {
+		return GroupSummary{}, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	row := r.s.db.QueryRow(ctx, groupSummarySQL(groupNamesSQL+` AND group_id = $2 ORDER BY group_id`), tenant, groupID)
+	return scanGroupSummary(op, row)
+}
+
+func scanGroupSummary(op string, row rowScanner) (GroupSummary, error) {
+	var (
+		g        GroupSummary
+		recorded bool
+		rec      Group
+		created  *time.Time
+		updated  *time.Time
+	)
+	if err := row.Scan(&g.ID, &recorded, &rec.DisplayName, &rec.Description, &rec.Source,
+		&created, &updated, &g.Members, &g.Roles); err != nil {
+		return GroupSummary{}, wrap(op, err)
+	}
+	if recorded {
+		rec.ID = g.ID
+		if created != nil {
+			rec.CreatedAt = *created
+		}
+		if updated != nil {
+			rec.UpdatedAt = *updated
+		}
+		g.Record = &rec
+	}
+	if g.Roles == nil {
+		g.Roles = []string{}
+	}
+	return g, nil
 }
 
 func (r groupRepo) Upsert(ctx context.Context, tenant Tenant, g Group) error {
@@ -209,8 +310,9 @@ func (r groupRepo) GroupsOf(ctx context.Context, tenant Tenant, subjectID string
 // RoleBindingRepository stores RBAC grants, per tenant and only per tenant.
 type RoleBindingRepository interface {
 	// Page returns one page of the tenant's bindings (M26): per role, the
-	// bindings to a subject by subject, then those to a group by group.
-	Page(ctx context.Context, tenant Tenant, p Page) (Paged[RoleBinding], error)
+	// bindings to a subject by subject, then those to a group by group,
+	// narrowed by the query.
+	Page(ctx context.Context, tenant Tenant, q RoleBindingQuery, p Page) (Paged[RoleBinding], error)
 	// RolesFor returns the role codes a subject holds in the tenant,
 	// including those it holds through the given groups. The groups are
 	// passed in rather than looked up because the caller has just resolved
@@ -234,12 +336,24 @@ type roleBindingRepo struct{ s *Store }
 // row comparison and the order from it.
 var roleBindingOrder = order{columns: []string{"role", "(subject_id IS NULL)", "coalesce(subject_id, group_id)"}}
 
-func (r roleBindingRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged[RoleBinding], error) {
+// RoleBindingQuery narrows the binding list. Every set field must match; at
+// most one of SubjectID and GroupID is set, because a binding has one holder.
+type RoleBindingQuery struct {
+	// Role keeps the bindings of one role.
+	Role string
+	// SubjectID keeps the bindings held by one subject directly — not those
+	// it holds through a group, which are the group's.
+	SubjectID string
+	// GroupID keeps the bindings held by one group.
+	GroupID string
+}
+
+func (r roleBindingRepo) Page(ctx context.Context, tenant Tenant, q RoleBindingQuery, p Page) (Paged[RoleBinding], error) {
 	const op = "store.RoleBindings.Page"
 	if err := checkTenant(op, tenant); err != nil {
 		return Paged[RoleBinding]{}, err
 	}
-	sql, args, err := roleBindingPageSQL(op, tenant, p)
+	sql, args, err := roleBindingPageSQL(op, tenant, q, p)
 	if err != nil {
 		return Paged[RoleBinding]{}, err
 	}
@@ -251,15 +365,27 @@ func (r roleBindingRepo) Page(ctx context.Context, tenant Tenant, p Page) (Paged
 
 // roleBindingPageSQL is the statement one page of the bindings runs, and its
 // arguments.
-func roleBindingPageSQL(op string, tenant Tenant, p Page) (string, []any, error) {
+func roleBindingPageSQL(op string, tenant Tenant, q RoleBindingQuery, p Page) (string, []any, error) {
 	if err := checkPage(op, roleBindingOrder, p); err != nil {
 		return "", nil, err
 	}
-	tail, args := roleBindingOrder.clause(p, []any{tenant})
+	if q.SubjectID != "" && q.GroupID != "" {
+		return "", nil, invalid(op, "a binding has one holder: a subject or a group, not both")
+	}
+	where, args := "", []any{tenant}
+	for _, f := range []struct{ column, value string }{
+		{"role", q.Role}, {"subject_id", q.SubjectID}, {"group_id", q.GroupID},
+	} {
+		if f.value != "" {
+			args = append(args, f.value)
+			where += fmt.Sprintf(" AND %s = $%d", f.column, len(args))
+		}
+	}
+	tail, args := roleBindingOrder.clause(p, args)
 	return `
 		SELECT subject_id, group_id, role, granted_by, created_at
 		FROM identity_role_bindings
-		WHERE tenant = $1` + tail, args, nil
+		WHERE tenant = $1` + where + tail, args, nil
 }
 
 func scanRoleBinding(op string, row rowScanner) (RoleBinding, error) {
