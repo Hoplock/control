@@ -31,8 +31,13 @@ export type Density = "compact" | "comfortable";
 export const THEMES: readonly Theme[] = ["light", "dark"];
 export const DENSITIES: readonly Density[] = ["compact", "comfortable"];
 
-/** Sets the density preference before the console reads it (src/prefs). */
-export async function useDensity(page: Page, density: Density): Promise<void> {
+/**
+ * Sets the density preference before the console reads it (src/prefs), and
+ * the theme to follow the system: a check chooses its theme as the browser's
+ * colour scheme, and the console's own default is dark (0052), which would
+ * otherwise hold every light run dark. "screen" is each screen's own density.
+ */
+export async function useDensity(page: Page, density: Density | "screen"): Promise<void> {
   await page.addInitScript((d) => {
     window.localStorage.setItem("hoplock.console.prefs", JSON.stringify({ last: { theme: "system", density: d } }));
   }, density);

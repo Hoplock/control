@@ -20,8 +20,8 @@
   at most 100 targets or proxies beside `<name>_count` and `<name>_truncated`).
 
 ## The series
-The console is eleven phases (PLAN §10, the console-split and console-look
-notes), each a release
+The console is twelve phases (PLAN §10, the console-split, console-look and
+fleet-bar notes), each a release
 and a PR of its own:
 
 | Phase | Builds |
@@ -36,7 +36,8 @@ and a PR of its own:
 | 0056 | Extensions and Reports |
 | 0057 | stream gaps, the archive's lag and retention, in the audit view |
 | 0058 | algorithm posture and the emergency runbook |
-| 0059 | the consistency audit of every screen |
+| 0059 | Fleet's health bar: solid segments, each labelled with its status glyph and count, in place of patterns |
+| 0060 | the consistency audit of every screen |
 
 Build only this phase's row. Build the screen from 0050's component set and
 register it with 0050's harnesses; a component this phase needs that the set

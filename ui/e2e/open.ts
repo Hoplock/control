@@ -41,7 +41,7 @@ export async function openScreen(browser: Browser, screen: E2EScreen, o: OpenOpt
   } else if (o.locale) {
     await serveBuild(page, `build/${o.locale}`);
   }
-  if (o.density && screen.kind !== "gallery") await useDensity(page, o.density);
+  if (screen.kind !== "gallery") await useDensity(page, o.density ?? "screen");
   const state = o.state ? screen.states[o.state] : undefined;
   for (const [path, s] of state?.substitute ?? []) await substitute(page, path, s);
   const url = screen.kind === "gallery" && o.density === "compact" ? `${screen.path}&density=compact` : screen.path;

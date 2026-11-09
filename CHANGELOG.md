@@ -26,6 +26,27 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.39.0
+
+Phase 0052, the console's look, chosen with an operator (M20, M21). No
+migration, and nothing in `ext`, `server` or the contract changes.
+
+- **The console has a new look, "Carbon", and opens dark.** Grounds are near
+  black with a blue cast, panels sit one step lighter, and hairline borders
+  carry the structure. The accent is now an electric cyan, replacing the
+  indigo. Text is a step denser, so more of a table fits on a screen: body
+  13px and table cells 12px. An operator who has never chosen a theme now
+  sees dark. Light, or following the system, is one choice in the account
+  menu, and a theme an operator already chose is kept.
+- **Status colours keep their meanings and glyphs**, retuned for the darker
+  ground. A deny and an outage remain different colours, and the info blue
+  moved bluer so it is not mistaken for the cyan accent.
+- **The default deployment stripe follows the accent**: a deployment with no
+  `console.stripe` shows a cyan bar. The `teal` stripe is the nearest of the
+  configurable stripes to it, so a deployment that must never be mistaken
+  for one with no stripe set should choose `magenta`, `orange` or `slate`.
+- **A host's screens change look with no change of their own**, because they
+  take every colour from the console's tokens.
 - **The console's theme and density are in the account menu**: the
   operator's name at the end of the top bar opens it, with each preference a
   group of choices and signing out beneath. They are no longer at the foot of

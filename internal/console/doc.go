@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Mauro Silva
 // SPDX-License-Identifier: Apache-2.0
 
-// Package console serves the operator console (phases 0049–0059, PLAN M20,
+// Package console serves the operator console (phases 0049–0060, PLAN M20,
 // M21, M27): the single-page app built from ui/ into dist/, embedded in the
 // binary so that a deployment is still one process, and served under
 // /console/ on the north-bound listener and nowhere else.

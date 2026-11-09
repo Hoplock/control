@@ -15,7 +15,9 @@ export interface Prefs {
   locale?: string;
 }
 
-export const DEFAULT_PREFS: Prefs = { theme: "system", density: "screen" };
+// Dark first (0052): the console opens dark until the operator chooses
+// light, or to follow the system, in the account menu (DESIGN.md §8).
+export const DEFAULT_PREFS: Prefs = { theme: "dark", density: "screen" };
 
 /**
  * Whose preferences these are: the operator, not the sign-in. A session's
@@ -45,8 +47,8 @@ function read(): Stored {
 }
 
 function valid(p: Partial<Prefs> | undefined): Prefs {
-  const theme: Theme = p?.theme === "light" || p?.theme === "dark" ? p.theme : "system";
-  const density: Density = p?.density === "compact" || p?.density === "comfortable" ? p.density : "screen";
+  const theme: Theme = p?.theme === "system" || p?.theme === "light" || p?.theme === "dark" ? p.theme : DEFAULT_PREFS.theme;
+  const density: Density = p?.density === "compact" || p?.density === "comfortable" ? p.density : DEFAULT_PREFS.density;
   const out: Prefs = { theme, density };
   if (typeof p?.tenant === "string") out.tenant = p.tenant;
   if (typeof p?.locale === "string") out.locale = p.locale;
