@@ -56,9 +56,10 @@ the statuses valid, invalid, blocking, warning, advice and superseded
 correlation id; every prompt that builds an Enterprise screen showing a diff,
 a source or a finding uses these and adds no look of its own; (4) a host's
 browser checks may force a child scrolling region with data-force-child (a
-button before), as Control's harness now does; (5) Control queued a new phase
-0065 at the end of its queue (policy refusals as codes), renumbering nothing:
-no citation of Control's numbers moves.
+button before), as Control's harness now does; (5) Control queued two new
+phases at the end of its queue, renumbering nothing: 0065 (policy refusals as
+codes) and 0066 (a visual policy editor, a second view of the candidate that
+changes no schema, route or storage). No citation of Control's numbers moves.
 
 Work on the branch this session was given, whatever it is named — if the name
 is yours to choose, claude/sync-<short-description>. Commit with the `sync`
