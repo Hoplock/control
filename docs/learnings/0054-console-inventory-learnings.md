@@ -155,4 +155,6 @@ No shared surface changes (`ext`, `server`, the contract, the cross-repo
 protocol), but the release changes what Enterprise ships, its screens build
 from the component set, and the north-bound API is a compatibility promise
 Enterprise's console reads (M19), so a downstream sync for
-`hoplock/enterprise` is queued (the PR's `## Cross-repo impact`). Proxy: none.
+`hoplock/enterprise` is queued at
+`prompts/downstream/queued/control-PR#154-console-inventory.md` (the PR's
+`## Cross-repo impact`). Proxy: none.
