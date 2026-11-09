@@ -140,7 +140,12 @@ the request's `conn.timestamp`, so a relative window finds them.
 ### The baseline
 
 46 new images and 74 rewritten (every console screen: the navigation gained
-Policy, and the audit view shows the versions' records). The navigation
+Policy, and the audit view shows the versions' records). **Take a baseline on
+a server the fixture set up once**: stop any running e2e server and let
+Playwright start its own, as CI does. Global setup signs every operator in on
+each run and its seeds skip what exists, so a reused server holds a second set
+of sign-in records, and the audit records page shows them. That is how this
+PR's first CI run failed on `audit-records` alone. The navigation
 change is under the 1% tolerance, so `--update-snapshots` alone left the old
 images; they were rewritten with `--update-snapshots=all`, and the 31 whose
 pixels did not change restored from `main`. Not recompressed with `oxipng`
