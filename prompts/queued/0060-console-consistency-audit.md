@@ -1,4 +1,4 @@
-# 0059 — Management console 11: one look and feel across every screen
+# 0060 — Management console 12: one look and feel across every screen
 
 ## Read first
 - `docs/PROTOCOL.md`: the session workflow, §3 (doing the work, and scope
@@ -12,7 +12,7 @@
   (`ui/`).
 - **`ui/DESIGN.md` — in full.** It is the standard every screen is audited
   against, and a claim to verify against the console as much as a source.
-- `docs/learnings/` — read every summary. Open the learnings of the ten
+- `docs/learnings/` — read every summary. Open the learnings of the eleven
   console phases **in full** — `0049-console-shell`,
   `0050-console-components-and-fleet`, `0051-console-explain-and-audit`,
   `0052-console-design-direction` (the look the operator chose, and the
@@ -20,14 +20,15 @@
   `0053-console-policy`, `0054-console-inventory`,
   `0055-console-standing-denials-and-directory`,
   `0056-console-extensions-and-reports`,
-  `0057-console-audit-gaps-and-retention` and
-  `0058-console-algorithm-posture-and-runbook` — and in each, the record of
+  `0057-console-audit-gaps-and-retention`,
+  `0058-console-algorithm-posture-and-runbook` and
+  `0059-console-fleet-health-bar` — and in each, the record of
   every change it made to `ui/DESIGN.md`. They are the claim set this phase
   checks, not a source of truth.
 
 ## Why this phase exists
-The console was built in ten phases (PLAN §10, the console-split and
-console-look notes), each in a session of its own that saw only its own screens. Each built to
+The console was built in eleven phases (PLAN §10, the console-split,
+console-look and fleet-bar notes), each in a session of its own that saw only its own screens. Each built to
 `ui/DESIGN.md` and to 0050's component set, and each passed the checks DESIGN.md
 §10 makes CI jobs.
 
@@ -42,10 +43,10 @@ for the object's name in one place and for a click in another. A screenshot
 baseline proves a screen did not change. It does not prove it matches its
 siblings.
 
-An operator does not use ten phases. They use one console, and M20 exists so
+An operator does not use eleven phases. They use one console, and M20 exists so
 that it has one identity. This phase looks across the whole of it, once, after
 the last screen lands and before anything is built on top of it — the E2E
-topology (0060) signs a person in to it, and Enterprise's screens inherit it.
+topology (0061) signs a person in to it, and Enterprise's screens inherit it.
 
 ## Objective
 1. **Audit** every screen against `ui/DESIGN.md` and against every other
@@ -149,7 +150,7 @@ doc is never evidence.
     finding with its image.
 14. **DESIGN.md and `ui/` agree.** Every rule in DESIGN.md is true of the
     console; §7's inventory is what the set ships; §3's tables are what
-    `tokens.css` holds; every change 0049–0058 made to DESIGN.md is recorded
+    `tokens.css` holds; every change 0049–0059 made to DESIGN.md is recorded
     in their learnings and still holds; and every claim those learnings make
     about the look and feel is true.
 
@@ -196,7 +197,7 @@ builds or changes, light and dark side by side. For each inconsistency fixed,
 the screen before and after.
 
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`, and add
-`docs/learnings/0059-console-consistency-audit-learnings.md`.
+`docs/learnings/0060-console-consistency-audit-learnings.md`.
 
 Its summary block MUST give:
 - the findings, by verdict and severity;

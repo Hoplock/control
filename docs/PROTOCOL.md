@@ -403,7 +403,7 @@ Any prompt must be runnable by a **fresh** session with no prior context. It mus
 
 A reviewer cannot judge a screen from its diff, and M20 makes how a screen
 looks part of done. So the PR of every phase that builds or changes the
-console (0049–0059, and any later change under `ui/`) shows, in its
+console (0049–0060, and any later change under `ui/`) shows, in its
 description, a screenshot of **every screen and every state it builds or
 changes**:
 

@@ -11,8 +11,8 @@ Its **visual design is specified, not improvised**: `ui/DESIGN.md` is the design
 system this console is built to — tokens, type scale, component inventory,
 states and motion — and PLAN M20 is the decision that makes it binding.
 
-Built in **phases 0049–0058**, its look chosen with the operator in **0052**,
-and audited for one look and feel across every screen in **0059**. Older documents number it differently; PLAN §10's
+Built in **phases 0049–0059**, its look chosen with the operator in **0052**,
+and audited for one look and feel across every screen in **0060**. Older documents number it differently; PLAN §10's
 table says what each old number is now.
 
 ## Working on it
