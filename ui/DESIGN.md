@@ -175,7 +175,7 @@ vocabulary — matching the domain rather than a generic palette:
 | Token | Meaning in this product | Light | Dark |
 | --- | --- | --- | --- |
 | `--s-allow` | allowed, healthy, verified, active | `#13753c` | `#3ccf80` |
-| `--s-deny` | denied by policy, revoked, expired | `#c4322a` | `#ff7a70` |
+| `--s-deny` | denied by policy, revoked, expired; a bundle refused (invalid, blocking) | `#c4322a` | `#ff7a70` |
 | `--s-warn` | degraded, stale, expiring, unverified | `#8f5a00` | `#f0b03f` |
 | `--s-outage` | unreachable, 5xx, an outage — **never a deny** | `#6d31d9` | `#ad93ff` |
 | `--s-info` | informational, pending, in progress | `#1d55c9` | `#6a9dff` |
@@ -269,6 +269,21 @@ Policy is read:
 | cell padding | `6px 12px` | `10px 12px` |
 | type | `--t-dense` | `--t-body` |
 
+### 3.8 Diff
+
+The two sides of a change, which the diff view (§7) sets lines on. They are
+**not statuses**: an added line is not *allowed* and a removed one is not
+*denied*, and a policy diff is exactly where a removed allow rule in deny red
+would be read as a denial. So neither takes a status hue (§3.4). Each is a
+pale ground of its own, and its side is said by its `+`/`−` marker and by
+words a screen reader reads, never by the tint alone (§2). Body and secondary
+text are held to 4.5:1 on both, in both themes (§10.2).
+
+| Token | Light | Dark | Use |
+| --- | --- | --- | --- |
+| `--diff-add-bg` | `#e3f4e8` | `#0e2618` | an added line |
+| `--diff-remove-bg` | `#fbe8e6` | `#2c1214` | a removed line |
+
 ---
 
 ## 4. Layout
@@ -346,12 +361,12 @@ One component renders all of it, so a status looks identical everywhere:
 
 | State | Colour | Glyph | Label |
 | --- | --- | --- | --- |
-| allowed / healthy / active / applied | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied` |
-| denied / revoked / expired | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired` |
-| degraded / stale / expiring / rejected | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected` |
+| allowed / healthy / active / applied / valid | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied`, `Valid` |
+| denied / revoked / expired / invalid / blocking | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired`, `Invalid`, `Blocking` |
+| degraded / stale / expiring / rejected / warning | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected`, `Warning` |
 | unreachable / outage / fetch failed / unserved | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved` |
-| pending / in progress / pending restart | `--s-info` | half-filled circle | `Pending`, `In progress`, `Pending restart` |
-| unknown / not reported / left | `--n-400` | hollow circle, dotted | `Not reported`, `Left` |
+| pending / in progress / pending restart / advice | `--s-info` | half-filled circle | `Pending`, `In progress`, `Pending restart`, `Advice` |
+| unknown / not reported / left / superseded | `--n-400` | hollow circle, dotted | `Not reported`, `Left`, `Superseded` |
 
 The component is `Status` in `ui/src/components/Status.tsx`, and every row
 above is a named entry of its `STATUS` map: a screen names a status, it never
@@ -369,6 +384,16 @@ A decision is read as its effect: `Allowed`, `Denied`, or **`Unserved`** — an
 allow the server could not answer (PLAN §5.6), which is an outage and never a
 deny (M11). A session reads as its worst hop: a deny anywhere denies it.
 
+A policy version reads as **`Active`**, the one decisions are taken under,
+or **`Superseded`**, every other (PLAN §5.6): kept and activatable, neither
+healthy nor failed. What is said about a bundle reads on one ladder of what it
+stops: a compiler's rejection is **`Invalid`** and a validator's blocking
+finding **`Blocking`** — both refuse it outright, as a decision the server
+made, so both are deny-class and never an outage (M11); a **`Warning`**
+stops activation until it is accepted by its id; **`Advice`** stops nothing.
+A severity outside the three, which the server answers as an outage, never
+reads as fine: it is `Not reported`. A bundle that compiles is **`Valid`**.
+
 A rolling upgrade reads as **`Pending` / in progress**, never as a fault (M19).
 `Not reported` is its own state and never renders as healthy — PLAN §4 is
 explicit that stale, undated and absent are one case, and the console says so
@@ -383,11 +408,13 @@ picker with 0051, the diff view with 0053), each with **every** state designed
 — default, hover, focus-visible, active, disabled, loading, error, empty, and
 both themes:
 
-**Primitives** — button (primary, secondary, ghost, danger), icon button (always
+**Primitives** — button (primary, secondary, ghost, danger), button link (a
+console link set as a primary or secondary button, for going somewhere rather
+than doing something, never danger), icon button (always
 with an accessible name), input, textarea, select, combobox, checkbox, radio,
 switch, tabs, tooltip, dropdown menu, dialog, drawer, toast, badge, status pill,
 chip/label, avatar, breadcrumb, pagination, skeleton, spinner (overlay only),
-code block, diff view, empty state, error state, keyboard hint.
+code block, source view, diff view, empty state, error state, keyboard hint.
 
 **Composites** — data table (sticky header, pinned first column, column sort,
 column visibility, row selection, per-row actions, saved views), filter bar
@@ -429,8 +456,28 @@ and restores focus), and a menu is a popover in the top layer anchored to its
 button. A test-only gallery (`ui/gallery/`, never built into the console)
 renders every component in every state, and the browser checks run over it.
 
+**The diff view** (`Diff.tsx`, 0053) renders a unified diff the server wrote
+and never diffs itself: a figure captioned with what is compared and the
+count of lines added and removed, then a table of hunks, each line with its
+number on both sides, a `+`/`−` marker with its side in words, and its text
+on the side's ground (§3.8). The table follows the page's direction, so the
+gutter is at the line's start in either, and each line's text is LTR, mono
+and untranslated (§9); a long diff scrolls inside its own focusable region.
+Its states are the lines, **no difference** (the sources are identical),
+**too far apart** (the server would not render a line diff, and the changes
+by rule are the whole answer), loading (`DiffSkeleton`), and an error, which
+is the caller's `ErrorMessage` where the read failed. **The source view**
+(`Code.tsx`'s `SourceView`) numbers a source's lines and sets each note — a
+compiler's rejection, a finding — beneath the line it is about, the line's
+gutter marked in the worst note's status hue; a note about the whole document
+heads it. A line is focusable, so a list beside it can go to one. A textarea
+holding source is `mono`: LTR, mono, unchecked for spelling and untranslated.
+
 **Form and mutation rules.** Destructive actions confirm by typing the object
-name, through the one `ConfirmDialog`. A failed mutation reports inline at the field or the form, never by a toast
+name, through the one `ConfirmDialog`, whose hint says what typing commits to:
+by default that the action cannot be undone, and for an activation, which a
+rollback reverses, that the decisions taken under it are not taken back. A
+breadcrumb's crumb may be data, such as a version's name in mono. A failed mutation reports inline at the field or the form, never by a toast
 alone — a toast is not a record. Toasts are for successful, reversible things and
 auto-dismiss; errors persist until dismissed.
 
@@ -573,7 +620,8 @@ are in the registry too. In detail:
   times and build versions masked; `npm run e2e:update` rewrites it, and a
   PR that changes a screen changes its images. Pseudo-classes are forced
   through the browser's developer protocol, so a gallery image shows hover,
-  focus and active at once.
+  focus and active at once — on a cell's own element, or on the button or
+  scrolling region a wrapper names (`data-force-child`).
 - §10.5 aborts every request to another origin, asserts there was none, and
   holds the page to the same baseline image.
 - §10.6 reads every element's computed transition and animation durations.

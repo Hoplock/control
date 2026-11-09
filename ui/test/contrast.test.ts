@@ -8,7 +8,16 @@ import { blockTokens, contrast, resolve, rootTokens, type Theme } from "./tokens
 const TEXT = 4.5; // WCAG 1.4.3: text.
 const NON_TEXT = 3; // WCAG 1.4.11: a control's boundary, a focus ring, a glyph.
 
-const TEXT_GROUNDS = ["--bg-canvas", "--bg-surface", "--bg-raised", "--bg-sunken", "--bg-hover", "--bg-selected"];
+const TEXT_GROUNDS = [
+  "--bg-canvas",
+  "--bg-surface",
+  "--bg-raised",
+  "--bg-sunken",
+  "--bg-hover",
+  "--bg-selected",
+  "--diff-add-bg",
+  "--diff-remove-bg",
+];
 const CONTROL_GROUNDS = ["--bg-canvas", "--bg-surface", "--bg-raised"];
 const STATUS = ["--s-allow", "--s-deny", "--s-warn", "--s-outage", "--s-info"];
 const STRIPES = ["accent", "magenta", "teal", "orange", "slate"];

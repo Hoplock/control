@@ -6,6 +6,7 @@ package model
 import (
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -220,6 +221,30 @@ var messages = map[Code]string{
 	CodeObligationDuplicate:     "obligation {obligation} is listed twice; remove the duplicate",
 	CodeObligationOnDeny:        "a deny rule carries obligation {obligation}; obligations are things a permitted session must do, and a denied one has none",
 	CodeObligationContradicts:   "obligation {obligation} contradicts the route: {detail}",
+}
+
+// Codes lists every rejection code, sorted. The console's catalogue holds a
+// sentence for each (0053), and a test in internal/authoring keeps the
+// console's copy of this list, ui/test/policy-codes.json, equal to it.
+func Codes() []Code {
+	return slices.Sorted(maps.Keys(messages))
+}
+
+// placeholder is one `{name}` in a message template.
+var placeholder = regexp.MustCompile(`\{([a-z_]+)\}`)
+
+// Parameters names the parameters a code's message is filled from, sorted
+// and without repeats: the values a client may build its own sentence from.
+// A code with no message names none.
+func Parameters(code Code) []string {
+	var out []string
+	for _, m := range placeholder.FindAllStringSubmatch(messages[code], -1) {
+		if !slices.Contains(out, m[1]) {
+			out = append(out, m[1])
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Rejection is one reason a bundle was refused. It is a value, not a sentence:

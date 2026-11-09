@@ -91,3 +91,72 @@
 .scalar[data-kind="null"] {
   color: var(--a-600);
 }
+.hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.headNotes {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12);
+  border-block-end: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+.sourceScroll {
+  overflow-x: auto;
+}
+.source {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font: var(--t-mono);
+  color: var(--text-primary);
+}
+.source tr[data-line]:target,
+.source tr[data-line]:focus {
+  outline: none;
+  background: var(--bg-selected);
+}
+.lineNo {
+  inline-size: 1%;
+  padding-block: 0;
+  padding-inline: var(--sp-12) var(--sp-8);
+  font: var(--t-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  text-align: end;
+  vertical-align: top;
+  user-select: none;
+  border-inline-end: var(--sp-2) solid transparent;
+}
+.source tr[data-noted] .lineNo {
+  color: var(--text-primary);
+}
+.source tr[data-noted="deny"] .lineNo {
+  border-inline-end-color: var(--s-deny);
+}
+.source tr[data-noted="warn"] .lineNo {
+  border-inline-end-color: var(--s-warn);
+}
+.source tr[data-noted="info"] .lineNo {
+  border-inline-end-color: var(--s-info);
+}
+.lineText {
+  padding-block: 0;
+  padding-inline: var(--sp-8) var(--sp-12);
+  white-space: pre;
+  vertical-align: top;
+}
+.noteRow td {
+  padding-block: var(--sp-4) var(--sp-8);
+}
+.notes {
+  display: grid;
+  gap: var(--sp-6);
+  padding-inline: var(--sp-8) var(--sp-12);
+  white-space: normal;
+  font: var(--t-body);
+}

@@ -370,3 +370,144 @@ export interface Capture {
   retained: boolean;
   payload?: string;
 }
+
+/** authoring.Version: one stored policy version, without its source. */
+export interface PolicyVersion {
+  version: number;
+  /** `sha256:<hex>` of the source. */
+  digest: string;
+  uploaded_by: string;
+  uploaded_at: string;
+  active: boolean;
+}
+
+/** north.versionList (M26): newest first, by version. */
+export interface PolicyVersionPage extends Paged {
+  versions: PolicyVersion[];
+}
+
+/** north.bundleView: one version, whole. */
+export interface PolicyBundle extends PolicyVersion {
+  source: string;
+}
+
+/** authoring.Rejection: one compiler refusal, verbatim (0005). */
+export interface Rejection {
+  code: string;
+  rule?: string;
+  line?: number;
+  parameters?: Record<string, string>;
+  /** English, for policyctl and curl; the console never shows it. */
+  message: string;
+}
+
+/** A finding's severity (PLAN §5.6). */
+export type Severity = "advice" | "warning" | "blocking";
+
+/** authoring.Finding: one thing a publish-time check has to say. */
+export interface Finding {
+  /** What an author accepts: the code and what it is about, never its message. */
+  id: string;
+  severity: Severity | string;
+  code: string;
+  /** "control", or the provider of the validator that said it. */
+  source: string;
+  rule?: string;
+  line?: number;
+  parameters?: Record<string, unknown>;
+  message: string;
+}
+
+/** authoring.Report: whether a bundle compiles, and what to know before publishing it. */
+export interface PolicyReport {
+  valid: boolean;
+  digest: string;
+  rejections: Rejection[];
+  findings: Finding[];
+}
+
+/** authoring.UploadResult */
+export interface PolicyUpload {
+  version: PolicyVersion;
+  /** The identical source was already stored, as this version. */
+  existing: boolean;
+  report: PolicyReport;
+}
+
+/** authoring.ActivateResult */
+export interface PolicyActivation {
+  version: PolicyVersion;
+  previous: number;
+  unchanged: boolean;
+  rollback: boolean;
+  accepted: string[];
+  report: PolicyReport;
+}
+
+/** authoring.Diff: what separates two bundles, by rule and by line. */
+export interface PolicyDiff {
+  from: number;
+  to: number;
+  added: string[];
+  removed: string[];
+  changed: string[];
+  moved: string[];
+  document: string[];
+  /** A unified diff of the sources. */
+  text: string;
+  text_omitted?: boolean;
+}
+
+/** decision.DryRunResult */
+export interface DryRunResult {
+  name?: string;
+  effect: string;
+  rule?: string;
+  rule_line?: number;
+  terms?: string[];
+  deny_reason?: string;
+  obligations?: string[];
+}
+
+/** decision.Flip: one recorded decision a candidate would answer otherwise. */
+export interface Flip {
+  decision_id: string;
+  session_id?: string;
+  subject: string;
+  target: string;
+  decided_at: string;
+  from: string;
+  to: string;
+  was_rule?: string;
+  now_rule?: string;
+}
+
+/** decision.FlipGroup */
+export interface FlipGroup {
+  from: string;
+  to: string;
+  was_rule?: string;
+  now_rule?: string;
+  count: number;
+  flips: Flip[];
+}
+
+/** decision.ReplayReport */
+export interface Replay {
+  from: string;
+  to: string;
+  replayed: number;
+  unchanged: number;
+  truncated: boolean;
+  allow_to_deny: FlipGroup[];
+  deny_to_allow: FlipGroup[];
+  unreplayable?: { decision_id: string; reason: string }[];
+}
+
+/** authoring.SimulateResult */
+export interface Simulation {
+  digest: string;
+  version?: number;
+  dry_run: DryRunResult[];
+  replay?: Replay;
+}

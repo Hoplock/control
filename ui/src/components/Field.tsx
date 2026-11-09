@@ -78,9 +78,19 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   },
 );
 
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
-  function Textarea({ className, ...rest }, ref) {
-    return <textarea ref={ref} className={[styles.control, styles.textarea, className].filter(Boolean).join(" ")} {...rest} />;
+/** A textarea; `mono` is for data typed as written — policy source (0053) — so it is LTR, mono and unchecked for spelling. */
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement> & { mono?: boolean }>(
+  function Textarea({ className, mono, ...rest }, ref) {
+    return (
+      <textarea
+        ref={ref}
+        className={[styles.control, styles.textarea, mono ? styles.mono : "", className].filter(Boolean).join(" ")}
+        dir={mono ? "ltr" : undefined}
+        spellCheck={mono ? false : undefined}
+        translate={mono ? "no" : undefined}
+        {...rest}
+      />
+    );
   },
 );
 

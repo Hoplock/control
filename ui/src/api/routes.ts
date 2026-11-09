@@ -37,6 +37,19 @@ export const ROUTES = {
   auditRecord: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/records/{record}", permission: "audit:read" },
   auditCapture: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/records/{record}/capture", permission: "audit:read" },
   blockedCommands: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/blocked-commands", permission: "audit:read" },
+  policyVersions: { method: "GET", pattern: "/api/v1/tenants/{tenant}/policy/bundles", permission: "policy:read" },
+  policyVersion: { method: "GET", pattern: "/api/v1/tenants/{tenant}/policy/bundles/{version}", permission: "policy:read" },
+  policyActive: { method: "GET", pattern: "/api/v1/tenants/{tenant}/policy/active", permission: "policy:read" },
+  policyVersionDiff: { method: "GET", pattern: "/api/v1/tenants/{tenant}/policy/bundles/{version}/diff", permission: "policy:read" },
+  policyDiff: { method: "POST", pattern: "/api/v1/tenants/{tenant}/policy/diff", permission: "policy:read" },
+  policyValidate: { method: "POST", pattern: "/api/v1/tenants/{tenant}/policy/validate", permission: "policy:read" },
+  policySimulate: { method: "POST", pattern: "/api/v1/tenants/{tenant}/policy/simulate", permission: "policy:read" },
+  policyUpload: { method: "POST", pattern: "/api/v1/tenants/{tenant}/policy/bundles", permission: "policy:write" },
+  policyActivate: {
+    method: "POST",
+    pattern: "/api/v1/tenants/{tenant}/policy/bundles/{version}/activate",
+    permission: "policy:publish",
+  },
 } as const satisfies Record<string, Route>;
 
 export type RouteName = keyof typeof ROUTES;

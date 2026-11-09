@@ -56,7 +56,7 @@ export function match(pattern: string, path: string): Record<string, string> | n
   return params;
 }
 
-type LinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
+export type LinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
   to: string;
   query?: Record<string, string>;
 };

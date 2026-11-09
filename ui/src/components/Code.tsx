@@ -1,8 +1,10 @@
-// CODE AND DATA (DESIGN.md §7): a code block and a JSON viewer. Both are
-// data — policy source, a log body, a proxy's declared capabilities — so both
-// render LTR, in mono, untranslated, on the sunken ground, and both copy.
+// CODE AND DATA (DESIGN.md §7): a code block, a source view and a JSON
+// viewer. Each is data — policy source, a log body, a proxy's declared
+// capabilities — so each renders LTR, in mono, untranslated, and each copies.
+// The source view numbers its lines and sets what is said about a line (a
+// compiler's rejection, 0053) directly beneath it, in the operator's words.
 
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { useI18n } from "../i18n/I18n";
 import styles from "./Code.module.css";
 
@@ -38,6 +40,99 @@ export function CodeBlock({ code, label }: { code: string; label: string }) {
       <pre className={styles.pre} dir="ltr" translate="no" tabIndex={0}>
         <code>{code}</code>
       </pre>
+    </figure>
+  );
+}
+
+/** Something said about one line of a source: 0 is the document as a whole. */
+export interface SourceNote {
+  line: number;
+  key: string;
+  /** The status tone of what is said, which marks the line (DESIGN.md §6). */
+  tone: "deny" | "warn" | "info";
+  content: ReactNode;
+}
+
+const TONE_RANK = { deny: 0, warn: 1, info: 2 } as const;
+
+/** The id a source view gives line `n`, so a list beside it can go there. */
+export function sourceLineId(prefix: string, n: number): string {
+  return `${prefix}-L${n}`;
+}
+
+/**
+ * A source with its lines numbered, and each note set beneath the line it is
+ * about. The gutter follows the page's direction and each line's text is LTR
+ * (DESIGN.md §9); a note is the operator's language, so it follows the page. A line with a note is marked, and a note about the whole document
+ * (line 0, or past the end) heads the view.
+ */
+export function SourceView({
+  source,
+  label,
+  notes = [],
+  idPrefix,
+}: {
+  source: string;
+  label: string;
+  notes?: readonly SourceNote[];
+  /** Prefixes each line's id (sourceLineId). */
+  idPrefix: string;
+}) {
+  const lines = source.split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  const byLine = new Map<number, SourceNote[]>();
+  const head: SourceNote[] = [];
+  for (const n of notes) {
+    if (n.line >= 1 && n.line <= lines.length) byLine.set(n.line, [...(byLine.get(n.line) ?? []), n]);
+    else head.push(n);
+  }
+  return (
+    <figure className={styles.figure} data-source-view="">
+      <figcaption className={styles.caption}>
+        <span>{label}</span>
+        <CopyButton text={source} />
+      </figcaption>
+      {head.length ? (
+        <div className={styles.headNotes}>
+          {head.map((n) => (
+            <Fragment key={n.key}>{n.content}</Fragment>
+          ))}
+        </div>
+      ) : null}
+      <div className={styles.sourceScroll}>
+        <table className={styles.source}>
+          <caption className={styles.hidden}>{label}</caption>
+          <tbody>
+            {lines.map((text, i) => {
+              const n = i + 1;
+              const here = byLine.get(n);
+              const worst = here?.reduce((a, b) => (TONE_RANK[b.tone] < TONE_RANK[a.tone] ? b : a)).tone;
+              return (
+                <Fragment key={n}>
+                  <tr id={sourceLineId(idPrefix, n)} data-line={n} data-noted={worst} tabIndex={-1}>
+                    <th scope="row" className={styles.lineNo} translate="no">
+                      {n}
+                    </th>
+                    <td className={styles.lineText} dir="ltr" translate="no">
+                      {text}
+                    </td>
+                  </tr>
+                  {here ? (
+                    <tr className={styles.noteRow} data-note-line={n}>
+                      <td />
+                      <td className={styles.notes}>
+                        {here.map((x) => (
+                          <Fragment key={x.key}>{x.content}</Fragment>
+                        ))}
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </figure>
   );
 }

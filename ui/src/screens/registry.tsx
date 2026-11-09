@@ -11,6 +11,7 @@ import { AuditRecordsScreen, BlockedCommandsScreen } from "./Audit";
 import { DeploymentScreen } from "./Deployment";
 import { ExplainScreen } from "./Explain";
 import { FleetScreen } from "./Fleet";
+import { PolicyCandidateScreen, PolicyScreen, PolicyVersionScreen } from "./Policy";
 import { ReplayScreen } from "./Replay";
 
 export interface Screen {
@@ -49,6 +50,29 @@ export const SCREENS: readonly Screen[] = [
     density: "compact",
     permission: "fleet:read",
     render: () => <FleetScreen />,
+  },
+  {
+    id: "policy",
+    path: "policy",
+    nav: "nav.policy",
+    section: "policy",
+    density: "comfortable",
+    permission: "policy:read",
+    render: () => <PolicyScreen />,
+  },
+  {
+    id: "policy-version",
+    path: "policy/versions/:version",
+    density: "comfortable",
+    permission: "policy:read",
+    render: (p) => <PolicyVersionScreen key={p.version} version={p.version as string} />,
+  },
+  {
+    id: "policy-candidate",
+    path: "policy/candidate",
+    density: "comfortable",
+    permission: "policy:read",
+    render: () => <PolicyCandidateScreen />,
   },
   {
     id: "explain",

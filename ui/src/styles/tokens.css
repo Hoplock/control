@@ -78,6 +78,13 @@
   --s-info: light-dark(#1d55c9, #6a9dff);
   --s-unknown: var(--n-400);
 
+  /* §3.8 Diff — the two sides of a change. Not statuses: an added line is not
+     "allowed" and a removed one is not "denied", so neither takes a status
+     hue; each is a pale ground of its own, and its side is said by its +/−
+     marker and its words, never by the tint alone. */
+  --diff-add-bg: light-dark(#e3f4e8, #0e2618);
+  --diff-remove-bg: light-dark(#fbe8e6, #2c1214);
+
   /* §5 Deployment stripe — operator-assigned, configuration and never
      inference. Each is a bar (≥ 3:1 on the canvas) and a tint the
      deployment chip sits on (text ≥ 4.5:1 on it). None is a status hue. */

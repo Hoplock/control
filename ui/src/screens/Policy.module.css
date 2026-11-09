@@ -1,0 +1,328 @@
+/* Policy (0053): read, not scanned — comfortable by default (DESIGN.md §3.7). */
+.screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-24);
+}
+.stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+}
+.panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+}
+.panelTitle {
+  margin: 0;
+  font: var(--t-h2);
+  color: var(--text-primary);
+}
+.subTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.para {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.quiet {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.notice {
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border-inline-start: var(--sp-2) solid var(--s-warn);
+  background: var(--bg-sunken);
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.toolbar,
+.actions,
+.simControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-8) var(--sp-12);
+}
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8) var(--sp-32);
+  margin: 0;
+}
+.facts div {
+  display: grid;
+  gap: var(--sp-2);
+}
+.facts dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.facts dd {
+  margin: 0;
+  font: var(--t-body);
+  font-variant-numeric: tabular-nums;
+}
+.factsSkeleton {
+  display: grid;
+  gap: var(--sp-8);
+}
+.activeVersion {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.version,
+.ident,
+.mono {
+  font: var(--t-mono);
+  color: var(--text-primary);
+}
+.open {
+  color: var(--text-primary);
+  text-decoration-color: var(--accent);
+  text-underline-offset: var(--sp-2);
+}
+.titleVersion {
+  font: var(--t-h1);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+.editor {
+  white-space: pre;
+  overflow-x: auto;
+}
+.visuallyHidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A rejection or a finding set beneath its line, or in a list. */
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-8);
+}
+.noteBody {
+  display: grid;
+  gap: var(--sp-2);
+  min-inline-size: 0;
+}
+.noteText {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.noteMeta {
+  margin: 0;
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+.place {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.placeRule {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.lineLink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--t-label);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: var(--sp-2);
+  cursor: pointer;
+}
+.rejectionList {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding-inline-start: var(--sp-20);
+}
+.rejectionList li {
+  font: var(--t-body);
+}
+.rejectionCode {
+  margin-inline-start: var(--sp-8);
+}
+
+/* The publish-time report. */
+.findings {
+  display: grid;
+  gap: var(--sp-12);
+}
+.finding {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.finding[data-severity="blocking"] {
+  border-inline-start: var(--sp-2) solid var(--s-deny);
+}
+.finding[data-severity="warning"] {
+  border-inline-start: var(--sp-2) solid var(--s-warn);
+}
+.finding[data-severity="advice"] {
+  border-inline-start: var(--sp-2) solid var(--s-info);
+}
+.findingHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+}
+.findingList {
+  display: grid;
+  gap: var(--sp-4);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.itemDetail {
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+
+/* Changes. */
+.changes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+}
+.ruleChanges {
+  display: grid;
+  grid-template-columns: minmax(max-content, auto) minmax(0, 1fr);
+  gap: var(--sp-8) var(--sp-24);
+  margin: 0;
+}
+.ruleChange {
+  display: contents;
+}
+.ruleChange dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.ruleChange dd {
+  margin: 0;
+}
+
+/* Simulation. */
+.replay {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+}
+.flipSection {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-8);
+}
+.flipGroup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-6);
+  padding: var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.flipHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-6) var(--sp-8);
+  margin: 0;
+  font: var(--t-body);
+}
+.arrow {
+  inline-size: var(--sp-12);
+  block-size: var(--sp-12);
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 1.5;
+}
+[dir="rtl"] .arrow {
+  transform: scaleX(-1);
+}
+.flipTable {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font: var(--t-dense);
+  font-variant-numeric: tabular-nums;
+}
+.flipTable th,
+.flipTable td {
+  padding: var(--sp-4) var(--sp-8);
+  border-block-end: var(--border-width) solid var(--border-subtle);
+  text-align: start;
+  white-space: nowrap;
+}
+.flipTable th {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.unreplayable {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.unreplayable li {
+  display: grid;
+  gap: var(--sp-2);
+}
+.serverWords {
+  font: var(--t-mono);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* The activation dialog's gate. */
+.gate,
+.gateList {
+  display: grid;
+  gap: var(--sp-8);
+}

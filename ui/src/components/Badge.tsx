@@ -74,14 +74,17 @@ export function KeyboardHint({ keys }: { keys: readonly string[] }) {
   );
 }
 
-/** Where a page sits. The last crumb is the page itself and is not a link. */
-export function Breadcrumb({ items }: { items: readonly { label: string; to?: string }[] }) {
+/**
+ * Where a page sits. The last crumb is the page itself and is not a link. A
+ * crumb may be data — a version's name — so a label is any node.
+ */
+export function Breadcrumb({ items }: { items: readonly { label: ReactNode; to?: string }[] }) {
   const { t } = useI18n();
   return (
     <nav aria-label={t("component.breadcrumb.label")}>
       <ol className={styles.crumbs}>
         {items.map((item, i) => (
-          <li key={`${item.label}-${i}`} className={styles.crumb}>
+          <li key={i} className={styles.crumb}>
             {item.to && i < items.length - 1 ? (
               <Link to={item.to} className={styles.crumbLink}>
                 {item.label}
