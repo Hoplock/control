@@ -1,0 +1,229 @@
+/*
+ * CANDIDATE DIRECTION (0052, round 2): a3 — Carbon, soft and lifted.
+ * first-theme: dark
+ *
+ * A1 (Porcelain's corners) with the dark surfaces lifted one step off the near-black canvas, so a rounded
+ * panel reads as a panel: surface #0f1318→#13181f, raised/hover #161b22→#1b212a, rules #222933→#29313d.
+ *
+ * A complete copy of src/styles/tokens.css with values changed: the same
+ * custom properties and selectors, nothing added or removed.
+ */
+
+:root {
+  color-scheme: light dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root {
+  /* §3.1 Neutrals */
+  --n-0: light-dark(#ffffff, #07090c);
+  --n-50: light-dark(#f4f6f8, #0d1015);
+  --n-100: light-dark(#eaedf1, #13181f);
+  --n-200: light-dark(#dde2e8, #1b212a);
+  --n-300: light-dark(#c5ccd5, #29313d);
+  --n-400: light-dark(#7e8897, #667183);
+  --n-500: light-dark(#5f6a79, #8590a1);
+  --n-600: light-dark(#454f5d, #a2acba);
+  --n-700: light-dark(#313a46, #c3cad4);
+  --n-800: light-dark(#1f262f, #d9dee5);
+  --n-900: light-dark(#11161c, #edf0f4);
+  --n-950: light-dark(#080b0f, #f7f8fa);
+
+  /* §3.3 Accent */
+  --a-50: light-dark(#ebfcfe, #061b20);
+  --a-100: light-dark(#cdf5fb, #0a2930);
+  --a-300: light-dark(#5fcfe3, #0e7490);
+  --a-500: light-dark(#0b7189, #22d3ee);
+  --a-600: light-dark(#0b5a6e, #6fe6f8);
+  --a-900: light-dark(#08313d, #cffafe);
+
+  /* §3.2 Semantic surface and text. Each is light-dark(the light theme's
+     step, the dark theme's step), exactly as DESIGN.md §3.2's table maps it. */
+  --bg-canvas: light-dark(var(--n-50), var(--n-0));
+  --bg-surface: light-dark(var(--n-0), var(--n-100));
+  --bg-raised: light-dark(var(--n-0), var(--n-200));
+  --bg-sunken: light-dark(var(--n-100), var(--n-50));
+  --bg-hover: light-dark(var(--n-100), var(--n-200));
+  --bg-selected: light-dark(var(--a-50), var(--a-100));
+  --border-subtle: light-dark(var(--n-200), var(--n-300));
+  --border-default: var(--n-400);
+  --border-strong: var(--n-500);
+  --text-primary: var(--n-900);
+  --text-secondary: var(--n-600);
+  --text-tertiary: var(--n-500);
+  --text-on-accent: light-dark(#ffffff, var(--n-0));
+  --accent: var(--a-500);
+  --focus-ring: var(--a-500);
+  /* The ground behind a modal overlay, and the inverted pair a tooltip uses. */
+  --scrim: light-dark(#f4f6f8b3, #07090cb3);
+  --bg-inverse: var(--n-900);
+  --text-inverse: var(--n-0);
+
+  /* §3.4 Status — reserved for status, never decoration. */
+  --s-allow: light-dark(#13753c, #3ccf80);
+  --s-deny: light-dark(#c4322a, #ff7a70);
+  --s-warn: light-dark(#8f5a00, #f0b03f);
+  --s-outage: light-dark(#6d31d9, #ad93ff);
+  --s-info: light-dark(#1d55c9, #6a9dff);
+  --s-unknown: var(--n-400);
+
+  /* §5 Deployment stripe — operator-assigned, configuration and never
+     inference. Each is a bar (≥ 3:1 on the canvas) and a tint the
+     deployment chip sits on (text ≥ 4.5:1 on it). None is a status hue. */
+  --stripe-accent: light-dark(#0b7189, #22d3ee);
+  --stripe-accent-tint: light-dark(#ebfcfe, #061b20);
+  --stripe-magenta: light-dark(#b5179e, #e879d0);
+  --stripe-magenta-tint: light-dark(#fbeaf7, #3a1534);
+  --stripe-teal: light-dark(#0f766e, #2dd4bf);
+  --stripe-teal-tint: light-dark(#e3f6f4, #0f2e2b);
+  --stripe-orange: light-dark(#c2410c, #fb923c);
+  --stripe-orange-tint: light-dark(#fdeee6, #3a1d0c);
+  --stripe-slate: light-dark(#475569, #94a3b8);
+  --stripe-slate-tint: light-dark(#eef1f5, #1c2430);
+  --stripe: var(--stripe-accent);
+  --stripe-tint: var(--stripe-accent-tint);
+  --stripe-height: 3px;
+
+  /* §3.5 Type */
+  --font-ui: "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --t-display: 600 28px/36px var(--font-ui);
+  --t-h1: 600 20px/28px var(--font-ui);
+  --t-h2: 600 16px/24px var(--font-ui);
+  --t-h3: 600 14px/20px var(--font-ui);
+  --t-body: 400 13px/20px var(--font-ui);
+  --t-dense: 400 12px/18px var(--font-ui);
+  --t-label: 600 11px/16px var(--font-ui);
+  --t-caption: 500 11px/15px var(--font-ui);
+  --t-caption-tracking: 0.04em;
+  --t-mono: 400 12px/18px var(--font-mono);
+
+  /* §3.6 Space — the 4px scale, named by its value. */
+  --sp-2: 2px;
+  --sp-4: 4px;
+  --sp-6: 6px;
+  --sp-8: 8px;
+  --sp-12: 12px;
+  --sp-16: 16px;
+  --sp-20: 20px;
+  --sp-24: 24px;
+  --sp-32: 32px;
+  --sp-40: 40px;
+  --sp-48: 48px;
+  --sp-64: 64px;
+
+  /* §3.6 Radius */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 14px;
+  --r-full: 999px;
+
+  /* §3.6 Elevation — overlays only. Dark elevation is a lighter surface and a
+     border; the shadow colour is transparent there, because a shadow does
+     not read on a dark ground. */
+  --shadow-near: light-dark(#080b0f24, #0000);
+  --shadow-far: light-dark(#080b0f14, #0000);
+  --e-1: 0 1px 2px var(--shadow-near), 0 2px 8px var(--shadow-far);
+  --e-2: 0 2px 4px var(--shadow-near), 0 8px 24px var(--shadow-far);
+  --e-3: 0 4px 8px var(--shadow-near), 0 16px 48px var(--shadow-far);
+
+  /* §3.6 Motion */
+  --m-fast: 120ms;
+  --m-base: 180ms;
+  --m-slow: 240ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  /* One turn of a busy indicator: a loop, not a transition (§3.6). */
+  --m-spin: 900ms;
+
+  /* §4 Layout */
+  --shell-nav-width: 200px;
+  --shell-topbar-height: 48px;
+  --content-max: 1440px;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --border-width: 1px;
+  --control-height: 32px;
+  --icon-size: 16px;
+  --dialog-width: 560px;
+  --drawer-width: 520px;
+  --menu-width: 240px;
+  --search-width: 220px;
+  /* The column a timeline stands in beside what it explains (Explain, replay). */
+  --rail-width: 300px;
+  --table-max-height: 70dvh;
+  --list-max-height: 320px;
+  --glyph-size: 10px;
+  --floor-width: 1024px;
+
+  /* §3.7 Density: comfortable unless a screen or the operator says compact. */
+  --row-height: 40px;
+  --cell-pad-block: 10px;
+  --cell-pad-inline: 12px;
+  --t-cell: var(--t-body);
+}
+
+[data-density="compact"] {
+  --row-height: 32px;
+  --cell-pad-block: 6px;
+  --cell-pad-inline: 12px;
+  --t-cell: var(--t-dense);
+}
+
+/* The configured stripe (internal/console sets data-stripe on <html>). */
+:root[data-stripe="magenta"] {
+  --stripe: var(--stripe-magenta);
+  --stripe-tint: var(--stripe-magenta-tint);
+}
+:root[data-stripe="teal"] {
+  --stripe: var(--stripe-teal);
+  --stripe-tint: var(--stripe-teal-tint);
+}
+:root[data-stripe="orange"] {
+  --stripe: var(--stripe-orange);
+  --stripe-tint: var(--stripe-orange-tint);
+}
+:root[data-stripe="slate"] {
+  --stripe: var(--stripe-slate);
+  --stripe-tint: var(--stripe-slate-tint);
+}
+
+/* §3.6: reduced motion collapses every duration and removes transforms. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --m-fast: 0ms;
+    --m-base: 0ms;
+    --m-slow: 0ms;
+    --m-spin: 0ms;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+    transform: none !important;
+  }
+}
+
+/* §3.5 The bundled faces. Latin only: the budget is 120 KB (§11), and the
+   Greek and Cyrillic subsets would take it past that (DESIGN.md §9). */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("../fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
