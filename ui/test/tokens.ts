@@ -5,11 +5,15 @@
 // guess, so a token written in a form this reader cannot check is noticed.
 
 import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type Theme = "light" | "dark";
 
-const path = fileURLToPath(new URL("../src/styles/tokens.css", import.meta.url));
+// CONTRAST_TOKENS names another token file to read instead — a candidate
+// direction (0052), checked before anyone is shown it. Relative to ui/.
+const ui = fileURLToPath(new URL("..", import.meta.url));
+const path = resolvePath(ui, process.env.CONTRAST_TOKENS || "src/styles/tokens.css");
 
 /** The declarations of the first :root block that declares the ramps. */
 export function rootTokens(): Map<string, string> {
