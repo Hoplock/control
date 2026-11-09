@@ -291,6 +291,12 @@ jobs:
           # last page, the supervisor's word, replay, keyboard and 768px.
           - check: explain and audit
             args: e2e/explain-audit.spec.ts --project checks
+          # Policy against the seeded database (0053): a rejection from its
+          # code at its line, the unknown-code fallback, a refused upload
+          # reported inline, an auditor refused at the API, the deep links.
+          # The author's flow that changes the data runs in mutations, above.
+          - check: policy
+            args: e2e/policy.spec.ts --project checks
           # The account menu: theme and density chosen from the operator's
           # name, held across a reload. Signing in and out is in mutations.
           - check: account menu

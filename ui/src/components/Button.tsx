@@ -5,6 +5,7 @@
 // An icon-only button is IconButton, which cannot be built without a name.
 
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { Link, type LinkProps } from "../router/router";
 import styles from "./Button.module.css";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -42,6 +43,19 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     </button>
   );
 });
+
+/**
+ * A link inside the console that looks like a button: for going somewhere
+ * (opening the candidate editor) rather than doing something. It is an
+ * anchor, so it opens in a new tab like any link, and never `danger`.
+ */
+export function ButtonLink({
+  variant = "secondary",
+  className,
+  ...rest
+}: LinkProps & { variant?: Exclude<ButtonVariant, "danger"> }) {
+  return <Link {...rest} className={[styles.button, className].filter(Boolean).join(" ")} data-variant={variant} />;
+}
 
 export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "aria-label" | "children"> {
   /** The accessible name: required, because the button has no visible text. */

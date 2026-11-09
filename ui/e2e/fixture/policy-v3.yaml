@@ -1,0 +1,124 @@
+# Policy (0053): a candidate the fixture uploads and leaves stored, not
+# active: v2 with the office path moved to another network, a database shell
+# now needing a just-in-time grant, and the build-host deny replaced by an
+# allow for SREs. Replayed against the recorded traffic it flips one allow to
+# a deny and one deny to an allow. Uploaded by e2e/fixture/policy.ts through
+# the north-bound API.
+
+schema_version: 1
+tenant: default
+description: the console browser checks' fixture policy, with an office path
+timezone: UTC
+
+labels:
+  env: [prod, dev]
+  kind: [db, vault, build]
+
+groups: [sre]
+
+rules:
+  # Policy (0053): a read-only path from the office network with a cache
+  # hint. A proxy reuses a cached decision by identity and target, never by
+  # the client's address, so the publish-time report warns, and activating
+  # this version accepts that warning by its id.
+  - id: office-db-read
+    description: read-only database access from the office network, cached
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      context:
+        source_cidrs: [10.40.0.0/16]
+      target:
+        labels: {env: [prod], kind: [db]}
+    route:
+      intent: direct
+      channels: [session]
+      requests:
+        types: [exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+    cache:
+      key: [subject, target, target-port]
+      ttl_seconds: 300
+
+  # An SRE's recorded shell on a production database: the direct allow, with
+  # an obligation and a capture the replay reads.
+  - id: ops-db-shell
+    description: an SRE's recorded shell on a production database
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        labels: {env: [prod], kind: [db]}
+      grant:
+        required: true
+        scopes: [db-maintenance]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [pty-req, shell, exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+      require_session_capture: true
+    obligations:
+      - kind: record-session
+
+  # The vault sits in the DMZ: reached from the core through px-dmz-03, so a
+  # session to it is two decisions, one per hop, and only while a just-in-time
+  # grant covers it (M10), which the fixture creates.
+  - id: vault-through-dmz
+    description: the vault, reached through the DMZ relay, under a grant
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        zones: [dmz]
+      grant:
+        required: true
+        scopes: [vault-maintenance]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+
+  # The build hosts, opened to SREs: what was a deny by a rule is an allow.
+  - id: sre-build-shell
+    description: an SRE's shell on a build host
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        labels: {env: [dev]}
+    route:
+      intent: direct
+      channels: [session]
+      requests:
+        types: [pty-req, shell, exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900

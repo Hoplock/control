@@ -7,12 +7,13 @@
 import { useState, type ReactNode } from "react";
 import type { ApiError } from "../src/i18n/errors";
 import { Avatar, Badge, Breadcrumb, Chip, KeyboardHint } from "../src/components/Badge";
-import { Button, IconButton } from "../src/components/Button";
-import { CodeBlock, JsonViewer } from "../src/components/Code";
+import { Button, ButtonLink, IconButton } from "../src/components/Button";
+import { CodeBlock, JsonViewer, SourceView } from "../src/components/Code";
 import { Combobox, CommandPalette } from "../src/components/Combobox";
 import { CopyableId } from "../src/components/CopyableId";
 import { DataTable, TableSkeleton, type Column } from "../src/components/DataTable";
 import { ConfirmDialog, Dialog, Drawer } from "../src/components/Dialog";
+import { DiffSkeleton, DiffView } from "../src/components/Diff";
 import { Checkbox, Choices, Field, Input, Radio, Select, Switch, Textarea } from "../src/components/Field";
 import { FilterBar } from "../src/components/FilterBar";
 import { Menu, Tooltip } from "../src/components/Menu";
@@ -96,6 +97,22 @@ function Buttons() {
             active: <Button variant={v} data-force="active">{t("common.retry")}</Button>,
             disabled: <Button variant={v} disabled>{t("common.retry")}</Button>,
             loading: <Button variant={v} loading>{t("common.retry")}</Button>,
+          }}
+        />
+      ))}
+      {(["primary", "secondary"] as const).map((v) => (
+        <Row
+          key={`link-${v}`}
+          name={`button link ${v}`}
+          cells={{
+            default: <ButtonLink variant={v} to="policy/candidate">{t("policies.author")}</ButtonLink>,
+            hover: <ButtonLink variant={v} to="policy/candidate" data-force="hover">{t("policies.author")}</ButtonLink>,
+            "focus-visible": (
+              <ButtonLink variant={v} to="policy/candidate" data-force="focus-visible">
+                {t("policies.author")}
+              </ButtonLink>
+            ),
+            active: <ButtonLink variant={v} to="policy/candidate" data-force="active">{t("policies.author")}</ButtonLink>,
           }}
         />
       ))}
@@ -649,6 +666,94 @@ function Time() {
   );
 }
 
+const DIFF = [
+  "@@ -9,7 +9,8 @@",
+  " groups: [sre]",
+  " ",
+  " rules:",
+  "-  - id: ops-db-shell",
+  "+  - id: ops-db-shell-recorded",
+  "+    description: an SRE's recorded shell on a production database",
+  "     effect: allow",
+  "     match:",
+  "       subject:",
+  "",
+].join("\n");
+
+const SOURCE = ["schema_version: 1", "tenant: default", "groups: [sre]", "rules:", "  - id: ops-db-shell", "    effect: allow", "    match:", "      subject: {groups: [sre-typo]}"].join(
+  "\n",
+);
+
+/** The diff view (0053), and the source view and mono textarea Policy edits and reads source with. */
+function Diffs() {
+  const { t } = useI18n();
+  const failed: ApiError = { code: "unavailable", correlation_id: "corr-gallery-diff" };
+  return (
+    <div className={styles.stack}>
+      <div className={styles.grid} data-component="diff view">
+        <Cell state="default">
+          <DiffView label={t("policies.diff.label", { to: "v3", from: "v2" })} text={DIFF} />
+        </Cell>
+        <Cell state="focus-visible">
+          <div data-force-child="focus-visible">
+            <DiffView label={t("policies.diff.label", { to: "v3", from: "v2" })} text={DIFF.split("\n").slice(0, 6).join("\n")} />
+          </div>
+        </Cell>
+        <Cell state="loading">
+          <DiffSkeleton rows={5} />
+        </Cell>
+        <Cell state="error">
+          <ErrorMessage error={failed} kind="outage" />
+        </Cell>
+        <Cell state="empty">
+          <DiffView label={t("policies.diff.label", { to: "v3", from: "v3" })} text="" />
+        </Cell>
+        <Cell state="omitted">
+          <DiffView label={t("policies.diff.label", { to: "v9", from: "v1" })} text="" omitted />
+        </Cell>
+      </div>
+      <div className={styles.grid} data-component="source view">
+        <Cell state="default">
+          <SourceView source={SOURCE} label={t("policies.source.label")} idPrefix="gallery-source" />
+        </Cell>
+        <Cell state="error">
+          <SourceView
+            source={SOURCE}
+            label={t("policies.source.label")}
+            idPrefix="gallery-source-noted"
+            notes={[
+              { line: 8, key: "r", tone: "deny", content: <ErrorMessage error={{ code: "policy_invalid" }} kind="refused" /> },
+              { line: 0, key: "d", tone: "info", content: <Status tone="info" label={t("status.advice")} /> },
+            ]}
+          />
+        </Cell>
+      </div>
+      <div className={styles.grid} data-component="mono textarea">
+        <Cell state="default">
+          <Field label={t("policies.candidate.label")} hint={t("policies.candidate.hintBlank")}>
+            <Textarea mono wrap="off" rows={4} defaultValue={SOURCE} />
+          </Field>
+        </Cell>
+        <Cell state="focus-visible">
+          <Field label={t("policies.candidate.label")}>
+            <Textarea mono wrap="off" rows={4} defaultValue={SOURCE} data-force="focus-visible" />
+          </Field>
+        </Cell>
+        <Cell state="error">
+          <Field label={t("policies.candidate.label")} error={t("policies.candidate.required")}>
+            <Textarea mono wrap="off" rows={4} defaultValue="" />
+          </Field>
+        </Cell>
+        <Cell state="disabled">
+          <Field label={t("policies.candidate.label")}>
+            <Textarea mono wrap="off" rows={4} defaultValue={SOURCE} disabled />
+          </Field>
+        </Cell>
+      </div>
+    </div>
+  );
+}
+
 const SECTIONS: Record<string, () => ReactNode> = {
   buttons: () => <Buttons />,
   fields: () => <Fields />,
@@ -658,6 +763,7 @@ const SECTIONS: Record<string, () => ReactNode> = {
   navigation: () => <Navigation />,
   data: () => <Data />,
   time: () => <Time />,
+  diff: () => <Diffs />,
 };
 
 /** The gallery's pages: one per section, and one per overlay state. */

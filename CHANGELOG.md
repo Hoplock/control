@@ -26,6 +26,39 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.40.0
+
+Phase 0053, the console's Policy screens (M3, M4, M11, M20, M21, M26). No
+migration, the north-bound API version is unchanged (`3`), and nothing in
+`ext`, `server` or the contract changes.
+
+- **Policy, at `/console/policy`.** The tenant's stored policy versions, a
+  page at a time and newest first, with the active one named above them. A
+  version, at `/console/policy/versions/<n>`, shows its source with each
+  publish-time finding beneath the line it is about; its changes against the
+  active version, or `?against=` another, by rule and then line by line; its
+  publish-time report, every finding by severity and then id; and a replay of
+  the decisions recorded in a window, which changes nothing.
+- **Authoring a candidate, at `/console/policy/candidate`.** A source not
+  stored yet — the active version's, or `?from=<n>` another's, to start from —
+  is validated, compared with the active version, replayed against recorded
+  traffic and uploaded. A bundle the compiler refuses shows each rejection
+  beneath the line it names, in the console's own words, built from the
+  rejection's code and parameters; a code the console does not know shows
+  the code itself and the correlation id. An upload refused is reported at
+  the form and in the source, never by a notification alone, and stores
+  nothing. Every role that reads policy may validate, compare and replay; only
+  `policy:write` is offered Upload.
+- **Activating and rolling back are one confirmation.** Activating a stored
+  version, newer or older than the active one, asks the operator to type its
+  name (`v4`), lists each warning in its publish-time report with a box to
+  accept it by its id — which the activation's audit record names — and
+  reports a refusal inside the dialog. Only a holder of `policy:publish` is
+  offered it, and the API refuses it to anyone else.
+- **What a validator registered by a host reports** shows in the report by
+  its code, its provider and its parameters, never its English message: a
+  validator's parameters are what a reader of its finding has.
+
 ## v0.39.0
 
 Phase 0052, the console's look, chosen with an operator (M20, M21). No

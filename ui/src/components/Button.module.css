@@ -19,6 +19,9 @@
     background-color var(--m-fast) var(--ease),
     border-color var(--m-fast) var(--ease);
 }
+a.button {
+  text-decoration: none;
+}
 .button:hover:not(:disabled) {
   background: var(--bg-hover);
   border-color: var(--border-strong);

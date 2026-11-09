@@ -1,0 +1,108 @@
+.figure {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+  min-inline-size: 0;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  padding: var(--sp-6) var(--sp-12);
+  border-block-end: var(--border-width) solid var(--border-subtle);
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.counts {
+  font: var(--t-caption);
+  font-variant-numeric: tabular-nums;
+}
+.scroll {
+  max-block-size: var(--table-max-height);
+  overflow: auto;
+  border-end-start-radius: var(--r-md);
+  border-end-end-radius: var(--r-md);
+}
+.scroll:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font: var(--t-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.table td {
+  padding-block: 0;
+  padding-inline: var(--sp-8);
+  vertical-align: top;
+  white-space: pre;
+}
+.number {
+  inline-size: 1%;
+  color: var(--text-secondary);
+  text-align: end;
+  user-select: none;
+  background: var(--bg-sunken);
+}
+.marker {
+  inline-size: 1%;
+  font-weight: 700;
+  text-align: center;
+  user-select: none;
+}
+.text {
+  inline-size: 100%;
+}
+tr[data-line="add"] td {
+  background: var(--diff-add-bg);
+}
+tr[data-line="remove"] td {
+  background: var(--diff-remove-bg);
+}
+.hunk td {
+  padding-block: var(--sp-2);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+}
+.notice {
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--sp-12) var(--sp-16);
+  border: var(--border-width) dashed var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.noticeTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.noticeBody {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.skeleton {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}

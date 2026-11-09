@@ -142,6 +142,7 @@ export function ConfirmDialog({
   body,
   name,
   action,
+  hint,
   onConfirm,
   onClose,
 }: {
@@ -152,6 +153,8 @@ export function ConfirmDialog({
   name: string;
   /** The confirm button's label: the verb, never "OK". */
   action: string;
+  /** What the field says beneath it; by default, that the action cannot be undone. */
+  hint?: ReactNode;
   onConfirm(): Promise<ConfirmFailure | null>;
   onClose(): void;
 }) {
@@ -182,7 +185,7 @@ export function ConfirmDialog({
         <div className={styles.warning}>{body}</div>
         <Field
           label={t("component.confirm.type", { name: "⁨" + name + "⁩" })}
-          hint={t("component.confirm.hint")}
+          hint={hint ?? t("component.confirm.hint")}
           error={typed !== "" && !matches ? t("component.confirm.mismatch") : undefined}
         >
           <Input

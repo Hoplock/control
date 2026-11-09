@@ -11,7 +11,7 @@ import { NETWORK_FAILURE, type ApiError } from "../i18n/errors";
 import { fill, ROUTES, type RouteName } from "./routes";
 
 export type Answer<T> =
-  | { kind: "ok"; status: number; data: T }
+  | { kind: "ok"; status: number; data: T; correlationId?: string }
   | { kind: "refused"; status: number; error: ApiError }
   | { kind: "outage"; status: number; error: ApiError };
 
@@ -82,7 +82,11 @@ export class ApiClient {
     }
     if (res.ok) {
       const data = res.status === 204 ? (undefined as T) : ((await res.json()) as T);
-      return { kind: "ok", status: res.status, data };
+      // Every answer names the id it was logged under (X-Correlation-Id), a
+      // success too: a report that carries a code this console does not know
+      // quotes it, so an operator can find the request (0053).
+      const correlationId = res.headers.get("X-Correlation-Id") ?? undefined;
+      return { kind: "ok", status: res.status, data, correlationId };
     }
     const error = await envelope(res);
     if (res.status >= 500) return { kind: "outage", status: res.status, error };
