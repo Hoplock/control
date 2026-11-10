@@ -280,6 +280,10 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			return err
 		},
 		"Subjects.Standing": func() error { _, err := s.Subjects().Standing(ctx, "", "s"); return err },
+		"Subjects.RecordMissing": func() error {
+			_, err := s.Subjects().RecordMissing(ctx, "", Page{Limit: 1})
+			return err
+		},
 		"SubjectLocks.Place": func() error {
 			_, _, err := s.SubjectLocks().Place(ctx, "", SubjectLock{SubjectID: "s", LockedBy: StandingActor{Principal: "p"}})
 			return err

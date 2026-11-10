@@ -558,8 +558,23 @@ func (s *Server) handleSubjectList(w http.ResponseWriter, r *http.Request) {
 	// an unfiltered list binds nothing, so its cursors are the ones it
 	// minted before the filter existed (M26.2: a cursor never expires).
 	q := store.SubjectQuery{Group: strings.TrimSpace(r.URL.Query().Get("group"))}
-	p, ok := readPage(w, r, subjectList, setFilters("group", q.Group)...)
+	// `?record=missing` is the other list (0055): the ids a standing denial
+	// holds with no subject row. They have no groups, so it takes no group.
+	record := strings.TrimSpace(r.URL.Query().Get("record"))
+	switch {
+	case record != "" && record != recordMissing:
+		s.invalid(w, r, "record", access.ProblemInvalid, "")
+		return
+	case record != "" && q.Group != "":
+		s.invalid(w, r, "record", "at_most_one_of_group_or_record", "")
+		return
+	}
+	p, ok := readPage(w, r, subjectList, setFilters("group", q.Group, "record", record)...)
 	if !ok {
+		return
+	}
+	if record == recordMissing {
+		s.answerRecordMissing(w, r, tenant, p)
 		return
 	}
 	page, err := s.st.Subjects().Page(r.Context(), tenant, q, p.Page)
@@ -596,6 +611,49 @@ func (s *Server) handleSubjectList(w http.ResponseWriter, r *http.Request) {
 	}
 	if n := len(page.Rows); n > 0 {
 		last = []any{page.Rows[n-1].ID}
+	}
+	s.answerPage(w, r, p, "subjects", out, page.More, last, nil)
+}
+
+// recordMissing is `?record=`'s one value.
+const recordMissing = "missing"
+
+// answerRecordMissing is one page of the subjects a standing denial holds
+// with no row (M28): a lock that outlived a deleted subject, and the
+// directory's deactivation of a person it has not created yet. Each is
+// answered as GET …/subjects/{subject} answers it, `record_missing` set, so
+// an operator can find the lock to lift it without knowing its id.
+func (s *Server) answerRecordMissing(w http.ResponseWriter, r *http.Request, tenant store.Tenant, p pageRequest) {
+	page, err := s.st.Subjects().RecordMissing(r.Context(), tenant, p.Page)
+	if err != nil {
+		s.fail(w, r, "list subjects with no record", err)
+		return
+	}
+	locks, err := s.st.SubjectLocks().For(r.Context(), tenant, page.Rows)
+	if err != nil {
+		s.fail(w, r, "list locks", err)
+		return
+	}
+	links, err := s.st.DirectoryLinks().For(r.Context(), tenant, page.Rows)
+	if err != nil {
+		s.fail(w, r, "list directory links", err)
+		return
+	}
+	out := make([]subjectView, 0, len(page.Rows))
+	for _, id := range page.Rows {
+		v := subjectView{Principals: []string{}, Groups: []string{}, Claims: map[string]string{}}
+		if l, ok := locks[id]; ok {
+			v.Locked, v.Lock = true, viewLock(l)
+		}
+		if link, ok := links[id]; ok {
+			v = v.withDirectory(link.SubjectDirectory())
+		}
+		v.ID, v.RecordMissing = id, true
+		out = append(out, v)
+	}
+	var last []any
+	if n := len(page.Rows); n > 0 {
+		last = []any{page.Rows[n-1]}
 	}
 	s.answerPage(w, r, p, "subjects", out, page.More, last, nil)
 }

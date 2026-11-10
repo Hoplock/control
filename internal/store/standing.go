@@ -396,6 +396,38 @@ func (r targetQuarantineRepo) For(ctx context.Context, tenant Tenant, targetIDs 
 	return out, wrap(op, rows.Err())
 }
 
+// RecordMissing pages over the ids a lock or the directory's deactivation
+// stands on and no subject row has. It is not on the decision path. Its
+// cost is bounded by the tenant's standing denials, which are emergency acts
+// and few, not by its subjects: each side is read by its tenant prefix and
+// the row's absence by the subjects' primary key.
+func (r subjectRepo) RecordMissing(ctx context.Context, tenant Tenant, p Page) (Paged[string], error) {
+	const op = "store.Subjects.RecordMissing"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[string]{}, err
+	}
+	if err := checkPage(op, subjectOrder, p); err != nil {
+		return Paged[string]{}, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+	tail, args := subjectOrder.clause(p, []any{tenant})
+	return queryPage(ctx, r.s.db, op, p, `
+		SELECT subject_id FROM (
+			SELECT subject_id FROM subject_locks WHERE tenant = $1
+			UNION
+			SELECT subject_id FROM directory_links WHERE tenant = $1 AND deactivated_at IS NOT NULL
+		) m
+		WHERE NOT EXISTS (SELECT 1 FROM subjects s WHERE s.tenant = $1 AND s.subject_id = m.subject_id)`+tail,
+		args, func(op string, row rowScanner) (string, error) {
+			var id string
+			if err := row.Scan(&id); err != nil {
+				return "", wrap(op, err)
+			}
+			return id, nil
+		})
+}
+
 // ---------------------------------------------------------------------------
 // the decision path's reads
 // ---------------------------------------------------------------------------
