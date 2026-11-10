@@ -364,7 +364,7 @@ One component renders all of it, so a status looks identical everywhere:
 | State | Colour | Glyph | Label |
 | --- | --- | --- | --- |
 | allowed / healthy / active / applied / valid | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied`, `Valid` |
-| denied / revoked / expired / invalid / blocking | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired`, `Invalid`, `Blocking` |
+| denied / revoked / expired / invalid / blocking / locked / quarantined / deactivated | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired`, `Invalid`, `Blocking`, `Locked`, `Quarantined`, `Deactivated` |
 | degraded / stale / expiring / rejected / warning | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected`, `Warning` |
 | unreachable / outage / fetch failed / unserved | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved` |
 | pending / scheduled / in progress / pending restart / advice | `--s-info` | half-filled circle | `Pending`, `Scheduled`, `In progress`, `Pending restart`, `Advice` |
@@ -400,6 +400,17 @@ A grant reads as its window (M10): **`Active`** while it is live,
 **`Scheduled`** before its window opens — information, never a fault — and
 **`Expired`** or **`Revoked`** once it backs no decision, both deny-class. A
 state the server names that the console does not know is `Not reported`.
+
+A **standing denial** reads as its own deny (PLAN M28): **`Locked`** for a
+subject lock, **`Quarantined`** for a target quarantine, **`Deactivated`** for
+the directory's deactivation — each a deny made on purpose, never an outage
+(M11), and never the plain `Denied` of a decision, because each is lifted by a
+different party: an operator unlocks and releases, and only the directory
+re-activates. A subject both locked and deactivated shows both, the lock
+first, as its record holds them. A lock or quarantine the server placed and
+could not deliver (`standing_denial_undelivered`) is in force: it reads as
+`Pending` delivery beside its own status, with a way to ask again, never as a
+failure to place it.
 
 A rolling upgrade reads as **`Pending` / in progress**, never as a fault (M19).
 `Not reported` is its own state and never renders as healthy — PLAN §4 is
@@ -487,7 +498,10 @@ holding source is `mono`: LTR, mono, unchecked for spelling and untranslated.
 **Form and mutation rules.** Destructive actions confirm by typing the object
 name, through the one `ConfirmDialog`, whose hint says what typing commits to:
 by default that the action cannot be undone, and for an activation, which a
-rollback reverses, that the decisions taken under it are not taken back. A
+rollback reverses, that the decisions taken under it are not taken back; for
+a lock, that lifting it later restores none of the sessions it ended. A field
+inside the dialog that is refused where it stands (a lock's holder text over
+its byte limit) holds the confirm (`ready`) until it is put right. A
 breadcrumb's crumb may be data, such as a version's name in mono. A failed mutation reports inline at the field or the form, never by a toast
 alone — a toast is not a record. Toasts are for successful, reversible things and
 auto-dismiss; errors persist until dismissed.
@@ -618,7 +632,9 @@ checks 1, 2 and 9; 0050 the browser checks 3–8):
    what keeps adding one cheap.
 Checks 3–8 run in CI as `console-e2e`, one job per rule, over **one
 registry of screens** (`ui/e2e/screens.ts`), against a real server on a seeded
-database (`ui/e2e/fixture/`): a screen is checked by registering it — its
+database (`ui/e2e/fixture/`; the server is the fixture host, Control with one
+registered identity sync, so a directory's subjects are real): a screen is
+checked by registering it — its
 path, how it is ready, how its loading, empty, error and partial states are
 made (an API answer substituted in the browser — a fixed answer, a request
 held open, or the server's own answer changed, such as a page marked cut —
