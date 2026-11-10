@@ -243,12 +243,18 @@ function useLever<T>() {
     undelivered,
     busy,
     clear: () => setUndelivered(null),
-    /** Runs a placement; an undelivered answer becomes the notice, with a retry that sends the same call. */
+    /**
+     * Runs a placement. Placed, or in force and undelivered, it is done with
+     * (`after`: the dialog closes and the page reads again); undelivered also
+     * leaves the notice, with a retry that sends the same call. A refusal is
+     * returned, for the dialog to show where the operator is.
+     */
     place: async (send: () => Promise<Answer<T>>, done: (data: T) => void, after: () => void): Promise<ConfirmFailure | null> => {
       const a = await send();
       if (a.kind === "ok") {
         setUndelivered(null);
         done(a.data);
+        after();
         return null;
       }
       if (isUndelivered(a.error)) {

@@ -220,7 +220,13 @@ test("a fleet-admin removes a target by typing its id", async ({ browser }) => {
 test("a grant-admin locks an identity and lifts the lock", async ({ browser }) => {
   const subject = SCREENS.find((s) => s.id === "inventory-subject");
   if (!subject) throw new Error("inventory-subject is not registered");
-  const page = await openScreen(browser, { ...subject, path: "/console/inventory/subjects/svc-deploy", role: "grant-admin" });
+  // svc-deploy holds no role directly, so the page is ready when its standing denials are.
+  const page = await openScreen(browser, {
+    ...subject,
+    path: "/console/inventory/subjects/svc-deploy",
+    role: "grant-admin",
+    ready: (p) => p.locator("main#content [data-standing]").waitFor(),
+  });
   const main = page.locator("main#content");
   await main.locator("[data-lock]").click();
   const dialog = page.locator("dialog[open]");
@@ -234,7 +240,7 @@ test("a grant-admin locks an identity and lifts the lock", async ({ browser }) =
   await confirm.click();
   await expect(dialog).toHaveCount(0);
   const lock = main.locator("[data-denial=locked]");
-  await expect(lock.locator('[data-tone="deny"]')).toHaveText("Locked");
+  await expect(lock.locator('span[data-tone="deny"]')).toHaveText("Locked");
   await expect(lock).toContainText("INC-4977");
   await expect(lock.locator('a[href="/console/inventory/subjects/gia"]')).toHaveCount(1);
   const stored = (await (await page.request.get("/api/v1/tenants/default/subjects/svc-deploy")).json()) as { locked: boolean; lock: { reason: string } };
@@ -263,7 +269,7 @@ test("an administrator quarantines a target and releases it", async ({ browser }
   await dialog.locator("[data-confirm-input]").fill("build-01");
   await dialog.locator("button[type=submit]").click();
   await expect(dialog).toHaveCount(0);
-  await expect(main.locator("[data-denial=quarantined] [data-tone=deny]")).toHaveText("Quarantined");
+  await expect(main.locator("[data-denial=quarantined] span[data-tone=deny]")).toHaveText("Quarantined");
   expect(((await (await page.request.get("/api/v1/tenants/default/targets/build-01")).json()) as { quarantined: boolean }).quarantined).toBe(true);
 
   await main.locator("[data-release]").click();
