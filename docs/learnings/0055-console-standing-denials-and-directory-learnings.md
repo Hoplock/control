@@ -141,7 +141,11 @@ connectors; asks `/v1/authorize` about dana as `sess-e2e-directory`.
 - The two fact lists in the standing-denials panel size their label columns
   independently, so a lock's and a deactivation's values do not line up.
 - `golangci-lint` here was built with Go 1.25 and refuses this module
-  (1.27); CI's pinned v2.14.0 was installed and run locally instead.
+  (1.27); CI's pinned v2.14.0, built with Go 1.27, was run locally instead.
+- `policy-candidate-loading-dark.png` came out 6 px taller (1047 against
+  1041) in 2 of 4 full runs in this container, never in isolation, with the
+  same content; this phase touches no policy screen, so the committed image
+  was kept. If CI's baseline job trips on it, it is that flake.
 
 ### Cross-repo
 
