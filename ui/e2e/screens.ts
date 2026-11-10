@@ -20,7 +20,8 @@ import { seedAudit } from "./fixture/audit";
 import { seedFleet } from "./fixture/fleet";
 import { fixtureGrant, seedInventory } from "./fixture/inventory";
 import { candidates, seedPolicy } from "./fixture/policy";
-import { TENANT, type Role, type Substitute } from "./harness";
+import { DIRECTORY, fixtureSubject, seedStanding } from "./fixture/standing";
+import { substitute, TENANT, type Role, type Substitute } from "./harness";
 
 export type StateName = "loading" | "empty" | "error" | "partial";
 
@@ -71,7 +72,7 @@ const outage = (correlation: string): Substitute => ({
 const main = (page: Page) => page.locator("main#content");
 
 /** Fixture steps that run after the seed, before any check (global-setup.ts). */
-export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [seedFleet, seedAudit, seedPolicy, seedInventory];
+export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [seedFleet, seedAudit, seedPolicy, seedInventory, seedStanding];
 
 const GALLERY_PAGES = [
   "buttons",
@@ -176,6 +177,299 @@ const formMutation = (route: string, method: "POST" | "PUT", path: string, permi
   control: (page) => main(page).locator(`form[${form}]`),
 });
 
+/** Sorts a list by its name column, when it has rows (a role offered nothing still has the column). */
+const byName = async (page: Page) => {
+  const sort = main(page).locator("table th[data-column=name] button").first();
+  if (await sort.count()) await sort.click();
+};
+
+/** Opens a detail's control, if the role is offered it, and waits for its dialog. */
+const openDialog = async (page: Page, control: string) => {
+  const button = main(page).locator(control);
+  if (!(await button.count())) return false;
+  await button.click();
+  await page.locator("dialog[open]").waitFor();
+  return true;
+};
+
+const STANDING: E2EScreen[] = [
+  // A quarantined target (M28): the quarantine's facts, release offered to a
+  // holder of session:revoke, and removal still offered to target:write —
+  // whose refusal says release it first.
+  {
+    id: "inventory-target-quarantined",
+    kind: "console",
+    path: "/console/inventory/targets/cache-01",
+    densities: false,
+    ready: (page) => main(page).locator("[data-denial=quarantined]").waitFor(),
+    states: {},
+    mutations: [
+      { route: "targetRelease", method: "POST", path: `${API}/targets/cache-01/release`, permission: "session:revoke", control: (page) => main(page).locator("[data-release]") },
+      { route: "targetDelete", method: "DELETE", path: `${API}/targets/cache-01`, permission: "target:write", control: (page) => main(page).locator("[data-remove]") },
+    ],
+  },
+  // Removing a quarantined target, typed and sent: the server refuses it
+  // (409 target_quarantined), and the dialog says release it first.
+  {
+    id: "inventory-target-remove-refused",
+    kind: "console",
+    path: "/console/inventory/targets/cache-01",
+    densities: false,
+    ready: (page) => main(page).locator("[data-denial=quarantined]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      if (!(await openDialog(page, "[data-remove]"))) return;
+      const dialog = page.locator("dialog[open]");
+      await dialog.locator("[data-confirm-input]").fill("cache-01");
+      await dialog.locator("button[type=submit]").click();
+      await dialog.locator("[role=alert][data-error-code=target_quarantined]").waitFor();
+    },
+  },
+  // Quarantining asks for nothing the holder sees, and says it ends no session.
+  {
+    id: "inventory-target-quarantine-dialog",
+    kind: "console",
+    path: "/console/inventory/targets/db-01",
+    densities: false,
+    ready: (page) => main(page).locator("[data-standing=none]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      await openDialog(page, "[data-quarantine]");
+    },
+  },
+  // An operator's lock: its facts, the text its holder was shown, and unlock.
+  {
+    id: "inventory-subject-locked",
+    kind: "console",
+    path: "/console/inventory/subjects/noor",
+    densities: false,
+    ready: (page) => main(page).locator("[data-denial=locked]").waitFor(),
+    states: {},
+    mutations: [
+      { route: "subjectUnlock", method: "POST", path: `${API}/subjects/noor/unlock`, permission: "session:revoke", control: (page) => main(page).locator("[data-unlock]") },
+    ],
+  },
+  // The lock dialog, with the text the holder will be shown, before sending.
+  {
+    id: "inventory-subject-lock-dialog",
+    kind: "console",
+    path: "/console/inventory/subjects/lin",
+    densities: false,
+    ready: (page) => main(page).locator("[data-standing=none]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      if (!(await openDialog(page, "[data-lock]"))) return;
+      const dialog = page.locator("dialog[open]");
+      await dialog.locator("input[name=reason]").fill("Your access is paused while we check a lost laptop. Call the SOC.");
+      await dialog.locator("input[name=reason_code]").fill("INC-4900");
+      await dialog.locator("[data-confirm-input]").fill("lin");
+    },
+  },
+  // A lock the server placed and could not deliver (503
+  // standing_denial_undelivered, substituted in the browser: one server does
+  // not fail its own stream on demand): in force, with a retry.
+  {
+    id: "inventory-subject-undelivered",
+    kind: "console",
+    path: "/console/inventory/subjects/lin",
+    densities: false,
+    ready: (page) => main(page).locator("[data-standing=none]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      await substitute(page, `${API}/subjects/lin/lock`, UNDELIVERED);
+      if (!(await openDialog(page, "[data-lock]"))) return;
+      const dialog = page.locator("dialog[open]");
+      await dialog.locator("[data-confirm-input]").fill("lin");
+      await dialog.locator("button[type=submit]").click();
+      await main(page).locator("[data-undelivered]").waitFor();
+    },
+  },
+  // A subject the directory manages (0040, 0042): whose it is, and no edit
+  // or removal; the lock and its roles stay offered.
+  {
+    id: "inventory-subject-directory",
+    kind: "console",
+    get path() {
+      return `/console/inventory/subjects/${fixtureSubject(DIRECTORY.dana)}`;
+    },
+    densities: false,
+    ready: (page) => main(page).locator("[data-directory-panel]").waitFor(),
+    states: {},
+    mutations: [
+      {
+        route: "subjectLock",
+        method: "POST",
+        get path() {
+          return `${API}/subjects/${fixtureSubject(DIRECTORY.dana)}/lock`;
+        },
+        permission: "session:revoke",
+        control: (page) => main(page).locator("[data-lock]"),
+      },
+      {
+        route: "roleBind",
+        method: "POST",
+        path: `${API}/role-bindings`,
+        get body() {
+          return { subject_id: fixtureSubject(DIRECTORY.dana), role: "auditor" };
+        },
+        permission: "identity:write",
+        control: (page) => main(page).locator("form[data-bind-form]"),
+      },
+    ],
+  },
+  // The directory's deactivation alone: a deny of its own, with no lever.
+  {
+    id: "inventory-subject-deactivated",
+    kind: "console",
+    get path() {
+      return `/console/inventory/subjects/${fixtureSubject(DIRECTORY.eli)}`;
+    },
+    densities: false,
+    ready: (page) => main(page).locator("[data-denial=deactivated]").waitFor(),
+    states: {},
+  },
+  // Locked by an operator AND deactivated by the directory: both, the lock first.
+  {
+    id: "inventory-subject-locked-deactivated",
+    kind: "console",
+    get path() {
+      return `/console/inventory/subjects/${fixtureSubject(DIRECTORY.sam)}`;
+    },
+    densities: false,
+    ready: (page) => main(page).locator("[data-denial=deactivated]").waitFor(),
+    states: {},
+    mutations: [
+      {
+        route: "subjectUnlock",
+        method: "POST",
+        get path() {
+          return `${API}/subjects/${fixtureSubject(DIRECTORY.sam)}/unlock`;
+        },
+        permission: "session:revoke",
+        control: (page) => main(page).locator("[data-unlock]"),
+      },
+    ],
+  },
+  // Its unlock dialog: lifting the lock does not re-admit a deactivated person.
+  {
+    id: "inventory-subject-unlock-deactivated",
+    kind: "console",
+    get path() {
+      return `/console/inventory/subjects/${fixtureSubject(DIRECTORY.sam)}`;
+    },
+    densities: false,
+    ready: (page) => main(page).locator("[data-denial=deactivated]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      await openDialog(page, "[data-unlock]");
+    },
+  },
+  // Removed while locked: listed by the lock alone, and still unlockable.
+  {
+    id: "inventory-subject-record-missing",
+    kind: "console",
+    path: "/console/inventory/subjects/ex-contractor",
+    densities: false,
+    ready: (page) => main(page).locator("[data-denial=locked]").waitFor(),
+    states: {},
+    mutations: [
+      { route: "subjectUnlock", method: "POST", path: `${API}/subjects/ex-contractor/unlock`, permission: "session:revoke", control: (page) => main(page).locator("[data-unlock]") },
+    ],
+  },
+  // Deactivated by the directory before it created the person.
+  {
+    id: "inventory-subject-deactivated-early",
+    kind: "console",
+    get path() {
+      return `/console/inventory/subjects/${fixtureSubject(DIRECTORY.early)}`;
+    },
+    densities: false,
+    ready: (page) => main(page).locator("[data-denial=deactivated]").waitFor(),
+    states: {},
+  },
+  // The claim mapping (0043): its facts, each group entry with its
+  // directories, the document, and the connectors' ties. Partial: some
+  // directory identities not yet on this version (the server's answer, its
+  // count changed) and the connectors unreadable.
+  {
+    id: "inventory-claim-mapping",
+    kind: "console",
+    path: "/console/inventory/claim-mapping",
+    densities: false,
+    ready: (page) => main(page).locator("[data-connectors] table tbody tr[data-row]").first().waitFor(),
+    states: {
+      loading: { substitute: [[`${API}/identity/claim-mapping`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+      error: { substitute: [[`${API}/identity/claim-mapping`, outage("corr-e2e-claim-mapping")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+      partial: {
+        substitute: [
+          [`${API}/identity/claim-mapping`, { kind: "patch", patch: (b) => ({ ...(b as object), stale_directory_subjects: 3 }) }],
+          ["/api/v1/session/methods", outage("corr-e2e-methods")],
+        ],
+        ready: (page) => main(page).locator("[data-state=partial] [data-stale]").waitFor(),
+      },
+    },
+    mutations: [
+      { route: "claimMappingPut", method: "PUT", path: `${API}/identity/claim-mapping`, body: { document: "schema_version: 1\n" }, permission: "identity:write", control: (page) => main(page).locator("[data-edit]") },
+    ],
+  },
+  // A write refused for the three directory faults (0043), each at its field.
+  {
+    id: "inventory-claim-mapping-refused",
+    kind: "console",
+    path: "/console/inventory/claim-mapping?edit=1",
+    densities: false,
+    ready: (page) => main(page).locator("[data-mapping-version]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      const form = main(page).locator("form[data-mapping-form]");
+      if (!(await form.count())) return;
+      await form.locator("textarea[name=document]").fill(REFUSED_MAPPING);
+      await form.locator("button[type=submit]").click();
+      await form.locator("[data-rejections]").waitFor();
+    },
+  },
+  // Explain for a subject the directory provisioned: its groups' directory beside the mapping version.
+  {
+    id: "explain-directory",
+    kind: "console",
+    path: "/console/explain/sessions/sess-e2e-directory",
+    densities: false,
+    ready: (page) => main(page).locator("[data-mapping-directory]").waitFor(),
+    states: {},
+  },
+];
+
+/** The answer to a lock the server placed and could not deliver (M28). */
+export const UNDELIVERED: Substitute = {
+  kind: "answer",
+  status: 503,
+  body: {
+    code: "standing_denial_undelivered",
+    message: "substituted",
+    parameters: { subject: "lin", locked: true, stands: true },
+    correlation_id: "corr-e2e-undelivered",
+  },
+};
+
+/** A mapping with one of each directory fault (0043): a bad name, an empty list, a source listed twice. */
+export const REFUSED_MAPPING = `schema_version: 1
+groups:
+  claim: groups
+  map:
+    - external: Payments Engineering
+      directories: [Corp]
+      group: payments-eng
+    - external: Auditors
+      directories: []
+      group: auditors
+    - external: sre
+      directories: [corp, lab]
+      group: sre
+    - external: sre
+      directories: [lab]
+      group: sre-lab
+`;
+
 const INVENTORY: E2EScreen[] = [
   {
     id: "inventory-targets",
@@ -213,6 +507,7 @@ const INVENTORY: E2EScreen[] = [
     mutations: [
       { route: "targetPut", method: "PUT", path: `${API}/targets/db-01`, permission: "target:write", control: (page) => main(page).locator("[data-edit]") },
       { route: "targetDelete", method: "DELETE", path: `${API}/targets/db-01`, permission: "target:write", control: (page) => main(page).locator("[data-remove]") },
+      { route: "targetQuarantine", method: "POST", path: `${API}/targets/db-01/quarantine`, permission: "session:revoke", control: (page) => main(page).locator("[data-quarantine]") },
     ],
   },
   {
@@ -239,6 +534,10 @@ const INVENTORY: E2EScreen[] = [
     densities: true,
     ready: rows,
     states: listStates("subjects", "subjects"),
+    // A directory subject's id is Control's random choice (0055), so in id
+    // order the directory's rows change places from run to run: the list is
+    // captured sorted by name, which is the same every run.
+    prepare: byName,
     mutations: [
       { route: "subjectPut", method: "PUT", path: `${API}/subjects/lin`, permission: "identity:write", control: (page) => main(page).locator("[data-create]") },
       { route: "subjectDelete", method: "DELETE", path: `${API}/subjects/temp-intern`, permission: "identity:write", reveal: rowMenu("temp-intern"), control: dangerItem },
@@ -255,6 +554,7 @@ const INVENTORY: E2EScreen[] = [
     },
     states: detailStates("subjects/lin", ["grants", "subject-grants"], "[data-grants=outage]"),
     mutations: [
+      { route: "subjectLock", method: "POST", path: `${API}/subjects/lin/lock`, permission: "session:revoke", control: (page) => main(page).locator("[data-lock]") },
       { route: "subjectPut", method: "PUT", path: `${API}/subjects/lin`, permission: "identity:write", control: (page) => main(page).locator("[data-edit]") },
       { route: "subjectDelete", method: "DELETE", path: `${API}/subjects/lin`, permission: "identity:write", control: (page) => main(page).locator("[data-remove]") },
       {
@@ -920,5 +1220,6 @@ export const SCREENS: readonly E2EScreen[] = [
     },
   },
   ...INVENTORY,
+  ...STANDING,
   ...GALLERY,
 ];

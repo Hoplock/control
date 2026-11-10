@@ -301,6 +301,14 @@ jobs:
           # name, held across a reload. Signing in and out is in mutations.
           - check: account menu
             args: e2e/account.spec.ts --project checks
+          # Standing denials and the directory's subjects (0055): a lock, a
+          # quarantine and a deactivation as denies with their facts, the
+          # levers offered to session:revoke alone, an undelivered lock in
+          # force, a directory subject never edited, the claim mapping's
+          # scoped entries and its refusals at their fields, the tie on the
+          # sign-in page. Locking and quarantining for real is in mutations.
+          - check: standing denials
+            args: e2e/standing.spec.ts --project checks
     services:
       postgres:
         image: postgres:16

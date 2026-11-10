@@ -1,7 +1,9 @@
 # The server the console's browser checks run against (0050, DESIGN.md §10).
 # serve.sh writes @DSN@ from HOPLOCK_E2E_DSN. Plain HTTP on loopback only, so
 # the session cookie drops Secure; nothing else here differs from a
-# deployment an operator would run.
+# deployment an operator would run, except `e2e_directory`, which is the
+# fixture host's own section (host/main.go): the directory its identity sync
+# provisions through Control's sink at start (0055).
 tenant: default
 listeners:
   south: 127.0.0.1:18080
@@ -21,3 +23,42 @@ instance:
   display_name: Staging EU
 console:
   stripe: teal
+# The directory the fixture host's identity sync holds (0055). Two
+# directories feed the tenant, `corp` and `lab`, and both call somebody
+# `00u1`: two people, two subjects. Every subject id is Control's to allocate
+# (`dir-…`, random), so the browser checks find them by their directory id.
+#   dana       corp 00u1, active, in Payments Engineering
+#   dana-lab   lab 00u1, active, in lab's Payments Engineering
+#   eli        corp 00u7, deactivated (offboarded)
+#   sam        corp 00u9, deactivated, and locked by an operator (inventory.ts)
+#   00u4       corp, deactivated before the directory created it (record_missing)
+e2e_directory:
+  tenant: default
+  groups:
+    - { source: corp, external_id: g-payments, name: Payments Engineering }
+    - { source: lab, external_id: g-payments, name: Payments Engineering }
+  subjects:
+    - source: corp
+      external_id: 00u1
+      username: dana
+      display_name: Dana Directory
+      email: dana@corp.example
+      groups: [g-payments]
+      attributes: { department: payments }
+    - source: lab
+      external_id: 00u1
+      username: dana-lab
+      display_name: Dana Lab
+      groups: [g-payments]
+    - source: corp
+      external_id: 00u7
+      username: eli
+      display_name: Eli Offboarded
+      deactivate: offboarded
+    - source: corp
+      external_id: 00u9
+      username: sam
+      display_name: Sam Suspended
+      deactivate: security_review
+  deactivated_before_create:
+    - { source: corp, external_id: 00u4, reason_code: never_started }

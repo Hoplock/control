@@ -175,6 +175,7 @@ func walkSince(v reflect.Value, path []any, version int, found func(path []any, 
 	if !v.IsValid() || marshalsItself(v.Type()) {
 		return
 	}
+	//exhaustive:ignore a scalar holds no member, so only what can contain one is walked.
 	switch v.Kind() {
 	case reflect.Pointer, reflect.Interface:
 		if !v.IsNil() {

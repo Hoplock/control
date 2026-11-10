@@ -4,9 +4,9 @@
 # A later phase adds its screen's data here, never through a route the server
 # binds for tests (docs/PROTOCOL.md §3).
 #
-# Three operators sign in by break-glass, one per role the RBAC harness
-# asserts: admin, auditor (reads everything, changes nothing) and
-# fleet-admin. Their passwords are fixture data, not secrets.
+# Four operators sign in by break-glass, one per role the RBAC harness
+# asserts: admin, auditor (reads everything, changes nothing), fleet-admin
+# and grant-admin (0055). Their passwords are fixture data, not secrets.
 subjects:
   - id: ada
     display_name: Ada Admin
@@ -56,6 +56,20 @@ subjects:
     display_name: Temporary Intern
     source: local
     principals: [temp-intern]
+  # Standing denials (0055): a grant administrator signs in, the role the
+  # lock and the quarantine are offered to beside admin; and an identity the
+  # fixture locks and then removes, so the lock alone lists it
+  # (record_missing). The directory's subjects are the fixture host's
+  # (control.yaml, `e2e_directory`), never seeded here: only a sync makes one.
+  - id: gia
+    display_name: Gia Grants
+    source: local
+    principals: [gia]
+    password: e2e-grant-admin-password
+  - id: ex-contractor
+    display_name: Former Contractor
+    source: local
+    principals: [ex-contractor]
 
 # Explain and Audit (0051): the hosts the fixture's sessions reach. A label
 # lives on the target, which is what the blocked-command view joins on.

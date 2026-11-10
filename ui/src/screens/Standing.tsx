@@ -80,7 +80,7 @@ export function TargetAccess({ target }: { target: Target }) {
 export function DirectoryRef({ directory }: { directory?: DirectoryFacts }) {
   if (!directory) return null;
   return (
-    <span className={styles.chips} data-directory={`${directory.source}/${directory.external_id}`}>
+    <span className={styles.denials} data-directory={`${directory.source}/${directory.external_id}`}>
       <Chip data>{directory.source}</Chip>
       <Ident value={directory.external_id} />
     </span>
@@ -449,6 +449,7 @@ function LockDialog({
       }
       name={subject.id}
       action={t("inventory.lock.confirm")}
+      hint={t("inventory.lock.hint")}
       ready={!reasonProblem && !codeProblem}
       onConfirm={confirm}
       onClose={onClose}
@@ -560,6 +561,7 @@ export function TargetStanding({ target, canRevoke, onChanged }: { target: Targe
         }
         name={target.id}
         action={t("inventory.quarantine.confirm")}
+        hint={t("inventory.quarantine.hint")}
         onConfirm={quarantine}
         onClose={() => setDialog(null)}
       />

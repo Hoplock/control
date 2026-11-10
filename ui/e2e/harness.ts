@@ -14,11 +14,14 @@ export const NORTH = "http://127.0.0.1:18081";
 export const SOUTH = "http://127.0.0.1:18080";
 export const TENANT = "default";
 
-export type Role = "admin" | "auditor" | "fleet-admin";
+export type Role = "admin" | "auditor" | "fleet-admin" | "grant-admin";
 export const OPERATORS: Record<Role, { login: string; password: string }> = {
   admin: { login: "ada", password: "e2e-admin-password" },
   auditor: { login: "avery", password: "e2e-auditor-password" },
   "fleet-admin": { login: "fenn", password: "e2e-fleet-password" },
+  // A holder of session:revoke who is not an administrator (0055): the lock
+  // and the quarantine are offered to them, and edits are not.
+  "grant-admin": { login: "gia", password: "e2e-grant-admin-password" },
 };
 
 /** Where global setup leaves each role's signed-in browser state. */
@@ -154,7 +157,8 @@ export async function fitContent(page: Page): Promise<void> {
  * wider than one read at 6 PM and moves a table's columns: every <time> is
  * given one fixed instant (it stays masked). And the identifiers a run mints
  * and no mask covers — a sign-in's session principal (`sess-` and 16
- * characters), a decision or grant id inside a sentence or a chip, the
+ * characters), a decision or grant id inside a sentence or a chip, a
+ * directory subject's id (`dir-` and 26, Control's random choice, 0055), the
  * build's commit — become placeholders of their own length, and an instant
  * written out as text becomes one fixed instant. The fixture's own ids are
  * left alone.
@@ -163,6 +167,7 @@ export async function steady(page: Page): Promise<void> {
   await page.evaluate(() => {
     for (const t of Array.from(document.querySelectorAll("time"))) t.textContent = "Jan 1, 2026, 12:00:00 PM";
     const minted = /\b(sess-|d_|g_)([A-Za-z0-9_-]{16})\b/g;
+    const directory = /\bdir-[a-z2-7]{26}\b/g;
     // The build's own commit and commit time, which Go stamps into the
     // version the Deployment view shows: every push changes them.
     const commit = /\b[0-9a-f]{40}\b/g;
@@ -172,6 +177,7 @@ export async function steady(page: Page): Promise<void> {
       const v = n.nodeValue ?? "";
       const w = v
         .replace(minted, (_, prefix: string, rest: string) => prefix + "x".repeat(rest.length))
+        .replace(directory, "dir-" + "x".repeat(26))
         .replace(commit, "x".repeat(40))
         .replace(instant, "2026-01-01T12:00:00Z");
       if (w !== v) n.nodeValue = w;
