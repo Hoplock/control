@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
 )
@@ -117,6 +118,60 @@ func TestAMappingWithNoDirectoriesReadsAsBefore(t *testing.T) {
 	}
 	if body["require_directories"] != false || body["stale_directory_subjects"] != float64(0) {
 		t.Errorf("require_directories %v, stale %v", body["require_directories"], body["stale_directory_subjects"])
+	}
+}
+
+// The read names each group entry in the document's order with the
+// directories it is scoped to (version 5), so the console says which entry
+// serves which directory without parsing the document. An unscoped entry has
+// none. A client of 4 is never served a thinned answer: with entries it is
+// told the answer cannot be expressed, and with none it reads as before.
+func TestTheClaimMappingReadNamesEachGroupEntry(t *testing.T) {
+	f := newServer(t)
+	token := f.token(t, "tenant-a", map[store.Tenant]identity.RoleSet{"tenant-a": {identity.RoleAuditor}})
+	const path = "/api/v1/tenants/tenant-a/identity/claim-mapping"
+
+	before := versioned(t, f, token, path, "4")
+	var empty map[string]any
+	decodeInto(t, before, &empty)
+	if before.StatusCode != http.StatusOK {
+		t.Fatalf("a mapping with no group entries, declared 4: %d", before.StatusCode)
+	}
+	if _, ok := empty["group_map"]; ok {
+		t.Errorf("group_map %v on a mapping that maps no group; want it absent", empty["group_map"])
+	}
+
+	if _, err := f.federation.PutMapping(t.Context(), "tenant-a", []byte(scopedDocument), "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.do(t, "GET", path, token, nil)
+	var body struct {
+		GroupMap []struct {
+			External    string   `json:"external"`
+			Group       string   `json:"group"`
+			Directories []string `json:"directories"`
+		} `json:"group_map"`
+	}
+	decodeInto(t, resp, &body)
+	type entry struct{ external, group, directories string }
+	var got []entry
+	for _, e := range body.GroupMap {
+		got = append(got, entry{e.External, e.Group, strings.Join(e.Directories, ",")})
+	}
+	want := []entry{
+		{"BigCorporationAdmins", "corp-admins", "jp,de,fr"},
+		{"admins", "de-admins", "de"},
+		{"engineering", "engineering", ""},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("group_map %+v, want %+v (document order; an unscoped entry lists none)", got, want)
+	}
+
+	old := versioned(t, f, token, path, "4")
+	var e north.Error
+	decodeInto(t, old, &e)
+	if old.StatusCode != http.StatusInternalServerError || e.Code != north.CodeAPIVersionUnexpressible || e.CorrelationID == "" {
+		t.Errorf("group entries declared 4: %d %+v; want 500 api_version_unexpressible", old.StatusCode, e)
 	}
 }
 
