@@ -14,8 +14,15 @@
 // is identity:write — admin's alone (§6) — offered only to a role holding it
 // and refused by the API to anyone else (M2). A role is the product's code, so
 // its description is the console's; a group name, a subject id and a claim are
-// data, mono and untranslated (DESIGN.md §9). A subject's lock, a directory's
-// facts and a deactivation are 0055's.
+// data, mono and untranslated (DESIGN.md §9).
+//
+// A subject's lock and the directory's deactivation (M28, 0055) are shown in
+// the list and the detail as denies, and the lock is placed and lifted by a
+// holder of session:revoke (Standing.tsx). A subject a registered identity
+// sync provisions shows whose it is, and is never edited or removed here: the
+// directory is its only writer (0040), so neither is offered, and the API's
+// refusal reads "managed by your directory". The ids a denial holds with no
+// subject row are listed beneath the identities (`?record=missing`).
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import { offered } from "../api/permit";
@@ -51,6 +58,7 @@ import {
   useSetQuery,
 } from "./InventoryParts";
 import { bindingKey, grantStatus, holderOf, holderPath, labelsText, parseLabels, parseList, roleKey } from "./inventoryModel";
+import { DirectoryPanel, DirectoryRef, SubjectAccess, SubjectStanding } from "./Standing";
 import styles from "./Inventory.module.css";
 
 export const subjectPath = (id: string) => `inventory/subjects/${encodeURIComponent(id)}`;
@@ -97,7 +105,12 @@ export function SubjectsScreen() {
       id: "id",
       header: t("inventory.col.id"),
       sortValue: (s) => s.id,
-      cell: (s) => <IdentLink to={subjectPath(s.id)} value={s.id} label={t("inventory.subjects.open", { id: s.id })} />,
+      // A directory subject's id is Control's, allocated at random (0040).
+      cell: (s) => (
+        <span data-volatile={s.directory_managed ? "" : undefined}>
+          <IdentLink to={subjectPath(s.id)} value={s.id} label={t("inventory.subjects.open", { id: s.id })} />
+        </span>
+      ),
     },
     {
       id: "name",
@@ -109,7 +122,19 @@ export function SubjectsScreen() {
         </span>
       ),
     },
+    {
+      id: "access",
+      header: t("inventory.col.access"),
+      sortValue: (s) => (s.locked ? 0 : 2) + (s.deactivated ? 0 : 1),
+      cell: (s) => <SubjectAccess subject={s} />,
+    },
     { id: "source", header: t("inventory.col.source"), sortValue: (s) => s.source, cell: (s) => <Ident value={s.source} /> },
+    {
+      id: "directory",
+      header: t("inventory.col.directory"),
+      sortValue: (s) => (s.directory ? `${s.directory.source}/${s.directory.external_id}` : ""),
+      cell: (s) => <DirectoryRef directory={s.directory} />,
+    },
     { id: "groups", header: t("inventory.col.groups"), cell: (s) => <IdentChips items={s.groups} to={groupPath} none={t("inventory.none")} /> },
     {
       id: "breakGlass",
@@ -187,14 +212,18 @@ export function SubjectsScreen() {
               rowActions={(s) => [
                 { id: "open", label: t("inventory.action.open"), onSelect: () => navigate(subjectPath(s.id)) },
                 { id: "audit", label: t("inventory.action.audit"), onSelect: () => navigate("audit/records", { query: { subject: s.id } }) },
-                ...(canWrite ? [{ id: "edit", label: t("inventory.action.edit"), onSelect: () => navigate(subjectPath(s.id), { query: { edit: "1" } }) }] : []),
-                ...(canDelete ? [{ id: "remove", label: t("inventory.action.remove"), danger: true, onSelect: () => setRemoving(s) }] : []),
+                // The directory is the only writer of what it provisions (0040).
+                ...(canWrite && !s.directory_managed
+                  ? [{ id: "edit", label: t("inventory.action.edit"), onSelect: () => navigate(subjectPath(s.id), { query: { edit: "1" } }) }]
+                  : []),
+                ...(canDelete && !s.directory_managed ? [{ id: "remove", label: t("inventory.action.remove"), danger: true, onSelect: () => setRemoving(s) }] : []),
               ]}
             />
             <Pagination page={page} shown={data.subjects.length} truncated={data.truncated} next={data.next} onPage={setPage} />
           </>
         )}
       </ScreenFrame>
+      {group ? null : <RecordMissing limit={limit} />}
       <RemoveSubject subject={removing} onClose={() => setRemoving(null)} onConfirm={remove} />
     </div>
   );
@@ -220,6 +249,54 @@ function RemoveSubject({ subject, onClose, onConfirm }: { subject: Subject | nul
   );
 }
 
+/**
+ * The ids a lock or the directory's deactivation holds with no subject row
+ * (M28): one removed while locked, or one the directory deactivated before it
+ * created it. They are listed so a lock can be found and lifted without
+ * knowing its id; the section is absent while there are none.
+ */
+function RecordMissing({ limit }: { limit: number }) {
+  const { t } = useI18n();
+  const { load, page, setPage } = usePagedList<SubjectPage>("subjects", [["record", "missing"]], limit);
+  if (load.state === "ok" && load.data.subjects.length === 0 && page.trail.length === 0) return null;
+  if (load.state === "loading") return null;
+  return (
+    <section className={styles.panel} aria-labelledby="subjects-record-missing" data-record-missing={load.state}>
+      <h2 id="subjects-record-missing" className={styles.panelTitle}>
+        {t("inventory.subjects.missingRecords.title")}
+      </h2>
+      <p className={styles.quiet}>{t("inventory.subjects.missingRecords.lede")}</p>
+      {load.state !== "ok" ? (
+        <ErrorMessage error={load.error} kind={load.state} />
+      ) : (
+        <>
+          <DataTable
+            caption={t("inventory.subjects.missingRecords.caption")}
+            columns={[
+              {
+                id: "id",
+                header: t("inventory.col.id"),
+                cell: (s) => (
+                  <span data-volatile={s.directory_managed ? "" : undefined}>
+                    <IdentLink to={subjectPath(s.id)} value={s.id} label={t("inventory.subjects.open", { id: s.id })} />
+                  </span>
+                ),
+              },
+              { id: "access", header: t("inventory.col.access"), cell: (s) => <SubjectAccess subject={s} /> },
+              { id: "directory", header: t("inventory.col.directory"), cell: (s) => <DirectoryRef directory={s.directory} /> },
+            ]}
+            rows={load.data.subjects}
+            rowKey={(s) => s.id}
+            rowLabel={(s) => s.id}
+            partialNote={load.data.truncated ? t("inventory.onePage") : undefined}
+          />
+          <Pagination page={page} shown={load.data.subjects.length} truncated={load.data.truncated} next={load.data.next} onPage={setPage} />
+        </>
+      )}
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // /console/inventory/subjects/<id>
 // ---------------------------------------------------------------------------
@@ -234,12 +311,16 @@ export function SubjectScreen({ id }: { id: string }) {
   const canWrite = offered("subjectPut", permissions);
   const canDelete = offered("subjectDelete", permissions);
   const canGrants = offered("grants", permissions);
-  const editing = canWrite && location.search.get("edit") === "1";
+  const canRevoke = offered("subjectLock", permissions);
   const [removing, setRemoving] = useState<Subject | null>(null);
   const [load, refresh] = useLoad<Subject | null>(tenant ? `subject|${tenant}|${id}` : null, async (signal) =>
     orNone(await api.call<Subject>("subject", { params: { tenant: tenant as string, subject: id }, signal })),
   );
   const found = load.state === "ok" ? load.data : null;
+  // The directory writes what it provisions, and an id with no row has
+  // nothing to edit or remove: neither is offered for either (0040, M28).
+  const writable = found !== null && !found.directory_managed && !found.record_missing;
+  const editing = canWrite && writable && location.search.get("edit") === "1";
   const bindings = usePagedList<RoleBindingPage>("roleBindings", [["subject", id]], 100, Boolean(found));
   const [grants] = useLoad<GrantPage>(tenant && found && canGrants ? `subject-grants|${tenant}|${id}` : null, (signal) =>
     api.call("grants", { params: { tenant: tenant as string }, query: { subject: id, limit: "10" }, signal }),
@@ -263,19 +344,27 @@ export function SubjectScreen({ id }: { id: string }) {
         breadcrumb={<Crumbs view={t("inventory.view.subjects")} to="inventory/subjects" here={<Ident value={id} />} />}
         title={<Ident value={id} title />}
         lede={found?.display_name ? <span translate="no">{found.display_name}</span> : t("inventory.subjects.detail.lede")}
-        status={found?.break_glass ? <Badge tone="info">{t("inventory.subjects.breakGlass")}</Badge> : null}
+        status={
+          found ? (
+            <span className={styles.denials}>
+              <SubjectAccess subject={found} />
+              {found.directory_managed ? <Badge>{t("inventory.directory.managed")}</Badge> : null}
+              {found.break_glass ? <Badge tone="info">{t("inventory.subjects.breakGlass")}</Badge> : null}
+            </span>
+          ) : null
+        }
         actions={
           found ? (
             <>
               <ButtonLink to="audit/records" query={{ subject: id }} data-audit-link="">
                 {t("inventory.action.audit")}
               </ButtonLink>
-              {canWrite && !editing ? (
+              {canWrite && writable && !editing ? (
                 <Button onClick={() => setQuery({ edit: "1" })} data-edit="">
                   {t("inventory.action.edit")}
                 </Button>
               ) : null}
-              {canDelete ? (
+              {canDelete && writable ? (
                 <Button variant="danger" onClick={() => setRemoving(found)} data-remove="">
                   {t("inventory.action.remove")}
                 </Button>
@@ -352,6 +441,8 @@ export function SubjectScreen({ id }: { id: string }) {
                   </dl>
                 </section>
               )}
+              <SubjectStanding subject={subject} canRevoke={canRevoke} onChanged={refresh} />
+              <DirectoryPanel subject={subject} />
               <BindingsPanel
                 title={t("inventory.subjects.roles")}
                 lede={t("inventory.subjects.roles.lede")}

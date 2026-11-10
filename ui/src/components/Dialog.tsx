@@ -143,6 +143,7 @@ export function ConfirmDialog({
   name,
   action,
   hint,
+  ready = true,
   onConfirm,
   onClose,
 }: {
@@ -155,6 +156,8 @@ export function ConfirmDialog({
   action: string;
   /** What the field says beneath it; by default, that the action cannot be undone. */
   hint?: ReactNode;
+  /** False while a field in the body is refused where it stands: the action cannot be sent yet. */
+  ready?: boolean;
   onConfirm(): Promise<ConfirmFailure | null>;
   onClose(): void;
 }) {
@@ -172,7 +175,7 @@ export function ConfirmDialog({
   const matches = typed === name;
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!matches || busy) return;
+    if (!matches || !ready || busy) return;
     setBusy(true);
     setFailure(null);
     const result = await onConfirm();
@@ -200,7 +203,7 @@ export function ConfirmDialog({
         {failure ? <ErrorMessage error={failure.error} kind={failure.kind} /> : null}
         <div className={styles.actions}>
           <Button onClick={onClose}>{t("common.cancel")}</Button>
-          <Button type="submit" variant="danger" disabled={!matches} loading={busy}>
+          <Button type="submit" variant="danger" disabled={!matches || !ready} loading={busy}>
             {action}
           </Button>
         </div>

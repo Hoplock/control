@@ -121,3 +121,67 @@
   font: var(--t-body);
   color: var(--text-primary);
 }
+/* Standing denials (0055): each denial a block of its own inside its panel,
+   headed by its status, and the text a lock's holder will see set apart as
+   a quotation of what their terminal prints. */
+.denials {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+}
+.denial {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding-block-start: var(--sp-12);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+}
+.denialTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.preview {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+}
+.previewLabel {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.previewText {
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  font: var(--t-mono);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+/* The claim mapping's editor (0055): a document, so as wide as the column
+   rather than a form's width, and a refused write's faults listed field by
+   field beneath it. */
+.editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+}
+.rejections {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rejections li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-4) var(--sp-12);
+}

@@ -8,6 +8,7 @@
 import type { ReactNode } from "react";
 import type { MessageKey } from "../i18n/catalogue";
 import { AuditRecordsScreen, BlockedCommandsScreen } from "./Audit";
+import { ClaimMappingScreen } from "./ClaimMapping";
 import { DeploymentScreen } from "./Deployment";
 import { ExplainScreen } from "./Explain";
 import { FleetScreen } from "./Fleet";
@@ -151,6 +152,14 @@ export const SCREENS: readonly Screen[] = [
     density: "comfortable",
     permission: "identity:read",
     render: (p) => <RoleScreen key={p.role} role={p.role as string} />,
+  },
+  // The claim mapping (0055): one view of the inventory, beside its lists.
+  {
+    id: "inventory-claim-mapping",
+    path: "inventory/claim-mapping",
+    density: "comfortable",
+    permission: "identity:read",
+    render: () => <ClaimMappingScreen />,
   },
   {
     id: "inventory-grants",

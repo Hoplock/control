@@ -55,10 +55,18 @@ export const ROUTES = {
   target: { method: "GET", pattern: "/api/v1/tenants/{tenant}/targets/{target}", permission: "fleet:read" },
   targetPut: { method: "PUT", pattern: "/api/v1/tenants/{tenant}/targets/{target}", permission: "target:write" },
   targetDelete: { method: "DELETE", pattern: "/api/v1/tenants/{tenant}/targets/{target}", permission: "target:write" },
+  // Standing denials (0055, M28): the levers whose holders can already end every session.
+  targetQuarantine: { method: "POST", pattern: "/api/v1/tenants/{tenant}/targets/{target}/quarantine", permission: "session:revoke" },
+  targetRelease: { method: "POST", pattern: "/api/v1/tenants/{tenant}/targets/{target}/release", permission: "session:revoke" },
   subjects: { method: "GET", pattern: "/api/v1/tenants/{tenant}/subjects", permission: "identity:read" },
   subject: { method: "GET", pattern: "/api/v1/tenants/{tenant}/subjects/{subject}", permission: "identity:read" },
   subjectPut: { method: "PUT", pattern: "/api/v1/tenants/{tenant}/subjects/{subject}", permission: "identity:write" },
   subjectDelete: { method: "DELETE", pattern: "/api/v1/tenants/{tenant}/subjects/{subject}", permission: "identity:write" },
+  subjectLock: { method: "POST", pattern: "/api/v1/tenants/{tenant}/subjects/{subject}/lock", permission: "session:revoke" },
+  subjectUnlock: { method: "POST", pattern: "/api/v1/tenants/{tenant}/subjects/{subject}/unlock", permission: "session:revoke" },
+  // The claim mapping (0011, 0043; shown from 0055).
+  claimMapping: { method: "GET", pattern: "/api/v1/tenants/{tenant}/identity/claim-mapping", permission: "identity:read" },
+  claimMappingPut: { method: "PUT", pattern: "/api/v1/tenants/{tenant}/identity/claim-mapping", permission: "identity:write" },
   groups: { method: "GET", pattern: "/api/v1/tenants/{tenant}/groups", permission: "identity:read" },
   group: { method: "GET", pattern: "/api/v1/tenants/{tenant}/groups/{group}", permission: "identity:read" },
   roleBindings: { method: "GET", pattern: "/api/v1/tenants/{tenant}/role-bindings", permission: "identity:read" },

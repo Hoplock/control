@@ -207,6 +207,8 @@ export interface MappingFacts {
   version: number;
   active: number;
   changed: boolean;
+  /** The directory the subject's groups came from, when a directory provisioned it (0043). */
+  directory_source?: string;
 }
 
 /** decision.Story (0019): one decision, explained whole (PLAN M4, §5.6). */
@@ -517,7 +519,40 @@ export interface Simulation {
 // internal/httpapi/north/inventory.go and grants.go answer them.
 // ---------------------------------------------------------------------------
 
-/** targetView. `quarantined` and `quarantine` are 0055's to show. */
+/** actorView: who placed a standing denial (M28). */
+export interface StandingActor {
+  /** The person, when one acted; absent for a machine token or an inbound action. */
+  subject?: string;
+  /** The credential: a session, a token, or `action-handler:<provider>`. */
+  principal_id: string;
+  break_glass: boolean;
+}
+
+/** lockView (0039): a subject lock as an operator reads it. */
+export interface Lock {
+  subject: string;
+  locked_at: string;
+  locked_by: StandingActor;
+  reason_code?: string;
+  /** What the holder was shown as their sessions ended, verbatim. */
+  reason?: string;
+  external_ref?: string;
+  /** The inbound action that placed it; absent for an operator's. */
+  action_id?: string;
+}
+
+/** quarantineView (0039). */
+export interface Quarantine {
+  target: string;
+  quarantined_at: string;
+  quarantined_by: StandingActor;
+  reason_code?: string;
+  reason?: string;
+  external_ref?: string;
+  action_id?: string;
+}
+
+/** targetView. */
 export interface Target {
   id: string;
   hostname: string;
@@ -527,6 +562,24 @@ export interface Target {
   created_at?: string;
   updated_at?: string;
   quarantined: boolean;
+  quarantine?: Quarantine;
+}
+
+/** POST …/targets/{target}/quarantine */
+export interface QuarantineAnswer {
+  target: string;
+  quarantined: boolean;
+  /** False when a quarantine already stood: its first facts are the ones shown. */
+  placed: boolean;
+  quarantine: Quarantine;
+}
+
+/** POST …/targets/{target}/release */
+export interface ReleaseAnswer {
+  target: string;
+  /** False when none stood, and nothing changed. */
+  released: boolean;
+  quarantine?: Quarantine;
 }
 
 /** GET …/targets */
@@ -542,9 +595,26 @@ export interface TargetBody {
   credential_method: string;
 }
 
-/** subjectView. The lock, the directory and the deactivation are 0055's to show. */
+/** directoryView (0040, 0042): whose a directory-managed subject is. */
+export interface DirectoryFacts {
+  /** The identity sync's provider. */
+  provider: string;
+  /** The directory the person comes from: not the subject's top-level `source`. */
+  source: string;
+  /** That directory's id for the person: one id is two people across two directories. */
+  external_id: string;
+}
+
+/** deactivationView (0040): the directory's standing deactivation. */
+export interface Deactivation {
+  deactivated_at: string;
+  reason_code?: string;
+}
+
+/** subjectView. */
 export interface Subject {
   id: string;
+  /** What asserted it: a connector, `local`, or for a directory subject the sync's provider. */
   source: string;
   display_name: string;
   principals: string[];
@@ -553,9 +623,68 @@ export interface Subject {
   break_glass: boolean;
   mapping_version?: number;
   locked: boolean;
+  lock?: Lock;
   directory_managed: boolean;
+  directory?: DirectoryFacts;
   deactivated: boolean;
+  deactivation?: Deactivation;
+  /** A lock or a deactivation stands on an id with no subject row (M28). */
   record_missing?: boolean;
+}
+
+/** POST …/subjects/{subject}/lock */
+export interface LockAnswer {
+  subject: string;
+  locked: boolean;
+  /** False when a lock already stood: its first facts are the ones shown, and its kill was sent again. */
+  placed: boolean;
+  lock: Lock;
+}
+
+/** POST …/subjects/{subject}/unlock */
+export interface UnlockAnswer {
+  subject: string;
+  /** False when none stood, and nothing changed. */
+  unlocked: boolean;
+  lock?: Lock;
+}
+
+/** groupEntryView (north-bound version 5): one `groups.map` entry. */
+export interface GroupEntry {
+  external: string;
+  group: string;
+  /** The directory sources it is scoped to; absent on an entry that serves logins and every other directory. */
+  directories?: string[];
+}
+
+/** claimMappingResponse (0011, 0043). */
+export interface ClaimMapping {
+  tenant: string;
+  version: number;
+  digest: string;
+  attributes: string[];
+  groups: string[];
+  directories: string[];
+  require_directories: boolean;
+  stale_directory_subjects: number;
+  /** Absent when the mapping maps no group. */
+  group_map?: GroupEntry[];
+  description?: string;
+  document: string;
+}
+
+/** PUT …/identity/claim-mapping */
+export interface ClaimMappingWritten {
+  version: number;
+  digest: string;
+  previous: number;
+}
+
+/** mappingRejectionView: one of a refused mapping's rejections, in `parameters.rejections`. */
+export interface MappingRejection {
+  code: string;
+  field?: string;
+  message?: string;
 }
 
 /** GET …/subjects */

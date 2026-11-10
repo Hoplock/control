@@ -435,6 +435,13 @@ function StoryPanel({ story: s, stories }: { story: Story; stories: readonly Sto
               ? t("explain.mapping.changed", { version: s.mapping.version, active: s.mapping.active })
               : t("explain.mapping.current", { version: s.mapping.version })}
         </p>
+        {s.mapping.directory_source ? (
+          // A directory provisioned the subject (0043): its groups are that
+          // directory's, through the entries scoped to it.
+          <p className={styles.sentence} data-mapping-directory="">
+            {t("explain.mapping.directory", { source: `⁨${s.mapping.directory_source}⁩` })}
+          </p>
+        ) : null}
       </Section>
 
       <Section id="explain-grant" title={t("explain.section.grant")}>

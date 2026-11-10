@@ -137,7 +137,7 @@ export function SignIn({ api, onSignedIn }: { api: ApiClient; onSignedIn(): void
             ) : (
               <ul className={styles.methods}>
                 {methods.data.methods.map((m) => (
-                  <li key={m.name}>
+                  <li key={m.name} data-connector={m.name}>
                     {m.kind === "oidc" ? (
                       <button type="button" className={styles.primary} disabled={busy} onClick={() => start(m.name)}>
                         {t("signIn.method.continue", { name: m.display_name || m.name })}
@@ -145,6 +145,16 @@ export function SignIn({ api, onSignedIn }: { api: ApiClient; onSignedIn(): void
                     ) : (
                       <p className={styles.help}>{t("signIn.method.saml", { name: m.display_name || m.name })}</p>
                     )}
+                    {m.directory_claim ? (
+                      // A tied connector reaches only the people a directory
+                      // provisioned, and creates nobody (0040, 0042).
+                      <p className={styles.help} data-directory-tie="">
+                        {t("signIn.method.directory", {
+                          claim: `⁨${m.directory_claim}⁩`,
+                          source: `⁨${m.directory_source ?? ""}⁩`,
+                        })}
+                      </p>
+                    ) : null}
                   </li>
                 ))}
               </ul>
