@@ -19,6 +19,7 @@ import (
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
+	"github.com/hoplock/control/internal/store/storetest"
 )
 
 // The role bindings and the outstanding certificates, paged (0034).
@@ -33,6 +34,54 @@ func seedBindings(t *testing.T, f *serverFixture, tenant store.Tenant, bindings 
 			t.Fatalf("bind %+v in %s: %v", b, tenant, err)
 		}
 	}
+}
+
+// seedHolderBindings writes bindings that interleave the filtered views
+// (0054): two roles, each held by subjects and groups, the subject and the
+// group named `ops` among them.
+func seedHolderBindings(t *testing.T, f *serverFixture) {
+	t.Helper()
+	seedBindings(t, f, "tenant-a",
+		store.RoleBinding{SubjectID: "ops", Role: "auditor"},
+		store.RoleBinding{SubjectID: "ops", Role: "fleet-admin"},
+		store.RoleBinding{SubjectID: "ops", Role: "policy-author"},
+		store.RoleBinding{SubjectID: "zed", Role: "auditor"},
+		store.RoleBinding{GroupID: "ops", Role: "auditor"},
+		store.RoleBinding{GroupID: "ops", Role: "grant-admin"},
+		store.RoleBinding{GroupID: "sre", Role: "admin"},
+		store.RoleBinding{GroupID: "sre", Role: "auditor"})
+}
+
+// countBindings counts the tenant's bindings a query keeps, read whole.
+func countBindings(t *testing.T, f *serverFixture, q store.RoleBindingQuery) int {
+	t.Helper()
+	got, err := f.st.RoleBindings().Page(t.Context(), "tenant-a", q, store.Page{Limit: store.MaxPageLimit})
+	if err != nil || got.More {
+		t.Fatalf("count role bindings %+v: %v (more=%t)", q, err, got.More)
+	}
+	return len(got.Rows)
+}
+
+// seedMembers writes subjects with these groups.
+func seedMembers(t *testing.T, f *serverFixture, tenant store.Tenant, groups map[string][]string) {
+	t.Helper()
+	for id, gs := range groups {
+		sub := storetest.Subject(id)
+		sub.Groups = gs
+		if err := f.st.Subjects().Upsert(t.Context(), tenant, sub); err != nil {
+			t.Fatalf("seed subject %s: %v", id, err)
+		}
+	}
+}
+
+// countSubjects counts the tenant's subjects a query keeps, read whole.
+func countSubjects(t *testing.T, f *serverFixture, q store.SubjectQuery) int {
+	t.Helper()
+	got, err := f.st.Subjects().Page(t.Context(), "tenant-a", q, store.Page{Limit: store.MaxPageLimit})
+	if err != nil || got.More {
+		t.Fatalf("count subjects %+v: %v (more=%t)", q, err, got.More)
+	}
+	return len(got.Rows)
 }
 
 // issueCertificates has the fixture's CA issue n certificates in tenant, to

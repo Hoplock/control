@@ -117,7 +117,7 @@ func TestNoRepositoryReachesAnotherTenantsRows(t *testing.T) {
 			return len(got.Rows), err
 		},
 		"Subjects.Page": func() (int, error) {
-			got, err := st.Subjects().Page(ctx, tenantA, store.Page{Limit: store.MaxPageLimit})
+			got, err := st.Subjects().Page(ctx, tenantA, store.SubjectQuery{}, store.Page{Limit: store.MaxPageLimit})
 			return len(got.Rows) - 1, err // A's own subject is expected
 		},
 		"Proxies.ListByZone": func() (int, error) {

@@ -248,8 +248,10 @@ in a column. Uppercase is for `--t-caption` only, never for headings.
   well (`--shell-nav-width`, `--shell-topbar-height`, `--control-height`,
   `--glyph-size`, `--border-width`, `--icon-size`, and the widths of a
   dialog, a drawer, a menu, a search field and the rail a timeline stands in
-  beside what it explains (`--rail-width`), a table's and a list's greatest
-  height), so no component carries a magic number.
+  beside what it explains (`--rail-width`), a form's greatest width and the
+  narrowest a field shares a row at (`--form-max`, `--form-column-min`), a
+  table's and a list's greatest height), so no component carries a magic
+  number.
 - **Motion** — `--m-fast 120ms` (hover, focus, checkbox), `--m-base 180ms`
   (dropdown, popover, tab), `--m-slow 240ms` (dialog, drawer, page transition),
   all `cubic-bezier(0.2, 0, 0, 1)`. Nothing animates longer than 240ms. A
@@ -365,7 +367,7 @@ One component renders all of it, so a status looks identical everywhere:
 | denied / revoked / expired / invalid / blocking | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired`, `Invalid`, `Blocking` |
 | degraded / stale / expiring / rejected / warning | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected`, `Warning` |
 | unreachable / outage / fetch failed / unserved | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved` |
-| pending / in progress / pending restart / advice | `--s-info` | half-filled circle | `Pending`, `In progress`, `Pending restart`, `Advice` |
+| pending / scheduled / in progress / pending restart / advice | `--s-info` | half-filled circle | `Pending`, `Scheduled`, `In progress`, `Pending restart`, `Advice` |
 | unknown / not reported / left / superseded | `--n-400` | hollow circle, dotted | `Not reported`, `Left`, `Superseded` |
 
 The component is `Status` in `ui/src/components/Status.tsx`, and every row
@@ -394,6 +396,11 @@ stops activation until it is accepted by its id; **`Advice`** stops nothing.
 A severity outside the three, which the server answers as an outage, never
 reads as fine: it is `Not reported`. A bundle that compiles is **`Valid`**.
 
+A grant reads as its window (M10): **`Active`** while it is live,
+**`Scheduled`** before its window opens — information, never a fault — and
+**`Expired`** or **`Revoked`** once it backs no decision, both deny-class. A
+state the server names that the console does not know is `Not reported`.
+
 A rolling upgrade reads as **`Pending` / in progress**, never as a fault (M19).
 `Not reported` is its own state and never renders as healthy — PLAN §4 is
 explicit that stale, undated and absent are one case, and the console says so
@@ -413,8 +420,11 @@ console link set as a primary or secondary button, for going somewhere rather
 than doing something, never danger), icon button (always
 with an accessible name), input, textarea, select, combobox, checkbox, radio,
 switch, tabs, tooltip, dropdown menu, dialog, drawer, toast, badge, status pill,
-chip/label, avatar, breadcrumb, pagination, skeleton, spinner (overlay only),
-code block, source view, diff view, empty state, error state, keyboard hint.
+chip/label, avatar, breadcrumb, view links (a screen's views, each its own
+deep link, the current one `aria-current="page"`), identifier (mono, LTR,
+never translated; at the page title's size for a page about one object named
+by its id), pagination, skeleton, spinner (overlay only), code block, source
+view, diff view, empty state, error state, keyboard hint.
 
 **Composites** — data table (sticky header, pinned first column, column sort,
 column visibility, row selection, per-row actions, saved views), filter bar
@@ -428,7 +438,8 @@ title).
 matching the final layout so nothing shifts), empty (what would be here, why it
 is not, the one action), error (what failed, the correlation id, retry — and it
 says *outage*, never *denied*, per M11), and partial (some data, a named gap —
-a fleet where one node is unreachable is not an error page).
+a fleet where one node is unreachable is not an error page; for a list that
+is nothing else, the rest of an answer the server cut, said beside its rows).
 
 **The timeline** (`Timeline.tsx`) is an ordered list, oldest first, along one
 rule: each event an instant (`<time>`, UTC on hover), a marker — the status

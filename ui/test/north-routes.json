@@ -273,6 +273,18 @@
     },
     {
       "method": "GET",
+      "pattern": "/api/v1/tenants/{tenant}/groups",
+      "access": "tenant",
+      "permission": "identity:read"
+    },
+    {
+      "method": "GET",
+      "pattern": "/api/v1/tenants/{tenant}/groups/{group}",
+      "access": "tenant",
+      "permission": "identity:read"
+    },
+    {
+      "method": "GET",
       "pattern": "/api/v1/tenants/{tenant}/identity/claim-mapping",
       "access": "tenant",
       "permission": "identity:read"

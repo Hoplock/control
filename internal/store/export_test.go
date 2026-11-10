@@ -126,7 +126,7 @@ func DeleteAuditRecord(ctx context.Context, s *Store, tenant Tenant, recordID st
 // that asks Postgres how it would plan them. They are compiled into the test
 // binary alone.
 func RoleBindingPageSQL(p Page) string {
-	sql, _, err := roleBindingPageSQL("test.RoleBindingPageSQL", "tenant", p)
+	sql, _, err := roleBindingPageSQL("test.RoleBindingPageSQL", "tenant", RoleBindingQuery{}, p)
 	if err != nil {
 		panic(err)
 	}

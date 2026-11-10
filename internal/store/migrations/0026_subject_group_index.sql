@@ -1,0 +1,40 @@
+-- 0026 — a group's members, found by the group (prompt 0054; PLAN M26, M7,
+-- M12, M18).
+--
+-- Scope: one index. No column, no table, no row rewritten.
+--
+-- ---------------------------------------------------------------------------
+-- WHY
+-- ---------------------------------------------------------------------------
+--
+-- `GET …/subjects?group=<name>` answers who is in a group: the console's
+-- group detail (0054). Membership is the `groups` array on the subject row,
+-- the decision path's one read (M5), so a member is a subject whose array
+-- contains the name. Without an index a page of that query walks the
+-- tenant's subjects in id order until it has filled, which for a group of
+-- three in a tenant of a hundred thousand is the whole tenant on every page.
+--
+-- A GIN index on the array serves containment (`groups @> ARRAY[$n]`): the
+-- page reads the group's members, sorts them by id and stops. The members of
+-- one group are bounded by the group, not by the tenant, so the sort is over
+-- what the caller asked for (M26.4).
+--
+-- 0001 kept this table to its primary key on purpose: "a lookup by display
+-- name or by claim is an operator query, not a decision-path one". This one
+-- is an operator query too, and it costs the decision path nothing: an
+-- authorize reads a subject by its key and never this index. What it costs is
+-- the write a login or an operator's edit makes to the row, which now updates
+-- the index as well — GIN's pending list absorbs it.
+--
+-- ---------------------------------------------------------------------------
+-- THE LOCK
+-- ---------------------------------------------------------------------------
+--
+-- As 0019: this file runs in one transaction, so CONCURRENTLY is not
+-- available, and a plain CREATE INDEX blocks writes to `subjects` while it
+-- builds — a login that writes its subject waits until it commits. Reads
+-- continue, so authorize is unaffected. Migrations are applied by an explicit
+-- command, never on boot (PLAN §8), so the operator chooses when this runs;
+-- the changelog says so.
+
+CREATE INDEX subjects_groups_idx ON subjects USING gin (groups);

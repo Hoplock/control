@@ -222,7 +222,7 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Subjects.GetByPrincipal": func() error { _, err := s.Subjects().GetByPrincipal(ctx, "", "p"); return err },
 		"Subjects.Upsert":         func() error { return s.Subjects().Upsert(ctx, "", Subject{ID: "s"}) },
 		"Subjects.Delete":         func() error { return s.Subjects().Delete(ctx, "", "s") },
-		"Subjects.Page":           func() error { _, err := s.Subjects().Page(ctx, "", Page{Limit: 1}); return err },
+		"Subjects.Page":           func() error { _, err := s.Subjects().Page(ctx, "", SubjectQuery{}, Page{Limit: 1}); return err },
 		"Targets.Page":            func() error { _, err := s.Targets().Page(ctx, "", nil, Page{Limit: 1}); return err },
 		"Targets.Get":             func() error { _, err := s.Targets().Get(ctx, "", "t"); return err },
 		"Targets.GetByHostname":   func() error { _, err := s.Targets().GetByHostname(ctx, "", "h"); return err },
@@ -685,7 +685,9 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Groups.AddMember":    func() error { return s.Groups().AddMember(ctx, "", "g", "s") },
 		"Groups.RemoveMember": func() error { return s.Groups().RemoveMember(ctx, "", "g", "s") },
 		"Groups.GroupsOf":     func() error { _, err := s.Groups().GroupsOf(ctx, "", "s"); return err },
-		"RoleBindings.Page":   func() error { _, err := s.RoleBindings().Page(ctx, "", Page{Limit: 1}); return err },
+		"Groups.Page":         func() error { _, err := s.Groups().Page(ctx, "", Page{Limit: 1}); return err },
+		"Groups.Summary":      func() error { _, err := s.Groups().Summary(ctx, "", "g"); return err },
+		"RoleBindings.Page":   func() error { _, err := s.RoleBindings().Page(ctx, "", RoleBindingQuery{}, Page{Limit: 1}); return err },
 		"RoleBindings.RolesFor": func() error {
 			_, err := s.RoleBindings().RolesFor(ctx, "", "s", nil)
 			return err

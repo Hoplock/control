@@ -52,6 +52,7 @@ import {
   SEVERITIES,
   type RecordFilters,
 } from "./auditModel";
+import { ViewLinks } from "../components/ViewLinks";
 import styles from "./Audit.module.css";
 
 const FORBIDDEN: Load<never> = { state: "refused", status: 403, error: { code: "forbidden" } };
@@ -78,18 +79,15 @@ export function When({ at }: { at?: string }) {
 /** The views of the audit screen, as links: each is its own deep link. */
 export function AuditViews({ current }: { current: "records" | "blocked" | "replay" }) {
   const { t } = useI18n();
-  const views = [
-    { id: "records", to: "audit/records", label: t("audit.view.records") },
-    { id: "blocked", to: "audit/blocked-commands", label: t("audit.view.blocked") },
-  ] as const;
   return (
-    <nav className={styles.views} aria-label={t("audit.views")}>
-      {views.map((v) => (
-        <Link key={v.id} to={v.to} className={styles.view} aria-current={current === v.id ? "page" : undefined}>
-          {v.label}
-        </Link>
-      ))}
-    </nav>
+    <ViewLinks
+      label={t("audit.views")}
+      current={current}
+      views={[
+        { id: "records", to: "audit/records", label: t("audit.view.records") },
+        { id: "blocked", to: "audit/blocked-commands", label: t("audit.view.blocked") },
+      ]}
+    />
   );
 }
 

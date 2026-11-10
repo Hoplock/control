@@ -6,9 +6,13 @@
 
 import styles from "./Ident.module.css";
 
-export function Ident({ value, short }: { value: string; short?: string }) {
+/**
+ * `title` sets it at the page title's size, for a page that is about one
+ * object named by its id — a target, an identity, a group, a role (0054).
+ */
+export function Ident({ value, short, title = false }: { value: string; short?: string; title?: boolean }) {
   return (
-    <code className={styles.ident} dir="ltr" translate="no" title={short && short !== value ? value : undefined}>
+    <code className={title ? styles.title : styles.ident} dir="ltr" translate="no" title={short && short !== value ? value : undefined}>
       {short ?? value}
     </code>
   );

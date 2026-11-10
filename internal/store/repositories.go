@@ -36,8 +36,9 @@ type SubjectRepository interface {
 	Upsert(ctx context.Context, tenant Tenant, s Subject) error
 	// Delete removes a subject. Absent is ErrNotFound.
 	Delete(ctx context.Context, tenant Tenant, subjectID string) error
-	// Page returns one page of the tenant's subjects, in id order (M26).
-	Page(ctx context.Context, tenant Tenant, p Page) (Paged[Subject], error)
+	// Page returns one page of the tenant's subjects, in id order (M26),
+	// narrowed by the query.
+	Page(ctx context.Context, tenant Tenant, q SubjectQuery, p Page) (Paged[Subject], error)
 	// Lock takes the tenant's subject lock for the rest of the transaction,
 	// so an operator's write reads the row it replaces with no other write
 	// between, and its record names the true before. Outside a transaction

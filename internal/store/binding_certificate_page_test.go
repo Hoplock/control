@@ -56,7 +56,7 @@ func TestRoleBindingPagesFollowTheirWholeKey(t *testing.T) {
 		var seen []string
 		p := store.Page{Limit: limit}
 		for range len(want) + 1 {
-			got, err := st.RoleBindings().Page(ctx, tenantA, p)
+			got, err := st.RoleBindings().Page(ctx, tenantA, store.RoleBindingQuery{}, p)
 			if err != nil {
 				t.Fatalf("limit %d after %v: %v", limit, p.After, err)
 			}
@@ -80,7 +80,7 @@ func TestRoleBindingPagesFollowTheirWholeKey(t *testing.T) {
 
 	// A position between a subject's binding and a group's of the same name
 	// continues with the group's.
-	got, err := st.RoleBindings().Page(ctx, tenantA, store.Page{Limit: 1, After: []any{"auditor", false, "zzz"}})
+	got, err := st.RoleBindings().Page(ctx, tenantA, store.RoleBindingQuery{}, store.Page{Limit: 1, After: []any{"auditor", false, "zzz"}})
 	if err != nil || len(got.Rows) != 1 || bindingKey(got.Rows[0]) != "auditor/group/eng" || !got.More {
 		t.Errorf("after the last subject's auditor binding: %+v more=%t (%v), want the first group's", got.Rows, got.More, err)
 	}

@@ -16,6 +16,7 @@ import { ConfirmDialog, Dialog, Drawer } from "../src/components/Dialog";
 import { DiffSkeleton, DiffView } from "../src/components/Diff";
 import { Checkbox, Choices, Field, Input, Radio, Select, Switch, Textarea } from "../src/components/Field";
 import { FilterBar } from "../src/components/FilterBar";
+import { Ident } from "../src/components/Ident";
 import { Menu, Tooltip } from "../src/components/Menu";
 import { PageHeader } from "../src/components/PageHeader";
 import { Pagination } from "../src/components/Pagination";
@@ -26,6 +27,7 @@ import { ToastRegion } from "../src/components/Toast";
 import { TimeRangePicker } from "../src/components/TimeRange";
 import { Timeline, TimelineSkeleton, type TimelineEvent } from "../src/components/Timeline";
 import { Tree } from "../src/components/Tree";
+import { ViewLinks } from "../src/components/ViewLinks";
 import { useI18n } from "../src/i18n/I18n";
 import styles from "./Gallery.module.css";
 
@@ -272,6 +274,8 @@ function Labels() {
           "focus-visible": <Chip data>{"team=payments"}</Chip>,
         }}
       />
+      <Row name="identifier" cells={{ default: <Ident value="db-01.core.internal" /> }} />
+      <Row name="identifier, title" cells={{ default: <Ident value="db-01" title /> }} />
       <Row name="avatar" cells={{ default: <span className={styles.inlineRow}><Avatar name="Ada Admin" /><Avatar name="fenn" /></span> }} />
       <Row name="keyboard hint" cells={{ default: <KeyboardHint keys={[t("palette.key.ctrl"), "K"]} /> }} />
       <Row
@@ -369,6 +373,17 @@ function Navigation() {
         >
           <p>{t("fleet.lede")}</p>
         </Tabs>
+      </div>
+      <div data-component="view links">
+        <ViewLinks
+          label={t("inventory.views")}
+          current="targets"
+          views={[
+            { id: "targets", to: "inventory/targets", label: t("inventory.view.targets") },
+            { id: "subjects", to: "inventory/subjects", label: t("inventory.view.subjects") },
+            { id: "grants", to: "inventory/grants", label: t("inventory.view.grants") },
+          ]}
+        />
       </div>
       <div data-component="pagination, first page">
         <Pagination page={{ trail: [], limit: 3 }} shown={3} truncated next="c1" onPage={() => {}} />

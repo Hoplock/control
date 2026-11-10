@@ -30,6 +30,22 @@ type Group struct {
 	UpdatedAt time.Time
 }
 
+// GroupSummary is a group as an operator lists it (0054): a name policy can
+// match on, wherever it appears in the tenant — on a subject's groups, as a
+// role binding's holder, or as a group record — with what holds it there.
+type GroupSummary struct {
+	// ID is the group's name, the one policy matches on.
+	ID string
+	// Record is the group's first-class record, when one exists. A group a
+	// claim mapping produces, or one an operator wrote onto a subject, has
+	// none, and is a group all the same: a rule cannot tell (M7).
+	Record *Group
+	// Members counts the subjects whose groups hold the name.
+	Members int
+	// Roles are the roles bound to the group, in code order.
+	Roles []string
+}
+
 // RoleBinding grants a role to a subject or to a group, inside one tenant.
 //
 // Exactly one of SubjectID and GroupID is set. A role granted in tenant A

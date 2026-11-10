@@ -22,33 +22,6 @@
 }
 
 /* The views, as links that look like tabs: each is its own page. */
-.views {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-4);
-  border-block-end: var(--border-width) solid var(--border-subtle);
-}
-.view {
-  margin-block-end: calc(-1 * var(--border-width));
-  padding: var(--sp-8) var(--sp-12);
-  border-block-end: var(--focus-ring-width) solid transparent;
-  color: var(--text-secondary);
-  font: var(--t-body);
-  font-weight: 500;
-  text-decoration: none;
-  transition:
-    color var(--m-fast) var(--ease),
-    border-color var(--m-fast) var(--ease);
-}
-.view:hover {
-  color: var(--text-primary);
-  border-block-end-color: var(--border-strong);
-}
-.view[aria-current="page"] {
-  color: var(--text-primary);
-  border-block-end-color: var(--accent);
-}
-
 .control {
   display: grid;
   gap: var(--sp-4);

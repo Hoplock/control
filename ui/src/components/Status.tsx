@@ -41,6 +41,7 @@ export const STATUS = {
   fetchFailed: { tone: "outage", label: "status.fetchFailed" },
   unserved: { tone: "outage", label: "status.unserved" },
   pending: { tone: "info", label: "status.pending" },
+  scheduled: { tone: "info", label: "status.scheduled" },
   inProgress: { tone: "info", label: "status.inProgress" },
   pendingRestart: { tone: "info", label: "status.pendingRestart" },
   advice: { tone: "info", label: "status.advice" },

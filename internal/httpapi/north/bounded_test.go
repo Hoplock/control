@@ -97,18 +97,54 @@ var pagedLists = map[string][]pagedList{
 			return len(got.Rows)
 		},
 	}},
-	"GET /api/v1/tenants/{tenant}/subjects": {{
-		member: "subjects", path: "/api/v1/tenants/tenant-a/subjects",
+	"GET /api/v1/tenants/{tenant}/subjects": {
+		{
+			member: "subjects", path: "/api/v1/tenants/tenant-a/subjects",
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				for _, id := range []string{"carol@example.com", "alice@example.com", "bob@example.com"} {
+					if err := f.st.Subjects().Upsert(t.Context(), "tenant-a", storetest.Subject(id)); err != nil {
+						t.Fatalf("seed subject %s: %v", id, err)
+					}
+				}
+				return countSubjects(t, f, store.SubjectQuery{})
+			},
+		},
+		// A group's members (0054): the members sit between subjects who
+		// are not, so a view that read the tenant's would walk more items
+		// than the group holds.
+		{
+			member: "subjects", path: "/api/v1/tenants/tenant-a/subjects",
+			query: url.Values{"group": {"sre"}},
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedMembers(t, f, "tenant-a", map[string][]string{
+					"m-1@example.com": {"sre"}, "n-1@example.com": {"dev"}, "m-2@example.com": {"dev", "sre"},
+					"n-2@example.com": nil, "m-3@example.com": {"sre"},
+				})
+				return countSubjects(t, f, store.SubjectQuery{Group: "sre"})
+			},
+		},
+	},
+	// Every group name in the tenant (0054), from all three sources: a
+	// subject's groups, a role binding's group and a group record, with a
+	// name in more than one of them listed once.
+	"GET /api/v1/tenants/{tenant}/groups": {{
+		member: "groups", path: "/api/v1/tenants/tenant-a/groups",
 		seed: func(t *testing.T, f *serverFixture) int {
 			t.Helper()
-			for _, id := range []string{"carol@example.com", "alice@example.com", "bob@example.com"} {
-				if err := f.st.Subjects().Upsert(t.Context(), "tenant-a", storetest.Subject(id)); err != nil {
-					t.Fatalf("seed subject %s: %v", id, err)
-				}
+			seedMembers(t, f, "tenant-a", map[string][]string{
+				"g-1@example.com": {"sre", "dev"}, "g-2@example.com": {"dev"},
+			})
+			seedBindings(t, f, "tenant-a",
+				store.RoleBinding{GroupID: "sre", Role: "admin"},
+				store.RoleBinding{GroupID: "auditors", Role: "auditor"})
+			if err := f.st.Groups().Upsert(t.Context(), "tenant-a", store.Group{ID: "oncall"}); err != nil {
+				t.Fatalf("seed group record: %v", err)
 			}
-			got, err := f.st.Subjects().Page(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
+			got, err := f.st.Groups().Page(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
 			if err != nil || got.More {
-				t.Fatalf("count subjects: %v (more=%t)", err, got.More)
+				t.Fatalf("count groups: %v (more=%t)", err, got.More)
 			}
 			return len(got.Rows)
 		},
@@ -237,21 +273,48 @@ var pagedLists = map[string][]pagedList{
 	// bindings' seed holds one role by a subject and by a group of the same
 	// name, so the walk continues from every component of the key. The CA
 	// route needs the fixture's CA, which the seed issues through.
-	"GET /api/v1/tenants/{tenant}/role-bindings": {{
-		member: "bindings", path: "/api/v1/tenants/tenant-a/role-bindings",
-		seed: func(t *testing.T, f *serverFixture) int {
-			t.Helper()
-			seedBindings(t, f, "tenant-a",
-				store.RoleBinding{SubjectID: "ops", Role: "auditor"},
-				store.RoleBinding{GroupID: "ops", Role: "auditor"},
-				store.RoleBinding{GroupID: "sre", Role: "admin"})
-			got, err := f.st.RoleBindings().Page(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
-			if err != nil || got.More {
-				t.Fatalf("count role bindings: %v (more=%t)", err, got.More)
-			}
-			return len(got.Rows)
+	"GET /api/v1/tenants/{tenant}/role-bindings": {
+		{
+			member: "bindings", path: "/api/v1/tenants/tenant-a/role-bindings",
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedBindings(t, f, "tenant-a",
+					store.RoleBinding{SubjectID: "ops", Role: "auditor"},
+					store.RoleBinding{GroupID: "ops", Role: "auditor"},
+					store.RoleBinding{GroupID: "sre", Role: "admin"})
+				return countBindings(t, f, store.RoleBindingQuery{})
+			},
 		},
-	}},
+		// One role's holders, and what one holder holds (0054). Each
+		// view's items sit among bindings it does not keep.
+		{
+			member: "bindings", path: "/api/v1/tenants/tenant-a/role-bindings",
+			query: url.Values{"role": {"auditor"}},
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedHolderBindings(t, f)
+				return countBindings(t, f, store.RoleBindingQuery{Role: "auditor"})
+			},
+		},
+		{
+			member: "bindings", path: "/api/v1/tenants/tenant-a/role-bindings",
+			query: url.Values{"subject": {"ops"}},
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedHolderBindings(t, f)
+				return countBindings(t, f, store.RoleBindingQuery{SubjectID: "ops"})
+			},
+		},
+		{
+			member: "bindings", path: "/api/v1/tenants/tenant-a/role-bindings",
+			query: url.Values{"group": {"ops"}},
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				seedHolderBindings(t, f)
+				return countBindings(t, f, store.RoleBindingQuery{GroupID: "ops"})
+			},
+		},
+	},
 	"GET /api/v1/tenants/{tenant}/ca/certificates": {{
 		member: "certificates", path: "/api/v1/tenants/tenant-a/ca/certificates",
 		seed: func(t *testing.T, f *serverFixture) int {
@@ -599,6 +662,7 @@ var exemptRoutes = map[string]string{
 	"GET /api/v1/tenants/{tenant}/decisions/{decision}":                        "one object",
 	"GET /api/v1/tenants/{tenant}/targets/{target}":                            "one object",
 	"GET /api/v1/tenants/{tenant}/subjects/{subject}":                          "one object",
+	"GET /api/v1/tenants/{tenant}/groups/{group}":                              "one object",
 	"GET /api/v1/tenants/{tenant}/extensions":                                  "one row per extension point",
 	"GET /api/v1/tenants/{tenant}/access-context/providers":                    "one per configured provider",
 	"GET /api/v1/tenants/{tenant}/access-context/bindings":                     "one per configured provider in the tenant (primary key (tenant, provider))",
