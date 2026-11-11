@@ -136,8 +136,10 @@ connectors; asks `/v1/authorize` about dana as `sess-e2e-directory`.
 
 - A claim-mapping write activates at once and is not confirmed by typing,
   unlike a policy activation (DESIGN.md §2 names activation as dangerous).
-  It has no diff or dry run on the server to show first; a later phase that
-  adds one should put the write behind the same typed confirm.
+  It has no diff or dry run on the server to show first. **0067** (queued
+  after this PR, the operator's ask: the Document section as a visual
+  configuration) adds the dry run and puts the write behind the typed
+  confirm.
 - The two fact lists in the standing-denials panel size their label columns
   independently, so a lock's and a deactivation's values do not line up.
 - `golangci-lint` here was built with Go 1.25 and refuses this module
