@@ -37,6 +37,10 @@ export const ERROR_MESSAGES: Readonly<Record<string, MessageKey>> = {
   policy_invalid: "error.policy_invalid",
   findings_not_accepted: "error.findings_not_accepted",
   policy_blocked: "error.policy_blocked",
+  // Standing denials and the directory (0039, 0040; shown from 0055).
+  target_quarantined: "error.target_quarantined",
+  subject_directory_managed: "error.subject_directory_managed",
+  standing_denial_undelivered: "error.standing_denial_undelivered",
   [NETWORK_FAILURE]: "error.network",
 };
 

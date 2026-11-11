@@ -59,6 +59,11 @@ type SubjectRepository interface {
 	// PresentedByAnother returns a subject other than except that presents a
 	// login name. Absent is ErrNotFound.
 	PresentedByAnother(ctx context.Context, tenant Tenant, principal, except string) (Subject, error)
+	// RecordMissing returns one page, in id order (M26), of the ids that
+	// hold a standing denial and no subject row: a lock that outlived its
+	// subject, and a deactivation the directory made before it created the
+	// person (M28, 0055). Standing reads each one whole.
+	RecordMissing(ctx context.Context, tenant Tenant, p Page) (Paged[string], error)
 }
 
 // DirectoryLinkRepository stores the links a registered identity sync makes

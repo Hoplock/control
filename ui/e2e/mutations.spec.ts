@@ -212,3 +212,70 @@ test("a fleet-admin removes a target by typing its id", async ({ browser }) => {
   expect((await page.request.get("/api/v1/tenants/default/targets/scratch-01")).status()).toBe(404);
   await page.context().close();
 });
+
+// A grant administrator locks an identity (0055, M28): the text the holder is
+// shown is typed and read back before it is sent, the confirm refuses a near
+// miss of the id, and the lock that stands is the one the server answers —
+// then lifted again.
+test("a grant-admin locks an identity and lifts the lock", async ({ browser }) => {
+  const subject = SCREENS.find((s) => s.id === "inventory-subject");
+  if (!subject) throw new Error("inventory-subject is not registered");
+  // svc-deploy holds no role directly, so the page is ready when its standing denials are.
+  const page = await openScreen(browser, {
+    ...subject,
+    path: "/console/inventory/subjects/svc-deploy",
+    role: "grant-admin",
+    ready: (p) => p.locator("main#content [data-standing]").waitFor(),
+  });
+  const main = page.locator("main#content");
+  await main.locator("[data-lock]").click();
+  const dialog = page.locator("dialog[open]");
+  const confirm = dialog.locator("button[type=submit]");
+  await dialog.locator("input[name=reason]").fill("The deploy key leaked; the pipeline is paused.");
+  await dialog.locator("input[name=reason_code]").fill("INC-4977");
+  await expect(dialog.locator("[data-holder-preview]")).toContainText("The deploy key leaked; the pipeline is paused.");
+  await dialog.locator("[data-confirm-input]").fill("svc-deplo");
+  await expect(confirm).toBeDisabled();
+  await dialog.locator("[data-confirm-input]").fill("svc-deploy");
+  await confirm.click();
+  await expect(dialog).toHaveCount(0);
+  const lock = main.locator("[data-denial=locked]");
+  await expect(lock.locator('span[data-tone="deny"]')).toHaveText("Locked");
+  await expect(lock).toContainText("INC-4977");
+  await expect(lock.locator('a[href="/console/inventory/subjects/gia"]')).toHaveCount(1);
+  const stored = (await (await page.request.get("/api/v1/tenants/default/subjects/svc-deploy")).json()) as { locked: boolean; lock: { reason: string } };
+  expect(stored.locked).toBe(true);
+  expect(stored.lock.reason).toBe("The deploy key leaked; the pipeline is paused.");
+
+  await main.locator("[data-unlock]").click();
+  await dialog.locator("[data-confirm-input]").fill("svc-deploy");
+  await dialog.locator("button[type=submit]").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(main.locator("[data-denial=locked]")).toHaveCount(0);
+  await expect(main.locator("[data-standing=none]")).toHaveCount(1);
+  await page.context().close();
+});
+
+// An administrator quarantines a target and releases it: it says it ends no
+// session, confirms by the target's id, and the API's answer is what shows.
+test("an administrator quarantines a target and releases it", async ({ browser }) => {
+  const target = SCREENS.find((s) => s.id === "inventory-target");
+  if (!target) throw new Error("inventory-target is not registered");
+  const page = await openScreen(browser, { ...target, path: "/console/inventory/targets/build-01" });
+  const main = page.locator("main#content");
+  await main.locator("[data-quarantine]").click();
+  const dialog = page.locator("dialog[open]");
+  await dialog.locator("textarea[name=reason]").fill("Unexpected outbound traffic from the build host.");
+  await dialog.locator("[data-confirm-input]").fill("build-01");
+  await dialog.locator("button[type=submit]").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(main.locator("[data-denial=quarantined] span[data-tone=deny]")).toHaveText("Quarantined");
+  expect(((await (await page.request.get("/api/v1/tenants/default/targets/build-01")).json()) as { quarantined: boolean }).quarantined).toBe(true);
+
+  await main.locator("[data-release]").click();
+  await dialog.locator("[data-confirm-input]").fill("build-01");
+  await dialog.locator("button[type=submit]").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(main.locator("[data-standing=none]")).toHaveCount(1);
+  await page.context().close();
+});

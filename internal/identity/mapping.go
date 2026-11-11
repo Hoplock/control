@@ -141,7 +141,20 @@ type Mapping struct {
 	scoped map[scopedGroup]string
 	// requireDirectories leaves the unscoped entries to logins alone.
 	requireDirectories bool
-	document           string
+	// entries are the group entries in document order, as GroupEntries
+	// answers them.
+	entries  []GroupEntry
+	document string
+}
+
+// GroupEntry is one `groups.map` entry as the mapping applies it: the IdP's or
+// the directory's group name it reads, the local group it produces, and the
+// directory sources it is scoped to — none for an entry that serves logins and
+// every directory no scoped entry lists for its name (0043).
+type GroupEntry struct {
+	External    string
+	Group       string
+	Directories []string
 }
 
 // scopedGroup is what a scoped entry matches: a group's name from one
@@ -415,6 +428,7 @@ func ParseMapping(document []byte) (*Mapping, error) {
 					firstListed[key] = i
 					m.scoped[key] = group
 				}
+				m.entries = append(m.entries, GroupEntry{External: external, Group: group, Directories: slices.Clone(sources)})
 				continue
 			}
 			if _, dup := m.groups[external]; dup {
@@ -425,6 +439,7 @@ func ParseMapping(document []byte) (*Mapping, error) {
 				continue
 			}
 			m.groups[external] = group
+			m.entries = append(m.entries, GroupEntry{External: external, Group: group})
 		}
 	}
 
@@ -655,6 +670,16 @@ func (m *Mapping) MappedDirectories() []string {
 		out = append(out, key.source)
 	}
 	return sortedSet(out)
+}
+
+// GroupEntries returns the mapping's group entries in the order its document
+// lists them; empty when it maps no group. The caller may keep the result.
+func (m *Mapping) GroupEntries() []GroupEntry {
+	out := make([]GroupEntry, 0, len(m.entries))
+	for _, e := range m.entries {
+		out = append(out, GroupEntry{External: e.External, Group: e.Group, Directories: slices.Clone(e.Directories)})
+	}
+	return out
 }
 
 // RequiresDirectories reports `groups.require_directories`: every directory

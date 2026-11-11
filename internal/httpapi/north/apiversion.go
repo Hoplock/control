@@ -55,14 +55,16 @@ import (
 // The history is docs/API-VERSIONING.md's: 1 is the surface as 0046 left it,
 // 2 adds the Hoplock-Acting-Operator request header (0048, acting.go), 3
 // adds a record's capture read and the `principal` filter on the audit query
-// (0051), and 4 adds the group reads and the holder filters on the subject
-// and role-binding lists (0054). A new request header or query parameter is additive, like a new
+// (0051), 4 adds the group reads and the holder filters on the subject and
+// role-binding lists (0054), and 5 adds the claim mapping's `group_map`, the
+// first member added after version 1, and `?record=missing` on the subject
+// list (0055). A new request header or query parameter is additive, like a new
 // route, and it still moves the version, so that a client can tell whether a
 // deployment honours it.
 const (
 	// APIVersion is the version this server serves by default and the
 	// newest it answers in.
-	APIVersion = 4
+	APIVersion = 5
 	// MinAPIVersion is the oldest version it still answers in.
 	MinAPIVersion = 1
 	// APIVersionHeader carries the declared version in, and the served one

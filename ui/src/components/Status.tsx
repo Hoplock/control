@@ -32,6 +32,10 @@ export const STATUS = {
   expired: { tone: "deny", label: "status.expired" },
   invalid: { tone: "deny", label: "status.invalid" },
   blocking: { tone: "deny", label: "status.blocking" },
+  // Standing denials (M28, 0055): each a deny made on purpose, never an outage (M11).
+  locked: { tone: "deny", label: "status.locked" },
+  quarantined: { tone: "deny", label: "status.quarantined" },
+  deactivated: { tone: "deny", label: "status.deactivated" },
   degraded: { tone: "warn", label: "status.degraded" },
   stale: { tone: "warn", label: "status.stale" },
   expiring: { tone: "warn", label: "status.expiring" },

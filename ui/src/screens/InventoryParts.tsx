@@ -1,5 +1,5 @@
 // What the inventory screens share (0054): the views bar that links the five
-// lists, a paged read of one list, how a time and a label set are shown, and
+// lists and the claim mapping (0055), a paged read of one list, how a time and a label set are shown, and
 // how a failed write is reported — at the field the API named, or at the form
 // (DESIGN.md §7). Every read and write goes through ApiClient by route name,
 // with the operator's own session (M2).
@@ -23,7 +23,7 @@ import styles from "./Inventory.module.css";
 
 export const DEFAULT_LIMIT = 100;
 
-export type InventoryView = "targets" | "subjects" | "groups" | "roles" | "grants";
+export type InventoryView = "targets" | "subjects" | "groups" | "roles" | "grants" | "mapping";
 
 /** The inventory's lists, each its own deep link. */
 export function InventoryViews({ current }: { current: InventoryView }) {
@@ -38,6 +38,7 @@ export function InventoryViews({ current }: { current: InventoryView }) {
         { id: "groups", to: "inventory/groups", label: t("inventory.view.groups") },
         { id: "roles", to: "inventory/roles", label: t("inventory.view.roles") },
         { id: "grants", to: "inventory/grants", label: t("inventory.view.grants") },
+        { id: "mapping", to: "inventory/claim-mapping", label: t("inventory.view.mapping") },
       ]}
     />
   );

@@ -72,6 +72,24 @@ var pagedReaders = map[string]pagedReader{
 			return ids, got.More, err
 		},
 	},
+	// The ids a lock stands on with no subject row (0055): a lock placed on
+	// an id nobody has written is the row-less denial at its simplest.
+	"Subjects.RecordMissing": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			_, _, err := st.SubjectLocks().Place(ctx, tenant, store.SubjectLock{
+				SubjectID: id, LockedBy: store.StandingActor{Principal: "page-test"},
+			})
+			return err
+		},
+		del: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			_, err := st.SubjectLocks().Lift(ctx, tenant, id)
+			return err
+		},
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.Subjects().RecordMissing(ctx, tenant, p)
+			return got.Rows, got.More, err
+		},
+	},
 	"Proxies.Page": {
 		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
 			return st.Proxies().Upsert(ctx, tenant, storetest.Proxy(id, "zone-a"))

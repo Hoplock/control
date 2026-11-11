@@ -7,7 +7,10 @@
 //   /console/inventory/new/targets            a new target
 // Reading is fleet:read; writing and removing a target is target:write, which
 // the console offers only to a role holding it and the API refuses to anyone
-// else (M2). Removing one is destructive and confirms by typing its id.
+// else (M2). Removing one is destructive and confirms by typing its id. A
+// quarantine (M28, 0055) is shown in the list and the detail as a deny, and
+// placed and released by a holder of session:revoke (Standing.tsx); a
+// quarantined target is not removed until it is released.
 
 import { useState, type FormEvent } from "react";
 import { offered } from "../api/permit";
@@ -41,6 +44,7 @@ import {
   useSetQuery,
 } from "./InventoryParts";
 import { labelFilters, labelsText, parseLabels } from "./inventoryModel";
+import { TargetAccess, TargetStanding } from "./Standing";
 import styles from "./Inventory.module.css";
 
 const targetPath = (id: string) => `inventory/targets/${encodeURIComponent(id)}`;
@@ -88,6 +92,7 @@ export function TargetsScreen() {
       sortValue: (x) => x.id,
       cell: (x) => <IdentLink to={targetPath(x.id)} value={x.id} label={t("inventory.targets.open", { id: x.id })} />,
     },
+    { id: "access", header: t("inventory.col.access"), sortValue: (x) => (x.quarantined ? 0 : 1), cell: (x) => <TargetAccess target={x} /> },
     { id: "hostname", header: t("inventory.col.hostname"), sortValue: (x) => x.hostname, cell: (x) => <Ident value={x.hostname} /> },
     { id: "zone", header: t("inventory.col.zone"), sortValue: (x) => x.zone, cell: (x) => (x.zone ? <Ident value={x.zone} /> : null) },
     { id: "labels", header: t("inventory.col.labels"), cell: (x) => <LabelChips labels={x.labels} none={t("inventory.none")} /> },
@@ -192,6 +197,11 @@ function RemoveTarget({ target, onClose, onConfirm }: { target: Target | null; o
         <>
           <p className={styles.para}>{t("inventory.targets.remove.body", { id: target?.id ?? "", hostname: target?.hostname ?? "" })}</p>
           <p className={styles.para}>{t("inventory.targets.remove.consequence")}</p>
+          {target?.quarantined ? (
+            <p className={styles.para} data-remove-quarantined="">
+              {t("inventory.targets.remove.quarantined")}
+            </p>
+          ) : null}
         </>
       }
       name={target?.id ?? ""}
@@ -216,6 +226,7 @@ export function TargetScreen({ id }: { id: string }) {
   const canWrite = offered("targetPut", permissions);
   const canDelete = offered("targetDelete", permissions);
   const canAudit = offered("auditRecords", permissions);
+  const canRevoke = offered("targetQuarantine", permissions);
   const editing = canWrite && location.search.get("edit") === "1";
   const [removing, setRemoving] = useState<Target | null>(null);
   const [load, refresh] = useLoad<Target | null>(tenant ? `target|${tenant}|${id}` : null, async (signal) =>
@@ -241,6 +252,7 @@ export function TargetScreen({ id }: { id: string }) {
         breadcrumb={<Breadcrumb items={[{ label: t("inventory.title"), to: "inventory/targets" }, { label: t("inventory.view.targets"), to: "inventory/targets" }, { label: <Ident value={id} /> }]} />}
         title={<Ident value={id} title />}
         lede={t("inventory.targets.detail.lede")}
+        status={found ? <TargetAccess target={found} /> : null}
         actions={
           found ? (
             <>
@@ -329,6 +341,7 @@ export function TargetScreen({ id }: { id: string }) {
                   </dl>
                 </section>
               )}
+              <TargetStanding target={target} canRevoke={canRevoke} onChanged={refresh} />
               <section className={styles.panel} aria-labelledby="target-activity" data-activity={activity.state}>
                 <div className={styles.panelHead}>
                   <h2 id="target-activity" className={styles.panelTitle}>

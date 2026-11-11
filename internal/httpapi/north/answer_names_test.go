@@ -36,11 +36,11 @@ import (
 // version 2, a client declaring 1 is answered through the reflective
 // projection (apiversion.go) rather than encoding/json, so the same walk
 // projects every body to every version this server serves and holds the
-// projection to what encoding/json writes for it. No view carries a `since`
-// member yet, so no answer may differ at any served version, nor fail to be
-// expressed in one. The phase that adds the first `since` member revisits
-// this check: from then on an older version's projection differs from
-// encoding/json by exactly the members it leaves out.
+// projection to what encoding/json writes for it, less exactly the members a
+// version predates: a `since` member newer than the version is left out
+// while it holds its absent value, and an answer in which one holds anything
+// else must be refused as unexpressible, never thinned. The first `since`
+// member is the claim mapping's `group_map` (version 5, 0055).
 
 // snakeCase is a member name an answer may carry.
 var snakeCase = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -119,16 +119,24 @@ func probeAnswer(body any) {
 // probeProjection projects body to every version this server serves and
 // records each one that fails, or does not encode as encoding/json does.
 func probeProjection(body any) {
-	want, err := canonicalJSON(body)
+	raw, err := json.Marshal(body)
 	if err != nil {
 		return // not an answer encoding/json can write; nothing to agree with
 	}
 	for v := north.MinAPIVersion; v <= north.APIVersion; v++ {
 		var problem string
-		if p, err := north.Project(body, v); err != nil {
+		want, expressible := expectedAt(raw, reflect.ValueOf(body), v)
+		p, err := north.Project(body, v)
+		switch {
+		case !expressible && err == nil:
+			problem = "a member newer than the version holds a value, and the answer was served thinned"
+		case !expressible:
+		case err != nil:
 			problem = err.Error()
-		} else if got, err := canonicalJSON(p); err != nil || got != want {
-			problem = fmt.Sprintf("projected %s, encoding/json %s", got, want)
+		default:
+			if got, err := canonicalJSON(p); err != nil || got != want {
+				problem = fmt.Sprintf("projected %s, want %s", got, want)
+			}
 		}
 		if problem != "" {
 			misprojected.Lock()
@@ -136,6 +144,98 @@ func probeProjection(body any) {
 			misprojected.Unlock()
 		}
 	}
+}
+
+// expectedAt is what a client declaring version is served: encoding/json's
+// body less every `since` member newer than version, and false when one of
+// those holds a value, which no answer at that version can express.
+func expectedAt(raw []byte, body reflect.Value, version int) (string, bool) {
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return "", false
+	}
+	expressible := true
+	walkSince(body, nil, version, func(path []any, zero bool) {
+		if !zero {
+			expressible = false
+			return
+		}
+		decoded = withoutMember(decoded, path)
+	})
+	out, err := json.Marshal(decoded)
+	if err != nil {
+		return "", false
+	}
+	return string(out), expressible
+}
+
+// walkSince calls found for every `since` member newer than version, with
+// the path to it in the decoded body (member names and indices).
+func walkSince(v reflect.Value, path []any, version int, found func(path []any, zero bool)) {
+	if !v.IsValid() || marshalsItself(v.Type()) {
+		return
+	}
+	//exhaustive:ignore a scalar holds no member, so only what can contain one is walked.
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			walkSince(v.Elem(), path, version, found)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := range v.Len() {
+			walkSince(v.Index(i), append(slices.Clone(path), i), version, found)
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			walkSince(iter.Value(), append(slices.Clone(path), fmt.Sprint(iter.Key().Interface())), version, found)
+		}
+	case reflect.Struct:
+		t := v.Type()
+		for i := range t.NumField() {
+			f := t.Field(i)
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if f.Anonymous && name == "" && v.Field(i).Kind() == reflect.Struct {
+				walkSince(v.Field(i), path, version, found)
+				continue
+			}
+			if !f.IsExported() || name == "-" {
+				continue
+			}
+			if name == "" {
+				name = f.Name
+			}
+			at := append(slices.Clone(path), name)
+			if since, ok := f.Tag.Lookup("since"); ok {
+				if n, err := strconv.Atoi(since); err == nil && n > version {
+					found(at, v.Field(i).IsZero())
+					continue
+				}
+			}
+			walkSince(v.Field(i), at, version, found)
+		}
+	}
+}
+
+// withoutMember is decoded with the member at path removed, if it is there.
+func withoutMember(decoded any, path []any) any {
+	if len(path) == 0 {
+		return decoded
+	}
+	switch node := decoded.(type) {
+	case map[string]any:
+		key, _ := path[0].(string)
+		if len(path) == 1 {
+			delete(node, key)
+		} else if child, ok := node[key]; ok {
+			node[key] = withoutMember(child, path[1:])
+		}
+	case []any:
+		if i, ok := path[0].(int); ok && i < len(node) {
+			node[i] = withoutMember(node[i], path[1:])
+		}
+	}
+	return decoded
 }
 
 // canonicalJSON is v encoded, decoded and encoded again, so two encodings of

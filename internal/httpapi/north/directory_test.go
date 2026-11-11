@@ -190,3 +190,68 @@ func TestTheSignInMethodsShowATiedConnectorsSource(t *testing.T) {
 		t.Errorf("the untied connector shows %v", m)
 	}
 }
+
+// `?record=missing` lists the ids a standing denial holds with no subject row
+// (0055): a lock that outlived its subject and a deactivation ahead of its
+// create, each answered as the single read answers it, and never a subject
+// that has a row, locked or not. A value it does not know, and a group beside
+// it, are refused rather than answered.
+func TestTheSubjectsAStandingDenialHoldsWithNoRecordAreListed(t *testing.T) {
+	f := newServer(t)
+	admin := f.roleToken(t, identity.RoleAdmin)
+	ctx := t.Context()
+	for _, id := range []string{"gone", "kept"} {
+		if err := f.st.Subjects().Upsert(ctx, "tenant-a", store.Subject{ID: id, Source: "local", Principals: []string{id}}); err != nil {
+			t.Fatal(err)
+		}
+		mustStatus(t, f.send(t, "POST", api+"/subjects/"+id+"/lock", admin, map[string]any{"reason_code": "inc-1"}), http.StatusOK)
+	}
+	mustStatus(t, f.send(t, "DELETE", api+"/subjects/gone", admin, nil), http.StatusNoContent)
+	if err := f.st.DirectoryLinks().Put(ctx, "tenant-a", store.DirectoryLink{
+		Source: "okta-a", ExternalID: "u-early", SubjectID: "dir-early", Provider: "hoplock/scim", LinkedAt: time.Now().UTC(),
+		DeactivatedAt: time.Now().UTC(), DeactivationReason: "never_started",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := f.send(t, "GET", api+"/subjects?record=missing", admin, nil)
+	mustStatus(t, resp, http.StatusOK)
+	var page struct {
+		Subjects []struct {
+			ID            string `json:"id"`
+			RecordMissing bool   `json:"record_missing"`
+			Locked        bool   `json:"locked"`
+			Lock          *struct {
+				ReasonCode string `json:"reason_code"`
+			} `json:"lock"`
+			DirectoryManaged bool `json:"directory_managed"`
+			Deactivated      bool `json:"deactivated"`
+			Deactivation     *struct {
+				ReasonCode string `json:"reason_code"`
+			} `json:"deactivation"`
+		} `json:"subjects"`
+		Truncated bool `json:"truncated"`
+	}
+	decodeInto(t, resp, &page)
+	if len(page.Subjects) != 2 || page.Truncated {
+		t.Fatalf("listed %+v; want the deleted locked subject and the early deactivation, and nothing cut", page.Subjects)
+	}
+	early, gone := page.Subjects[0], page.Subjects[1]
+	if early.ID != "dir-early" || !early.RecordMissing || !early.DirectoryManaged || !early.Deactivated ||
+		early.Deactivation == nil || early.Deactivation.ReasonCode != "never_started" || early.Locked {
+		t.Errorf("the early deactivation = %+v", early)
+	}
+	if gone.ID != "gone" || !gone.RecordMissing || !gone.Locked || gone.Lock == nil || gone.Lock.ReasonCode != "inc-1" ||
+		gone.DirectoryManaged || gone.Deactivated {
+		t.Errorf("the deleted locked subject = %+v", gone)
+	}
+
+	for query, field := range map[string]string{"record=all": "record", "record=missing&group=sre": "record"} {
+		resp := f.send(t, "GET", api+"/subjects?"+query, admin, nil)
+		var e north.Error
+		decodeInto(t, resp, &e)
+		if resp.StatusCode != http.StatusBadRequest || e.Code != north.CodeInvalidRequest || e.Parameters["field"] != field {
+			t.Errorf("?%s = %d %+v; want 400 invalid_request on %s", query, resp.StatusCode, e, field)
+		}
+	}
+}

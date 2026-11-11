@@ -151,6 +151,7 @@ export function DataTable<T>({
                     aria-sort={dir}
                     className={i === 0 ? styles.pinned : undefined}
                     data-numeric={c.numeric || undefined}
+                    data-column={c.id}
                   >
                     <span className={styles.headCell}>
                       {i === 0 && selected !== undefined ? (

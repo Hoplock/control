@@ -26,6 +26,57 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.42.0
+
+Phase 0055, the console's locks, quarantines and the directory's subjects
+(M28, M7, M2, M11, M26, M20, M21). North-bound API version `5`: a client of
+`1` to `4` is served as before, except that reading a claim mapping that has
+group entries answers it `500 api_version_unexpressible` (below). No
+migration. Nothing in `ext`, `server` or the contract changes.
+
+- **Standing denials, wherever their subject or target is shown.** A subject
+  lock reads `Locked`, a target quarantine `Quarantined` and the directory's
+  deactivation `Deactivated` — each a deny, never an outage — in the
+  inventory's lists and on each page, with their facts: when, by whom (a
+  person, an inbound action's handler or the directory's sync), the reason
+  code, the text the holder was shown, the external reference and the
+  inbound action. A subject both locked and deactivated shows both. The
+  identities removed while locked, and the ones the directory deactivated
+  before creating them, are listed beneath the identities.
+- **Lock, unlock, quarantine and release** are offered to a holder of
+  `session:revoke` (`admin`, `grant-admin`) and nobody else, each confirmed
+  by typing the id. Locking asks for the one line the holder is shown and
+  shows it before it is sent; a quarantine says it ends no session and names
+  `POST …/revocations` for the ones running. A lock or quarantine answered
+  `503 standing_denial_undelivered` reads as in force, not yet delivered,
+  with a button that asks again. Removing a quarantined target reads
+  "release it first".
+- **A subject a directory provisions** shows its sync's provider, the
+  directory it comes from (`directory.source`) and that directory's id for
+  the person, in the list and on its page, and is offered no edit and no
+  removal: `409 subject_directory_managed` reads "managed by your
+  directory". Its lock and its roles stay an operator's. Nothing offers to
+  lift a deactivation.
+- **The claim mapping, at `/console/inventory/claim-mapping`.** The active
+  version's facts, each group entry with the directories it is scoped to,
+  `require_directories`, how many directory identities are still being
+  brought onto it, the document, the sign-in connectors with each tie's
+  `directory_claim` and `directory_source`, and, for `identity:write`, an
+  editor whose refusals are rendered code by code at the field each names.
+  The sign-in page shows a tied connector's claim and directory, and Explain
+  the directory a provisioned subject's groups came from.
+- **`group_map` on `GET …/identity/claim-mapping`**: the document's group
+  entries in order, each `{external, group, directories}`, `directories`
+  absent on an unscoped entry, `group_map` absent when the mapping maps no
+  group. It is the first member added after version `1`: a client declaring
+  an older version reading a mapping with group entries is answered `500
+  api_version_unexpressible`, never a body without them.
+- **`?record=missing` on `GET …/subjects`** lists, by id and a page at a
+  time, the ids a lock or the directory's deactivation holds with no subject
+  row, each as `GET …/subjects/{subject}` answers it; another value is `400
+  invalid_request {field: record, problem: invalid}`, and `group` beside it
+  `{field: record, problem: at_most_one_of_group_or_record}`.
+
 ## v0.41.0
 
 Phase 0054, the console's Inventory (M2, M7, M10, M26, M20, M21). Migration

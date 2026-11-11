@@ -125,6 +125,33 @@ var pagedLists = map[string][]pagedList{
 				return countSubjects(t, f, store.SubjectQuery{Group: "sre"})
 			},
 		},
+		// The ids a lock holds with no subject row (0055): they sit between
+		// subjects that have rows, locked and not, so a view that read the
+		// tenant's subjects would walk more items than it answers.
+		{
+			member: "subjects", path: "/api/v1/tenants/tenant-a/subjects",
+			query: url.Values{"record": {"missing"}},
+			seed: func(t *testing.T, f *serverFixture) int {
+				t.Helper()
+				for _, id := range []string{"a-row@example.com", "c-row@example.com"} {
+					if err := f.st.Subjects().Upsert(t.Context(), "tenant-a", storetest.Subject(id)); err != nil {
+						t.Fatalf("seed subject %s: %v", id, err)
+					}
+				}
+				for _, id := range []string{"b-gone@example.com", "c-row@example.com", "d-gone@example.com", "e-gone@example.com"} {
+					if _, _, err := f.st.SubjectLocks().Place(t.Context(), "tenant-a", store.SubjectLock{
+						SubjectID: id, LockedBy: store.StandingActor{Principal: "bounded-test"},
+					}); err != nil {
+						t.Fatalf("lock %s: %v", id, err)
+					}
+				}
+				got, err := f.st.Subjects().RecordMissing(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
+				if err != nil || got.More {
+					t.Fatalf("count subjects with no record: %v (more=%t)", err, got.More)
+				}
+				return len(got.Rows)
+			},
+		},
 	},
 	// Every group name in the tenant (0054), from all three sources: a
 	// subject's groups, a role binding's group and a group record, with a

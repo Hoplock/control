@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hoplock/control/internal/credential"
+	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
 )
 
@@ -258,9 +259,34 @@ type claimMappingResponse struct {
 	// StaleDirectorySubjects counts the directory subjects not yet on this
 	// version: it falls to zero as the recalculation a mapping write starts
 	// finishes (0043).
-	StaleDirectorySubjects int64  `json:"stale_directory_subjects"`
-	Description            string `json:"description,omitempty"`
-	Document               string `json:"document"`
+	StaleDirectorySubjects int64 `json:"stale_directory_subjects"`
+	// GroupMap is the document's group entries in its order, each with the
+	// directories it is scoped to, so a reader need not parse the document
+	// to say which entry serves which directory (version 5). Absent when the
+	// mapping maps no group.
+	GroupMap    []groupEntryView `json:"group_map,omitempty" since:"5"`
+	Description string           `json:"description,omitempty"`
+	Document    string           `json:"document"`
+}
+
+// groupEntryView is one `groups.map` entry. Directories is absent on an
+// unscoped entry, which serves logins and every directory no scoped entry
+// lists for its name (0043).
+type groupEntryView struct {
+	External    string   `json:"external"`
+	Group       string   `json:"group"`
+	Directories []string `json:"directories,omitempty"`
+}
+
+func viewGroupEntries(entries []identity.GroupEntry) []groupEntryView {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]groupEntryView, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, groupEntryView{External: e.External, Group: e.Group, Directories: e.Directories})
+	}
+	return out
 }
 
 func (s *Server) handleClaimMapping(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +315,7 @@ func (s *Server) handleClaimMapping(w http.ResponseWriter, r *http.Request) {
 		Directories:            mapping.MappedDirectories(),
 		RequireDirectories:     mapping.RequiresDirectories(),
 		StaleDirectorySubjects: stale,
+		GroupMap:               viewGroupEntries(mapping.GroupEntries()),
 		Description:            mapping.Description,
 		Document:               mapping.Document(),
 	})
