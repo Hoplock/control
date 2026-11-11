@@ -27,6 +27,9 @@ export const STATUS = {
   active: { tone: "allow", label: "status.active" },
   applied: { tone: "allow", label: "status.applied" },
   valid: { tone: "allow", label: "status.valid" },
+  // Extensions (0056): a handler whose Start succeeded, a consumer with nothing unconfirmed.
+  running: { tone: "allow", label: "status.running" },
+  caughtUp: { tone: "allow", label: "status.caughtUp" },
   denied: { tone: "deny", label: "status.denied" },
   revoked: { tone: "deny", label: "status.revoked" },
   expired: { tone: "deny", label: "status.expired" },
@@ -41,17 +44,27 @@ export const STATUS = {
   expiring: { tone: "warn", label: "status.expiring" },
   rejected: { tone: "warn", label: "status.rejected" },
   warning: { tone: "warn", label: "status.warning" },
+  // A registered extension whose Start failed, and a downstream consumer whose
+  // delivery is failing: each degraded, never an outage of Control (M11, M8).
+  notStarted: { tone: "warn", label: "status.notStarted" },
+  failing: { tone: "warn", label: "status.failing" },
   unreachable: { tone: "outage", label: "status.unreachable" },
   fetchFailed: { tone: "outage", label: "status.fetchFailed" },
   unserved: { tone: "outage", label: "status.unserved" },
+  // A report pack that could not list its reports, and a generation that ended broken (0056).
+  unavailable: { tone: "outage", label: "status.unavailable" },
+  failed: { tone: "outage", label: "status.failed" },
   pending: { tone: "info", label: "status.pending" },
   scheduled: { tone: "info", label: "status.scheduled" },
   inProgress: { tone: "info", label: "status.inProgress" },
   pendingRestart: { tone: "info", label: "status.pendingRestart" },
   advice: { tone: "info", label: "status.advice" },
+  behind: { tone: "info", label: "status.behind" },
   notReported: { tone: "unknown", label: "status.notReported" },
   left: { tone: "unknown", label: "status.left" },
   superseded: { tone: "unknown", label: "status.superseded" },
+  // A point with nothing registered: Control does what it says instead, which is not a fault (M15).
+  notRegistered: { tone: "unknown", label: "status.notRegistered" },
 } as const satisfies Record<string, StatusView>;
 
 export type StatusName = keyof typeof STATUS;

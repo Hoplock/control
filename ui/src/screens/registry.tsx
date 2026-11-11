@@ -11,11 +11,13 @@ import { AuditRecordsScreen, BlockedCommandsScreen } from "./Audit";
 import { ClaimMappingScreen } from "./ClaimMapping";
 import { DeploymentScreen } from "./Deployment";
 import { ExplainScreen } from "./Explain";
+import { ExtensionsScreen } from "./Extensions";
 import { FleetScreen } from "./Fleet";
 import { GrantNewScreen, GrantScreen, GrantsScreen } from "./Grants";
 import { GroupScreen, GroupsScreen, RoleScreen, RolesScreen, SubjectNewScreen, SubjectScreen, SubjectsScreen } from "./Identities";
 import { PolicyCandidateScreen, PolicyScreen, PolicyVersionScreen } from "./Policy";
 import { ReplayScreen } from "./Replay";
+import { ReportsScreen } from "./Reports";
 import { TargetNewScreen, TargetScreen, TargetsScreen } from "./Targets";
 
 export interface Screen {
@@ -226,6 +228,23 @@ export const SCREENS: readonly Screen[] = [
     density: "compact",
     permission: "audit:read",
     render: (p) => <ReplayScreen key={p.session} session={p.session as string} />,
+  },
+  // Extensions and Reports (0056): what extends this deployment, and the packs that report on it.
+  {
+    id: "extensions",
+    path: "extensions",
+    nav: "nav.extensions",
+    density: "comfortable",
+    permission: "extension:read",
+    render: () => <ExtensionsScreen />,
+  },
+  {
+    id: "reports",
+    path: "reports",
+    nav: "nav.reports",
+    density: "comfortable",
+    permission: "audit:read",
+    render: () => <ReportsScreen />,
   },
 ];
 

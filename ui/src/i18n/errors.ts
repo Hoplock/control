@@ -41,6 +41,10 @@ export const ERROR_MESSAGES: Readonly<Record<string, MessageKey>> = {
   target_quarantined: "error.target_quarantined",
   subject_directory_managed: "error.subject_directory_managed",
   standing_denial_undelivered: "error.standing_denial_undelivered",
+  // Report packs (0044; shown from 0056): each an outage of the pack, never a denial.
+  report_provider_failed: "error.report_provider_failed",
+  report_provider_unavailable: "error.report_provider_unavailable",
+  report_generation_busy: "error.report_generation_busy",
   [NETWORK_FAILURE]: "error.network",
 };
 

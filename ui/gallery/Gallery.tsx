@@ -14,6 +14,7 @@ import { CopyableId } from "../src/components/CopyableId";
 import { DataTable, TableSkeleton, type Column } from "../src/components/DataTable";
 import { ConfirmDialog, Dialog, Drawer } from "../src/components/Dialog";
 import { DiffSkeleton, DiffView } from "../src/components/Diff";
+import { FeedLagSkeleton, FeedLagView } from "../src/components/FeedLag";
 import { Checkbox, Choices, Field, Input, Radio, Select, Switch, Textarea } from "../src/components/Field";
 import { FilterBar } from "../src/components/FilterBar";
 import { Ident } from "../src/components/Ident";
@@ -769,6 +770,44 @@ function Diffs() {
   );
 }
 
+/**
+ * A downstream consumer's lag (0056): a sink's and the archive's, every
+ * reading — caught up, behind, failing, overtaken by retention — loading, and
+ * a lag the server did not report.
+ */
+function Lags() {
+  const { t } = useI18n();
+  const label = t("extensions.sinkLag.label", { provider: "siem" });
+  const at = "2026-11-01T08:00:00Z";
+  return (
+    <div className={styles.stack}>
+      <div className={styles.grid} data-component="feed lag">
+        <Cell state="caught up">
+          <FeedLagView label={label} lag={{ streams_behind: 0, failing: false, skipped_by_retention: 0 }} />
+        </Cell>
+        <Cell state="behind">
+          <FeedLagView label={label} lag={{ streams_behind: 3, oldest_unconfirmed_at: at, failing: false, skipped_by_retention: 0 }} />
+        </Cell>
+        <Cell state="failing">
+          <FeedLagView label={label} lag={{ streams_behind: 12, oldest_unconfirmed_at: at, failing: true, skipped_by_retention: 0 }} />
+        </Cell>
+        <Cell state="overtaken">
+          <FeedLagView label={label} lag={{ streams_behind: 1, oldest_unconfirmed_at: at, failing: false, skipped_by_retention: 1280 }} />
+        </Cell>
+        <Cell state="archive">
+          <FeedLagView label={t("extensions.archiveLag.label")} lag={{ streams_behind: 2, oldest_unconfirmed_at: at, failing: false, captures_waiting: 7 }} />
+        </Cell>
+        <Cell state="loading">
+          <FeedLagSkeleton />
+        </Cell>
+        <Cell state="not reported">
+          <FeedLagView label={label} lag={null} />
+        </Cell>
+      </div>
+    </div>
+  );
+}
+
 const SECTIONS: Record<string, () => ReactNode> = {
   buttons: () => <Buttons />,
   fields: () => <Fields />,
@@ -779,6 +818,7 @@ const SECTIONS: Record<string, () => ReactNode> = {
   data: () => <Data />,
   time: () => <Time />,
   diff: () => <Diffs />,
+  lag: () => <Lags />,
 };
 
 /** The gallery's pages: one per section, and one per overlay state. */
