@@ -116,6 +116,21 @@ screen's Refresh. The PR captions those images as substituted.
   about it — but `test/extensions.test.tsx` pins `POINTS` to today's eleven
   so the gap is noticed.
 
+### A capture race CI found, fixed here
+
+`inventory-subjects` (0055) failed CI's baseline once (light, 2% of pixels,
+same size). Its screen holds two tables — the identities list and the ids a
+denial holds with no record, a second `GET …/subjects?record=missing` — and
+its `ready` waited for "a data row" in any table. When the second read
+answered first, `ready` passed while the list was still loading, `byName`
+found no name column and silently did not sort, and the list was captured in
+id order, where the directory's random `dir-…` ids move rows. Reproduced by
+holding the list's answer 1.5 s in the browser (the old steps captured it
+unsorted; the new ones sorted). `ready` is now `subjectRows` (a row of the
+table that has the name column), and `byName` waits for `aria-sort` on that
+column after its click. This phase's extra load (two sinks polling every
+second) made the race likelier; it was 0055's.
+
 ### Cross-repo
 
 No shared surface changes (`ext`, `server`, the contract and the decision ids

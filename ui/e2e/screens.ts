@@ -181,8 +181,19 @@ const formMutation = (route: string, method: "POST" | "PUT", path: string, permi
 /** Sorts a list by its name column, when it has rows (a role offered nothing still has the column). */
 const byName = async (page: Page) => {
   const sort = main(page).locator("table th[data-column=name] button").first();
-  if (await sort.count()) await sort.click();
+  if (!(await sort.count())) return;
+  await sort.click();
+  await main(page).locator('table th[data-column=name][aria-sort="ascending"]').first().waitFor();
 };
+
+/**
+ * A row of the identities list itself. Its screen holds a second table — the
+ * ids a denial holds with no record (0055), a read of its own that can answer
+ * first — so "a data row" alone could be that table's, and the list would be
+ * captured before it is sorted by name (0056 found this in CI).
+ */
+const subjectRows = (page: Page) =>
+  main(page).locator("table").filter({ has: page.locator("th[data-column=name]") }).locator("tbody tr[data-row]").first().waitFor();
 
 /** Opens a detail's control, if the role is offered it, and waits for its dialog. */
 const openDialog = async (page: Page, control: string) => {
@@ -533,7 +544,7 @@ const INVENTORY: E2EScreen[] = [
     kind: "console",
     path: "/console/inventory/subjects",
     densities: true,
-    ready: rows,
+    ready: subjectRows,
     states: listStates("subjects", "subjects"),
     // A directory subject's id is Control's random choice (0055), so in id
     // order the directory's rows change places from run to run: the list is
