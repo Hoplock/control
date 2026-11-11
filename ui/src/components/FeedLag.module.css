@@ -1,0 +1,59 @@
+/* A consumer's lag (FeedLag.tsx): its reading as a status pill and a sentence,
+   then its scalars as facts. Borders carry the structure (DESIGN.md §1). */
+.lag {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-canvas);
+}
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-6) var(--sp-12);
+}
+.summary {
+  flex: 1 1 var(--form-column-min);
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--form-column-min), 1fr));
+  gap: var(--sp-8) var(--sp-24);
+  margin: 0;
+}
+.fact {
+  display: grid;
+  gap: var(--sp-2);
+}
+.facts dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.facts dd {
+  margin: 0;
+  font: var(--t-body);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.gap {
+  margin: 0;
+  padding-block-start: var(--sp-8);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.link {
+  color: var(--accent);
+}
+.skeletonFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-24);
+}

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command host is the server the console's browser checks run against (0050,
-// 0055): Hoplock Control exactly as hoplock-control is, plus one identity
-// sync, registered in the host's registry as a host registers its own (M15).
+// 0055, 0056): Hoplock Control exactly as hoplock-control is, plus one
+// identity sync and the extensions in extensions.go, registered in the host's
+// registry as a host registers its own (M15).
 // It starts Control through internal/daemon, which server.Main forwards to,
 // because nothing in this module but cmd/hoplock-control may import the
 // public façade (architecture_test.go).
@@ -159,6 +160,9 @@ func run(ctx context.Context) error {
 	s := &fixtureSync{}
 	registry := ext.NewRegistry()
 	if err := registry.RegisterIdentitySync(ext.Registration{Provider: syncProvider, Version: "e2e"}, s); err != nil {
+		return err
+	}
+	if err := registerExtensions(registry); err != nil {
 		return err
 	}
 	return daemon.Main(ctx, os.Args[1:], os.Stdout, os.Stderr, daemon.Host{

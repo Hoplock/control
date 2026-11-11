@@ -26,6 +26,42 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.43.0
+
+Phase 0056, the console's Extensions and Reports (M15, M8, M11, M21, M27,
+M20). No migration. The north-bound API is unchanged at version `5`: both
+screens read routes that were already served (`GET …/extensions`,
+`GET …/reports`, `POST …/reports/generate`). Nothing in `ext`, `server` or
+the contract changes.
+
+- **Extensions, at `/console/extensions`** (`extension:read`). Every
+  extension point, what is registered at it — a host's registrations listed
+  first, under "In play" — and Control's own default where it has one. An
+  action handler or identity sync whose `Start` succeeded reads `Running`;
+  one whose `Start` failed reads `Not started`, with the error's kind, and
+  never as an outage. A point with nothing registered reads `Not registered`
+  and says, in the console's own words, what Control does instead: an
+  extension that is not installed is not shown as broken.
+- **Each audit sink's delivery lag**, on its own registration's row:
+  `Caught up`, `Behind` (in progress) or `Failing` (degraded, retried by
+  itself, never an outage), streams behind, the oldest unconfirmed record,
+  and the records a retention pass removed before the sink confirmed them,
+  with a link to the `operator.audit.retained` records that explain the gap.
+  The archive's lag renders through the same component.
+- **Reports, at `/console/reports[?provider=&report=]`** (`audit:read`). Every
+  registered report pack for the tenant and its reports; a pack that could
+  not list them reads `Unavailable` and never as having none. A report's form
+  is built from its descriptor — the period, each parameter (a closed set as
+  a choice, the required ones marked) and its formats — and saves the file
+  under the name the server gave it. A generation whose body breaks after its
+  first bytes reads `Failed` and saves nothing. With no pack registered, the
+  screen points to the audit view, which is the reporting available. A report
+  is named by its code: nothing hands a host's catalogue to the console yet.
+- **Status vocabulary**: `Running`, `Caught up`, `Not started`, `Failing`,
+  `Behind`, `Unavailable`, `Failed` and `Not registered` join the console's
+  statuses; `report_provider_failed`, `report_provider_unavailable` and
+  `report_generation_busy` have sentences.
+
 ## v0.42.0
 
 Phase 0055, the console's locks, quarantines and the directory's subjects

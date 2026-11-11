@@ -1,0 +1,99 @@
+/* Reports (0056): a pack's reports as rows, and a report's form beneath its
+   row when opened. Shares Extensions.module.css's panels. */
+.reports {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.report {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding-block: var(--sp-12);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+}
+.reportHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-16);
+}
+.reportName {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-6) var(--sp-12);
+}
+.reportTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.action {
+  margin-inline-start: auto;
+}
+.form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+  max-inline-size: var(--form-max);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-canvas);
+}
+.period,
+.parameters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--form-column-min), 1fr));
+  align-items: start;
+  gap: var(--sp-12) var(--sp-16);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+.legend {
+  margin-block-end: var(--sp-8);
+  padding: 0;
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.parameterLabel {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-6);
+}
+.required {
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+.fault {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--s-deny);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.outcome:empty {
+  display: none;
+}
+.failed {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-8);
+}

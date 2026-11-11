@@ -76,6 +76,10 @@ export const ROUTES = {
   grant: { method: "GET", pattern: "/api/v1/tenants/{tenant}/grants/{grant}", permission: "grant:read" },
   grantCreate: { method: "POST", pattern: "/api/v1/tenants/{tenant}/grants", permission: "grant:write" },
   grantRevoke: { method: "POST", pattern: "/api/v1/tenants/{tenant}/grants/{grant}/revoke", permission: "grant:write" },
+  // Extensions and Reports (0056): what extends this deployment, and the packs registered to report on it.
+  extensions: { method: "GET", pattern: "/api/v1/tenants/{tenant}/extensions", permission: "extension:read" },
+  reports: { method: "GET", pattern: "/api/v1/tenants/{tenant}/reports", permission: "audit:read" },
+  reportGenerate: { method: "POST", pattern: "/api/v1/tenants/{tenant}/reports/generate", permission: "audit:read" },
 } as const satisfies Record<string, Route>;
 
 export type RouteName = keyof typeof ROUTES;

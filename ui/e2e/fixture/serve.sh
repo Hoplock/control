@@ -3,7 +3,8 @@
 # it, empties the database HOPLOCK_E2E_DSN names, migrates, seeds, binds the
 # four operators' roles, and runs it in the foreground. The server is the
 # fixture host (host/main.go): Control with one identity sync, whose
-# directory is control.yaml's `e2e_directory` (0055). Playwright's
+# directory is control.yaml's `e2e_directory` (0055), and the action handler,
+# sinks and report packs of host/extensions.go (0056). Playwright's
 # webServer runs this and waits for /console/; CI runs it the same way.
 #
 # The database is emptied first so a run starts from the seed and nothing

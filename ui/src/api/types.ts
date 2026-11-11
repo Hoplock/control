@@ -820,3 +820,102 @@ export interface GrantRevocation {
   widened: boolean;
   events: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Extensions (0004, 0025, 0026, 0039, 0040; shown from 0056).
+// ---------------------------------------------------------------------------
+
+/**
+ * feedLagView: how far one consumer of the audit store — the archive, or a
+ * sink — is behind in the caller's tenant, under one set of names (0025,
+ * 0026). captures_waiting is the archive's alone, skipped_by_retention a
+ * sink's alone; absent is "this consumer does not have it", never zero.
+ */
+export interface FeedLag {
+  streams_behind: number;
+  oldest_unconfirmed_at?: string;
+  failing: boolean;
+  captures_waiting?: number;
+  skipped_by_retention?: number;
+}
+
+/** extensionRegistrationView */
+export interface ExtensionRegistration {
+  provider: string;
+  version?: string;
+  /** Control's own implementation, not an extension. */
+  default: boolean;
+  /** A sink's delivery lag, on each registration at the audit sink point. */
+  lag?: FeedLag;
+}
+
+/** extensionPointView: one row per point, the empty ones included. */
+export interface ExtensionPoint {
+  /** The point's code: its Go interface's name (AuditSink, …). */
+  point: string;
+  interface: string;
+  multiple: boolean;
+  registered: boolean;
+  registrations: ExtensionRegistration[];
+  /** core | default | disabled: what kind of answer Control has when nothing is registered. */
+  when_absent: string;
+  /** The server's English line for curl; the console says it from its own catalogue (M21). */
+  absent: string;
+  control_ships?: string;
+  /** The archive's lag, on its row while one is registered. */
+  lag?: FeedLag;
+  /** The action handler's and the identity sync's, while one is registered. */
+  started?: boolean;
+  /** The kind of the error its Start returned (ext.Kind), when it did not start. */
+  start_error?: string;
+}
+
+/** GET …/extensions */
+export interface Extensions {
+  points: ExtensionPoint[];
+}
+
+// ---------------------------------------------------------------------------
+// Reports (0044; shown from 0056).
+// ---------------------------------------------------------------------------
+
+/** The three wire codes a report is produced in. */
+export type ReportFormat = "json" | "csv" | "pdf";
+
+export interface ReportParameter {
+  name: string;
+  required: boolean;
+  /** A closed set when non-empty; free-form when empty. */
+  values: string[];
+}
+
+export interface ReportDescriptor {
+  report: string;
+  formats: ReportFormat[];
+  parameters: ReportParameter[];
+}
+
+/** One registered pack: its reports for this tenant, or the error that stopped it listing them. */
+export interface ReportProvider {
+  /** The pack's ext.Registration.Provider, by convention a module path: data, never a path segment. */
+  provider: string;
+  version?: string;
+  reports: ReportDescriptor[];
+  /** report_provider_failed | report_provider_unavailable: listed, and unavailable. */
+  error?: string;
+}
+
+/** GET …/reports */
+export interface ReportListing {
+  providers: ReportProvider[];
+}
+
+/** POST …/reports/generate */
+export interface ReportRequestBody {
+  provider: string;
+  report: string;
+  from: string;
+  to: string;
+  parameters: Record<string, string>;
+  format: ReportFormat;
+}
