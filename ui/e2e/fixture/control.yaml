@@ -3,7 +3,8 @@
 # the session cookie drops Secure; nothing else here differs from a
 # deployment an operator would run, except `e2e_directory`, which is the
 # fixture host's own section (host/main.go): the directory its identity sync
-# provisions through Control's sink at start (0055).
+# provisions through Control's sink at start (0055). The host also registers
+# an action handler, two sinks and two report packs (host/extensions.go, 0056).
 tenant: default
 listeners:
   south: 127.0.0.1:18080
@@ -21,6 +22,13 @@ fleet:
   relay_registration_ttl: 24h
 instance:
   display_name: Staging EU
+# The fixture host's two sinks (0056, host/extensions.go): delivery looks for
+# new records every second, so the confirming sink is caught up by the time a
+# check reads it, and the failing one is retried at most every 30 s.
+audit:
+  sinks:
+    idle_interval: 1s
+    backoff_cap: 30s
 console:
   stripe: teal
 # The directory the fixture host's identity sync holds (0055). Two

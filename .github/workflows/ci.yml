@@ -309,6 +309,13 @@ jobs:
           # sign-in page. Locking and quarantining for real is in mutations.
           - check: standing denials
             args: e2e/standing.spec.ts --project checks
+          # Extensions and Reports (0056): the fixture host's sync running and
+          # its action handler not started, a failing sink and a caught-up one,
+          # a sink a retention pass overtook, every point empty and none
+          # broken; a pack listed and generated with a parameter and a format,
+          # a pack unavailable, a generation that broke shown as failed.
+          - check: extensions and reports
+            args: e2e/extensions-reports.spec.ts --project checks
     services:
       postgres:
         image: postgres:16

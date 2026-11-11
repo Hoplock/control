@@ -84,6 +84,7 @@ const GALLERY_PAGES = [
   "data",
   "time",
   "diff",
+  "lag",
   "overlay-dialog",
   "overlay-confirm",
   "overlay-confirm-failed",
@@ -756,6 +757,139 @@ const INVENTORY: E2EScreen[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Extensions and Reports (0056). The fixture host registers what each screen
+// reads (fixture/host/extensions.go): an identity sync that started, an
+// action handler whose Start failed, a failing sink and a caught-up one, a
+// report pack and a pack that cannot list its reports. Two states one
+// server cannot hold still are the server's own answer changed, in the
+// browser: a sink a retention pass overtook while it was behind (it catches
+// up within a second, which zeroes the count), and Control alone, with
+// nothing registered but its own coordinator.
+// ---------------------------------------------------------------------------
+
+type PointRow = { point: string; registered: boolean; registrations: { provider: string; default: boolean; lag?: unknown }[]; [k: string]: unknown };
+const withPoints = (patch: (p: PointRow) => PointRow): Substitute => ({
+  kind: "patch",
+  patch: (b) => ({ ...(b as object), points: (b as { points: PointRow[] }).points.map(patch) }),
+});
+
+/** A retention pass overtook e2e-lake while it was behind: 42 records it never confirmed (M8). */
+export const OVERTAKEN = withPoints((p) =>
+  p.point !== "AuditSink"
+    ? p
+    : {
+        ...p,
+        registrations: p.registrations.map((r) =>
+          r.provider === "e2e-lake"
+            ? { ...r, lag: { streams_behind: 1, oldest_unconfirmed_at: "2026-11-01T08:00:00Z", failing: false, skipped_by_retention: 42 } }
+            : r,
+        ),
+      },
+);
+
+/** Control alone: every point empty but the cluster coordinator, whose default Control registers (M15). */
+export const BARE = withPoints((p) => {
+  const own = p.registrations.filter((r) => r.default);
+  const { lag: _lag, started: _started, start_error: _startError, ...rest } = p;
+  return { ...rest, registered: own.length > 0, registrations: own };
+});
+
+/** The lag of e2e-siem was not reported: a named gap, never "caught up". */
+const SIEM_UNREPORTED = withPoints((p) =>
+  p.point !== "AuditSink" ? p : { ...p, registrations: p.registrations.map((r) => (r.provider === "e2e-siem" ? { ...r, lag: undefined } : r)) },
+);
+
+const lakeCaughtUp = (page: Page) => main(page).locator('[data-sink="e2e-lake"] [data-lag-state="caughtUp"]').waitFor();
+/** Changes the extensions answer and reads it again. */
+const reread = (s: Substitute, ready: string) => async (page: Page) => {
+  await substitute(page, `${API}/extensions`, s);
+  await main(page).locator("[data-refresh]").click();
+  await main(page).locator(ready).first().waitFor();
+};
+
+export const COMPLIANCE = "example.com/e2e/compliance";
+const reportPath = (report: string) => `/console/reports?${new URLSearchParams({ provider: COMPLIANCE, report })}`;
+
+const EXTENSIONS: E2EScreen[] = [
+  {
+    id: "extensions",
+    kind: "console",
+    path: "/console/extensions",
+    densities: false,
+    ready: lakeCaughtUp,
+    states: {
+      loading: { substitute: [[`${API}/extensions`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+      empty: {
+        substitute: [[`${API}/extensions`, { kind: "answer", status: 200, body: { points: [] } }]],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: { substitute: [[`${API}/extensions`, outage("corr-e2e-extensions")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+      partial: {
+        substitute: [[`${API}/extensions`, SIEM_UNREPORTED]],
+        ready: (page) => main(page).locator('[data-state=partial] [data-sink="e2e-siem"] [data-lag-state="notReported"]').waitFor(),
+      },
+    },
+  },
+  {
+    id: "extensions-overtaken",
+    kind: "console",
+    path: "/console/extensions",
+    densities: false,
+    ready: lakeCaughtUp,
+    states: {},
+    prepare: reread(OVERTAKEN, '[data-sink="e2e-lake"] [data-retention-gap]'),
+  },
+  {
+    id: "extensions-bare",
+    kind: "console",
+    path: "/console/extensions",
+    densities: false,
+    ready: lakeCaughtUp,
+    states: {},
+    prepare: reread(BARE, '[data-in-play="0"]'),
+  },
+  {
+    id: "reports",
+    kind: "console",
+    path: "/console/reports",
+    densities: false,
+    ready: (page) => main(page).locator("[data-provider] [data-report]").first().waitFor(),
+    states: {
+      loading: { substitute: [[`${API}/reports`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+      empty: {
+        substitute: [[`${API}/reports`, { kind: "answer", status: 200, body: { providers: [] } }]],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: { substitute: [[`${API}/reports`, outage("corr-e2e-reports")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+      // The flaky pack cannot list its reports: the seeded answer is partial.
+      partial: { seeded: true, ready: (page) => main(page).locator("[data-state=partial] [data-provider-state=unavailable]").waitFor() },
+    },
+  },
+  {
+    id: "reports-form",
+    kind: "console",
+    path: reportPath("access-review"),
+    densities: false,
+    ready: (page) => main(page).locator("form[data-report-form]").waitFor(),
+    states: {},
+  },
+  // A generation whose body broke after its first bytes: Failed, and nothing saved.
+  {
+    id: "reports-failed",
+    kind: "console",
+    path: reportPath("privileged-sessions"),
+    densities: false,
+    ready: (page) => main(page).locator("form[data-report-form]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      const form = main(page).locator("form[data-report-form]");
+      await form.locator("button[type=submit]").click();
+      await form.locator("[data-failed]").waitFor();
+    },
+  },
+];
+
 export const SCREENS: readonly E2EScreen[] = [
   {
     id: "sign-in",
@@ -1221,5 +1355,6 @@ export const SCREENS: readonly E2EScreen[] = [
   },
   ...INVENTORY,
   ...STANDING,
+  ...EXTENSIONS,
   ...GALLERY,
 ];
