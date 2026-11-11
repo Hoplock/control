@@ -363,12 +363,12 @@ One component renders all of it, so a status looks identical everywhere:
 
 | State | Colour | Glyph | Label |
 | --- | --- | --- | --- |
-| allowed / healthy / active / applied / valid | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied`, `Valid` |
+| allowed / healthy / active / applied / valid / running / caught up | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied`, `Valid`, `Running`, `Caught up` |
 | denied / revoked / expired / invalid / blocking / locked / quarantined / deactivated | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired`, `Invalid`, `Blocking`, `Locked`, `Quarantined`, `Deactivated` |
-| degraded / stale / expiring / rejected / warning | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected`, `Warning` |
-| unreachable / outage / fetch failed / unserved | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved` |
-| pending / scheduled / in progress / pending restart / advice | `--s-info` | half-filled circle | `Pending`, `Scheduled`, `In progress`, `Pending restart`, `Advice` |
-| unknown / not reported / left / superseded | `--n-400` | hollow circle, dotted | `Not reported`, `Left`, `Superseded` |
+| degraded / stale / expiring / rejected / warning / not started / failing | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected`, `Warning`, `Not started`, `Failing` |
+| unreachable / outage / fetch failed / unserved / unavailable / failed | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved`, `Unavailable`, `Failed` |
+| pending / scheduled / in progress / pending restart / advice / behind | `--s-info` | half-filled circle | `Pending`, `Scheduled`, `In progress`, `Pending restart`, `Advice`, `Behind` |
+| unknown / not reported / left / superseded / not registered | `--n-400` | hollow circle, dotted | `Not reported`, `Left`, `Superseded`, `Not registered` |
 
 The component is `Status` in `ui/src/components/Status.tsx`, and every row
 above is a named entry of its `STATUS` map: a screen names a status, it never
@@ -412,6 +412,21 @@ could not deliver (`standing_denial_undelivered`) is in force: it reads as
 `Pending` delivery beside its own status, with a way to ask again, never as a
 failure to place it.
 
+An **extension point** reads as what is in play there (PLAN M15, 0056): one
+with nothing registered is **`Not registered`** — Control's own answer runs,
+and the point says which in the console's words, so an extension that is not
+installed never reads as broken; an action handler or identity sync whose
+`Start` succeeded is **`Running`**, and one whose `Start` failed is **`Not
+started`**, with the error's kind — degraded, because Control serves without
+it, and never an outage (M11); anything else registered is `Active`. A
+**downstream consumer** of the audit store — the archive, a sink — reads as
+its lag: **`Caught up`**, said plainly; **`Behind`**, delivery in progress;
+**`Failing`**, degraded and retried by itself while the local store stays
+the record (M8), never an outage or tampering. A **report pack** that could
+not list its reports is **`Unavailable`**, an outage of the pack and never a
+pack with no reports, and a generation that ended broken is **`Failed`**,
+with nothing saved.
+
 A rolling upgrade reads as **`Pending` / in progress**, never as a fault (M19).
 `Not reported` is its own state and never renders as healthy — PLAN §4 is
 explicit that stale, undated and absent are one case, and the console says so
@@ -443,7 +458,7 @@ column visibility, row selection, per-row actions, saved views), filter bar
 detail drawer, timeline (Explain), tree (fleet graph, hop path), JSON viewer
 (collapsible, copyable), command palette, page header (title, id, status,
 actions), copyable id (mono, click-to-copy, truncated with full value in the
-title).
+title), feed lag (a downstream consumer's lag, 0056).
 
 **Every screen defines four states, and they are reviewed**: loading (skeleton
 matching the final layout so nothing shifts), empty (what would be here, why it
@@ -495,6 +510,18 @@ gutter marked in the worst note's status hue; a note about the whole document
 heads it. A line is focusable, so a list beside it can go to one. A textarea
 holding source is `mono`: LTR, mono, unchecked for spelling and untranslated.
 
+**The feed lag** (`FeedLag.tsx`, 0056) renders one consumer of the audit
+store's lag in the caller's tenant — a sink's on the Extensions screen, the
+archive's wherever it is shown (0057) — from the scalars the extension
+listing carries under one set of names: its reading as a status pill and a
+sentence (`Caught up`, `Behind`, `Failing`, §6), then streams behind, the
+oldest unconfirmed record, and the archive's captures waiting or a sink's
+records skipped by retention where the answer carries them. A skip is a count
+with its explanation — the pass's `operator.audit.retained` record, linked in
+the audit view — and never tampering. Its states are the three readings, a
+skip, loading (`FeedLagSkeleton`) and **not reported** (a lag the server did
+not send, which is never caught up).
+
 **Form and mutation rules.** Destructive actions confirm by typing the object
 name, through the one `ConfirmDialog`, whose hint says what typing commits to:
 by default that the action cannot be undone, and for an activation, which a
@@ -541,7 +568,11 @@ the same reason.
 - **Catalogue keys are namespaced** (M27): Control's carry no `:`, and a host's
   screens use `<provider>:<key>` (`hoplock/enterprise:approvals.title`), so a
   host's key can never be one of Control's; one that is is refused when the
-  host's catalogue is mounted.
+  host's catalogue is mounted. What a host registers in Control is named in
+  the host's catalogue too: a report pack's report under
+  `<host>:reports.<pack provider>.<report>` and its parameter under
+  `….parameters.<name>` (0056, `ui/src/i18n/host.ts`), and by its code
+  wherever no catalogue names it.
 - **Every user-visible string comes from a catalogue**, keyed by a stable id. No
   literal in a component, and nothing user-visible baked into an image or a
   sprite — text in an SVG is text.
