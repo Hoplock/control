@@ -441,7 +441,7 @@ function RecordDrawer({ id, onClose }: { id: string | null; onClose(): void }) {
   );
 }
 
-function Detail({ label, children }: { label: string; children: ReactNode }) {
+function Detail({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <>
       <dt>{label}</dt>
@@ -559,7 +559,8 @@ function RecordDetail({ record: r }: { record: AuditRecord }) {
           </h3>
           <dl className={styles.fields}>
             {knownAttributes(r).map(([k, v]) => (
-              <Detail key={k} label={k}>
+              // An attribute's key is its writer's identifier, never translated.
+              <Detail key={k} label={<Id>{k}</Id>}>
                 {k === "acting_operator" ? (
                   <span className={styles.word}>
                     <span className={styles.wordLabel}>{t("audit.actor.word")}</span>

@@ -165,8 +165,11 @@ export function ConfirmDialog({
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<ConfirmFailure | null>(null);
+  // Cleared as it CLOSES, so a dialog opened again starts empty: cleared as it
+  // opened, it showed the last name typed — the confirmation already met — for
+  // the frames before the effect ran, and a name typed in those frames was lost.
   useEffect(() => {
-    if (open) {
+    if (!open) {
       setTyped("");
       setFailure(null);
       setBusy(false);

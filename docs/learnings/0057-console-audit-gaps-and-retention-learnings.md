@@ -65,6 +65,27 @@
   (re-exported by `gapModel`). `ui/test/extensions.test.tsx` and the
   extensions spec expect the new link.
 
+### Changes outside the new screens
+
+- **`ConfirmDialog` clears what was typed as it closes, not as it opens.**
+  Cleared on open, a dialog opened a second time showed the last name typed —
+  the confirmation already met, its destructive button enabled — for the
+  frames before the effect ran, and a name typed in those frames was then
+  wiped. The retention form opens the dialog twice in one flow (the refused
+  pass, then the pass by instant), and the browser checks typed into that
+  window; an operator pressing Enter there would have confirmed without
+  typing. Every screen's typed-name confirm shares the fix.
+- **The record drawer marks an attribute's key as an identifier** (`Id`,
+  mono, `translate="no"`). Its label was the raw key, which the `en-XA` check
+  found unaccented the first time a registered screen opened the drawer
+  (`audit-record-gap`).
+- `e2e/explain-audit.spec.ts` counts grace's command records as three: the
+  gap session adds one.
+- The baseline of every audit screen was retaken with `--update-snapshots=all`:
+  the two new view links and the `Event` filter changed `audit-blocked` and
+  `audit-supervisor` by less than the 1% tolerance, so a `changed` run kept
+  their old images.
+
 ### Changes to `ui/DESIGN.md` in this PR, and why
 
 1. **§6, table:** the warn row gains `refused at ingest` / `Refused at
