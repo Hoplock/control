@@ -901,6 +901,233 @@ const EXTENSIONS: E2EScreen[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Stream gaps and retention in the audit view (0057). The seed holds a
+// session with holes (fixture/audit.ts: two `evicted` reports and one
+// `refused`), so its replay is partial by its own data, and a gap that
+// belongs to no session, on px-dmz-03's stream. The fixture host's archive is
+// registered and behind (fixture/host/retention.go): a pass by sequence is
+// refused by the server itself, and one by instant is held back — neither
+// deletes or records anything, so both run here, against the seeded data.
+// ---------------------------------------------------------------------------
+
+/** Nothing on the page is still being read. */
+const settled = (page: Page) =>
+  page.waitForFunction(() => document.querySelectorAll("main#content [aria-busy=true], main#content [data-state=loading]").length === 0);
+const gapsSession = "/console/audit/sessions/sess-e2e-gaps/replay";
+const retentionReady = async (page: Page) => {
+  await main(page).locator("#retention-trail").waitFor();
+  await settled(page);
+};
+/**
+ * Runs a pass from the retention form, confirming it by the stream's name, and
+ * waits for its answer beside the form. A role offered no form runs nothing:
+ * the RBAC harness prepares every screen as every role.
+ */
+async function runPass(page: Page, by: "sequence" | "instant", result: string): Promise<void> {
+  const form = main(page).locator("[data-retention-form] form");
+  if ((await form.count()) === 0) return;
+  if (by === "sequence") {
+    await form.locator('input[name="stream"]').fill("proxy:px-core-01");
+    await form.locator('input[name="retention-by"][value="sequence"]').check();
+    await form.locator('input[name="through_seq"]').fill("3");
+  }
+  await form.locator("[data-retention-run]").click();
+  const dialog = page.locator("dialog[open]");
+  await dialog.locator("[data-confirm-input]").fill("proxy:px-core-01");
+  await dialog.locator("form button[type=submit]").click();
+  await main(page).locator(`[data-retention-result="${result}"]`).waitFor();
+  await page.locator("dialog[open]").waitFor({ state: "detached" });
+}
+/** A by-sequence pass the archive refuses, then the pass by instant it offers. */
+const refusedThenByInstant = async (page: Page) => {
+  if ((await main(page).locator("[data-retention-form]").count()) === 0) return;
+  await runPass(page, "sequence", "refused");
+  await main(page).locator("[data-retention-by-instant]").click();
+  await runPass(page, "instant", "held");
+};
+
+/** Two passes in the trail, one the archive held back: a substituted answer, as the seed runs none that deletes. */
+const TRAIL: Substitute = {
+  kind: "answer",
+  status: 200,
+  body: {
+    records: [
+      ["rec-e2e-retained-2", 41, "2026-11-01T11:00:00Z", { after: "40", "operator.stream": "proxy:px-core-01", "operator.deleted": "40", "operator.held_by_archive": "true", "operator.archived_through_seq": "40" }],
+      ["rec-e2e-retained-1", 40, "2026-11-01T10:00:00Z", { after: "12", "operator.stream": "proxy:px-dmz-03", "operator.deleted": "12", "operator.held_by_archive": "false", "operator.archived_through_seq": "30" }],
+    ].map(([id, seq, at, attrs]) => ({
+      record_id: id,
+      stream: "control",
+      chain_seq: seq,
+      hash: "sha256:e2e",
+      session_id: "",
+      kind: "policy_decision",
+      severity: "info",
+      event: "operator.audit.retained",
+      message: "stream retained",
+      attributes: { event: "operator.audit.retained", principal_id: "ada", ...(attrs as object) },
+      recorded_at: at,
+      received_at: at,
+      body: "{}",
+    })),
+    truncated: false,
+  },
+};
+
+const GAPS: E2EScreen[] = [
+  {
+    id: "audit-replay-gaps",
+    kind: "console",
+    path: gapsSession,
+    densities: false,
+    // Partial by its own data: three holes, each at its span, the loss summed.
+    ready: async (page) => {
+      await main(page).locator("[data-state=partial] [data-gap]").first().waitFor();
+      await main(page).locator("[data-stream-gap]").first().waitFor();
+      await settled(page);
+    },
+    states: {},
+  },
+  // A step onto the refused hole: this server's own answer and the refused ids.
+  {
+    id: "audit-replay-gap-refused",
+    kind: "console",
+    path: `${gapsSession}?step=rec-e2e-gap-refused`,
+    densities: false,
+    ready: async (page) => {
+      await main(page).locator('[data-gap-detail="rec-e2e-gap-refused"]').waitFor();
+      await settled(page);
+    },
+    states: {},
+  },
+  {
+    id: "audit-gaps",
+    kind: "console",
+    path: "/console/audit/gaps",
+    densities: false,
+    ready: (page) => main(page).locator("[data-stream] [data-gap]").first().waitFor(),
+    states: {
+      loading: { substitute: [[`${API}/audit/gaps`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+      empty: {
+        substitute: [[`${API}/audit/gaps`, { kind: "answer", status: 200, body: { gaps: [], truncated: false } }]],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: { substitute: [[`${API}/audit/gaps`, outage("corr-e2e-gaps")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+      // One page of a longer list of reports, said beside the streams.
+      partial: { substitute: [[`${API}/audit/gaps`, cut]], ready: (page) => main(page).locator("[data-state=partial] [data-stream]").first().waitFor() },
+    },
+  },
+  // The per-proxy view: px-dmz-03's stream, whose one gap belongs to no session.
+  {
+    id: "audit-gaps-proxy",
+    kind: "console",
+    path: "/console/audit/gaps?proxy=px-dmz-03",
+    densities: false,
+    ready: (page) => main(page).locator("[data-gap-sessionless]").first().waitFor(),
+    states: {},
+  },
+  // A gap report in the trail, opened: its facts, never a deny.
+  {
+    id: "audit-record-gap",
+    kind: "console",
+    path: "/console/audit/records?record=rec-e2e-gap-refused",
+    densities: false,
+    ready: async (page) => {
+      await page.locator('dialog[open] [data-gap-facts="rec-e2e-gap-refused"]').waitFor();
+      await settled(page);
+    },
+    states: {},
+  },
+  {
+    id: "audit-retention",
+    kind: "console",
+    path: "/console/audit/retention",
+    densities: false,
+    ready: async (page) => {
+      await main(page).locator('[data-archive="registered"] [data-lag-state="behind"]').waitFor();
+      await retentionReady(page);
+    },
+    states: {
+      // Only the trail's read is held open: the archive's panel has arrived,
+      // so the image does not depend on which of the two answered first.
+      loading: {
+        substitute: [[`${API}/audit/records`, { kind: "hang" }]],
+        ready: async (page) => {
+          await main(page).locator("[data-state=loading]").waitFor();
+          await main(page).locator('[data-archive="registered"] [data-lag-state="behind"]').waitFor();
+        },
+      },
+      // The seed runs no pass that deletes, so the trail is empty by its own data.
+      empty: { seeded: true, ready: (page) => main(page).locator("[data-state=empty]").waitFor() },
+      error: { substitute: [[`${API}/audit/records`, outage("corr-e2e-retention")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
+      // The archive's lag could not be read beside a trail that could.
+      partial: {
+        substitute: [[`${API}/extensions`, outage("corr-e2e-archive")]],
+        ready: (page) => main(page).locator('[data-state=partial], [data-archive="unread"]').first().waitFor(),
+      },
+    },
+    mutations: [
+      {
+        route: "auditRetention",
+        method: "POST",
+        path: `${API}/audit/retention`,
+        body: { stream: "proxy:px-core-01", through_seq: 1 },
+        permission: "audit:retain",
+        control: (page) => main(page).locator("[data-retention-run]"),
+      },
+    ],
+  },
+  // A pass by sequence beyond the archive, refused by the server, then the
+  // pass by instant it offers, which the archive holds back.
+  {
+    id: "audit-retention-refused",
+    kind: "console",
+    path: "/console/audit/retention",
+    densities: false,
+    ready: retentionReady,
+    states: {},
+    prepare: (page) => runPass(page, "sequence", "refused"),
+  },
+  {
+    id: "audit-retention-held",
+    kind: "console",
+    path: "/console/audit/retention",
+    densities: false,
+    ready: retentionReady,
+    states: {},
+    prepare: refusedThenByInstant,
+  },
+  // With no archive registered, none of the archive appears (substituted).
+  {
+    id: "audit-retention-bare",
+    kind: "console",
+    path: "/console/audit/retention",
+    densities: false,
+    ready: retentionReady,
+    states: {},
+    prepare: async (page) => {
+      await substitute(page, `${API}/extensions`, BARE);
+      await page.reload();
+      await retentionReady(page);
+    },
+  },
+  // The trail with two passes, one held back by the archive (substituted).
+  {
+    id: "audit-retention-trail",
+    kind: "console",
+    path: "/console/audit/retention",
+    densities: false,
+    ready: retentionReady,
+    states: {},
+    prepare: async (page) => {
+      await substitute(page, `${API}/audit/records`, TRAIL);
+      await page.reload();
+      await main(page).locator('[data-held-by-archive="true"]').waitFor();
+      await retentionReady(page);
+    },
+  },
+];
+
 export const SCREENS: readonly E2EScreen[] = [
   {
     id: "sign-in",
@@ -1367,5 +1594,6 @@ export const SCREENS: readonly E2EScreen[] = [
   ...INVENTORY,
   ...STANDING,
   ...EXTENSIONS,
+  ...GAPS,
   ...GALLERY,
 ];

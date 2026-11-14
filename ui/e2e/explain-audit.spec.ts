@@ -169,10 +169,11 @@ test("every filter is in the URL under /console/, and a filtered link opens filt
   await main(page).getByLabel("Kind").selectOption("command");
   await expect(page).toHaveURL(/\/console\/audit\/records\?(.*&)?subject=grace/);
   await expect(page).toHaveURL(/kind=command/);
-  await expect(main(page).locator("table tbody tr[data-row]")).toHaveCount(2);
+  // grace's commands: two in sess-e2e-allow, one in sess-e2e-gaps (0057).
+  await expect(main(page).locator("table tbody tr[data-row]")).toHaveCount(3);
   const url = page.url();
   const again = await open(browser, url);
-  await expect(main(again).locator("table tbody tr[data-row]")).toHaveCount(2);
+  await expect(main(again).locator("table tbody tr[data-row]")).toHaveCount(3);
   await expect(main(again).getByLabel("Subject", { exact: true })).toHaveValue("grace");
   await again.context().close();
   await page.context().close();

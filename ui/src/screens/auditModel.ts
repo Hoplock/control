@@ -28,9 +28,11 @@ export type Severity = (typeof SEVERITIES)[number];
 /**
  * The record filters the URL carries, each the audit query's own parameter
  * (`GET …/audit/records`), so a filtered view under /console/ is the query
- * it shows (DESIGN.md §4). The time range is the picker's (TimeRange.tsx).
+ * it shows (DESIGN.md §4). `event` is the record's own event code — a gap
+ * report's `logging.gap`, a retention pass's `operator.audit.retained` (0057).
+ * The time range is the picker's (TimeRange.tsx).
  */
-export const RECORD_FILTERS = ["subject", "target", "session", "decision", "principal", "kind", "severity"] as const;
+export const RECORD_FILTERS = ["subject", "target", "session", "decision", "principal", "event", "kind", "severity"] as const;
 export type RecordFilter = (typeof RECORD_FILTERS)[number];
 export type RecordFilters = Partial<Record<RecordFilter, string>>;
 

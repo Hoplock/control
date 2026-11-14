@@ -24,8 +24,8 @@ import { Skeleton } from "./States";
 import { StatusOf, type StatusName } from "./Status";
 import styles from "./FeedLag.module.css";
 
-/** The record kind a retention pass writes on the control stream (M8). */
-export const RETAINED_KIND = "operator.audit.retained";
+/** The event a retention pass's record carries on the control stream (M8): an event, not a kind. */
+export const RETAINED_EVENT = "operator.audit.retained";
 
 /** Which reading a lag is: failing before behind before caught up. */
 export function lagStatus(lag: FeedLag): "failing" | "behind" | "caughtUp" {
@@ -97,10 +97,10 @@ export function FeedLagView({ lag, label }: { lag: FeedLag | null; label: string
       {skipped > 0 ? (
         <p className={styles.gap} data-retention-gap="">
           <span>{t("lag.skipped.explain", { count: skipped })}</span>{" "}
-          <Link to="audit/records" query={{ kind: RETAINED_KIND }} className={styles.link}>
+          <Link to="audit/retention" className={styles.link}>
             {t("lag.skipped.link")}
           </Link>{" "}
-          <Ident value={RETAINED_KIND} />
+          <Ident value={RETAINED_EVENT} />
         </p>
       ) : null}
     </section>

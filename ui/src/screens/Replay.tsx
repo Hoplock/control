@@ -13,10 +13,23 @@
 // A capture a retention pass removed, or one that could not be read, is a
 // named gap in the pane and in the partial notice: never spliced over, never
 // shown as an empty terminal, and an unreadable one is an outage (M11).
+//
+// Where the proxy's stream has a hole (0057, `Hoplock/proxy#71`), the
+// session's `logging.gap` reports (`GET …/audit/gaps?session=…`) are steps of
+// their own, each at the start of its SPAN and never at its report's
+// timestamp, which is often after the session ended; the report's own record
+// is not a step. Its cause is its status: `Evicted` (never received — an
+// outage, M11) or `Refused at ingest` (received and refused here, with this
+// server's answer — neither a deny nor an outage). The terminal shows the
+// hole where it falls and never joins the capture on either side of it. A
+// session with a hole is partial, and its loss is the SUM of its reports per
+// cause (`GET …/audit/sessions/{session}/loss`), never the latest report. A
+// session with no report is never called complete: the chain says nothing
+// about a record that never arrived (PLAN §7).
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { offered } from "../api/permit";
-import type { AuditRecord, AuditRecordPage, Capture } from "../api/types";
+import type { AuditRecord, AuditRecordPage, Capture, Gap, GapPage, SessionLoss } from "../api/types";
 import { Button } from "../components/Button";
 import { CopyableId } from "../components/CopyableId";
 import { PageHeader } from "../components/PageHeader";
@@ -31,6 +44,8 @@ import { useDeployment } from "../shell/Shell";
 import { AuditViews, Id } from "./Audit";
 import { useKindLabel } from "./auditLabels";
 import { captureBytes, readLimit, recordsQuery, terminalText } from "./auditModel";
+import { GapFacts, GapStatus, gapEvent, Unplaced } from "./Gaps";
+import { lossByCause, placeGaps, type Entry } from "./gapModel";
 import styles from "./Audit.module.css";
 
 const FORBIDDEN: Load<never> = { state: "refused", status: 403, error: { code: "forbidden" } };
@@ -38,6 +53,10 @@ const FORBIDDEN: Load<never> = { state: "refused", status: 403, error: { code: "
 const REPLAY_LIMIT = 500;
 /** How long a played step stays on screen. */
 const PLAY_MS = 700;
+/** A session's gap reports, read in one page: one per cause and loss, so a handful. */
+const GAPS_LIMIT = 500;
+const NO_GAPS: readonly Gap[] = [];
+const NO_RECORDS: readonly AuditRecord[] = [];
 
 export function ReplayScreen({ session: sessionID }: { session: string }) {
   const { t } = useI18n();
@@ -54,13 +73,21 @@ export function ReplayScreen({ session: sessionID }: { session: string }) {
     api.call("auditRecords", { params: { tenant: tenant as string }, query, signal }),
   );
   const shown = may ? load : FORBIDDEN;
-  const records = shown.state === "ok" ? shown.data.records : [];
+  const holes = useHoles(sessionID);
+  const records = shown.state === "ok" ? shown.data.records : NO_RECORDS;
+  // The page's window: a gap is placed on the page its span starts in.
+  const from = trail.length && records.length ? (records[0] as AuditRecord).recorded_at : undefined;
+  const to = shown.state === "ok" && shown.data.truncated && records.length ? (records[records.length - 1] as AuditRecord).recorded_at : undefined;
+  const reports = holes.gaps.state === "ok" ? holes.gaps.data.gaps : NO_GAPS;
+  // One order for the records and the holes, kept while neither answer changes.
+  const { entries, unplaced } = useMemo(() => placeGaps(records, reports, { from, to }), [records, reports, from, to]);
   // A replay opens on its last step, the whole session shown; ?step= names another.
   const step = location.search.get("step");
-  const found = records.findIndex((r) => r.record_id === step);
-  const at = found >= 0 ? found : Math.max(0, records.length - 1);
-  const captures = useCaptures(records.slice(0, at + 1).filter((r) => r.kind === "stream"));
-  const gaps = Array.from(captures.values()).filter((c) => c.state !== "ok" || c.data.retained).length;
+  const found = entries.findIndex((e) => e.id === step);
+  const at = found >= 0 ? found : Math.max(0, entries.length - 1);
+  const captures = useCaptures(streamsOf(entries.slice(0, at + 1)));
+  const missingCaptures = Array.from(captures.values()).filter((c) => c.state !== "ok" || c.data.retained).length;
+  const partial = [...(missingCaptures ? [t("replay.partial", { count: missingCaptures })] : []), ...holes.lines];
 
   return (
     <div className={styles.screen}>
@@ -79,7 +106,7 @@ export function ReplayScreen({ session: sessionID }: { session: string }) {
         load={shown}
         onRetry={refresh}
         isEmpty={(d) => d.records.length === 0 && trail.length === 0}
-        gaps={gaps ? [t("replay.partial", { count: gaps })] : []}
+        gaps={partial}
         loading={
           <div className={styles.replay}>
             <div className={styles.replayRail}>
@@ -92,7 +119,9 @@ export function ReplayScreen({ session: sessionID }: { session: string }) {
       >
         {(data) => (
           <Stepper
-            records={data.records}
+            entries={entries}
+            unplaced={unplaced}
+            reported={holes.reported}
             at={at}
             captures={captures}
             onStep={(id) => navigate(location.path, { replace: true, query: { step: id } })}
@@ -112,6 +141,52 @@ export function ReplayScreen({ session: sessionID }: { session: string }) {
       </ScreenFrame>
     </div>
   );
+}
+
+/** The stream records of these steps: the ones that carry a capture. */
+function streamsOf(entries: readonly Entry[]): AuditRecord[] {
+  return entries.flatMap((e) => (e.kind === "record" && e.record.kind === "stream" ? [e.record] : []));
+}
+
+/**
+ * The session's holes: its gap reports, and its loss summed per cause. Each
+ * is its own read, and one that fails is a named gap of the partial notice —
+ * never a session shown as whole. `reported` is false only when both answered
+ * and the proxy reported nothing missing.
+ */
+function useHoles(sessionID: string): { gaps: Load<GapPage>; lines: string[]; reported: boolean | null } {
+  const { t } = useI18n();
+  const { tenant, session, api } = useDeployment();
+  const permissions = (tenant && session.scopes[tenant]?.permissions) || [];
+  const mayGaps = offered("auditGaps", permissions);
+  const mayLoss = offered("auditSessionLoss", permissions);
+  const gq = new URLSearchParams({ session: sessionID, order: "asc", limit: String(GAPS_LIMIT) });
+  const [gaps] = useLoad<GapPage>(tenant && mayGaps ? `${tenant}|gaps|${gq.toString()}` : null, (signal) =>
+    api.call("auditGaps", { params: { tenant: tenant as string }, query: gq, signal }),
+  );
+  const [loss] = useLoad<SessionLoss>(tenant && mayLoss ? `${tenant}|loss|${sessionID}` : null, (signal) =>
+    api.call("auditSessionLoss", { params: { tenant: tenant as string, session: sessionID }, signal }),
+  );
+  const shownGaps = mayGaps ? gaps : FORBIDDEN;
+  const lines: string[] = [];
+  if (!mayLoss || loss.state === "refused" || loss.state === "outage") lines.push(t("replay.loss.unread"));
+  else if (loss.state === "ok") {
+    const all = shownGaps.state === "ok" && !shownGaps.data.truncated ? shownGaps.data.gaps : null;
+    for (const l of lossByCause(loss.data.loss, all)) {
+      const args = { records: l.records, reports: l.reports };
+      const line =
+        l.cause === "evicted"
+          ? t("replay.loss.evicted", args)
+          : l.cause === "refused"
+            ? t("replay.loss.refused", args)
+            : t("replay.loss.other", { ...args, cause: l.cause });
+      lines.push(l.critical ? `${line} ${t("replay.loss.critical", { count: l.critical })}` : line);
+    }
+  }
+  if (shownGaps.state === "refused" || shownGaps.state === "outage") lines.push(t("replay.gaps.unread"));
+  const reported =
+    loss.state === "ok" && shownGaps.state === "ok" ? loss.data.loss.length > 0 || shownGaps.data.gaps.length > 0 : null;
+  return { gaps: shownGaps, lines, reported };
 }
 
 /**
@@ -150,13 +225,17 @@ function useCaptures(records: readonly AuditRecord[]): Map<string, Load<Capture>
 }
 
 function Stepper({
-  records,
+  entries: records,
+  unplaced,
+  reported,
   at,
   captures,
   onStep,
   pager,
 }: {
-  records: readonly AuditRecord[];
+  entries: readonly Entry[];
+  unplaced: readonly Gap[];
+  reported: boolean | null;
   at: number;
   captures: Map<string, Load<Capture>>;
   onStep(id: string): void;
@@ -165,8 +244,8 @@ function Stepper({
   const { t, f } = useI18n();
   const kindLabel = useKindLabel();
   const [playing, setPlaying] = useState(false);
-  const current = records[at] as AuditRecord;
-  const streams = records.filter((r) => r.kind === "stream");
+  const current = records[at] as Entry | undefined;
+  const streams = streamsOf(records);
 
   useEffect(() => {
     if (!playing) return;
@@ -174,15 +253,18 @@ function Stepper({
       const id = window.setTimeout(() => setPlaying(false), PLAY_MS);
       return () => window.clearTimeout(id);
     }
-    const id = window.setTimeout(() => onStep((records[at + 1] as AuditRecord).record_id), PLAY_MS);
+    const id = window.setTimeout(() => onStep((records[at + 1] as Entry).id), PLAY_MS);
     return () => window.clearTimeout(id);
   }, [playing, at, records, onStep]);
+
+  // A page whose only records are gap reports, while their gaps are read.
+  if (!current) return <TimelineSkeleton rows={3} />;
 
   return (
     <div className={styles.replay}>
       <div className={styles.replayRail}>
         <div className={styles.stepButtons}>
-          <Button disabled={at === 0} onClick={() => onStep((records[at - 1] as AuditRecord).record_id)}>
+          <Button disabled={at === 0} onClick={() => onStep((records[at - 1] as Entry).id)}>
             {t("replay.previous")}
           </Button>
           <Button
@@ -190,13 +272,13 @@ function Stepper({
             disabled={records.length < 2}
             onClick={() => {
               // Played from the end, it starts again from the first step.
-              if (!playing && at >= records.length - 1) onStep((records[0] as AuditRecord).record_id);
+              if (!playing && at >= records.length - 1) onStep((records[0] as Entry).id);
               setPlaying(!playing);
             }}
           >
             {playing ? t("replay.pause") : t("replay.play")}
           </Button>
-          <Button disabled={at >= records.length - 1} onClick={() => onStep((records[at + 1] as AuditRecord).record_id)}>
+          <Button disabled={at >= records.length - 1} onClick={() => onStep((records[at + 1] as Entry).id)}>
             {t("replay.next")}
           </Button>
         </div>
@@ -205,31 +287,52 @@ function Stepper({
         </p>
         <Timeline
           label={t("replay.timeline")}
-          selected={current.record_id}
+          selected={current.id}
           onSelect={onStep}
-          events={records.map((r) => ({
-            id: r.record_id,
-            at: r.recorded_at,
-            title: <span>{kindLabel(r.kind)}</span>,
-            meta:
-              r.attributes?.command || r.event || r.message ? (
-                <>
-                  {r.attributes?.command ? <Id>{r.attributes.command}</Id> : r.event ? <Id>{r.event}</Id> : null}
-                  {r.message ? <span translate="no">{r.message}</span> : null}
-                </>
-              ) : undefined,
-          }))}
+          events={records.map((e) => {
+            if (e.kind === "gap") return gapEvent(t, e.gap);
+            const r = e.record;
+            return {
+              id: r.record_id,
+              at: r.recorded_at,
+              title: <span>{kindLabel(r.kind)}</span>,
+              meta:
+                r.attributes?.command || r.event || r.message ? (
+                  <>
+                    {r.attributes?.command ? <Id>{r.attributes.command}</Id> : r.event ? <Id>{r.event}</Id> : null}
+                    {r.message ? <span translate="no">{r.message}</span> : null}
+                  </>
+                ) : undefined,
+            };
+          })}
         />
+        {unplaced.length ? <Unplaced gaps={unplaced} /> : null}
+        {reported === false ? (
+          <p className={styles.quiet} data-loss="none">
+            {t("replay.loss.none")}
+          </p>
+        ) : null}
         {pager}
       </div>
       <section className={styles.terminalPanel} aria-labelledby="replay-terminal">
+        {current.kind === "gap" ? (
+          <section className={styles.gapPanel} aria-labelledby="replay-gap" data-gap-detail={current.id}>
+            <h2 id="replay-gap" className={styles.drawerTitle}>
+              {t("replay.gap.title")}
+            </h2>
+            <GapFacts gap={current.gap} session={false} />
+          </section>
+        ) : null}
         <h2 id="replay-terminal" className={styles.drawerTitle}>
           {t("replay.terminal")}
         </h2>
         {streams.length === 0 ? (
           <p className={styles.quiet}>{t("replay.noCapture")}</p>
         ) : (
-          <Terminal records={records.slice(0, at + 1).filter((r) => r.kind === "stream")} captures={captures} />
+          <Terminal
+            entries={records.slice(0, at + 1).filter((e) => e.kind === "gap" || e.record.kind === "stream")}
+            captures={captures}
+          />
         )}
       </section>
     </div>
@@ -238,10 +341,11 @@ function Stepper({
 
 /**
  * The terminal at this step: every chunk so far, joined, as text. A chunk that
- * is gone or unreadable ends the run before it and is shown where it falls,
- * so nothing on either side of a hole is joined across it.
+ * is gone or unreadable, and a hole in the proxy's stream (a gap, at its
+ * span), each ends the run before it and is shown where it falls, so nothing
+ * on either side of a hole is joined across it.
  */
-function Terminal({ records, captures }: { records: readonly AuditRecord[]; captures: Map<string, Load<Capture>> }) {
+function Terminal({ entries, captures }: { entries: readonly Entry[]; captures: Map<string, Load<Capture>> }) {
   const { t } = useI18n();
   const pieces: ReactNode[] = [];
   let run: Uint8Array[] = [];
@@ -257,7 +361,22 @@ function Terminal({ records, captures }: { records: readonly AuditRecord[]; capt
     run = [];
     runStart = key;
   };
-  for (const r of records) {
+  for (const e of entries) {
+    if (e.kind === "gap") {
+      flush(e.id);
+      pieces.push(
+        <div key={e.id} className={styles.terminalGap} data-stream-gap={e.gap.gap_cause}>
+          <GapStatus gap={e.gap} />
+          <span>
+            {e.gap.gap_records === undefined
+              ? t("replay.hole.unknown")
+              : t("replay.hole", { count: e.gap.gap_records })}
+          </span>
+        </div>,
+      );
+      continue;
+    }
+    const r = e.record;
     const c = captures.get(r.record_id);
     if (!c || c.state === "loading") {
       flush(r.record_id);

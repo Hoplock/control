@@ -13,6 +13,11 @@
 //   sess-e2e-rule-deny  grace → build-01, denied by no-shell-on-build-hosts
 //   sess-e2e-hops       grace → vault-01 through px-dmz-03: two decisions,
 //                       under an administrator's just-in-time grant
+//   sess-e2e-gaps       grace → app-01, recorded, with holes (0057): two
+//                       `logging.gap` reports of `evicted` (summed) and one
+//                       of `refused` that hid a critical record, each sent
+//                       after the records around its hole
+// And one gap that belongs to no session, on px-dmz-03's stream (0057).
 // The decision ids are the server's own, minted at random, so the screens
 // mask them in screenshots. Record ids and instants are the fixture's.
 
@@ -128,6 +133,8 @@ export async function seedAudit(admin: APIRequestContext): Promise<void> {
     { record_id: "rec-e2e-hops-03", session_id: "sess-e2e-hops", timestamp: "2026-11-01T08:12:30Z", kind: "session_end", severity: "info", message: "session closed", subject: "grace", login: "grace", target: "vault-01.dmz.internal" },
   ]);
 
+  await seedGaps(admin);
+
   // What a supervisor did from above (M19): one act naming the person it
   // acted for, one naming nobody. Its own context: its token, no session.
   const sup = await request.newContext({ baseURL: NORTH });
@@ -142,4 +149,74 @@ export async function seedAudit(admin: APIRequestContext): Promise<void> {
   });
   if (!flush.ok()) throw new Error(`supervisor's cache invalidation: ${flush.status()} ${await flush.text()}`);
   await sup.dispose();
+}
+
+/**
+ * A proxy's own report of records this server does not hold (PLAN §7,
+ * `Hoplock/proxy#71`; upstream `api/README.md`, "When records do not
+ * arrive"): `kind: error`, `event: logging.gap`, one per session and cause,
+ * its keys as attributes. Its timestamp is when the proxy wrote it, after the
+ * hole, so a timeline places it by its span.
+ */
+function gap(g: {
+  id: string;
+  session: string;
+  at: string;
+  cause: "evicted" | "refused";
+  records: number;
+  bytes: number;
+  kinds: string;
+  critical: number;
+  first: string;
+  last: string;
+  extra?: Record<string, string>;
+}): Rec {
+  return {
+    record_id: g.id,
+    session_id: g.session,
+    timestamp: g.at,
+    kind: "error",
+    severity: g.critical > 0 ? "critical" : "warn",
+    ...(g.session ? { subject: "grace", login: "grace", target: "app-01.core.internal" } : {}),
+    attributes: {
+      event: "logging.gap",
+      gap_cause: g.cause,
+      gap_records: String(g.records),
+      gap_bytes: String(g.bytes),
+      gap_kinds: g.kinds,
+      gap_critical: String(g.critical),
+      gap_first_at: g.first,
+      gap_last_at: g.last,
+      ...g.extra,
+    },
+  };
+}
+
+async function seedGaps(admin: APIRequestContext): Promise<void> {
+  const app = { subject: "grace", login: "grace", target: "app-01.core.internal" };
+  const s = "sess-e2e-gaps";
+  const prompt = "\x1b[1;32mgrace@app-01\x1b[0m:~$ ";
+  await deliver(admin, "px-core-01", [
+    { record_id: "rec-e2e-gaps-01", session_id: s, timestamp: "2026-11-01T09:00:00Z", kind: "session_start", severity: "info", message: "session opened from 10.20.0.7", ...app },
+    { record_id: "rec-e2e-gaps-02", session_id: s, timestamp: "2026-11-01T09:00:01Z", kind: "stream", severity: "info", ...app, payload: b64(prompt) },
+    { record_id: "rec-e2e-gaps-03", session_id: s, timestamp: "2026-11-01T09:00:10Z", kind: "command", severity: "info", ...app, attributes: { command: "tail -n 3 /var/log/app/worker.log", action: "allow" } },
+    { record_id: "rec-e2e-gaps-04", session_id: s, timestamp: "2026-11-01T09:00:11Z", kind: "stream", severity: "info", ...app, payload: b64("tail -n 3 /var/log/app/worker.log\r\nworker 1 started\r\nworker 2 started\r\n") },
+    // The proxy was cut off from Control here: what it wrote meanwhile was evicted from its disk.
+    { record_id: "rec-e2e-gaps-05", session_id: s, timestamp: "2026-11-01T09:04:00Z", kind: "stream", severity: "info", ...app, payload: b64("worker 9 started\r\n" + prompt) },
+    // Two records Control refused (rec-px-0411, rec-px-0412), then a second outage.
+    { record_id: "rec-e2e-gaps-06", session_id: s, timestamp: "2026-11-01T09:07:00Z", kind: "stream", severity: "info", ...app, payload: b64("exit\r\nlogout\r\n") },
+    { record_id: "rec-e2e-gaps-07", session_id: s, timestamp: "2026-11-01T09:07:30Z", kind: "session_end", severity: "info", message: "session closed", ...app },
+    // The refused report is sent when the refusal happens; the evicted ones once delivery resumes.
+    gap({
+      id: "rec-e2e-gap-refused", session: s, at: "2026-11-01T09:04:32Z", cause: "refused", records: 2, bytes: 1730, kinds: "command,policy_decision", critical: 1,
+      first: "2026-11-01T09:04:30.120000000Z", last: "2026-11-01T09:04:31.004000000Z",
+      extra: { gap_record_ids: "rec-px-0411,rec-px-0412", refusal_code: "invalid_record", refusal_message: "record 2 (rec-px-0412) is malformed: attributes.command exceeds 4096 bytes" },
+    }),
+    gap({ id: "rec-e2e-gap-evicted-1", session: s, at: "2026-11-01T09:20:00Z", cause: "evicted", records: 40, bytes: 61440, kinds: "command,stream", critical: 0, first: "2026-11-01T09:00:30Z", last: "2026-11-01T09:03:10Z" }),
+    gap({ id: "rec-e2e-gap-evicted-2", session: s, at: "2026-11-01T09:20:01Z", cause: "evicted", records: 12, bytes: 18200, kinds: "stream", critical: 0, first: "2026-11-01T09:05:00Z", last: "2026-11-01T09:06:20Z" }),
+  ]);
+  // Records that belonged to no session: the proxy's own, evicted during an outage.
+  await deliver(admin, "px-dmz-03", [
+    gap({ id: "rec-e2e-gap-sessionless", session: "", at: "2026-11-01T07:45:00Z", cause: "evicted", records: 120, bytes: 204800, kinds: "host_key,provisioning", critical: 0, first: "2026-11-01T07:00:00Z", last: "2026-11-01T07:30:00Z" }),
+  ]);
 }

@@ -106,7 +106,7 @@ describe("the sinks' lag (0026, M8)", () => {
     expect(rows[1]).toContain('data-lag-state="behind"');
     expect(rows[1]).toContain('data-skipped="42"');
     expect(rows[1]).toContain("42 records were removed by a retention pass");
-    expect(rows[1]).toContain('href="/console/audit/records?kind=operator.audit.retained"');
+    expect(rows[1]).toContain('href="/console/audit/retention"');
   });
 
   it("a failing or overtaken sink is never an outage or a deny", () => {

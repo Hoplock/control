@@ -37,6 +37,11 @@ export const ROUTES = {
   auditRecord: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/records/{record}", permission: "audit:read" },
   auditCapture: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/records/{record}/capture", permission: "audit:read" },
   blockedCommands: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/blocked-commands", permission: "audit:read" },
+  // Stream gaps and retention in the audit view (0057): what a proxy could not
+  // deliver and why, a session's loss summed per cause, and a retention pass.
+  auditGaps: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/gaps", permission: "audit:read" },
+  auditSessionLoss: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/sessions/{session}/loss", permission: "audit:read" },
+  auditRetention: { method: "POST", pattern: "/api/v1/tenants/{tenant}/audit/retention", permission: "audit:retain" },
   policyVersions: { method: "GET", pattern: "/api/v1/tenants/{tenant}/policy/bundles", permission: "policy:read" },
   policyVersion: { method: "GET", pattern: "/api/v1/tenants/{tenant}/policy/bundles/{version}", permission: "policy:read" },
   policyActive: { method: "GET", pattern: "/api/v1/tenants/{tenant}/policy/active", permission: "policy:read" },

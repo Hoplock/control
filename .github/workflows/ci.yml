@@ -316,6 +316,14 @@ jobs:
           # a pack unavailable, a generation that broke shown as failed.
           - check: extensions and reports
             args: e2e/extensions-reports.spec.ts --project checks
+          # Stream gaps and retention in the audit view (0057): an evicted and
+          # a refused gap at their spans, neither denied, two reports summed,
+          # the session partial, replay's hole joining nothing, a session-less
+          # gap on its proxy's view; the archive behind, a pass by sequence
+          # refused having deleted nothing, the pass by instant held back, and
+          # no lag with no archive.
+          - check: stream gaps and retention
+            args: e2e/audit-gaps.spec.ts --project checks
     services:
       postgres:
         image: postgres:16

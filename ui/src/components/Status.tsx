@@ -48,12 +48,19 @@ export const STATUS = {
   // delivery is failing: each degraded, never an outage of Control (M11, M8).
   notStarted: { tone: "warn", label: "status.notStarted" },
   failing: { tone: "warn", label: "status.failing" },
+  // A stream gap whose records this server received and refused itself (0057,
+  // Hoplock/proxy#71): degraded — the store lacks them, and Control's own
+  // answer is shown beside it — and neither a deny nor an outage (M11).
+  refusedAtIngest: { tone: "warn", label: "status.refusedAtIngest" },
   unreachable: { tone: "outage", label: "status.unreachable" },
   fetchFailed: { tone: "outage", label: "status.fetchFailed" },
   unserved: { tone: "outage", label: "status.unserved" },
   // A report pack that could not list its reports, and a generation that ended broken (0056).
   unavailable: { tone: "outage", label: "status.unavailable" },
   failed: { tone: "outage", label: "status.failed" },
+  // A stream gap whose records this server never received: the proxy was cut
+  // off for longer than its disk window held them, which is outage-class (M11, 0057).
+  evicted: { tone: "outage", label: "status.evicted" },
   pending: { tone: "info", label: "status.pending" },
   scheduled: { tone: "info", label: "status.scheduled" },
   inProgress: { tone: "info", label: "status.inProgress" },
