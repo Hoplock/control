@@ -14,7 +14,9 @@ package main
 //     failing — and `e2e-lake`, which confirms every batch — caught up;
 //   - two report packs: `example.com/e2e/compliance`, with a report that
 //     generates and one whose body breaks after its first bytes, and
-//     `example.com/e2e/flaky`, which cannot list its reports — unavailable.
+//     `example.com/e2e/flaky`, which cannot list its reports — unavailable;
+//   - an archive that stays behind and a key store in memory, for the audit
+//     view's retention (0057, retention.go).
 //
 // The identity sync the fixture already registers (main.go) is the point
 // that started.
@@ -172,5 +174,7 @@ func registerExtensions(r *ext.Registry) error {
 		r.RegisterAuditSink(ext.Registration{Provider: lakeProvider, Version: "e2e"}, confirmingSink{}),
 		r.RegisterReportProvider(ext.Registration{Provider: compliancePack, Version: "1.4.0"}, compliance{}),
 		r.RegisterReportProvider(ext.Registration{Provider: flakyPack, Version: "0.3.0"}, flaky{}),
+		r.RegisterArchiveStore(ext.Registration{Provider: archiveProvider, Version: "e2e"}, holdingArchive{}),
+		r.RegisterKeyStore(ext.Registration{Provider: keyStoreProvider, Version: "e2e"}, newMemoryKeys()),
 	)
 }

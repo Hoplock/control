@@ -45,6 +45,10 @@ export const ERROR_MESSAGES: Readonly<Record<string, MessageKey>> = {
   report_provider_failed: "error.report_provider_failed",
   report_provider_unavailable: "error.report_provider_unavailable",
   report_generation_busy: "error.report_generation_busy",
+  // Retention (0024, 0025; shown from 0057): each a refusal that deleted nothing, never an outage of the store.
+  retention_not_archived: "error.retention_not_archived",
+  retention_unverified: "error.retention_unverified",
+  retention_key_not_configured: "error.retention_key_not_configured",
   [NETWORK_FAILURE]: "error.network",
 };
 

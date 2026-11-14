@@ -340,6 +340,72 @@ export interface AuditRecord {
   body: string;
 }
 
+/**
+ * audit.Gap (0019, `Hoplock/proxy#71`): one `logging.gap` record — a proxy's
+ * own report of records this server does not hold — its keys as fields. The
+ * span is when the hole was; `reported_at` is when the proxy wrote the report,
+ * often after the session ended. A key the proxy did not send is absent.
+ */
+export interface Gap {
+  record_id: string;
+  stream: string;
+  chain_seq: number;
+  session_id?: string;
+  proxy_id?: string;
+  severity: string;
+  /** `evicted` (never received) or `refused` (received and refused here); another is shown as not reported. */
+  gap_cause: string;
+  gap_records?: number;
+  gap_bytes?: number;
+  gap_first_at?: string;
+  gap_last_at?: string;
+  gap_kinds?: string[];
+  /** How many of the missing records were critical. */
+  gap_critical?: number;
+  /** A refused report's own record ids, at most 64. */
+  gap_record_ids?: string[];
+  gap_record_ids_truncated?: boolean;
+  /** A refused report repeats this server's own answer. */
+  refusal_code?: string;
+  refusal_message?: string;
+  reported_at: string;
+}
+
+/** north.gapList */
+export interface GapPage extends Paged {
+  gaps: Gap[];
+}
+
+/** north.lossView: one cause's row of a session's loss, summed across its reports. */
+export interface GapLoss {
+  cause: string;
+  reports: number;
+  records: number;
+  bytes: number;
+}
+
+/** `GET …/audit/sessions/{session}/loss` */
+export interface SessionLoss {
+  session_id: string;
+  loss: GapLoss[];
+}
+
+/**
+ * `POST …/audit/retention`'s answer (0024, 0025): what one pass by sequence
+ * or by instant deleted, and — with an archive registered — whether the
+ * archive held it back and how far the archive holds the stream.
+ */
+export interface RetentionPass {
+  stream: string;
+  deleted: number;
+  through_seq: number;
+  through_hash: string;
+  key: string;
+  held_by_archive: boolean;
+  /** Present only with an archive registered. */
+  archived_through_seq?: number;
+}
+
 /** north.auditRecordList */
 export interface AuditRecordPage extends Paged {
   records: AuditRecord[];

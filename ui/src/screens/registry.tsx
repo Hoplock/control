@@ -13,11 +13,13 @@ import { DeploymentScreen } from "./Deployment";
 import { ExplainScreen } from "./Explain";
 import { ExtensionsScreen } from "./Extensions";
 import { FleetScreen } from "./Fleet";
+import { AuditGapsScreen } from "./Gaps";
 import { GrantNewScreen, GrantScreen, GrantsScreen } from "./Grants";
 import { GroupScreen, GroupsScreen, RoleScreen, RolesScreen, SubjectNewScreen, SubjectScreen, SubjectsScreen } from "./Identities";
 import { PolicyCandidateScreen, PolicyScreen, PolicyVersionScreen } from "./Policy";
 import { ReplayScreen } from "./Replay";
 import { ReportsScreen } from "./Reports";
+import { AuditRetentionScreen } from "./Retention";
 import { TargetNewScreen, TargetScreen, TargetsScreen } from "./Targets";
 
 export interface Screen {
@@ -221,6 +223,21 @@ export const SCREENS: readonly Screen[] = [
     density: "compact",
     permission: "audit:read",
     render: () => <BlockedCommandsScreen />,
+  },
+  // Stream gaps and retention in the audit view (0057).
+  {
+    id: "audit-gaps",
+    path: "audit/gaps",
+    density: "compact",
+    permission: "audit:read",
+    render: () => <AuditGapsScreen />,
+  },
+  {
+    id: "audit-retention",
+    path: "audit/retention",
+    density: "compact",
+    permission: "audit:read",
+    render: () => <AuditRetentionScreen />,
   },
   {
     id: "audit-replay",

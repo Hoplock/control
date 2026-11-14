@@ -365,8 +365,8 @@ One component renders all of it, so a status looks identical everywhere:
 | --- | --- | --- | --- |
 | allowed / healthy / active / applied / valid / running / caught up | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied`, `Valid`, `Running`, `Caught up` |
 | denied / revoked / expired / invalid / blocking / locked / quarantined / deactivated | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired`, `Invalid`, `Blocking`, `Locked`, `Quarantined`, `Deactivated` |
-| degraded / stale / expiring / rejected / warning / not started / failing | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected`, `Warning`, `Not started`, `Failing` |
-| unreachable / outage / fetch failed / unserved / unavailable / failed | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved`, `Unavailable`, `Failed` |
+| degraded / stale / expiring / rejected / warning / not started / failing / refused at ingest | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected`, `Warning`, `Not started`, `Failing`, `Refused at ingest` |
+| unreachable / outage / fetch failed / unserved / unavailable / failed / evicted | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved`, `Unavailable`, `Failed`, `Evicted` |
 | pending / scheduled / in progress / pending restart / advice / behind | `--s-info` | half-filled circle | `Pending`, `Scheduled`, `In progress`, `Pending restart`, `Advice`, `Behind` |
 | unknown / not reported / left / superseded / not registered | `--n-400` | hollow circle, dotted | `Not reported`, `Left`, `Superseded`, `Not registered` |
 
@@ -426,6 +426,23 @@ the record (M8), never an outage or tampering. A **report pack** that could
 not list its reports is **`Unavailable`**, an outage of the pack and never a
 pack with no reports, and a generation that ended broken is **`Failed`**,
 with nothing saved.
+
+A **gap in a proxy's stream** — a `logging.gap`, the proxy's own report of
+records this server does not hold (PLAN §7, 0057) — reads as its cause.
+**`Evicted`** is a hole this server never received, the proxy cut off for
+longer than its disk window held the records: outage-class (M11), the outage
+row's glyph and hue. **`Refused at ingest`** is the state for records this
+server received and refused itself, and it is decided here (0057): the warn
+row — degraded, because the store lacks records it was handed — and its own
+word, because it is neither the deny of a decision (nothing was decided about
+anyone's access) nor an outage (the records arrived), and must not read as
+either. It is never the `Rejected` of a proxy refusing a document, which is
+the other side of the same wire, and it is always shown beside this
+server's own answer (`refusal_code`, `refusal_message`) and the refused record
+ids. A cause the console does not know is `Not reported`. A gap that hid a
+critical record is marked critical beside its status. A gap is never
+tampering, and a stream whose chain verifies is never "nothing missing": the
+chain says nothing about a record that never arrived.
 
 A rolling upgrade reads as **`Pending` / in progress**, never as a fault (M19).
 `Not reported` is its own state and never renders as healthy — PLAN §4 is
@@ -517,10 +534,28 @@ listing carries under one set of names: its reading as a status pill and a
 sentence (`Caught up`, `Behind`, `Failing`, §6), then streams behind, the
 oldest unconfirmed record, and the archive's captures waiting or a sink's
 records skipped by retention where the answer carries them. A skip is a count
-with its explanation — the pass's `operator.audit.retained` record, linked in
-the audit view — and never tampering. Its states are the three readings, a
+with its explanation — the pass's `operator.audit.retained` record, linked to
+the audit view's retention trail — and never tampering. Its states are the three readings, a
 skip, loading (`FeedLagSkeleton`) and **not reported** (a lag the server did
 not send, which is never caught up).
+
+**Stream gaps and retention in the audit view** (0057). A gap is placed by
+its **span** (`gap_first_at` to `gap_last_at`), never at its report's own
+timestamp, which is often after the session ended; a report with no span is
+listed beside the timeline, never placed at a time it does not have. In a
+session's replay each gap is a step of its own, its cause as its marker, and
+the terminal shows the hole where it falls and never joins the capture on
+either side of it; the report's own record is not a step. A session with a
+hole is the **partial** state: its loss per cause, the **sum** of its
+reports (never the latest), named in the partial notice, and a loss that
+could not be read is a named gap too, so the session never reads as
+complete. Gaps that belong to no session are on the per-proxy view, each
+stream a timeline placed by span. The archive's lag is the feed lag
+component on the retention view, where a pass by sequence the archive refused
+(`retention_not_archived`) is shown beside the form as a refusal that
+deleted nothing, offering the pass by instant, and a pass the archive held
+back says so; with no archive registered, none of it appears. A retention
+pass deletes records, so it confirms by typing the stream's name.
 
 **Form and mutation rules.** Destructive actions confirm by typing the object
 name, through the one `ConfirmDialog`, whose hint says what typing commits to:

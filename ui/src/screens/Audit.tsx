@@ -53,6 +53,9 @@ import {
   type RecordFilters,
 } from "./auditModel";
 import { ViewLinks } from "../components/ViewLinks";
+import { GapFacts, GapStatus } from "./Gaps";
+import { gapOfRecord, isGapRecord, RETAINED_EVENT } from "./gapModel";
+import { RetainedFactsOf } from "./Retention";
 import styles from "./Audit.module.css";
 
 const FORBIDDEN: Load<never> = { state: "refused", status: 403, error: { code: "forbidden" } };
@@ -77,7 +80,7 @@ export function When({ at }: { at?: string }) {
 }
 
 /** The views of the audit screen, as links: each is its own deep link. */
-export function AuditViews({ current }: { current: "records" | "blocked" | "replay" }) {
+export function AuditViews({ current }: { current: "records" | "blocked" | "gaps" | "retention" | "replay" }) {
   const { t } = useI18n();
   return (
     <ViewLinks
@@ -86,6 +89,8 @@ export function AuditViews({ current }: { current: "records" | "blocked" | "repl
       views={[
         { id: "records", to: "audit/records", label: t("audit.view.records") },
         { id: "blocked", to: "audit/blocked-commands", label: t("audit.view.blocked") },
+        { id: "gaps", to: "audit/gaps", label: t("audit.view.gaps") },
+        { id: "retention", to: "audit/retention", label: t("audit.view.retention") },
       ]}
     />
   );
@@ -180,6 +185,7 @@ export function AuditRecordsScreen() {
     { id: "session", label: t("audit.col.session"), kind: "text", mono: true },
     { id: "decision", label: t("audit.col.decision"), kind: "text", mono: true },
     { id: "principal", label: t("audit.col.actor"), kind: "text", mono: true },
+    { id: "event", label: t("audit.record.event"), kind: "text", mono: true },
     { id: "kind", label: t("audit.col.kind"), options: KINDS.map((k) => ({ value: k, label: kindLabel(k) })) },
     { id: "severity", label: t("audit.col.severity"), options: SEVERITIES.map((s) => ({ value: s, label: severityLabel(s) })) },
   ];
@@ -224,6 +230,7 @@ export function AuditRecordsScreen() {
       header: headers[4] as string,
       cell: (r) => (
         <span className={styles.what}>
+          {isGapRecord(r) ? <GapStatus gap={gapOfRecord(r)} /> : null}
           {r.event ? <Id>{r.event}</Id> : null}
           {r.message ? (
             <span className={styles.message} translate="no">
@@ -536,6 +543,15 @@ function RecordDetail({ record: r }: { record: AuditRecord }) {
           <Id volatile>{r.hash}</Id>
         </Detail>
       </dl>
+      {isGapRecord(r) ? (
+        <section aria-labelledby="audit-record-gap" className={styles.drawerSection}>
+          <h3 id="audit-record-gap" className={styles.drawerTitle}>
+            {t("gaps.record.title")}
+          </h3>
+          <GapFacts gap={gapOfRecord(r)} />
+        </section>
+      ) : null}
+      {(r.event || r.attributes?.event) === RETAINED_EVENT ? <RetainedFactsOf record={r} /> : null}
       {knownAttributes(r).length ? (
         <section aria-labelledby="audit-record-attributes" className={styles.drawerSection}>
           <h3 id="audit-record-attributes" className={styles.drawerTitle}>

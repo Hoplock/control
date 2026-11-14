@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ConfigRollout, Proxy } from "../src/api/types";
 import { ErrorMessage, ErrorState } from "../src/components/States";
-import { STATUS, type Tone } from "../src/components/Status";
+import { STATUS, StatusOf, type Tone } from "../src/components/Status";
 import { I18nProvider } from "../src/i18n/I18n";
 import { HEALTH_STATUS } from "../src/shell/chrome";
 import { configStatus, proxyHealth } from "../src/screens/fleetModel";
@@ -49,6 +49,36 @@ describe("M11: a deny and an outage are never drawn alike", () => {
     expect(outageHtml).not.toMatch(/denied|refused/i);
     expect(refusedHtml).toContain('data-tone="deny"');
     expect(refusedHtml).toContain(">Refused<");
+  });
+});
+
+// A stream gap's two causes (0057, DESIGN.md §6): evicted is an outage, and
+// a refusal at ingest is a state of its own that is neither the deny nor the
+// outage state — this server received the records and refused them itself.
+describe("a stream gap reads as its cause", () => {
+  it("refused at ingest is neither a deny nor an outage, in tone, glyph or word", () => {
+    const refused = STATUS.refusedAtIngest;
+    expect(refused.tone).not.toBe("deny");
+    expect(refused.tone).not.toBe("outage");
+    for (const s of Object.values(STATUS).filter((x) => x.tone === "deny" || x.tone === "outage")) {
+      expect(en[refused.label]).not.toBe(en[s.label]);
+    }
+    const html = render(<StatusOf name="refusedAtIngest" pill />);
+    expect(html).toContain('data-tone="warn"');
+    expect(html).not.toMatch(/data-tone="(deny|outage)"/);
+    expect(html).toContain("Refused at ingest");
+  });
+  it("refused at ingest is not drawn in the deny or the outage colour, in either theme", () => {
+    for (const theme of ["light", "dark"] as const) {
+      const root = rootTokens();
+      const of = (tone: Tone) => resolve(root, `var(${TONE_TOKEN[tone]})`, theme);
+      expect(of(STATUS.refusedAtIngest.tone)).not.toBe(of("deny"));
+      expect(of(STATUS.refusedAtIngest.tone)).not.toBe(of("outage"));
+    }
+  });
+  it("evicted is an outage, never a deny (M11)", () => {
+    expect(STATUS.evicted.tone).toBe("outage");
+    expect(en[STATUS.evicted.label]).toBe("Evicted");
   });
 });
 

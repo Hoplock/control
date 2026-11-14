@@ -231,6 +231,74 @@
   align-items: baseline;
 }
 
+/* Stream gaps and retention (0057). A panel per proxy's stream, per pass. */
+.para {
+  margin: 0;
+  color: var(--text-primary);
+}
+.streamPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.gapPanel {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  border: var(--border-width) dashed var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.gapWhy {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.refusal {
+  display: grid;
+  gap: var(--sp-4);
+  min-inline-size: 0;
+}
+.gapDetails {
+  display: grid;
+  gap: var(--sp-12);
+}
+.gapDetails > summary {
+  font: var(--t-label);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.gapDetails[open] > summary {
+  margin-block-end: var(--sp-12);
+}
+.gapDetails > div + div {
+  padding-block-start: var(--sp-12);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+}
+.unplaced {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.retentionForm {
+  display: grid;
+  grid-template-columns: minmax(0, var(--form-max));
+  gap: var(--sp-12);
+}
+.retentionResult {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-12) var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-inline-start: var(--focus-ring-width) solid var(--border-strong);
+  border-radius: var(--r-md);
+}
+
 /* Replay. */
 .replay {
   display: grid;
