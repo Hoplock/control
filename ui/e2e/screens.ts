@@ -1048,7 +1048,15 @@ const GAPS: E2EScreen[] = [
       await retentionReady(page);
     },
     states: {
-      loading: { substitute: [[`${API}/audit/records`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
+      // Only the trail's read is held open: the archive's panel has arrived,
+      // so the image does not depend on which of the two answered first.
+      loading: {
+        substitute: [[`${API}/audit/records`, { kind: "hang" }]],
+        ready: async (page) => {
+          await main(page).locator("[data-state=loading]").waitFor();
+          await main(page).locator('[data-archive="registered"] [data-lag-state="behind"]').waitFor();
+        },
+      },
       // The seed runs no pass that deletes, so the trail is empty by its own data.
       empty: { seeded: true, ready: (page) => main(page).locator("[data-state=empty]").waitFor() },
       error: { substitute: [[`${API}/audit/records`, outage("corr-e2e-retention")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },

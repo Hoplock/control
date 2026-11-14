@@ -137,6 +137,17 @@
   The trail with a held pass is a substituted answer
   (`audit-retention-trail`), because the seed runs no pass that deletes.
 
+### A capture race CI found, fixed here
+
+The first CI run failed the screenshot baseline on `audit-retention`'s loading
+state (1020 px tall against a 1134 px baseline). That state holds only the
+trail's read open, and a loading screenshot does not wait for the network to
+settle, so whether the archive's panel had arrived or was still its skeleton
+depended on which answer came first. Reproduced locally by delaying the
+extensions answer by 1.5 s (1014 px); the state's `ready` now also waits for
+the archive's panel, and the same delayed run passes. A state that holds one
+read open must wait for every other read on the screen.
+
 ### Registered with the harnesses
 
 `ui/e2e/screens.ts` (`GAPS`): `audit-replay-gaps` (partial by its data),
