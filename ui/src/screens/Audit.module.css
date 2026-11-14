@@ -266,13 +266,39 @@
   display: grid;
   gap: var(--sp-12);
 }
-.gapDetails > summary {
-  font: var(--t-label);
-  color: var(--text-secondary);
+.gapToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  list-style: none;
+  inline-size: fit-content;
+  padding: var(--sp-4) var(--sp-8);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-md);
+  color: var(--text-primary);
+  font: var(--t-body);
   cursor: pointer;
 }
-.gapDetails[open] > summary {
-  margin-block-end: var(--sp-12);
+.gapToggle:hover {
+  background: var(--bg-hover);
+}
+/* The platform's disclosure triangle is a font glyph; this one is drawn. */
+.gapToggle::-webkit-details-marker {
+  display: none;
+}
+.chevron {
+  inline-size: var(--sp-12);
+  block-size: var(--sp-12);
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  transition: rotate var(--m-fast) var(--ease);
+}
+.gapDetails[open] .chevron {
+  rotate: 90deg;
+}
+:root[dir="rtl"] .gapDetails:not([open]) .chevron {
+  rotate: 180deg;
 }
 .gapDetails > div + div {
   padding-block-start: var(--sp-12);

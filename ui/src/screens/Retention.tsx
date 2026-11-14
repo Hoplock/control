@@ -165,12 +165,12 @@ function RetentionForm({ archived, onRan }: { archived: boolean; onRan(): void }
       </h2>
       <p className={styles.quiet}>{t("retention.pass.lede")}</p>
       <form className={styles.retentionForm} onSubmit={submit} noValidate>
-        <Field label={t("retention.field.stream")} hint={t("retention.field.stream.hint", { control: CONTROL_STREAM })} error={touched ? errors.stream : undefined}>
+        <Field label={t("retention.field.stream")} hint={t("retention.field.stream.hint", { example: "proxy:px-core-01", control: CONTROL_STREAM })} error={touched ? errors.stream : undefined}>
           <Input mono name="stream" value={stream} onChange={(e) => setStream(e.target.value)} autoComplete="off" spellCheck={false} />
         </Field>
         <Choices legend={t("retention.field.by")}>
-          <Radio label={t("retention.by.sequence")} name="retention-by" checked={mode === "sequence"} onChange={() => setMode("sequence")} />
-          <Radio label={t("retention.by.instant")} name="retention-by" checked={mode === "instant"} onChange={() => setMode("instant")} />
+          <Radio label={t("retention.by.sequence")} name="retention-by" value="sequence" checked={mode === "sequence"} onChange={() => setMode("sequence")} />
+          <Radio label={t("retention.by.instant")} name="retention-by" value="instant" checked={mode === "instant"} onChange={() => setMode("instant")} />
         </Choices>
         {mode === "sequence" ? (
           <Field label={t("retention.field.seq")} hint={t("retention.field.seq.hint")} error={touched ? errors.seq : undefined}>
@@ -178,7 +178,8 @@ function RetentionForm({ archived, onRan }: { archived: boolean; onRan(): void }
           </Field>
         ) : (
           <Field label={t("retention.field.before")} hint={t("retention.field.before.hint")} error={touched ? errors.before : undefined}>
-            <Input ref={instantField} name="before" type="datetime-local" step={1} value={before} onChange={(e) => setBefore(e.target.value)} />
+            {/* An instant the operator picks: masked in a screenshot, as a <time> is. */}
+            <Input ref={instantField} name="before" type="datetime-local" step={1} value={before} onChange={(e) => setBefore(e.target.value)} data-volatile="" />
           </Field>
         )}
         <div className={styles.stepButtons}>
@@ -382,7 +383,7 @@ export function AuditRetentionScreen() {
         />
       ) : (
         <p className={styles.quiet} data-retention-readonly="">
-          {t("retention.readonly")}
+          {t("retention.readonly", { permission: "audit:retain" })}
         </p>
       )}
       <section className={styles.drawerSection} aria-labelledby="retention-trail">
@@ -395,7 +396,7 @@ export function AuditRetentionScreen() {
           isEmpty={(d) => d.records.length === 0 && trail.length === 0}
           gaps={unread ? [t("retention.partial.archive")] : []}
           loading={<TableSkeleton headers={headers.slice(0, 5)} />}
-          empty={<EmptyState title={t("retention.trail.empty.title")} body={t("retention.trail.empty.body")} />}
+          empty={<EmptyState title={t("retention.trail.empty.title")} body={t("retention.trail.empty.body", { event: RETAINED_EVENT })} />}
         >
           {(data) => (
             <>

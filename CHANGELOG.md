@@ -26,6 +26,47 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.44.0
+
+Phase 0057, stream gaps, the archive's lag and retention in the console's
+audit view (M8, M11, M20, M21, M23). No migration. The north-bound API is
+unchanged at version `5`: every view reads routes that were already served
+(`GET …/audit/gaps`, `GET …/audit/sessions/{session}/loss`,
+`GET …/audit/records`, `GET …/extensions`, `POST …/audit/retention`).
+Nothing in `ext`, `server` or the contract changes.
+
+- **A session's holes, in its replay**
+  (`/console/audit/sessions/<id>/replay`). Each `logging.gap` a proxy
+  reported for the session is a step of its own, at the start of its span and
+  never at the report's own timestamp; the report's record is not a step. Its
+  cause is its status: `Evicted` (never received — an outage, never a deny)
+  or `Refused at ingest` (received and refused by this server, shown with its
+  own answer and the refused record ids — neither a deny nor an outage). A gap
+  that hid a critical record is marked critical. The terminal shows each hole
+  where it falls and never joins the capture either side of it. A session
+  with a hole is partial: its loss per cause is the sum of its reports, and a
+  loss that could not be read is named too, so the session never reads as
+  complete.
+- **Stream gaps, at `/console/audit/gaps[?proxy=&cause=&scope=sessionless]`**
+  (`audit:read`). One page of the reports, each proxy's stream a timeline
+  placed by span; a gap that belongs to no session is shown here.
+- **Retention, at `/console/audit/retention`.** With an archive registered,
+  its lag (`Caught up`, `Behind`, `Failing`) and the rule that retention never
+  deletes what it has not confirmed; with none, none of it appears. A
+  retention pass by sequence or by instant received (`audit:retain`), which
+  confirms by typing the stream's name: a pass by sequence the archive refuses
+  (`retention_not_archived`) is shown as a refusal that deleted nothing,
+  offering the pass by instant, and a pass the archive held back says so. The
+  passes in the trail, each with what it deleted and whether the archive held
+  it back.
+- **The audit records view** filters by `event`, shows a gap report's cause in
+  its row, and opens a gap report or a retention pass's record with its facts.
+  The lag component's link to a retention pass's records now opens the
+  retention view's trail; it named a kind no record has.
+- **Status vocabulary**: `Evicted` (outage) and `Refused at ingest` (warn).
+  Error sentences for `retention_not_archived`, `retention_unverified` and
+  `retention_key_not_configured`.
+
 ## v0.43.0
 
 Phase 0056, the console's Extensions and Reports (M15, M8, M11, M21, M27,

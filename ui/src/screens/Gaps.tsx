@@ -325,7 +325,12 @@ export function AuditGapsScreen() {
                 />
                 {s.unplaced.length ? <Unplaced gaps={s.unplaced} /> : null}
                 <details className={styles.gapDetails}>
-                  <summary>{t("gaps.stream.details", { count: s.placed.length + s.unplaced.length })}</summary>
+                  <summary className={styles.gapToggle}>
+                    <svg className={styles.chevron} viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                      <path d="M3.5 2 6.5 5 3.5 8" />
+                    </svg>
+                    {t("gaps.stream.details", { count: s.placed.length + s.unplaced.length })}
+                  </summary>
                   {[...s.placed, ...s.unplaced].map((g) => (
                     <GapFacts key={g.record_id} gap={g} />
                   ))}

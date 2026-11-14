@@ -78,9 +78,13 @@ test.describe("extensions", () => {
     await expect(sinkOf(page, "e2e-siem").locator("[data-lag-state]")).toHaveAttribute("data-lag-state", "failing");
     await expect(sinkOf(page, "e2e-lake").locator("[data-lag-state]")).toHaveAttribute("data-lag-state", "caughtUp");
     await expectNoOutage(pointOf(page, "AuditSink"));
-    // A sink's lag is on the sink, never on the archive's row, which is empty.
-    await expect(pointOf(page, "ArchiveStore")).toHaveAttribute("data-point-status", "notRegistered");
-    await expect(pointOf(page, "ArchiveStore").locator("[data-lag-state]")).toHaveCount(0);
+    // A sink's lag is on the sink, never on the archive's row, which has its
+    // own: the fixture's archive holds every batch (0057), so it is behind
+    // and never failing.
+    await expect(pointOf(page, "ArchiveStore")).toHaveAttribute("data-point-status", "active");
+    await expect(pointOf(page, "ArchiveStore").locator("[data-lag-state]")).toHaveCount(1);
+    await expect(pointOf(page, "ArchiveStore").locator("[data-lag-state]")).toHaveAttribute("data-lag-state", "behind");
+    await expect(pointOf(page, "ArchiveStore").locator("[data-sink]")).toHaveCount(0);
   });
 
   test("a sink a retention pass overtook shows its skipped count and what explains it (substituted)", async ({ browser }) => {
@@ -88,7 +92,7 @@ test.describe("extensions", () => {
     const lake = sinkOf(page, "e2e-lake");
     await expect(lake.locator("[data-lag-state]")).toHaveAttribute("data-skipped", "42");
     await expect(lake.locator('[data-fact="skipped"] dd')).toHaveText("42");
-    await expect(lake.locator("[data-retention-gap] a")).toHaveAttribute("href", "/console/audit/records?kind=operator.audit.retained");
+    await expect(lake.locator("[data-retention-gap] a")).toHaveAttribute("href", "/console/audit/retention");
     await expect(sinkOf(page, "e2e-siem").locator("[data-lag-state]")).toHaveAttribute("data-lag-state", "failing");
     await expectNoOutage(pointOf(page, "AuditSink"));
     await expect(pointOf(page, "AuditSink").locator('[data-tone="deny"]')).toHaveCount(0);
