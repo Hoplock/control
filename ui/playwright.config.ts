@@ -48,8 +48,8 @@ export default defineConfig({
     trace: "off",
   },
   projects: [
-    { name: "checks", testIgnore: /mutations\.spec\.ts/ },
-    { name: "mutations", testMatch: /mutations\.spec\.ts/, dependencies: ["checks"] },
+    { name: "checks", testIgnore: /(mutations|runbook)\.spec\.ts/ },
+    { name: "mutations", testMatch: /(mutations|runbook)\.spec\.ts/, dependencies: ["checks"] },
   ],
   webServer: {
     command: "sh e2e/fixture/serve.sh",

@@ -13,12 +13,14 @@ import { DeploymentScreen } from "./Deployment";
 import { ExplainScreen } from "./Explain";
 import { ExtensionsScreen } from "./Extensions";
 import { FleetScreen } from "./Fleet";
+import { FleetAlgorithmsScreen } from "./FleetAlgorithms";
 import { AuditGapsScreen } from "./Gaps";
 import { GrantNewScreen, GrantScreen, GrantsScreen } from "./Grants";
 import { GroupScreen, GroupsScreen, RoleScreen, RolesScreen, SubjectNewScreen, SubjectScreen, SubjectsScreen } from "./Identities";
 import { PolicyCandidateScreen, PolicyScreen, PolicyVersionScreen } from "./Policy";
 import { ReplayScreen } from "./Replay";
 import { ReportsScreen } from "./Reports";
+import { RunbookScreen } from "./Runbook";
 import { AuditRetentionScreen } from "./Retention";
 import { TargetNewScreen, TargetScreen, TargetsScreen } from "./Targets";
 
@@ -55,9 +57,18 @@ export const SCREENS: readonly Screen[] = [
     id: "fleet",
     path: "fleet",
     nav: "nav.fleet",
+    section: "fleet",
     density: "compact",
     permission: "fleet:read",
     render: () => <FleetScreen />,
+  },
+  // Algorithm posture (0058): a view of Fleet, beside its proxies.
+  {
+    id: "fleet-algorithms",
+    path: "fleet/algorithms",
+    density: "comfortable",
+    permission: "fleet:read",
+    render: () => <FleetAlgorithmsScreen />,
   },
   {
     id: "policy",
@@ -74,6 +85,15 @@ export const SCREENS: readonly Screen[] = [
     density: "comfortable",
     permission: "policy:read",
     render: (p) => <PolicyVersionScreen key={p.version} version={p.version as string} />,
+  },
+  // The emergency runbook (0058): the day an advisory lands, in the Policy
+  // section because its first step is a publish.
+  {
+    id: "policy-runbook",
+    path: "policy/runbook",
+    density: "comfortable",
+    permission: "policy:read",
+    render: () => <RunbookScreen />,
   },
   {
     id: "policy-candidate",

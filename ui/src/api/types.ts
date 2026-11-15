@@ -985,3 +985,71 @@ export interface ReportRequestBody {
   parameters: Record<string, string>;
   format: ReportFormat;
 }
+
+// ---------------------------------------------------------------------------
+// Algorithm posture and the emergency runbook (0058; Hoplock/proxy#69, #72).
+// ---------------------------------------------------------------------------
+
+/** contract.AlgorithmFloorCapability: one level a build enforces, and the exchanges it accepts there. */
+export interface FloorCapability {
+  level: string;
+  key_exchanges: string[];
+}
+
+/** contract.AlgorithmProfileCapability: what one profile offers per axis, before any floor or ban. */
+export interface ProfileCapability {
+  profile: string;
+  key_exchanges: string[];
+  ciphers: string[];
+  macs: string[];
+  host_keys: string[];
+  public_key_auth: string[];
+}
+
+/** fleet.AlgorithmDeclaration: a build's algorithm offer. Absent members declare nothing. */
+export interface AlgorithmDeclaration {
+  algorithm_floors?: FloorCapability[];
+  algorithm_profiles?: ProfileCapability[];
+  algorithms?: Partial<Record<AlgorithmAxis, string[]>>;
+}
+
+/** The five axes a ban names, in the contract's order (contract.Axes). */
+export type AlgorithmAxis = "key_exchanges" | "ciphers" | "macs" | "host_keys" | "public_key_auth";
+
+/** fleet.DeclaredAlgorithms: one proxy's latest recorded declaration. */
+export interface DeclaredAlgorithms {
+  proxy_id: string;
+  declaration: AlgorithmDeclaration;
+  declared_at: string;
+}
+
+/** GET …/fleet/algorithms */
+export interface DeclarationPage extends Paged {
+  declarations: DeclaredAlgorithms[];
+}
+
+/** POST …/policy/apply: the upload and the activation, in one answer. */
+export interface PolicyApplied {
+  upload: PolicyUpload;
+  activate: PolicyActivation;
+}
+
+/** north.revocationReceipt: what one publication reported covering. */
+export interface RevocationReceipt {
+  type: string;
+  event_id: string;
+  /** Subscriptions on the answering node the event was queued to: never a count of the fleet. */
+  delivered: number;
+  covers_host_key_decisions: boolean;
+}
+
+/** audit.NegotiatedSession */
+export interface NegotiatedSession {
+  session_id: string;
+  latest_recorded_at: string;
+}
+
+/** GET …/audit/negotiated */
+export interface NegotiatedPage extends Paged {
+  sessions: NegotiatedSession[];
+}

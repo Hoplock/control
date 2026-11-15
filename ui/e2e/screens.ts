@@ -16,6 +16,7 @@
 // `npm run e2e:update` rewrites it after a deliberate change.
 
 import type { APIRequestContext, Page } from "@playwright/test";
+import { floorCandidate, seedAlgorithms } from "./fixture/algorithms";
 import { seedAudit } from "./fixture/audit";
 import { seedFleet } from "./fixture/fleet";
 import { fixtureGrant, seedInventory } from "./fixture/inventory";
@@ -72,7 +73,15 @@ const outage = (correlation: string): Substitute => ({
 const main = (page: Page) => page.locator("main#content");
 
 /** Fixture steps that run after the seed, before any check (global-setup.ts). */
-export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [seedFleet, seedAudit, seedPolicy, seedInventory, seedStanding];
+export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [
+  seedFleet,
+  seedAudit,
+  // After the audit fixture: px-dmz-03's declaration rides on a session its grant allows.
+  seedAlgorithms,
+  seedPolicy,
+  seedInventory,
+  seedStanding,
+];
 
 const GALLERY_PAGES = [
   "buttons",
@@ -1231,6 +1240,48 @@ export const SCREENS: readonly E2EScreen[] = [
   // one version's four views, the candidate editor, a refused candidate's
   // rejections at their lines, and the activation dialog — each a deep link
   // or a step from one, so each is in the baseline and every check.
+  // Algorithm posture (0058): three builds mid-upgrade, and proxies that
+  // declared nothing. Its partial state is the proxies' list failing beside
+  // the declarations, so who declared nothing is the named gap.
+  {
+    id: "fleet-algorithms",
+    kind: "console",
+    path: "/console/fleet/algorithms",
+    densities: false,
+    ready: (page) => main(page).locator("[data-levels] tbody tr[data-level]").first().waitFor(),
+    states: {
+      loading: {
+        substitute: [[`${API}/fleet/algorithms`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-state=loading]").waitFor(),
+      },
+      empty: {
+        substitute: [
+          [`${API}/fleet/algorithms`, { kind: "answer", status: 200, body: { declarations: [], truncated: false } }],
+          [
+            `${API}/proxies`,
+            {
+              kind: "answer",
+              status: 200,
+              body: {
+                proxies: [],
+                truncated: false,
+                liveness: { heartbeat_ttl_seconds: 90, relay_registration_ttl_seconds: 60, target_capability_ttl_seconds: 86400, report_after_seconds: 21600 },
+              },
+            },
+          ],
+        ],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/fleet/algorithms`, outage("corr-e2e-algorithms")]],
+        ready: (page) => main(page).locator("[data-state=error]").waitFor(),
+      },
+      partial: {
+        substitute: [[`${API}/proxies`, outage("corr-e2e-algorithms-proxies")]],
+        ready: (page) => main(page).locator("[data-state=partial]").waitFor(),
+      },
+    },
+  },
   {
     id: "policy",
     kind: "console",
@@ -1431,6 +1482,78 @@ export const SCREENS: readonly E2EScreen[] = [
       await main(page).locator("[data-candidate-source]").fill(candidates().invalid);
       await main(page).locator("[data-validate]").click();
       await main(page).locator("[data-rejections] [data-source-view]").waitFor();
+    },
+  },
+  // The emergency runbook (0058): opened on an advisory, its three steps
+  // waiting in order. Every step's call is a mutation the RBAC harness
+  // asserts hidden and API-refused per role; the reads it makes are ones
+  // every fixture role holds. The walk itself is runbook.spec.ts.
+  {
+    id: "policy-runbook",
+    kind: "console",
+    path: "/console/policy/runbook?axis=ciphers&name=aes128-ctr",
+    densities: false,
+    ready: (page) => main(page).locator("[data-step='3']").waitFor(),
+    states: {
+      loading: {
+        substitute: [[`${API}/policy/active`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-state=loading]").waitFor(),
+      },
+      empty: {
+        substitute: [[`${API}/policy/active`, notFound("corr-e2e-runbook-404")]],
+        ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/policy/active`, outage("corr-e2e-runbook")]],
+        ready: (page) => main(page).locator("[data-state=error]").waitFor(),
+      },
+      partial: {
+        substitute: [[`${API}/fleet/algorithms`, outage("corr-e2e-runbook-builds")]],
+        ready: (page) => main(page).locator("[data-state=partial] [data-step='3']").waitFor(),
+      },
+    },
+    mutations: [
+      {
+        route: "policyApply",
+        method: "POST",
+        path: `${API}/policy/apply`,
+        body: { source: "schema_version: 1\n" },
+        permission: "policy:publish",
+        control: (page) => main(page).locator("[data-runbook-apply]"),
+      },
+      {
+        route: "revocations",
+        method: "POST",
+        path: `${API}/revocations`,
+        body: { type: "cache_invalidate", all: true },
+        permission: "session:revoke",
+        control: (page) => main(page).locator("[data-runbook-invalidate]"),
+      },
+      {
+        route: "revocations",
+        method: "POST",
+        path: `${API}/revocations`,
+        body: { type: "session_kill", session_ids: ["sess-e2e-neg-1"], reason: "refused by the harness" },
+        permission: "session:revoke",
+        control: (page) => main(page).locator("[data-runbook-kill]"),
+      },
+    ],
+  },
+  // A candidate that raises a floor the fleet cannot meet everywhere and bans
+  // a cipher one build offers alone (0058): the floor's impact preview and the
+  // ban's per-build warnings, in the publish-time report.
+  {
+    id: "policy-candidate-floor",
+    kind: "console",
+    path: "/console/policy/candidate",
+    densities: false,
+    ready: (page) => main(page).locator("[data-start=version]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      await main(page).locator("[data-candidate-source]").fill(floorCandidate());
+      await main(page).locator("[data-validate]").click();
+      await main(page).locator("[data-floor-impact=below]").waitFor();
+      await main(page).locator("[data-ban-progress]").first().waitFor();
     },
   },
   // Explain (0051): a session crossing two hops under a grant, opened on its

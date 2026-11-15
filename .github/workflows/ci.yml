@@ -324,6 +324,15 @@ jobs:
           # no lag with no archive.
           - check: stream gaps and retention
             args: e2e/audit-gaps.spec.ts --project checks
+          # Algorithm posture and the emergency runbook (0058): three builds
+          # mid-upgrade, in progress and never a fault, a proxy that declared
+          # nothing Not reported; the floor's impact preview and a ban's
+          # per-build warning, neither blocking; then, on a fresh server of
+          # its own, the runbook walked against a negotiated list longer than
+          # one page, every listed session ended.
+          - check: algorithms and runbook
+            args: e2e/algorithms.spec.ts --project checks
+            then: npx playwright test e2e/runbook.spec.ts --project mutations --no-deps
     services:
       postgres:
         image: postgres:16

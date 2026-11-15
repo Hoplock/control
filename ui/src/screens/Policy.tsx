@@ -185,6 +185,9 @@ export function PolicyScreen() {
             <ButtonLink to="policy/candidate" data-author="">
               {t("policies.author")}
             </ButtonLink>
+            <ButtonLink to="policy/runbook" data-runbook-link="">
+              {t("policies.runbook")}
+            </ButtonLink>
             <Button
               onClick={() => {
                 refresh();
