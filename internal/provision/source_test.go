@@ -24,8 +24,8 @@ func from(src string, s ext.SyncedSubject) ext.SyncedSubject { s.Source = src; r
 
 func groupFrom(src string, g ext.SyncedGroup) ext.SyncedGroup { g.Source = src; return g }
 
-func refIn(src, externalID string) ext.DirectoryRef {
-	return ext.DirectoryRef{Tenant: ext.Tenant(tenant), Source: src, ExternalID: externalID}
+func (h *harness) refIn(src, externalID string) ext.DirectoryRef {
+	return ext.DirectoryRef{Tenant: ext.Tenant(h.tenant), Source: src, ExternalID: externalID}
 }
 
 func TestTwoDirectoriesKeepTheirOwnIDsInOneTenant(t *testing.T) {
@@ -40,7 +40,7 @@ func TestTwoDirectoriesKeepTheirOwnIDsInOneTenant(t *testing.T) {
 		t.Fatalf("one id in two directories is subjects %q and %q, want two dir- ids", a.SubjectID, b.SubjectID)
 	}
 	for src, link := range map[string]store.DirectoryLink{source: a, sourceB: b} {
-		standing, err := h.store.Subjects().Standing(t.Context(), tenant, link.SubjectID)
+		standing, err := h.store.Subjects().Standing(t.Context(), h.tenant, link.SubjectID)
 		if err != nil || standing.Directory == nil || standing.Directory.Source != src || standing.Directory.ExternalID != "00u1" {
 			t.Errorf("subject %s reads directory %+v (%v), want source %s", link.SubjectID, standing.Directory, err, src)
 		}
@@ -49,7 +49,7 @@ func TestTwoDirectoriesKeepTheirOwnIDsInOneTenant(t *testing.T) {
 		t.Fatalf("source b's person is denied before anything happened: %+v", out.Deny)
 	}
 
-	if err := h.sink.DeactivateSubject(t.Context(), refIn(source, "00u1"), "terminated"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), h.refIn(source, "00u1"), "terminated"); err != nil {
 		t.Fatal(err)
 	}
 	if out := h.authorize(a.SubjectID, "sess-a"); out.Deny == nil || out.Deny.Reason != "subject_deactivated" {
@@ -73,7 +73,7 @@ func TestASubjectsGroupsResolveWithinItsOwnSource(t *testing.T) {
 	if got := h.subject("u-a").Groups; !slices.Equal(got, []string{"sre"}) {
 		t.Errorf("source a's subject takes %v from g1, want only sre: (b, g1) is DBAs", got)
 	}
-	bob, err := h.store.Subjects().Get(t.Context(), tenant, h.linkIn(sourceB, "u-b").SubjectID)
+	bob, err := h.store.Subjects().Get(t.Context(), h.tenant, h.linkIn(sourceB, "u-b").SubjectID)
 	if err != nil || !slices.Equal(bob.Groups, []string{"dba"}) {
 		t.Errorf("source b's subject = %v (%v), want dba", bob.Groups, err)
 	}
@@ -82,10 +82,10 @@ func TestASubjectsGroupsResolveWithinItsOwnSource(t *testing.T) {
 	alice := h.subject("u-a")
 	before := len(h.revoker.invalidated())
 	h.mustGroup(groupFrom(sourceB, h.group("g1", "SRE Team")))
-	if err := h.sink.DeleteGroup(t.Context(), refIn(sourceB, "g1")); err != nil {
+	if err := h.sink.DeleteGroup(t.Context(), h.refIn(sourceB, "g1")); err != nil {
 		t.Fatal(err)
 	}
-	for _, rec := range append(h.records(tenant, audit.EventSyncGroupUpserted)[:1], h.records(tenant, audit.EventSyncGroupDeleted)...) {
+	for _, rec := range append(h.records(h.tenant, audit.EventSyncGroupUpserted)[:1], h.records(h.tenant, audit.EventSyncGroupDeleted)...) {
 		if field(rec, audit.AttrSyncSource) != sourceB || field(rec, "identity_sync.members_rederived") != "1" {
 			t.Errorf("a change to (b, g1) recorded %v, want one member re-derived in source b", rec.Attributes)
 		}
@@ -127,7 +127,7 @@ func TestOrderingAndTombstonesAreKeptPerSource(t *testing.T) {
 			}
 		}},
 		{"a deactivation kept for an unseen (a, x) leaves a later create of (b, x) active", func(t *testing.T, h *harness) {
-			if err := h.sink.DeactivateSubject(t.Context(), refIn(source, "x"), "terminated"); err != nil {
+			if err := h.sink.DeactivateSubject(t.Context(), h.refIn(source, "x"), "terminated"); err != nil {
 				t.Fatal(err)
 			}
 			h.mustUpsert(h.person("x", "alice"))
@@ -141,15 +141,15 @@ func TestOrderingAndTombstonesAreKeptPerSource(t *testing.T) {
 		}},
 		{"a tombstone for (a, g) does not stop an older upsert of (b, g)", func(t *testing.T, h *harness) {
 			older := groupFrom(sourceB, h.group("g", "DBAs"))
-			if err := h.sink.DeleteGroup(t.Context(), refIn(source, "g")); err != nil {
+			if err := h.sink.DeleteGroup(t.Context(), h.refIn(source, "g")); err != nil {
 				t.Fatal(err)
 			}
 			h.mustGroup(older)
-			g, err := h.store.DirectoryGroups().Get(t.Context(), tenant, sourceB, "g")
+			g, err := h.store.DirectoryGroups().Get(t.Context(), h.tenant, sourceB, "g")
 			if err != nil || g.Deleted() || g.Name != "DBAs" {
 				t.Errorf("(b, g) = %+v (%v), want it live: (a, g)'s tombstone is a's", g, err)
 			}
-			if a, _ := h.store.DirectoryGroups().Get(t.Context(), tenant, source, "g"); !a.Deleted() {
+			if a, _ := h.store.DirectoryGroups().Get(t.Context(), h.tenant, source, "g"); !a.Deleted() {
 				t.Errorf("(a, g) = %+v, want its tombstone kept", a)
 			}
 		}},
@@ -166,10 +166,10 @@ func TestALoginNameIsUniqueAcrossSources(t *testing.T) {
 	if kindOf(err) != ext.KindConflict {
 		t.Fatalf("(b, y) presenting (a, x)'s name: %v, want KindConflict", err)
 	}
-	if _, err := h.store.DirectoryLinks().Get(t.Context(), tenant, sourceB, "y"); !store.IsNotFound(err) {
+	if _, err := h.store.DirectoryLinks().Get(t.Context(), h.tenant, sourceB, "y"); !store.IsNotFound(err) {
 		t.Errorf("the refused upsert left a link: %v", err)
 	}
-	recs := h.records(tenant, audit.EventSyncRefused)
+	recs := h.records(h.tenant, audit.EventSyncRefused)
 	if len(recs) != 1 || field(recs[0], audit.AttrSyncSource) != sourceB || field(recs[0], audit.AttrSyncExternalID) != "y" ||
 		field(recs[0], "identity_sync.conflicting_subject") != h.link("x").SubjectID {
 		t.Errorf("the refusal recorded %v", recs)
@@ -187,9 +187,9 @@ func TestASourceIsRequiredAndHeldToItsPattern(t *testing.T) {
 			return h.sink.UpsertGroup(t.Context(), groupFrom(src, h.group("g1", "SRE Team")))
 		},
 		"DeactivateSubject": func(src string) error {
-			return h.sink.DeactivateSubject(t.Context(), refIn(src, "u-1"), "terminated")
+			return h.sink.DeactivateSubject(t.Context(), h.refIn(src, "u-1"), "terminated")
 		},
-		"DeleteGroup": func(src string) error { return h.sink.DeleteGroup(t.Context(), refIn(src, "g1")) },
+		"DeleteGroup": func(src string) error { return h.sink.DeleteGroup(t.Context(), h.refIn(src, "g1")) },
 	}
 	bad := map[string]string{
 		"absent":           "",
@@ -216,7 +216,7 @@ func TestASourceIsRequiredAndHeldToItsPattern(t *testing.T) {
 			}
 		}
 	}
-	recs := h.records(tenant, audit.EventSyncRefused)
+	recs := h.records(h.tenant, audit.EventSyncRefused)
 	if len(recs) != refused {
 		t.Errorf("%d refusal records for %d refused calls", len(recs), refused)
 	}
@@ -247,7 +247,7 @@ func TestEverySyncRecordCarriesTheSource(t *testing.T) {
 	active := h.person("u-1", "alice.smith", "g1")
 	active.UpdatedAt = time.Now().Add(time.Hour)
 	h.mustUpsert(active)
-	if err := h.sink.DeleteGroup(t.Context(), ref(tenant, "g1")); err != nil {
+	if err := h.sink.DeleteGroup(t.Context(), ref(h.tenant, "g1")); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.sink.UpsertSubject(t.Context(), h.person("u-2", "alice.smith")); kindOf(err) != ext.KindConflict {
@@ -258,7 +258,7 @@ func TestEverySyncRecordCarriesTheSource(t *testing.T) {
 		audit.EventSyncSubjectReactivated, audit.EventSyncGroupUpserted, audit.EventSyncGroupDeleted,
 		audit.EventSyncRefused,
 	} {
-		recs := h.records(tenant, event)
+		recs := h.records(h.tenant, event)
 		if len(recs) == 0 {
 			t.Errorf("no %s record was written", event)
 		}
