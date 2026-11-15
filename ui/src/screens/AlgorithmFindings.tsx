@@ -95,7 +95,7 @@ export function AlgorithmDetail({ finding: fd, builds }: { finding: Finding; bui
       const targets = objects<KexTarget>(p.targets, (o) => typeof o.hostname === "string");
       return (
         <div className={styles.stack} data-floor-impact="below">
-          <div className={styles.tableWrap}>
+          <div className={styles.tableWrap} tabIndex={0} role="region" aria-label={t("policies.floor.below.caption")}>
             <table className={styles.table}>
               <caption className={styles.visuallyHidden}>{t("policies.floor.below.caption")}</caption>
               <thead>
@@ -177,7 +177,7 @@ export function AlgorithmDetail({ finding: fd, builds }: { finding: Finding; bui
       return (
         <div className={styles.stack} data-ban-emptied={axis}>
           <p className={styles.meta}>{t("policies.ban.refuse", { axis: axisLabel })}</p>
-          <div className={styles.tableWrap}>
+          <div className={styles.tableWrap} tabIndex={0} role="region" aria-label={t("policies.ban.refuse", { axis: axisLabel })}>
             <table className={styles.table}>
               <caption className={styles.visuallyHidden}>{t("policies.ban.refuse", { axis: axisLabel })}</caption>
               <thead>

@@ -13,7 +13,6 @@
 // builds shown and the gap named. Builds that disagree are a rolling upgrade
 // IN PROGRESS (M19), never a fault.
 
-import type { ReactNode } from "react";
 import type { Answer } from "../api/client";
 import type { DeclarationPage, DeclaredAlgorithms, ProfileCapability, Proxy, ProxyPage } from "../api/types";
 import { Button } from "../components/Button";
@@ -142,7 +141,7 @@ function Posture({ data }: { data: Posture }) {
           {t("algorithms.levels.title")}
         </h2>
         <p className={styles.para}>{t("algorithms.levels.lede")}</p>
-        <div className={styles.tableWrap}>
+        <div className={styles.tableWrap} tabIndex={0} role="region" aria-label={t("algorithms.levels.title")}>
           <table className={styles.table}>
             <caption className={styles.visuallyHidden}>{t("algorithms.levels.title")}</caption>
             <thead>
@@ -319,11 +318,11 @@ function BuildCard({ build: b }: { build: Build }) {
 }
 
 /** What each profile offers per axis: profiles down, axes across. */
-export function ProfileTable({ profiles, label }: { profiles: readonly ProfileCapability[]; label: ReactNode }) {
+export function ProfileTable({ profiles, label }: { profiles: readonly ProfileCapability[]; label: string }) {
   const { t } = useI18n();
   if (profiles.length === 0) return <span className={styles.quiet}>{t("algorithms.build.noProfile")}</span>;
   return (
-    <div className={styles.tableWrap}>
+    <div className={styles.tableWrap} tabIndex={0} role="region" aria-label={`${t("algorithms.profiles.caption")} ${label}`}>
       <table className={styles.table}>
         <caption className={styles.visuallyHidden}>
           {t("algorithms.profiles.caption")} {label}
