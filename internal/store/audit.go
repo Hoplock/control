@@ -85,7 +85,7 @@ func (r auditRepo) AppendChain(
 	err := r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
 		stored = 0
 
-		if err := lockStream(ctx, op, q, tenant, stream); err != nil {
+		if err := lockStream(ctx, op, q, r.s.lockNS, tenant, stream); err != nil {
 			return err
 		}
 
@@ -131,10 +131,12 @@ func (r auditRepo) AppendChain(
 // hashtext gives the two int4 keys the advisory lock takes. A collision costs
 // two streams a shared lock and nothing else: the chain is still correct, the
 // append is merely serialised with a stream it need not have waited for.
-func lockStream(ctx context.Context, op string, q querier, tenant Tenant, stream string) error {
+//
+// ns is the Store's lock namespace (WithLockNamespace), "" in production.
+func lockStream(ctx context.Context, op string, q querier, ns string, tenant Tenant, stream string) error {
 	if _, err := q.Exec(ctx,
 		`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
-		string(tenant), stream); err != nil {
+		ns+string(tenant), stream); err != nil {
 		return wrap(op, err)
 	}
 	return nil

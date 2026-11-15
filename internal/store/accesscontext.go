@@ -183,7 +183,7 @@ func (r accessContextWindowEndRepo) Lock(ctx context.Context, tenant Tenant, sys
 	// two-int4 space the audit chain locks in (AppendChain), so the two never
 	// contend; a collision of the hash only serializes two assertions.
 	_, err := r.s.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		string(tenant)+assertionKeySeparator+system+assertionKeySeparator+assertionID)
+		r.s.lockName(string(tenant)+assertionKeySeparator+system+assertionKeySeparator+assertionID))
 	return wrap(op, err)
 }
 

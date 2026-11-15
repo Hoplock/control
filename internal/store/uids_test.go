@@ -112,12 +112,7 @@ func TestUIDCursorIsDisjointUnderConcurrency(t *testing.T) {
 	// only scaling story is horizontal).
 	stores := make([]*store.Store, workers)
 	for i := range stores {
-		st, err := store.Open(ctx, storetest.DSNForSchema(dsn, schema))
-		if err != nil {
-			t.Fatalf("open store %d: %v", i, err)
-		}
-		t.Cleanup(st.Close)
-		stores[i] = st
+		stores[i] = storetest.Open(t, dsn, schema)
 	}
 
 	if _, err := stores[0].Migrate(ctx); err != nil {

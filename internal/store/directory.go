@@ -178,7 +178,7 @@ func (s *Store) lockKey(ctx context.Context, op, kind string, tenant Tenant, id 
 	}
 	// fn is one of the two constants above, never caller input.
 	_, err := s.db.Exec(ctx, `SELECT `+fn+`(hashtextextended($1, 0))`,
-		kind+directoryKeySeparator+string(tenant)+directoryKeySeparator+id)
+		s.lockName(kind+directoryKeySeparator+string(tenant)+directoryKeySeparator+id))
 	return wrap(op, err)
 }
 

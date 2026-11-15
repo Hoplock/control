@@ -16,6 +16,13 @@
 // cursor need N connections, and connections inside one transaction are one
 // connection. A schema costs a `CREATE SCHEMA` and a `DROP ... CASCADE`, and
 // buys tests that are order-independent and can run in parallel.
+//
+// A schema isolates tables and not advisory locks, which are the database's:
+// every test that names the same tenant would take the same lock keys, in
+// whichever package it runs, and stall or deadlock another test it shares no
+// row with. So the Store New opens keys its locks under the test's schema
+// (store.WithLockNamespace). A test that opens its own Store on a schema from
+// NewSchema passes the same option with the schema's name, through Open.
 package storetest
 
 import (
@@ -72,15 +79,24 @@ func NewWith(t testing.TB, opts ...store.Option) *store.Store {
 	ctx := t.Context()
 	schema := NewSchema(t, dsn)
 
-	st, err := store.Open(ctx, DSNForSchema(dsn, schema), opts...)
+	st := Open(t, dsn, schema, opts...)
+	if _, err := st.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return st
+}
+
+// Open opens a Store on a schema from NewSchema, with its advisory locks keyed
+// under the schema (store.WithLockNamespace) so that no other test's locks are
+// its, and registers its Close. Every Store a test opens on one schema shares
+// that schema's namespace, so they contend with each other as two nodes would.
+func Open(t testing.TB, dsn, schema string, opts ...store.Option) *store.Store {
+	t.Helper()
+	st, err := store.Open(t.Context(), DSNForSchema(dsn, schema), append([]store.Option{store.WithLockNamespace(schema)}, opts...)...)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(st.Close)
-
-	if _, err := st.Migrate(ctx); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	return st
 }
 

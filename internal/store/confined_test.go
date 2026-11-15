@@ -231,11 +231,7 @@ func TestTheLedgerConditionAppliesForwardOverExistingRows(t *testing.T) {
 	t.Parallel()
 	dsn := storetest.DSN(t)
 	ctx := t.Context()
-	st, err := store.Open(ctx, storetest.DSNForSchema(dsn, storetest.NewSchema(t, dsn)))
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(st.Close)
+	st := storetest.Open(t, dsn, storetest.NewSchema(t, dsn))
 
 	if err := store.MigrateThrough(ctx, st, 21); err != nil {
 		t.Fatalf("migrate through 0021: %v", err)
