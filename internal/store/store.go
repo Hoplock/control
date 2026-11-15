@@ -42,6 +42,9 @@ type Store struct {
 	tracer pgx.QueryTracer
 	// maxConns caps the pool; zero leaves pgx's default.
 	maxConns int32
+	// lockNS prefixes every advisory-lock key this Store builds; "" in
+	// production (WithLockNamespace).
+	lockNS string
 }
 
 // Option configures a Store at Open.
@@ -69,6 +72,27 @@ func WithMaxConns(n int32) Option {
 func WithQueryTimeout(d time.Duration) Option {
 	return func(s *Store) { s.timeout = d }
 }
+
+// WithLockNamespace prefixes every advisory-lock key the Store builds with ns.
+//
+// It exists for the test harness and nothing else. A test's tables are its own
+// schema's, but Postgres's advisory locks are the database's, and the store
+// keys them by tenant and id — so two tests in parallel that name the same
+// tenant contend for each other's locks, stall each other past the query
+// timeout, and can deadlock with each other, though neither shares a row.
+// storetest sets the test's schema here, which keeps each test's locks its own.
+//
+// Production never sets it, and with "" every key is byte for byte the key
+// the store built before this option existed — which is what keeps two nodes
+// of different versions excluding each other through a rolling upgrade. Never
+// derive it from the schema or the connection in a deployment: a key that
+// changes between versions is a lock two nodes stop sharing.
+func WithLockNamespace(ns string) Option {
+	return func(s *Store) { s.lockNS = ns }
+}
+
+// lockName is key in this Store's lock namespace.
+func (s *Store) lockName(key string) string { return s.lockNS + key }
 
 // Open connects to Postgres and verifies the connection before returning.
 //
@@ -174,7 +198,7 @@ func (s *Store) InTx(ctx context.Context, fn func(ctx context.Context, tx *Store
 		_ = pgtx.Rollback(rollbackCtx)
 	}()
 
-	txStore := &Store{db: pgtx, timeout: s.timeout}
+	txStore := &Store{db: pgtx, timeout: s.timeout, lockNS: s.lockNS}
 	if err := fn(ctx, txStore); err != nil {
 		return err
 	}
@@ -231,7 +255,7 @@ func (s *Store) lockTenant(ctx context.Context, op, prefix string, tenant Tenant
 	}
 	ctx, cancel := s.withTimeout(ctx)
 	defer cancel()
-	_, err := s.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, prefix+string(tenant))
+	_, err := s.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, s.lockName(prefix+string(tenant)))
 	return wrap(op, err)
 }
 

@@ -166,12 +166,7 @@ func TestDryRunOnAFreshDatabaseCreatesNothing(t *testing.T) {
 	dsn := storetest.DSN(t)
 	ctx := t.Context()
 
-	schema := storetest.NewSchema(t, dsn)
-	st, err := store.Open(ctx, storetest.DSNForSchema(dsn, schema))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(st.Close)
+	st := storetest.Open(t, dsn, storetest.NewSchema(t, dsn))
 
 	plan, err := st.PlanMigrations(ctx)
 	if err != nil {

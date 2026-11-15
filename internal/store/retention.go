@@ -126,7 +126,7 @@ func (r auditRepo) RetainPrefix(ctx context.Context, tenant Tenant, stream strin
 		deleted int64
 	)
 	err := r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
-		if err := lockStream(ctx, op, q, tenant, stream); err != nil {
+		if err := lockStream(ctx, op, q, r.s.lockNS, tenant, stream); err != nil {
 			return err
 		}
 		var prior *AuditRetention
@@ -291,9 +291,9 @@ func (r auditRepo) retainedOutside(ctx context.Context, op string, q querier, te
 	return n, wrap(op, err)
 }
 
-func lockCaptureRetention(ctx context.Context, op string, q querier, tenant Tenant) error {
+func lockCaptureRetention(ctx context.Context, op string, q querier, ns string, tenant Tenant) error {
 	_, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		captureRetentionLockPrefix+string(tenant))
+		ns+captureRetentionLockPrefix+string(tenant))
 	return wrap(op, err)
 }
 
@@ -316,7 +316,7 @@ func (r auditRepo) RetainCaptures(ctx context.Context, tenant Tenant, recordedBe
 	}
 	var emptied int64
 	err := r.s.inTx(ctx, op, func(ctx context.Context, q querier) error {
-		if err := lockCaptureRetention(ctx, op, q, tenant); err != nil {
+		if err := lockCaptureRetention(ctx, op, q, r.s.lockNS, tenant); err != nil {
 			return err
 		}
 		if o.Bound != nil {

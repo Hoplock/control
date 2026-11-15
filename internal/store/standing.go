@@ -654,7 +654,7 @@ func (r actionExecutionRepo) Lock(ctx context.Context, tenant Tenant, actionID s
 	defer cancel()
 
 	_, err := r.s.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		"action"+actionKeySeparator+string(tenant)+actionKeySeparator+actionID)
+		r.s.lockName("action"+actionKeySeparator+string(tenant)+actionKeySeparator+actionID))
 	return wrap(op, err)
 }
 
