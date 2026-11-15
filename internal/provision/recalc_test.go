@@ -88,7 +88,7 @@ func (h *harness) groupIn(src, externalID, name string) ext.SyncedGroup {
 // API call, so nothing starts a recalculation.
 func (h *harness) putMapping(document string) *identity.Mapping {
 	h.t.Helper()
-	m, err := h.federation.PutMapping(h.t.Context(), h.tenant, []byte(document), "cli", nil)
+	m, err := h.federation.PutMapping(h.t.Context(), tenant, []byte(document), "cli", nil)
 	if err != nil {
 		h.t.Fatalf("mapping: %v", err)
 	}
@@ -110,7 +110,7 @@ func (h *harness) provisionEveryDirectory() {
 // groupsIn reads the groups of a source's person.
 func (h *harness) groupsIn(src, externalID string) []string {
 	h.t.Helper()
-	s, err := h.store.Subjects().Get(h.t.Context(), h.tenant, h.linkIn(src, externalID).SubjectID)
+	s, err := h.store.Subjects().Get(h.t.Context(), tenant, h.linkIn(src, externalID).SubjectID)
 	if err != nil {
 		h.t.Fatalf("subject of %s/%s: %v", src, externalID, err)
 	}
@@ -133,7 +133,7 @@ func (h *harness) recalculator(batch int, revoker provision.Revoker) *provision.
 
 func (h *harness) stale(version int) int64 {
 	h.t.Helper()
-	n, err := h.store.DirectoryLinks().StaleCount(h.t.Context(), h.tenant, version)
+	n, err := h.store.DirectoryLinks().StaleCount(h.t.Context(), tenant, version)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func (h *harness) stale(version int) int64 {
 // oldest first.
 func (h *harness) applied() []store.AuditRecord {
 	h.t.Helper()
-	rows := h.records(h.tenant, audit.EventClaimMappingApplied)
+	rows := h.records(tenant, audit.EventClaimMappingApplied)
 	slices.Reverse(rows)
 	return rows
 }
@@ -209,7 +209,7 @@ func TestRequiringScopingLeavesUnscopedEntriesToLogins(t *testing.T) {
 	if got := h.groupsIn("de", "p-de"); !slices.Equal(got, []string{"corp-admins", "de-admins"}) {
 		t.Errorf("under require_directories a de subject has %v", got)
 	}
-	active, err := identity.ActiveMapping(t.Context(), h.store, h.tenant)
+	active, err := identity.ActiveMapping(t.Context(), h.store, tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestAMappingWriteReachesEveryDirectorySubject(t *testing.T) {
 	if n := h.stale(m.Version); n != 1 {
 		t.Fatalf("stale before the run: %d, want 1", n)
 	}
-	got, err := h.recalculator(0, nil).Recalculate(t.Context(), h.tenant)
+	got, err := h.recalculator(0, nil).Recalculate(t.Context(), tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestAMappingWriteReachesEveryDirectorySubject(t *testing.T) {
 	if g := h.groupsIn("de", "p-de"); !slices.Equal(g, []string{"de-admins"}) {
 		t.Errorf("after: %v, want de-admins alone", g)
 	}
-	row, err := h.store.Subjects().Get(t.Context(), h.tenant, subjectID)
+	row, err := h.store.Subjects().Get(t.Context(), tenant, subjectID)
 	if err != nil || row.MappingVersion != m.Version {
 		t.Errorf("the row names mapping %d (%v), want %d", row.MappingVersion, err, m.Version)
 	}
@@ -271,13 +271,13 @@ func TestAMappingWriteReachesEveryDirectorySubject(t *testing.T) {
 		r.Attributes[audit.AttrPrincipalID] != "cli" {
 		t.Errorf("applied record: %v", r.Attributes)
 	}
-	published := h.records(h.tenant, audit.EventRevocationPublished)
+	published := h.records(tenant, audit.EventRevocationPublished)
 	if len(published) == 0 || published[0].Attributes[audit.AttrPrincipalID] != "cli" {
 		t.Errorf("the invalidation was not published as the mapping's author: %v", published)
 	}
 
 	// A second run finds nothing, writes nothing and records nothing.
-	again, err := h.recalculator(0, nil).Recalculate(t.Context(), h.tenant)
+	again, err := h.recalculator(0, nil).Recalculate(t.Context(), tenant)
 	if err != nil || again.Recalculated != 0 || !again.Complete {
 		t.Errorf("a second run: %+v, %v", again, err)
 	}
@@ -322,7 +322,7 @@ func TestARecalculationEndsOnTheNewestMapping(t *testing.T) {
 			third = h.putMapping(scopedMapping(false, true))
 		}
 	}}
-	got, err := h.recalculator(1, revoker).Recalculate(t.Context(), h.tenant)
+	got, err := h.recalculator(1, revoker).Recalculate(t.Context(), tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestARecalculationResumesAfterItStops(t *testing.T) {
 		}
 	}}
 	r := h.recalculator(1, revoker)
-	if _, err := r.Recalculate(ctx, h.tenant); err == nil {
+	if _, err := r.Recalculate(ctx, tenant); err == nil {
 		t.Fatal("a stopped run reported no error")
 	}
 	if n := h.stale(m.Version); n != 3 {
@@ -396,7 +396,7 @@ func TestARecalculationNeedsNoSync(t *testing.T) {
 	// Built from the store, the stream and the recorder alone: no sink, no
 	// runner, nothing registered.
 	r := h.recalculator(0, nil)
-	r.Track(h.tenant)
+	r.Track(tenant)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
@@ -428,7 +428,7 @@ func TestStartRecalculatesInTheBackground(t *testing.T) {
 
 	r := h.recalculator(0, nil)
 	m := h.putMapping(scopedMapping(true, false))
-	r.Start(h.tenant) // before Run: tracks, starts nothing
+	r.Start(tenant) // before Run: tracks, starts nothing
 	if n := h.stale(m.Version); n != 2 {
 		t.Fatalf("Start before Run recalculated: %d stale", n)
 	}
@@ -447,7 +447,7 @@ func TestStartRecalculatesInTheBackground(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	next := h.putMapping(scopedMapping(false, true))
-	r.Start(h.tenant)
+	r.Start(tenant)
 	for h.stale(next.Version) != 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("Start never recalculated")
@@ -485,7 +485,7 @@ func TestSinkWritesAndARecalculationShareTheirLocks(t *testing.T) {
 		wg.Go(func() {
 			r := h.recalculator(2, nil)
 			for range 3 {
-				if _, err := r.Recalculate(ctx, h.tenant); err != nil {
+				if _, err := r.Recalculate(ctx, tenant); err != nil {
 					errs <- fmt.Errorf("recalculator %d: %w", w, err)
 					return
 				}
@@ -496,7 +496,7 @@ func TestSinkWritesAndARecalculationShareTheirLocks(t *testing.T) {
 		for round := range 3 {
 			for i := range people {
 				p := ext.SyncedSubject{
-					Tenant: ext.Tenant(h.tenant), Source: "de", ExternalID: fmt.Sprintf("p-%03d", i),
+					Tenant: ext.Tenant(tenant), Source: "de", ExternalID: fmt.Sprintf("p-%03d", i),
 					Username: fmt.Sprintf("person-%03d", i), Groups: []string{"g-adm"},
 					Attributes: map[string]string{"round": strconv.Itoa(round)}, Active: true, UpdatedAt: next(),
 				}
@@ -528,7 +528,7 @@ func TestABatchPastTheBoundInvalidatesTheTenant(t *testing.T) {
 	before := len(h.revoker.invalidated())
 	h.putMapping(scopedMapping(true, false))
 
-	got, err := h.recalculator(0, nil).Recalculate(t.Context(), h.tenant)
+	got, err := h.recalculator(0, nil).Recalculate(t.Context(), tenant)
 	if err != nil || got.Changed != 70 {
 		t.Fatalf("%+v, %v", got, err)
 	}
@@ -553,7 +553,7 @@ func TestAnUndeliveredInvalidationIsDeliveredByTheNextRun(t *testing.T) {
 	m := h.putMapping(scopedMapping(true, false))
 
 	h.revoker.fail.Store(true)
-	if _, err := h.recalculator(0, nil).Recalculate(t.Context(), h.tenant); err == nil {
+	if _, err := h.recalculator(0, nil).Recalculate(t.Context(), tenant); err == nil {
 		t.Fatal("a run whose stream refused reported no error")
 	}
 	if n := h.stale(m.Version); n != 0 || !h.linkIn("de", "p-000").InvalidateOwed {
@@ -561,7 +561,7 @@ func TestAnUndeliveredInvalidationIsDeliveredByTheNextRun(t *testing.T) {
 	}
 	h.revoker.fail.Store(false)
 	before := len(h.revoker.invalidated())
-	if _, err := h.recalculator(0, nil).Recalculate(t.Context(), h.tenant); err != nil {
+	if _, err := h.recalculator(0, nil).Recalculate(t.Context(), tenant); err != nil {
 		t.Fatal(err)
 	}
 	if invs := h.revoker.invalidated()[before:]; len(invs) != 1 || h.linkIn("de", "p-000").InvalidateOwed {

@@ -5,8 +5,6 @@ package provision_test
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"log/slog"
 	"strings"
@@ -34,6 +32,8 @@ import (
 // what it leaves behind.
 
 const (
+	tenant   = store.Tenant("acme")
+	other    = store.Tenant("globex")
 	provider = "hoplock/scim-test"
 	// source is the directory the harness's sync names (0042); sourceB is a
 	// second directory feeding the same tenant.
@@ -142,37 +142,16 @@ type harness struct {
 	emitter    *audit.Emitter
 	// at is the directory's clock, advanced by tick.
 	at time.Time
-	// tenant is the test's tenant, and other a second one it must not touch.
-	// Each test has its own pair: a test's schema is its own, but Postgres's
-	// advisory locks are the database's, and the store keys them by tenant
-	// and id. With one tenant name shared by every test, a parallel test —
-	// in this package or any other — holding the tenant's directory locks
-	// stalled this test's store calls past their timeout, and once
-	// deadlocked with it (TestStartRecalculatesInTheBackground on main,
-	// after #157).
-	tenant, other store.Tenant
-}
-
-// uniqueTenants names a fresh pair of tenants for one test.
-func uniqueTenants(t *testing.T) (store.Tenant, store.Tenant) {
-	t.Helper()
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		t.Fatal(err)
-	}
-	suffix := hex.EncodeToString(b)
-	return store.Tenant("acme-" + suffix), store.Tenant("globex-" + suffix)
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	st := storetest.New(t)
 	h := &harness{t: t, store: st, at: time.Now().UTC().Add(-time.Hour).Truncate(time.Second)}
-	h.tenant, h.other = uniqueTenants(t)
 	log := slog.New(slog.DiscardHandler)
 	now := time.Now().UTC()
 
-	for _, tn := range []store.Tenant{h.tenant, h.other} {
+	for _, tn := range []store.Tenant{tenant, other} {
 		storetest.Seed(t, st, storetest.Fixture{
 			Tenant:  tn,
 			Targets: []store.Target{{ID: "t-db", Hostname: "db01.example.com", Zone: "edge"}},
@@ -201,7 +180,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tn := range []store.Tenant{h.tenant, h.other} {
+	for _, tn := range []store.Tenant{tenant, other} {
 		if _, err := h.federation.PutMapping(t.Context(), tn, []byte(mapping), "provision_test", nil); err != nil {
 			t.Fatalf("mapping: %v", err)
 		}
@@ -244,7 +223,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.sink, err = provision.New(provision.Options{
 		Provider: provider, Store: st, Grants: h.grants, Revoker: h.revoker, Recorder: h.emitter,
-		DefaultTenant: h.tenant, Settle: time.Millisecond, Logger: log,
+		DefaultTenant: tenant, Settle: time.Millisecond, Logger: log,
 	})
 	if err != nil {
 		t.Fatalf("provision: %v", err)
@@ -261,7 +240,7 @@ func (h *harness) tick() time.Time {
 // person is a directory record of a person, at the next directory instant.
 func (h *harness) person(externalID, username string, groups ...string) ext.SyncedSubject {
 	return ext.SyncedSubject{
-		Tenant: ext.Tenant(h.tenant), Source: source, ExternalID: externalID, Username: username,
+		Tenant: ext.Tenant(tenant), Source: source, ExternalID: externalID, Username: username,
 		DisplayName: strings.ToUpper(username), Email: username + "@example.com",
 		Groups: groups, Active: true, UpdatedAt: h.tick(),
 	}
@@ -269,7 +248,7 @@ func (h *harness) person(externalID, username string, groups ...string) ext.Sync
 
 // group is a directory group, at the next directory instant.
 func (h *harness) group(externalID, name string) ext.SyncedGroup {
-	return ext.SyncedGroup{Tenant: ext.Tenant(h.tenant), Source: source, ExternalID: externalID, Name: name, UpdatedAt: h.tick()}
+	return ext.SyncedGroup{Tenant: ext.Tenant(tenant), Source: source, ExternalID: externalID, Name: name, UpdatedAt: h.tick()}
 }
 
 // ref names an identity or a group of the harness's source in a tenant.
@@ -301,7 +280,7 @@ func (h *harness) link(externalID string) store.DirectoryLink {
 // linkIn reads the link of an external id of a source in the tenant.
 func (h *harness) linkIn(src, externalID string) store.DirectoryLink {
 	h.t.Helper()
-	l, err := h.store.DirectoryLinks().Get(h.t.Context(), h.tenant, src, externalID)
+	l, err := h.store.DirectoryLinks().Get(h.t.Context(), tenant, src, externalID)
 	if err != nil {
 		h.t.Fatalf("link %s/%s: %v", src, externalID, err)
 	}
@@ -311,7 +290,7 @@ func (h *harness) linkIn(src, externalID string) store.DirectoryLink {
 // subject reads the subject behind an external id.
 func (h *harness) subject(externalID string) store.Subject {
 	h.t.Helper()
-	s, err := h.store.Subjects().Get(h.t.Context(), h.tenant, h.link(externalID).SubjectID)
+	s, err := h.store.Subjects().Get(h.t.Context(), tenant, h.link(externalID).SubjectID)
 	if err != nil {
 		h.t.Fatalf("subject of %s: %v", externalID, err)
 	}
@@ -322,7 +301,7 @@ func (h *harness) subject(externalID string) store.Subject {
 func (h *harness) authorize(subjectID, sess string) decision.Outcome {
 	h.t.Helper()
 	version := contract.PolicyVersion
-	out, err := h.decisions.Authorize(h.t.Context(), h.tenant, &contract.AuthorizeRequest{
+	out, err := h.decisions.Authorize(h.t.Context(), tenant, &contract.AuthorizeRequest{
 		Identity: contract.Identity{Subject: subjectID, Login: subjectID, Source: provider}, Target: "db01.example.com",
 		AuthMethod: contract.AuthMethodCert, PolicyVersion: &version,
 		Capabilities: &contract.ProxyCapabilities{Execution: []string{string(contract.ExecutionNoInteractiveShell)}},
@@ -364,7 +343,7 @@ func (h *harness) syncRecords(t store.Tenant) int {
 // verify holds the audit chain of both tenants to its hashes.
 func (h *harness) verify() {
 	h.t.Helper()
-	for _, tn := range []store.Tenant{h.tenant, h.other} {
+	for _, tn := range []store.Tenant{tenant, other} {
 		res, err := audit.NewVerifier(h.store).VerifyTenant(h.t.Context(), tn)
 		if err != nil {
 			h.t.Fatalf("verify %s: %v", tn, err)
@@ -383,11 +362,11 @@ func (h *harness) grantFor(id, subject string, backing ...string) {
 		NotBefore: time.Now().Add(-time.Hour), ExpiresAt: time.Now().Add(time.Hour),
 		CreatedBy: store.GrantActor{Principal: "p-admin"}, Reason: "incident",
 	}
-	if err := h.store.Grants().Insert(h.t.Context(), h.tenant, g); err != nil {
+	if err := h.store.Grants().Insert(h.t.Context(), tenant, g); err != nil {
 		h.t.Fatalf("insert grant: %v", err)
 	}
 	for _, sess := range backing {
-		if err := h.store.Decisions().Insert(h.t.Context(), h.tenant, store.Decision{
+		if err := h.store.Decisions().Insert(h.t.Context(), tenant, store.Decision{
 			ID: "d-" + sess, SubjectID: subject, InputsDigest: "x", Effect: store.DecisionEffectAllow,
 			ProxyID: "proxy-1", SessionID: sess, GrantID: id, DecidedAt: time.Now(),
 		}); err != nil {

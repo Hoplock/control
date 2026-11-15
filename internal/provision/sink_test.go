@@ -53,13 +53,13 @@ func TestAnUpsertProvisionsJoinedOnExternalIDAndARenameKeepsTheSubject(t *testin
 	if !slices.Equal(renamed.Principals, []string{"alice.smith"}) {
 		t.Errorf("principals after a rename = %v, want only the new name", renamed.Principals)
 	}
-	if _, err := h.store.Subjects().GetByPrincipal(t.Context(), h.tenant, "alice"); !store.IsNotFound(err) {
+	if _, err := h.store.Subjects().GetByPrincipal(t.Context(), tenant, "alice"); !store.IsNotFound(err) {
 		t.Errorf("the old name still resolves: %v", err)
 	}
-	if got := len(h.records(h.tenant, audit.EventSyncSubjectProvisioned)); got != 1 {
+	if got := len(h.records(tenant, audit.EventSyncSubjectProvisioned)); got != 1 {
 		t.Errorf("%d provisioned records, want one", got)
 	}
-	updated := h.records(h.tenant, audit.EventSyncSubjectUpdated)
+	updated := h.records(tenant, audit.EventSyncSubjectUpdated)
 	if len(updated) != 1 {
 		t.Fatalf("%d updated records, want one", len(updated))
 	}
@@ -84,7 +84,7 @@ func TestAnUpsertIsIdempotentAndOrderedByUpdatedAt(t *testing.T) {
 	first := h.person("u-1", "alice", "grp-1")
 	h.mustUpsert(first)
 	h.mustUpsert(first)
-	if got := h.syncRecords(h.tenant); got != 3 {
+	if got := h.syncRecords(tenant); got != 3 {
 		t.Errorf("%d sync records after two groups and the same upsert twice, want 3", got)
 	}
 
@@ -98,7 +98,7 @@ func TestAnUpsertIsIdempotentAndOrderedByUpdatedAt(t *testing.T) {
 	if !slices.Equal(s.Groups, []string{"dba"}) || !slices.Equal(s.Principals, []string{"alice"}) {
 		t.Errorf("after a stale upsert the subject is %+v, want the newer write's", s)
 	}
-	if got := len(h.records(h.tenant, audit.EventSyncSubjectUpdated)); got != 1 {
+	if got := len(h.records(tenant, audit.EventSyncSubjectUpdated)); got != 1 {
 		t.Errorf("%d update records, want one for the newer write and none for the stale one", got)
 	}
 	// The directory's time is kept to the database's precision, so a replay
@@ -107,7 +107,7 @@ func TestAnUpsertIsIdempotentAndOrderedByUpdatedAt(t *testing.T) {
 	nanos.UpdatedAt = nanos.UpdatedAt.Add(123)
 	h.mustUpsert(nanos)
 	h.mustUpsert(nanos)
-	if got := len(h.records(h.tenant, audit.EventSyncSubjectUpdated)); got != 2 {
+	if got := len(h.records(tenant, audit.EventSyncSubjectUpdated)); got != 2 {
 		t.Errorf("%d update records after a sub-microsecond replay, want 2", got)
 	}
 }
@@ -121,7 +121,7 @@ func TestAHundredConcurrentUpsertsAcrossFreshIDsEachApplyOnce(t *testing.T) {
 	errs := make(chan error, 2*n)
 	for i := range n {
 		s := ext.SyncedSubject{
-			Tenant: ext.Tenant(h.tenant), Source: source, ExternalID: fmt.Sprintf("u-%03d", i), Username: fmt.Sprintf("user%03d", i),
+			Tenant: ext.Tenant(tenant), Source: source, ExternalID: fmt.Sprintf("u-%03d", i), Username: fmt.Sprintf("user%03d", i),
 			Active: true, UpdatedAt: at,
 		}
 		for range 2 {
@@ -139,12 +139,12 @@ func TestAHundredConcurrentUpsertsAcrossFreshIDsEachApplyOnce(t *testing.T) {
 			t.Fatalf("a concurrent upsert failed: %v", err)
 		}
 	}
-	if got := len(h.records(h.tenant, audit.EventSyncSubjectProvisioned)); got != n {
+	if got := len(h.records(tenant, audit.EventSyncSubjectProvisioned)); got != n {
 		t.Errorf("%d provisioned records for %d people each sent twice, want %d", got, n, n)
 	}
 	var subjects int
 	if err := h.store.Pool().QueryRow(t.Context(),
-		`SELECT count(*) FROM subjects WHERE tenant = $1 AND source = $2`, string(h.tenant), provider).Scan(&subjects); err != nil {
+		`SELECT count(*) FROM subjects WHERE tenant = $1 AND source = $2`, string(tenant), provider).Scan(&subjects); err != nil {
 		t.Fatal(err)
 	}
 	if subjects != n {
@@ -224,52 +224,52 @@ func TestADeactivationRevokesEverythingTheSubjectHolds(t *testing.T) {
 	ctx := t.Context()
 
 	h.grantFor("g-1", id, "sess-live")
-	storetest.Seed(t, h.store, storetest.Fixture{Tenant: h.tenant, GrantRequests: []store.GrantRequest{storetest.GrantRequest("r-1", id, time.Hour)}})
+	storetest.Seed(t, h.store, storetest.Fixture{Tenant: tenant, GrantRequests: []store.GrantRequest{storetest.GrantRequest("r-1", id, time.Hour)}})
 	for _, p := range []store.NorthPrincipal{
 		{ID: "sess-n1", Kind: store.PrincipalSession, SubjectID: id, SessionDigest: "digest-session", ExpiresAt: time.Now().Add(time.Hour)},
 		{ID: "tok-n1", Kind: store.PrincipalToken, SubjectID: id, TokenDigest: "digest-token"},
 		{ID: "tok-machine", Kind: store.PrincipalToken, TokenDigest: "digest-machine"},
 	} {
-		if err := h.store.NorthPrincipals().Put(ctx, h.tenant, p); err != nil {
+		if err := h.store.NorthPrincipals().Put(ctx, tenant, p); err != nil {
 			t.Fatalf("principal %s: %v", p.ID, err)
 		}
 	}
-	if err := h.store.CAKeys().Insert(ctx, h.tenant, store.CAKey{
+	if err := h.store.CAKeys().Insert(ctx, tenant, store.CAKey{
 		KeyID: "ca-1", Algorithm: "ed25519", PublicKey: []byte("pub"), PrivateRef: "software:ca-1", Active: true,
 	}); err != nil {
 		t.Fatalf("ca key: %v", err)
 	}
-	if err := h.store.SSHCertificates().Insert(ctx, h.tenant, store.SSHCertificate{
+	if err := h.store.SSHCertificates().Insert(ctx, tenant, store.SSHCertificate{
 		Serial: 7, KeyID: "k", CAKeyID: "ca-1", SubjectID: id, Principals: []string{"alice"},
 		ValidAfter: time.Now().Add(-time.Minute), ValidBefore: time.Now().Add(time.Hour), Certificate: "ssh-ed25519-cert-v01@openssh.com AAAA",
 	}); err != nil {
 		t.Fatalf("certificate: %v", err)
 	}
 
-	if err := h.sink.DeactivateSubject(ctx, ref(h.tenant, "u-1"), "terminated"); err != nil {
+	if err := h.sink.DeactivateSubject(ctx, ref(tenant, "u-1"), "terminated"); err != nil {
 		t.Fatalf("DeactivateSubject: %v", err)
 	}
 
-	g, err := h.store.Grants().Get(ctx, h.tenant, "g-1")
+	g, err := h.store.Grants().Get(ctx, tenant, "g-1")
 	if err != nil || g.RevokedAt.IsZero() || g.RevokedBy.Principal != provision.PrincipalPrefix+provider || g.RevokedBy.Subject != "" {
 		t.Errorf("the grant after a deactivation = %+v, %v", g, err)
 	}
 	if g.RevokeReason != provision.DeactivatedByDirectory {
 		t.Errorf("the grant's holder reason = %q", g.RevokeReason)
 	}
-	req, err := h.store.GrantRequests().Get(ctx, h.tenant, "r-1")
+	req, err := h.store.GrantRequests().Get(ctx, tenant, "r-1")
 	if err != nil || req.State != store.GrantRequestCancelled {
 		t.Errorf("the pending request after a deactivation = %+v, %v", req, err)
 	}
 	for _, pid := range []string{"sess-n1", "tok-n1"} {
-		if p, err := h.store.NorthPrincipals().Get(ctx, h.tenant, pid); err != nil || p.RevokedAt.IsZero() {
+		if p, err := h.store.NorthPrincipals().Get(ctx, tenant, pid); err != nil || p.RevokedAt.IsZero() {
 			t.Errorf("north-bound credential %s after a deactivation = %+v, %v", pid, p, err)
 		}
 	}
-	if p, _ := h.store.NorthPrincipals().Get(ctx, h.tenant, "tok-machine"); !p.RevokedAt.IsZero() {
+	if p, _ := h.store.NorthPrincipals().Get(ctx, tenant, "tok-machine"); !p.RevokedAt.IsZero() {
 		t.Error("a machine token with no subject was revoked with the person")
 	}
-	if c, err := h.store.SSHCertificates().Get(ctx, h.tenant, 7); err != nil || c.RevokedAt.IsZero() {
+	if c, err := h.store.SSHCertificates().Get(ctx, tenant, 7); err != nil || c.RevokedAt.IsZero() {
 		t.Errorf("the certificate after a deactivation = %+v, %v", c, err)
 	}
 
@@ -293,16 +293,16 @@ func TestADeactivationRevokesEverythingTheSubjectHolds(t *testing.T) {
 	if out.Deny == nil || out.Deny.Reason != "subject_deactivated" {
 		t.Fatalf("authorize after a deactivation = %+v, want a subject_deactivated deny", out)
 	}
-	recs := h.records(h.tenant, audit.EventSyncSubjectDeactivated)
+	recs := h.records(tenant, audit.EventSyncSubjectDeactivated)
 	if len(recs) != 1 || field(recs[0], "identity_sync.reason_code") != "terminated" ||
 		field(recs[0], "identity_sync.credentials_revoked") != "2" || field(recs[0], "identity_sync.certificates_revoked") != "1" {
 		t.Errorf("deactivation records = %+v", recs)
 	}
-	if got := len(h.records(h.tenant, audit.EventRevocationPublished)); got < 2 {
+	if got := len(h.records(tenant, audit.EventRevocationPublished)); got < 2 {
 		t.Errorf("%d revocation records, want the invalidation's and the kill's", got)
 	}
 	// History is attributable: the subject row is still there.
-	if _, err := h.store.Subjects().Get(ctx, h.tenant, id); err != nil {
+	if _, err := h.store.Subjects().Get(ctx, tenant, id); err != nil {
 		t.Errorf("a deactivation deleted the subject: %v", err)
 	}
 	h.verify()
@@ -318,7 +318,7 @@ func TestADeactivationTheStreamRefusedIsFinishedByTheSameCall(t *testing.T) {
 	id := h.link("u-1").SubjectID
 
 	h.revoker.fail.Store(true)
-	err := h.sink.DeactivateSubject(t.Context(), ref(h.tenant, "u-1"), "terminated")
+	err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "terminated")
 	if kindOf(err) != ext.KindUnavailable {
 		t.Fatalf("DeactivateSubject with the stream down: %v, want KindUnavailable", err)
 	}
@@ -330,13 +330,13 @@ func TestADeactivationTheStreamRefusedIsFinishedByTheSameCall(t *testing.T) {
 	}
 
 	h.revoker.fail.Store(false)
-	if err := h.sink.DeactivateSubject(t.Context(), ref(h.tenant, "u-1"), "terminated"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "terminated"); err != nil {
 		t.Fatalf("the retry: %v", err)
 	}
 	if !killedSubject(h, id) {
 		t.Error("the retry did not deliver the kill")
 	}
-	if got := len(h.records(h.tenant, audit.EventSyncSubjectDeactivated)); got != 1 {
+	if got := len(h.records(tenant, audit.EventSyncSubjectDeactivated)); got != 1 {
 		t.Errorf("%d deactivation records, want one", got)
 	}
 	if h.link("u-1").DeactivationOwed {
@@ -362,7 +362,7 @@ func TestOrderIsDecidedWithoutTrustingEitherClockToWidenAccess(t *testing.T) {
 	h.mustGroup(h.group("grp-1", "SRE Team"))
 
 	created := h.person("u-1", "alice", "grp-1") // written before the deactivation
-	if err := h.sink.DeactivateSubject(t.Context(), ref(h.tenant, "u-1"), "offboarded"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "offboarded"); err != nil {
 		t.Fatalf("deactivating an unknown id: %v", err)
 	}
 	link := h.link("u-1")
@@ -394,10 +394,10 @@ func TestOrderIsDecidedWithoutTrustingEitherClockToWidenAccess(t *testing.T) {
 
 	// A grant revoked by the deactivation stays revoked after a re-activation.
 	h.grantFor("g-1", id)
-	if err := h.sink.DeactivateSubject(t.Context(), ref(h.tenant, "u-1"), "offboarded"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "offboarded"); err != nil {
 		t.Fatalf("deactivating again: %v", err)
 	}
-	if got := len(h.records(h.tenant, audit.EventSyncSubjectDeactivated)); got != 1 {
+	if got := len(h.records(tenant, audit.EventSyncSubjectDeactivated)); got != 1 {
 		t.Errorf("%d deactivation records after a repeat, want one", got)
 	}
 
@@ -411,10 +411,10 @@ func TestOrderIsDecidedWithoutTrustingEitherClockToWidenAccess(t *testing.T) {
 	if out := h.authorize(id, "sess-2"); out.Deny != nil {
 		t.Errorf("a re-activated sre was denied: %+v", out.Deny)
 	}
-	if g, _ := h.store.Grants().Get(t.Context(), h.tenant, "g-1"); g.RevokedAt.IsZero() {
+	if g, _ := h.store.Grants().Get(t.Context(), tenant, "g-1"); g.RevokedAt.IsZero() {
 		t.Error("a re-activation restored a revoked grant")
 	}
-	if got := len(h.records(h.tenant, audit.EventSyncSubjectReactivated)); got != 1 {
+	if got := len(h.records(tenant, audit.EventSyncSubjectReactivated)); got != 1 {
 		t.Errorf("%d re-activation records, want one", got)
 	}
 }
@@ -433,10 +433,10 @@ func TestAnInactiveUpsertIsADeactivation(t *testing.T) {
 	if out := h.authorize(id, "sess-1"); out.Deny == nil || out.Deny.Reason != "subject_deactivated" {
 		t.Fatalf("authorize after Active: false = %+v", out)
 	}
-	if g, _ := h.store.Grants().Get(t.Context(), h.tenant, "g-1"); g.RevokedAt.IsZero() {
+	if g, _ := h.store.Grants().Get(t.Context(), tenant, "g-1"); g.RevokedAt.IsZero() {
 		t.Error("Active: false revoked no grant")
 	}
-	recs := h.records(h.tenant, audit.EventSyncSubjectDeactivated)
+	recs := h.records(tenant, audit.EventSyncSubjectDeactivated)
 	if len(recs) != 1 || field(recs[0], "identity_sync.reason_code") != provision.ReasonDirectoryInactive {
 		t.Errorf("deactivation records = %+v", recs)
 	}
@@ -452,17 +452,17 @@ func TestALockAndADeactivationAreTwoStandingDenials(t *testing.T) {
 	id := h.link("u-1").SubjectID
 	operator := standing.Actor{Principal: "p-soc"}
 
-	if _, err := h.standing.Lock(t.Context(), h.tenant, operator, standing.LockRequest{SubjectID: id, Reason: "Investigating."}); err != nil {
+	if _, err := h.standing.Lock(t.Context(), tenant, operator, standing.LockRequest{SubjectID: id, Reason: "Investigating."}); err != nil {
 		t.Fatalf("lock: %v", err)
 	}
-	if err := h.sink.DeactivateSubject(t.Context(), ref(h.tenant, "u-1"), "terminated"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "terminated"); err != nil {
 		t.Fatalf("deactivate: %v", err)
 	}
 	out := h.authorize(id, "sess-1")
 	if out.Deny == nil || out.Deny.Reason != "subject_locked" {
 		t.Fatalf("locked and deactivated = %+v", out)
 	}
-	rec, err := h.store.Decisions().Get(t.Context(), h.tenant, out.Deny.DecisionID)
+	rec, err := h.store.Decisions().Get(t.Context(), tenant, out.Deny.DecisionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,7 @@ func TestALockAndADeactivationAreTwoStandingDenials(t *testing.T) {
 
 	// The operator lifts the lock: still deactivated.
 	err = h.store.InTx(t.Context(), func(ctx context.Context, tx *store.Store) error {
-		_, err := h.standing.LiftLock(ctx, tx, h.tenant, operator, standing.LiftRequest{ID: id})
+		_, err := h.standing.LiftLock(ctx, tx, tenant, operator, standing.LiftRequest{ID: id})
 		return err
 	})
 	if err != nil {
@@ -483,7 +483,7 @@ func TestALockAndADeactivationAreTwoStandingDenials(t *testing.T) {
 	}
 
 	// Lock again; the directory re-activates: still locked.
-	if _, err := h.standing.Lock(t.Context(), h.tenant, operator, standing.LockRequest{SubjectID: id, Reason: "Investigating."}); err != nil {
+	if _, err := h.standing.Lock(t.Context(), tenant, operator, standing.LockRequest{SubjectID: id, Reason: "Investigating."}); err != nil {
 		t.Fatalf("lock: %v", err)
 	}
 	back := h.person("u-1", "alice", "grp-1")
@@ -505,7 +505,7 @@ func TestDeletingAGroupStopsItsMembershipApplying(t *testing.T) {
 	alice, bob := h.link("u-1").SubjectID, h.link("u-2").SubjectID
 	before := len(h.revoker.invalidated())
 
-	if err := h.sink.DeleteGroup(t.Context(), ref(h.tenant, "grp-1")); err != nil {
+	if err := h.sink.DeleteGroup(t.Context(), ref(tenant, "grp-1")); err != nil {
 		t.Fatalf("DeleteGroup: %v", err)
 	}
 	for _, x := range []string{"u-1", "u-2"} {
@@ -520,7 +520,7 @@ func TestDeletingAGroupStopsItsMembershipApplying(t *testing.T) {
 	if !got[alice] || !got[bob] {
 		t.Errorf("invalidations after the delete = %v, want both members", got)
 	}
-	recs := h.records(h.tenant, audit.EventSyncGroupDeleted)
+	recs := h.records(tenant, audit.EventSyncGroupDeleted)
 	if len(recs) != 1 || field(recs[0], "identity_sync.members_rederived") != "2" {
 		t.Errorf("group_deleted records = %+v", recs)
 	}
@@ -530,24 +530,24 @@ func TestDeletingAGroupStopsItsMembershipApplying(t *testing.T) {
 	if s := h.subject("u-1"); len(s.Groups) != 0 {
 		t.Errorf("an older upsert brought the group back: %v", s.Groups)
 	}
-	if got := len(h.records(h.tenant, audit.EventSyncGroupUpserted)); got != 1 {
+	if got := len(h.records(tenant, audit.EventSyncGroupUpserted)); got != 1 {
 		t.Errorf("%d group_upserted records, want only the first", got)
 	}
 	// A delete of a group already deleted changes nothing.
-	if err := h.sink.DeleteGroup(t.Context(), ref(h.tenant, "grp-1")); err != nil {
+	if err := h.sink.DeleteGroup(t.Context(), ref(tenant, "grp-1")); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(h.records(h.tenant, audit.EventSyncGroupDeleted)); got != 1 {
+	if got := len(h.records(tenant, audit.EventSyncGroupDeleted)); got != 1 {
 		t.Errorf("%d group_deleted records after a repeat, want one", got)
 	}
 	// Deleting an id never seen keeps a tombstone, and an older upsert of it
 	// changes nothing either.
 	unseen := h.group("grp-9", "DBAs")
-	if err := h.sink.DeleteGroup(t.Context(), ref(h.tenant, "grp-9")); err != nil {
+	if err := h.sink.DeleteGroup(t.Context(), ref(tenant, "grp-9")); err != nil {
 		t.Fatal(err)
 	}
 	h.mustGroup(unseen)
-	if g, _ := h.store.DirectoryGroups().Get(t.Context(), h.tenant, source, "grp-9"); !g.Deleted() {
+	if g, _ := h.store.DirectoryGroups().Get(t.Context(), tenant, source, "grp-9"); !g.Deleted() {
 		t.Errorf("an upsert older than the tombstone lifted it: %+v", g)
 	}
 }
@@ -570,7 +570,7 @@ func TestAGroupThatArrivesAfterItsMembersReachesThem(t *testing.T) {
 // to nothing. An existing subject is never adopted.
 func TestAUsernameAnotherSubjectPresentsIsAConflict(t *testing.T) {
 	h := newHarness(t)
-	storetest.Seed(t, h.store, storetest.Fixture{Tenant: h.tenant, Subjects: []store.Subject{storetest.Subject("alice")}})
+	storetest.Seed(t, h.store, storetest.Fixture{Tenant: tenant, Subjects: []store.Subject{storetest.Subject("alice")}})
 
 	err := h.sink.UpsertSubject(t.Context(), h.person("u-1", "alice"))
 	if kindOf(err) != ext.KindConflict {
@@ -579,10 +579,10 @@ func TestAUsernameAnotherSubjectPresentsIsAConflict(t *testing.T) {
 	if strings.Contains(err.Error(), "alice@") || strings.Contains(err.Error(), "subject alice") {
 		t.Errorf("the error names the other subject: %v", err)
 	}
-	if _, err := h.store.DirectoryLinks().Get(t.Context(), h.tenant, source, "u-1"); !store.IsNotFound(err) {
+	if _, err := h.store.DirectoryLinks().Get(t.Context(), tenant, source, "u-1"); !store.IsNotFound(err) {
 		t.Errorf("a refused upsert left a link: %v", err)
 	}
-	recs := h.records(h.tenant, audit.EventSyncRefused)
+	recs := h.records(tenant, audit.EventSyncRefused)
 	if len(recs) != 1 || field(recs[0], "identity_sync.refusal") != "conflict" ||
 		field(recs[0], "identity_sync.field") != "username" || field(recs[0], "identity_sync.conflicting_subject") != "alice" {
 		t.Errorf("refusal records = %+v", recs)
@@ -618,10 +618,10 @@ func TestMalformedCallsAreInvalidRecordedAndHaveNoEffect(t *testing.T) {
 			return h.sink.UpsertSubject(t.Context(), s)
 		}, "attributes"},
 		{"a long reason code", func() error {
-			return h.sink.DeactivateSubject(t.Context(), ref(h.tenant, "u-ok"), strings.Repeat("r", 200))
+			return h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-ok"), strings.Repeat("r", 200))
 		}, "reason_code"},
 		{"a nameless group", func() error { g := h.group("grp-1", ""); return h.sink.UpsertGroup(t.Context(), g) }, "name"},
-		{"a group with no id", func() error { return h.sink.DeleteGroup(t.Context(), ref(h.tenant, "")) }, "external_id"},
+		{"a group with no id", func() error { return h.sink.DeleteGroup(t.Context(), ref(tenant, "")) }, "external_id"},
 	}
 	for _, c := range cases {
 		err := c.call()
@@ -629,7 +629,7 @@ func TestMalformedCallsAreInvalidRecordedAndHaveNoEffect(t *testing.T) {
 			t.Errorf("%s: %v, want KindInvalid naming %s", c.name, err, c.field)
 		}
 	}
-	recs := h.records(h.tenant, audit.EventSyncRefused)
+	recs := h.records(tenant, audit.EventSyncRefused)
 	if len(recs) != len(cases) {
 		t.Errorf("%d refusal records for %d malformed calls", len(recs), len(cases))
 	}
@@ -646,17 +646,17 @@ func TestASyncCallInOneTenantReachesNothingInAnother(t *testing.T) {
 	h := newHarness(t)
 	h.mustGroup(h.group("grp-1", "SRE Team"))
 	theirs := h.person("u-1", "alice", "grp-1")
-	theirs.Tenant = ext.Tenant(h.other)
+	theirs.Tenant = ext.Tenant(other)
 	if err := h.sink.UpsertSubject(t.Context(), theirs); err != nil {
 		t.Fatal(err)
 	}
 	// The same external id in this tenant is a different person.
 	h.mustUpsert(h.person("u-1", "alice", "grp-1"))
-	mine, err := h.store.DirectoryLinks().Get(t.Context(), h.tenant, source, "u-1")
+	mine, err := h.store.DirectoryLinks().Get(t.Context(), tenant, source, "u-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	yours, err := h.store.DirectoryLinks().Get(t.Context(), h.other, source, "u-1")
+	yours, err := h.store.DirectoryLinks().Get(t.Context(), other, source, "u-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -664,16 +664,16 @@ func TestASyncCallInOneTenantReachesNothingInAnother(t *testing.T) {
 		t.Error("one external id in two tenants is one subject")
 	}
 	// The group named in this tenant is not the other's.
-	if s, _ := h.store.Subjects().Get(t.Context(), h.other, yours.SubjectID); len(s.Groups) != 0 {
+	if s, _ := h.store.Subjects().Get(t.Context(), other, yours.SubjectID); len(s.Groups) != 0 {
 		t.Errorf("the other tenant's subject took this tenant's group: %v", s.Groups)
 	}
-	if err := h.sink.DeactivateSubject(t.Context(), ref(h.tenant, "u-1"), "terminated"); err != nil {
+	if err := h.sink.DeactivateSubject(t.Context(), ref(tenant, "u-1"), "terminated"); err != nil {
 		t.Fatal(err)
 	}
-	if l, _ := h.store.DirectoryLinks().Get(t.Context(), h.other, source, "u-1"); l.Deactivated() {
+	if l, _ := h.store.DirectoryLinks().Get(t.Context(), other, source, "u-1"); l.Deactivated() {
 		t.Error("a deactivation in one tenant deactivated the other's person")
 	}
-	if got := len(h.records(h.other, audit.EventSyncSubjectDeactivated)); got != 0 {
+	if got := len(h.records(other, audit.EventSyncSubjectDeactivated)); got != 0 {
 		t.Errorf("%d deactivation records in the other tenant", got)
 	}
 }
@@ -685,7 +685,7 @@ func TestAProvisionedSubjectIsNeverBreakGlassAndRecordsItsMapping(t *testing.T) 
 	h := newHarness(t)
 	h.mustUpsert(h.person("u-1", "alice"))
 	s := h.subject("u-1")
-	m, err := identity.ActiveMapping(t.Context(), h.store, h.tenant)
+	m, err := identity.ActiveMapping(t.Context(), h.store, tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
