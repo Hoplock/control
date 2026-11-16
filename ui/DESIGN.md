@@ -363,12 +363,12 @@ One component renders all of it, so a status looks identical everywhere:
 
 | State | Colour | Glyph | Label |
 | --- | --- | --- | --- |
-| allowed / healthy / active / applied / valid / running / caught up | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied`, `Valid`, `Running`, `Caught up` |
+| allowed / healthy / active / applied / valid / running / caught up / declared / done | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied`, `Valid`, `Running`, `Caught up`, `Declared`, `Done` |
 | denied / revoked / expired / invalid / blocking / locked / quarantined / deactivated | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired`, `Invalid`, `Blocking`, `Locked`, `Quarantined`, `Deactivated` |
 | degraded / stale / expiring / rejected / warning / not started / failing / refused at ingest | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected`, `Warning`, `Not started`, `Failing`, `Refused at ingest` |
 | unreachable / outage / fetch failed / unserved / unavailable / failed / evicted | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved`, `Unavailable`, `Failed`, `Evicted` |
 | pending / scheduled / in progress / pending restart / advice / behind | `--s-info` | half-filled circle | `Pending`, `Scheduled`, `In progress`, `Pending restart`, `Advice`, `Behind` |
-| unknown / not reported / left / superseded / not registered | `--n-400` | hollow circle, dotted | `Not reported`, `Left`, `Superseded`, `Not registered` |
+| unknown / not reported / left / superseded / not registered / not declared / not judged | `--n-400` | hollow circle, dotted | `Not reported`, `Left`, `Superseded`, `Not registered`, `Not declared`, `Not judged` |
 
 The component is `Status` in `ui/src/components/Status.tsx`, and every row
 above is a named entry of its `STATUS` map: a screen names a status, it never
@@ -443,6 +443,19 @@ ids. A cause the console does not know is `Not reported`. A gap that hid a
 critical record is marked critical beside its status. A gap is never
 tampering, and a stream whose chain verifies is never "nothing missing": the
 chain says nothing about a record that never arrived.
+
+**Algorithm posture** reads per build (PLAN M17, 0058), a build being the
+proxies that declared the same thing. A floor level or a profile every
+declaring build states alike is **`Declared`**; builds that disagree about
+it — different exchanges for one level, different lists under one profile,
+or some without it — are **`In progress`**, a rolling upgrade and never a
+fault (M19); a level no build declares is **`Not declared`**, a fact of the
+fleet beside `Not registered` and never a failure. A proxy or a build that
+said nothing there is **`Not reported`**, never "no floor" or "offers
+nothing". A build whose declaration cannot judge a ban is **`Not judged`**,
+never fine. A target a floor's impact preview has no fresh observation of is
+`Not reported`, never shown as meeting the floor. A runbook step reads as
+**`Pending`** until its call answers and **`Done`** once it has.
 
 A rolling upgrade reads as **`Pending` / in progress**, never as a fault (M19).
 `Not reported` is its own state and never renders as healthy — PLAN §4 is
@@ -556,6 +569,21 @@ component on the retention view, where a pass by sequence the archive refused
 deleted nothing, offering the pass by instant, and a pass the archive held
 back says so; with no archive registered, none of it appears. A retention
 pass deletes records, so it confirms by typing the stream's name.
+
+**A finding's evidence** (0058) is set out inside its card, never in a
+panel beside the report: a floor's impact preview as a table of the targets
+it breaks — the level each met, what it negotiated and offered, and when —
+and the targets it cannot judge as `Not reported`; a ban that empties an axis
+as a table of the proxies that will refuse the route and what each build
+offers there. Each says that it warns and never blocks.
+
+**A workflow** (the runbook, 0058) is an ordered list of steps, each a panel
+with its number, its title and its status (`Pending`, `Done`). A step is
+offered only once the one before it has answered — its controls are shown,
+closed, and say which step they wait for — and only to a role holding its
+call's permission; to any other role it says, in words, which permission it
+needs. Each destructive call confirms through the one `ConfirmDialog`, and
+what the call reported covering stays beneath the step as its receipt.
 
 **Form and mutation rules.** Destructive actions confirm by typing the object
 name, through the one `ConfirmDialog`, whose hint says what typing commits to:

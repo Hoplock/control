@@ -37,7 +37,11 @@ import type { ApiError } from "../i18n/errors";
 import { isoUTC } from "../i18n/format";
 import { useI18n } from "../i18n/I18n";
 import { Link } from "../router/router";
+import type { Load } from "../shell/load";
 import { useDeployment } from "../shell/Shell";
+import { ALGORITHM_DETAIL, AlgorithmDetail, needsBuilds } from "./AlgorithmFindings";
+import { useBuilds } from "./AlgorithmParts";
+import type { Build } from "./algorithmModel";
 import { findingText, rejectionText } from "./policyCodes";
 import {
   findingLists,
@@ -251,10 +255,13 @@ export function FindingCard({
   onLine,
   correlationId,
   accept,
+  builds,
 }: {
   finding: Finding;
   onLine?(line: number): void;
   correlationId?: string;
+  /** The fleet's builds, where read: whether builds disagree about a ban (0058). */
+  builds?: Load<Build[]>;
   /** Offered where an activation can accept it (a warning, by its id). */
   accept?: { checked: boolean; onChange(checked: boolean): void };
 }) {
@@ -272,9 +279,11 @@ export function FindingCard({
         ) : null}
       </header>
       <p className={styles.noteText}>{rendered.text}</p>
-      {findingLists(fd).map((l) => (
-        <ListOf key={l.name} list={l} />
-      ))}
+      {fd.source === "control" && ALGORITHM_DETAIL.has(fd.code) ? (
+        <AlgorithmDetail finding={fd} builds={builds} />
+      ) : (
+        findingLists(fd).map((l) => <ListOf key={l.name} list={l} />)
+      )}
       {!rendered.known && fd.parameters ? <JsonViewer label={t("policies.finding.parameters")} value={fd.parameters} /> : null}
       <p className={styles.noteMeta}>
         <span>{t("policies.finding.id")}</span> <CopyableId value={fd.id} />
@@ -311,6 +320,7 @@ export function Report({
   const { t } = useI18n();
   const counts = severityCounts(report.findings);
   const findings = inReportOrder(report.findings);
+  const builds = useBuilds(needsBuilds(report.findings));
   return (
     <section className={styles.panel} aria-labelledby={`${idPrefix}-report`} data-report="">
       <div className={styles.panelHead}>
@@ -326,7 +336,7 @@ export function Report({
       ) : (
         <div className={styles.findings}>
           {findings.map((fd) => (
-            <FindingCard key={fd.id} finding={fd} onLine={onLine} correlationId={correlationId} />
+            <FindingCard key={fd.id} finding={fd} onLine={onLine} correlationId={correlationId} builds={builds} />
           ))}
         </div>
       )}
@@ -626,6 +636,7 @@ export function ActivateDialog({
   const { tenant, api } = useDeployment();
   const [gate, setGate] = useState<Gate>({ state: "loading" });
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
+  const builds = useBuilds(gate.state === "ok" && needsBuilds(gate.findings));
   useEffect(() => {
     if (version === null || !tenant) return;
     setGate({ state: "loading" });
@@ -700,7 +711,7 @@ export function ActivateDialog({
             <div className={styles.gateList}>
               <p className={styles.para}>{t("policies.activate.blocking", { count: blocking.length })}</p>
               {blocking.map((f) => (
-                <FindingCard key={f.id} finding={f} />
+                <FindingCard key={f.id} finding={f} builds={builds} />
               ))}
             </div>
           ) : null}
@@ -711,6 +722,7 @@ export function ActivateDialog({
                 <FindingCard
                   key={f.id}
                   finding={f}
+                  builds={builds}
                   accept={{
                     checked: accepted.has(f.id),
                     onChange: (on) =>

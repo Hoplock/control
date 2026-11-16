@@ -33,6 +33,7 @@ import { navigate, useLocation } from "../router/router";
 import { useLoad } from "../shell/load";
 import { useDeployment } from "../shell/Shell";
 import { FleetChart } from "./FleetChart";
+import { FleetViews } from "./FleetAlgorithms";
 import { applyFilters, configStatus, proxyHealth, unreachable, type FleetFilters } from "./fleetModel";
 import styles from "./Fleet.module.css";
 
@@ -292,6 +293,7 @@ export function FleetScreen() {
           </Button>
         }
       />
+      <FleetViews current="proxies" />
       <section className={styles.panel} aria-labelledby="fleet-summary">
         <h2 id="fleet-summary" className={styles.panelTitle}>
           {t("fleet.summary")}

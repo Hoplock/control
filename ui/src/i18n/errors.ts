@@ -49,6 +49,8 @@ export const ERROR_MESSAGES: Readonly<Record<string, MessageKey>> = {
   retention_not_archived: "error.retention_not_archived",
   retention_unverified: "error.retention_unverified",
   retention_key_not_configured: "error.retention_key_not_configured",
+  // 0058: a list read to its end that said it continues and named no new position.
+  list_unterminated: "error.list_unterminated",
   [NETWORK_FAILURE]: "error.network",
 };
 

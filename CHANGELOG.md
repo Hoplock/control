@@ -26,6 +26,52 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.45.0
+
+Phase 0058, the console's algorithm posture and the emergency runbook (M11,
+M17, M19, M20, M21, M23, M26). No migration. The north-bound API is unchanged
+at version `5`: every view reads or calls routes that were already served
+(`GET …/fleet/algorithms`, `GET …/proxies`, `GET …/policy/active`,
+`POST …/policy/validate`, `POST …/policy/apply`, `POST …/revocations`,
+`GET …/audit/negotiated`). Nothing in `ext`, `server` or the contract changes.
+
+- **Algorithm posture, at `/console/fleet/algorithms`** (`fleet:read`), a view
+  of Fleet beside its proxies. Each `algorithm_floor` level with the key
+  exchanges it accepts in each build, the proxies that cannot enforce it yet,
+  what each profile a build accepts offers per axis, and the proxies that
+  declared nothing. A build is the proxies that declared the same thing. Builds
+  that disagree about a level or a profile read `In progress`, never a fault;
+  a proxy or build that declared nothing there reads `Not reported`, never "no
+  floor" or "offers nothing". Both lists are read to their last page.
+- **The floor's impact preview and a ban's per-build warnings**, inside the
+  publish-time report's finding cards wherever the report is shown (a
+  version's report, the candidate, the activation dialog). A target a raised
+  floor breaks is shown with the level it met, what it negotiated and offered,
+  and when; a target with no observation or a stale one is `Not reported`; a
+  proxy that cannot enforce the level is named; `pq-hybrid-kex` is explained
+  as ML-KEM-768 hybrid, needing OpenSSH 9.9 or later on the target, and never
+  as sntrup761. A ban that empties an axis lists, per build, the proxies that
+  will refuse the route and what each offers there, says `In progress` when
+  some declaring proxies would refuse it and the rest would not, and a build
+  that cannot judge the ban is `Not judged`. None of them blocks: each is the
+  warning or advice the server already reported.
+- **The emergency runbook, at
+  `/console/policy/runbook[?axis=&name=&limit=&range=|from=&to=]`**, linked
+  from Policy. Three steps, each offered only once the one before it has
+  answered and only to a role holding its permission: the ban written into the
+  bundle's own `algorithm_bans` and applied (`policy:publish`) after its report
+  is read and its warnings accepted by id, or the active version's ban where
+  it already bans the name everywhere; `cache_invalidate` with `all`
+  (`session:revoke`); then the sessions that negotiated the name, read to the
+  negotiated list's last page (`audit:read`), ended with `session_kill` in
+  batches of 500 (`session:revoke`), the `reason` asked for and shown before
+  it is sent. Each step confirms by typing a name and shows what its call
+  reported covering.
+- **Status vocabulary**: `Declared` and `Done` (allow), `Not declared` and
+  `Not judged` (not reported). Error sentence for `list_unterminated`, the
+  console's own outage for a list that said it continues and named no new
+  position.
+
 ## v0.44.0
 
 Phase 0057, stream gaps, the archive's lag and retention in the console's

@@ -30,6 +30,10 @@ export const STATUS = {
   // Extensions (0056): a handler whose Start succeeded, a consumer with nothing unconfirmed.
   running: { tone: "allow", label: "status.running" },
   caughtUp: { tone: "allow", label: "status.caughtUp" },
+  // 0058: every build that says anything about a floor level or a profile says
+  // the same; and a runbook step whose call answered.
+  declared: { tone: "allow", label: "status.declared" },
+  done: { tone: "allow", label: "status.done" },
   denied: { tone: "deny", label: "status.denied" },
   revoked: { tone: "deny", label: "status.revoked" },
   expired: { tone: "deny", label: "status.expired" },
@@ -72,6 +76,10 @@ export const STATUS = {
   superseded: { tone: "unknown", label: "status.superseded" },
   // A point with nothing registered: Control does what it says instead, which is not a fault (M15).
   notRegistered: { tone: "unknown", label: "status.notRegistered" },
+  // 0058: no build declares a floor level (a fact, not an absence of proof),
+  // and a build whose declaration cannot judge a ban — never fine.
+  notDeclared: { tone: "unknown", label: "status.notDeclared" },
+  notJudged: { tone: "unknown", label: "status.notJudged" },
 } as const satisfies Record<string, StatusView>;
 
 export type StatusName = keyof typeof STATUS;

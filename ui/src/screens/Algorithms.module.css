@@ -1,0 +1,256 @@
+/* Algorithm posture and the emergency runbook (0058): read, not scanned. */
+.screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-24);
+}
+.stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+}
+.section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+}
+.sectionTitle {
+  margin: 0;
+  font: var(--t-h2);
+  color: var(--text-primary);
+}
+.subTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.para {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.quiet {
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.meta {
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+.note {
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border-inline-start: var(--sp-2) solid var(--s-info);
+  background: var(--bg-sunken);
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.warnNote {
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border-inline-start: var(--sp-2) solid var(--s-warn);
+  background: var(--bg-sunken);
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.visuallyHidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.tableWrap {
+  overflow-x: auto;
+}
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font: var(--t-dense);
+  font-variant-numeric: tabular-nums;
+}
+.table th,
+.table td {
+  padding: var(--sp-6) var(--sp-12);
+  border-block-end: var(--border-width) solid var(--border-subtle);
+  text-align: start;
+  vertical-align: top;
+  color: var(--text-primary);
+}
+.table thead th {
+  white-space: nowrap;
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.table code,
+.idents code,
+.row code {
+  font: var(--t-mono);
+}
+/* An identifier is read whole: it never breaks at its hyphens. */
+.idents code,
+.table code,
+.row code {
+  white-space: nowrap;
+}
+.idents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-6);
+}
+.variants {
+  display: grid;
+  gap: var(--sp-8);
+}
+.variant {
+  display: grid;
+  gap: var(--sp-2);
+}
+.unreported {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  margin: 0;
+}
+.list {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-4) var(--sp-12);
+}
+.build {
+  display: grid;
+  gap: var(--sp-8);
+  padding-block-start: var(--sp-12);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+}
+.buildHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-4) var(--sp-12);
+}
+.facts {
+  display: grid;
+  grid-template-columns: minmax(max-content, auto) minmax(0, 1fr);
+  gap: var(--sp-8) var(--sp-24);
+  margin: 0;
+}
+.facts dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.facts dd {
+  margin: 0;
+  min-inline-size: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+
+/* The runbook: three steps, in order, each a destructive call. */
+.steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.step[data-step-state="waiting"] {
+  background: var(--bg-canvas);
+}
+.stepHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+}
+.stepNumber {
+  font: var(--t-label);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-8) var(--sp-12);
+}
+.form {
+  display: grid;
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(var(--form-column-min), 1fr));
+  gap: var(--sp-12) var(--sp-16);
+  max-inline-size: var(--form-max);
+}
+.wide {
+  grid-column: 1 / -1;
+}
+.receipt {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border-inline-start: var(--sp-2) solid var(--s-allow);
+  background: var(--bg-sunken);
+}
+.reason {
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  font: var(--t-body);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sessions {
+  max-block-size: var(--list-max-height);
+  overflow-y: auto;
+}
+.added {
+  font: var(--t-mono);
+  color: var(--text-primary);
+}
+.tableWrap:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}

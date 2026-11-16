@@ -81,6 +81,11 @@ export const ROUTES = {
   grant: { method: "GET", pattern: "/api/v1/tenants/{tenant}/grants/{grant}", permission: "grant:read" },
   grantCreate: { method: "POST", pattern: "/api/v1/tenants/{tenant}/grants", permission: "grant:write" },
   grantRevoke: { method: "POST", pattern: "/api/v1/tenants/{tenant}/grants/{grant}/revoke", permission: "grant:write" },
+  // Algorithm posture and the emergency runbook (0058; Hoplock/proxy#69, #72).
+  fleetAlgorithms: { method: "GET", pattern: "/api/v1/tenants/{tenant}/fleet/algorithms", permission: "fleet:read" },
+  policyApply: { method: "POST", pattern: "/api/v1/tenants/{tenant}/policy/apply", permission: "policy:publish" },
+  revocations: { method: "POST", pattern: "/api/v1/tenants/{tenant}/revocations", permission: "session:revoke" },
+  auditNegotiated: { method: "GET", pattern: "/api/v1/tenants/{tenant}/audit/negotiated", permission: "audit:read" },
   // Extensions and Reports (0056): what extends this deployment, and the packs registered to report on it.
   extensions: { method: "GET", pattern: "/api/v1/tenants/{tenant}/extensions", permission: "extension:read" },
   reports: { method: "GET", pattern: "/api/v1/tenants/{tenant}/reports", permission: "audit:read" },
