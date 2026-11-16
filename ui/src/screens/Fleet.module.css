@@ -45,39 +45,46 @@
   margin: 0;
 }
 .bar {
+  display: block;
   inline-size: 100%;
-  block-size: var(--sp-16);
-  border-radius: var(--r-sm);
+  block-size: var(--sp-24);
 }
 .track {
   fill: var(--bg-sunken);
+  rx: var(--r-sm);
 }
-.segLive {
+/* Each segment solid in its status hue (DESIGN.md §3.4), from the vocabulary's
+   tone, so the bar and its legend cannot disagree. */
+.segment {
+  rx: var(--r-sm);
+}
+.segment[data-tone="allow"] {
   fill: var(--s-allow);
 }
-.segment {
-  stroke: var(--bg-surface);
-  stroke-width: 0.3;
-  vector-effect: non-scaling-stroke;
-}
-.segStale {
+.segment[data-tone="warn"] {
   fill: var(--s-warn);
 }
-.segUnreachable {
+.segment[data-tone="outage"] {
   fill: var(--s-outage);
 }
-.segPending {
+.segment[data-tone="info"] {
   fill: var(--s-info);
 }
-.segRevoked {
+.segment[data-tone="deny"] {
   fill: var(--s-deny);
 }
-.patternInk {
-  fill: var(--bg-surface);
-}
-.patternStroke {
-  stroke: var(--bg-surface);
-  stroke-width: 0.5;
+/* A segment's glyph and count, from its inline start, in the ink that reads
+   on every status hue (--text-on-status, held by the contrast test). */
+.segmentLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  block-size: 100%;
+  padding-inline: var(--sp-8);
+  font: var(--t-label);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-on-status);
+  white-space: nowrap;
 }
 .legend {
   display: flex;
@@ -92,26 +99,6 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-6);
-}
-.swatch {
-  inline-size: var(--sp-12);
-  block-size: var(--sp-12);
-  border-radius: var(--r-sm);
-  background: var(--s-allow);
-}
-.swatch[data-segment="stale"] {
-  background: repeating-linear-gradient(45deg, var(--s-warn) 0 3px, var(--bg-surface) 3px 4px);
-}
-.swatch[data-segment="unreachable"] {
-  background: radial-gradient(circle, var(--bg-surface) 1px, var(--s-outage) 1.5px) 0 0 / 4px 4px;
-}
-.swatch[data-segment="pending"] {
-  background: repeating-linear-gradient(0deg, var(--s-info) 0 3px, var(--bg-surface) 3px 4px);
-}
-.swatch[data-segment="revoked"] {
-  background:
-    repeating-linear-gradient(45deg, var(--s-deny) 0 3px, var(--bg-surface) 3px 4px),
-    var(--s-deny);
 }
 .count {
   font-variant-numeric: tabular-nums;

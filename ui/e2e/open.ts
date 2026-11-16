@@ -18,6 +18,8 @@ export interface OpenOptions {
    * pairs, so content-sized columns drift a pixel or two from their mirror.
    */
   noKerning?: boolean;
+  /** Device pixels per CSS pixel, for a check that reads a small shape's pixels (1 otherwise, as the baseline is). */
+  scale?: number;
   /** Called with the context before anything loads (to watch or block requests). */
   before?(context: BrowserContext): Promise<void>;
 }
@@ -26,7 +28,7 @@ export async function openScreen(browser: Browser, screen: E2EScreen, o: OpenOpt
   const context = await browser.newContext({
     baseURL: NORTH,
     viewport: { width: 1280, height: 800 },
-    deviceScaleFactor: 1,
+    deviceScaleFactor: o.scale ?? 1,
     locale: "en-US",
     timezoneId: "UTC",
     colorScheme: o.theme ?? "light",

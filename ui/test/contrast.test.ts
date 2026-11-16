@@ -56,6 +56,12 @@ function pairs(): Pair[] {
       out.push({ fg: s, bg, min: TEXT, why: "a status glyph and label" });
     }
   }
+  // Fleet's health bar (0059): each segment's glyph and count are set on its
+  // own status hue. The count is text, so the pair is held to text (1.4.3),
+  // which also holds the glyph beside it to the 3:1 a graphic needs (1.4.11).
+  for (const s of STATUS) {
+    out.push({ fg: "--text-on-status", bg: s, min: TEXT, why: "a health bar segment's glyph and count" });
+  }
   for (const s of STRIPES) {
     out.push({ fg: `--stripe-${s}`, bg: "--bg-canvas", min: NON_TEXT, why: `the ${s} stripe` });
     out.push({ fg: "--text-primary", bg: `--stripe-${s}-tint`, min: TEXT, why: `the deployment name on the ${s} chip` });
