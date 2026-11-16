@@ -95,7 +95,11 @@ last met `modern-kex` (fresh, `now`), api-01's observation is from January
 (stale), vault-01 has none; five sessions that negotiated `aes128-ctr`. The
 candidate (`floorCandidate()`) is the seeded policy plus a `prod-pq-floor`
 rule and the top-level ban. The runbook spec opens with `?limit=2`, so the
-negotiated list is three pages.
+negotiated list is three pages. The two declaring allows to db-01 are
+recorded decisions like any other, so replaying v3 flips them as it flips
+`sess-e2e-allow`: the author's flow in `mutations.spec.ts` now expects four
+flips, three of them allow→deny to db-01. A fixture that records decisions
+moves every replay over recorded traffic; run the mutations project too.
 
 ### The baseline
 

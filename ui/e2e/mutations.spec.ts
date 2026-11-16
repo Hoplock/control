@@ -90,11 +90,18 @@ test("an author validates, simulates, compares, uploads and activates a candidat
   await main.locator("[data-validate]").click();
   await expect(main.locator("[data-report] [data-finding][data-severity=warning]")).toHaveCount(1);
 
-  // Simulated against the recorded traffic: both directions flip.
+  // Simulated against the recorded traffic: both directions flip. Four
+  // decisions flip: sess-e2e-allow and sess-e2e-rule-deny (0053), and the two
+  // allows to db-01 under ops-db-shell that px-core-01 and px-core-02 declared
+  // their builds on (0058's fixture/algorithms.ts), which flip as
+  // sess-e2e-allow does.
   await main.locator("[data-simulate-tab]").click();
   await main.locator("[data-run-replay]").click();
-  await expect(main.locator("[data-replay]")).toHaveAttribute("data-flipped", "2");
-  await expect(main.locator('[data-flips="allow_to_deny"] tr[data-flip]')).toHaveCount(1);
+  await expect(main.locator("[data-replay]")).toHaveAttribute("data-flipped", "4");
+  // One row per decision: all three allow→deny flips are grace's sessions to db-01.
+  const allowToDeny = main.locator('[data-flips="allow_to_deny"] tr[data-flip]');
+  await expect(allowToDeny).toHaveCount(3);
+  await expect(allowToDeny.filter({ hasText: "db-01.core.internal" })).toHaveCount(3);
   await expect(main.locator('[data-flips="deny_to_allow"] tr[data-flip]')).toHaveCount(1);
 
   // Compared with the active version (v2).
