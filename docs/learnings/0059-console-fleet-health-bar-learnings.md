@@ -53,9 +53,10 @@ returns a custom property with its `var()` already substituted (`--sp-2` →
 does not re-render.
 
 The 72px threshold is a glyph (10px), a gap (4px), five tabular digits at
-`--t-label`, and 8px of padding each side. A count with more digits on a
-segment barely over the threshold would be cut by the `<foreignObject>` — a
-fleet that large is far past anything the fixture or any test draws, and the
+`--t-label`, and 8px of padding each side: the label `12,345` measures
+68.5px in this container's Chromium. A count with more digits on a segment
+barely over the threshold would be cut by the `<foreignObject>` — a fleet
+that large is far past anything the fixture or any test draws, and the
 legend still carries every count.
 
 ### The greyscale check, and how it was calibrated
@@ -102,6 +103,17 @@ database, compressed losslessly with oxipng at level 4 with safe stripping
 (here through its Python binding, `pyoxipng`; pixels checked identical
 before and after: 964 KB → 739 KB), and the whole suite then run on a second
 fresh database with no update.
+
+### Noticed, not changed
+
+- `go test ./server/` panics when `HOPLOCK_TEST_DSN` is unset:
+  `TestTheDaemonStartsTheActionHandlerOnceBeforeAnyListenerAcceptsAndStopsItOnShutdown`
+  (`server/action_test.go`) registers a cleanup that calls the host's
+  executor, then `runHostAt` skips for the missing DSN before that executor
+  exists, and the cleanup calls it on nil. CI always sets
+  the DSN, so only a local run without a database sees it; run Go's tests
+  with one, as CI does. Worth a one-line fix (read the DSN before registering
+  the cleanup) in a later phase.
 
 ### Cross-repo
 No shared surface changed. The release changes what Enterprise's binary
