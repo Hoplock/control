@@ -157,6 +157,8 @@ Four of those rows carry an argument rather than a value:
 ### 3.3 Accent
 
 One. It marks the primary action, the active navigation item, and selection —
+and underlines a link, which is how every console link and text button says
+it can be followed (0060 found this everywhere and §3.3 silent on it) —
 nothing else. It is an electric **cyan**, which the operator chose in 0052: vivid
 on the near-black ground, and in light a deep teal-cyan that carries white text.
 It is deliberately not blue-as-default and deliberately not any of the status
@@ -274,6 +276,10 @@ in a column. Uppercase is for `--t-caption` only, never for headings.
 
 Two modes, remembered per operator, because Fleet and Audit are scanned and
 Policy is read:
+
+Fleet and Audit mean every one of their views (`/console/fleet/…`,
+`/console/audit/…`), so switching views never changes the density
+(§10.10).
 
 | | Compact (default on Fleet, Audit) | Comfortable (default elsewhere) |
 | --- | --- | --- |
@@ -483,13 +489,19 @@ both themes:
 
 **Primitives** — button (primary, secondary, ghost, danger), button link (a
 console link set as a primary or secondary button, for going somewhere rather
-than doing something, never danger), icon button (always
+than doing something, never danger), text button (a button set as a link's
+text, for an action inside the page — opening a row's drawer, going to a
+source line — never destructive), icon button (always
 with an accessible name), input, textarea, select, combobox, checkbox, radio,
 switch, tabs, tooltip, dropdown menu, dialog, drawer, toast, badge, status pill,
 chip/label, avatar, breadcrumb, view links (a screen's views, each its own
 deep link, the current one `aria-current="page"`), identifier (mono, LTR,
 never translated; at the page title's size for a page about one object named
-by its id), pagination, skeleton, spinner (overlay only), code block, source
+by its id), timestamp (an instant: the operator's zone, ISO-8601 UTC on
+hover and when copied), notice (a sentence about the page set apart — a
+rule, a wait, a receipt, a refusal — in one of four tones, `info`, `warn`,
+`allow`, `deny`, with its glyph or a status pill, never colour alone),
+pagination, skeleton, spinner (overlay only), code block, source
 view, diff view, empty state, error state, keyboard hint.
 
 **Composites** — data table (sticky header, pinned first column, column sort,
@@ -500,10 +512,31 @@ detail drawer, timeline (Explain), tree (fleet graph, hop path), JSON viewer
 actions), copyable id (mono, click-to-copy, truncated with full value in the
 title), feed lag (a downstream consumer's lag, 0056).
 
+**One component per job.** A screen renders the set's control, overlay,
+instant and notice, never one of its own: no `<button>`, `<input>`,
+`<select>`, `<textarea>`, `<dialog>` or `<time>` outside
+`ui/src/components/`, and a list is the data table. A status hue is drawn by
+the status component and the set; outside them only by Fleet's health bar
+(§11), a finding card's edge beside its own status pill, and the chrome's
+supervised and break-glass badges (§5) — and a badge carries a hue only for
+those two facts, wherever they appear (break-glass is `warn` on every
+screen). §10.10 holds all of it.
+
+**Page anatomy.** Every screen opens with the page header: a breadcrumb on
+a detail, then the title, the object's id and its status on one line, the
+actions at the line's end, and the lede beneath. A view has at most one
+primary action, and it is the header's last (the sign-in page's connectors
+are the one exception: one choice among equals, each primary). A screen's
+views are view links beneath the header. A row whose object has a page of
+its own opens it from its first column, a link; a row whose object has none
+(a proxy, an audit record) opens the detail drawer from its first column, a
+text button, its id in the URL (`?proxy=`, `?record=`).
+
 **Every screen defines four states, and they are reviewed**: loading (skeleton
 matching the final layout so nothing shifts), empty (what would be here, why it
 is not, the one action), error (what failed, the correlation id, retry — and it
-says *outage*, never *denied*, per M11), and partial (some data, a named gap —
+says *outage*, never *denied*, per M11), and partial (some data, a named gap, under the one heading every screen's
+partial notice carries, each gap saying what is missing and why —
 a fleet where one node is unreachable is not an error page; for a list that
 is nothing else, the rest of an answer the server cut, said beside its rows).
 
@@ -603,8 +636,15 @@ a lock, that lifting it later restores none of the sessions it ended. A field
 inside the dialog that is refused where it stands (a lock's holder text over
 its byte limit) holds the confirm (`ready`) until it is put right. A
 breadcrumb's crumb may be data, such as a version's name in mono. A failed mutation reports inline at the field or the form, never by a toast
-alone — a toast is not a record. Toasts are for successful, reversible things and
-auto-dismiss; errors persist until dismissed.
+alone — a toast is not a record. A **success** toast is for a successful,
+reversible thing and auto-dismisses. The success of a destructive action —
+one confirmed by typing its object's name — is a **receipt**: it says what
+was done (the grant revoked and the sessions it ended, the version made
+active) and persists until dismissed, unless the screen keeps the receipt on
+the page itself (the runbook's steps, a retention pass). Errors persist
+until dismissed. Which success follows a typed confirm is a property of the
+call, not of the line that raises the toast, so this rule is held by review,
+with `useToast()`'s two kinds named for it.
 
 ---
 
@@ -697,6 +737,26 @@ the same reason.
   and Cyrillic, which the faces cover, fall back to system fonts until a
   locale bundles their subsets. Pretending a new script is a free
   `<link>` is how an air-gapped deployment ends up rendering tofu.
+- **One word per concept** (0060), so a host's screens use the same words.
+  The catalogue holds these, and §10.10 refuses the words marked *never*:
+
+  | Term | Means | Not |
+  | --- | --- | --- |
+  | identity | the record of a person or service that can be given access; the label of every column and field that names one | *never* "user"; "subject" only as the policy language's field or the API's parameter, set as code |
+  | person | the human at a terminal who is denied, or whose session ends | "user" |
+  | principal | the credential that made a call — a session (`sess-`) or a token, a supervisor's (`sup-`) included | an identity |
+  | operator | someone signed in to this console | |
+  | target | what policy names and a session reaches; "host" only for its hostname and its keys | |
+  | proxy | a Hoplock Proxy in the fleet | a node |
+  | node | one Control server in this deployment's cluster | a proxy |
+  | deployment | this Control: what it decided, holds and recorded | *never* "this server took / recorded / no longer holds" |
+  | server | only the API answering this console's request (an error, a refusal, a version) | |
+  | denied | a decision of policy (M11); a lock, quarantine or deactivation is its own word (§6) | refused, blocked |
+  | refused | a request or a record the deployment would not accept — a compile, a write, ingest | denied |
+  | blocked | a command a proxy's filter stopped (blocked commands) | denied |
+
+  An instant is absolute everywhere: no screen says "5 minutes ago", so
+  relative time has one rule, and it is none.
 - **The server does not localise.** North-bound errors arrive as a stable code
   and typed parameters and the console owns the sentence (M21, 0019); compiler
   rejections arrive the same way (0005). Server logs stay English — they are read
@@ -709,7 +769,8 @@ the same reason.
 
 A design system nobody checks is a mood board. Each of these is a CI job or a
 test, and the console phases' acceptance criteria name them (0049 the static
-checks 1, 2 and 9; 0050 the browser checks 3–8):
+checks 1, 2 and 9; 0050 the browser checks 3–8; 0060 the consistency checks,
+10):
 
 1. **Token lint.** No raw hex, named colour, `rgb()`/`hsl()`/`light-dark()`,
    font size, radius, `px` margin, padding or gap, or transition duration
@@ -774,6 +835,22 @@ are in the registry too. In detail:
    (`ui/src/i18n/`). It reads the TypeScript syntax tree
    (`ui/scripts/lint-strings.mjs`), and it also refuses an inline `style` and a
    raw colour in a string, the two ways a value escapes the token lint.
+
+10. **Consistency** (0060, `ui/test/consistency.test.ts`, run by the
+   unit-test job). Holds across every screen what the per-screen checks
+   cannot see: no control, overlay or instant outside the set; no `<table>`
+   but the data table's, beyond a named count that may only fall; a status
+   hue only where §7 names one; a badge's hue only for break-glass; every
+   registered screen headed by the page header; Fleet and Audit compact and
+   every other screen comfortable; §6's table and the `STATUS` map the same
+   states with the same words; and §9's glossary. And, in the browser
+   (`console-e2e`, "widths"), every screen at 1024 and 900px — Explain and
+   Audit at 768 too — with no sideways page scroll and every wider table
+   scrolling in its own container with its first column pinned (§4).
+   **The contact sheet** (`npm run contact-sheet`) lays the baseline out
+   side by side, one sheet per area and theme, for what only an eye can
+   judge; it is not a CI job, and a PR that changes how the console looks
+   attaches it.
 
 ---
 

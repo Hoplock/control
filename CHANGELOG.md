@@ -26,6 +26,49 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.47.0
+
+Phase 0060, one look and feel across every console screen (M11, M17, M19,
+M20, M21, M23, M27). No migration. The north-bound API is unchanged at
+version `5`, and nothing in `ext`, `server` or the contract changes.
+
+- **Notes about a page read the same on every screen.** A rule that holds
+  here, a request waiting, a receipt or a refusal is one panel shape
+  everywhere, with its status glyph beside it: Audit's "what one principal
+  did here", the claim mapping's stale notice and refused document (now in
+  the deny colour, as a refusal is), a grant request waiting for its
+  workflow, a lock or quarantine not yet delivered, a directory-managed or
+  record-less identity, the algorithms view's notes, a finding's "warns,
+  never blocks", a replay cut short, and the runbook's notes and receipts.
+- **A destructive action's success stays on screen until dismissed.**
+  Withdrawing a proxy, revoking a grant, removing a target or an identity,
+  withdrawing a role, locking, unlocking, quarantining, releasing, and
+  activating or rolling back a policy version — each confirmed by typing a
+  name — now leave their receipt (what was done, and the sessions or tokens
+  it ended) until it is closed, instead of fading after five seconds.
+  Reversible successes still fade.
+- **Copying a timestamp copies its ISO-8601 UTC form** on every screen, as
+  its tooltip already showed.
+- **Fleet's algorithms view is compact by default**, as Fleet's proxies
+  view is, so switching between them no longer changes the density; its
+  tables, and a floor finding's, keep their first column in view when they
+  scroll sideways.
+- **The same words for the same things.** Explain, the audit view and a
+  replay's flips label an identity "Identity", as the inventory does (they
+  said "Subject"); Explain and the runbook say "person" for whoever was
+  denied or has a session ended (they said "user"); and what Control decided
+  or holds is "this deployment's" (they said "this server's").
+- **Break-glass reads the same everywhere**: the inventory's break-glass
+  badge is the warning colour the top bar's break-glass session badge
+  already was (it was the information colour). Fleet's relay-registration
+  count is a neutral badge, not a coloured one.
+- **The sign-in page and the "could not load" page use the console's own
+  buttons and fields**; the break-glass sign-in button is no longer edged in
+  the warning colour. The narrow-screen navigation toggle and the tenant
+  switch are the console's button and select.
+- The row that opens Fleet's proxy drawer, an audit record's drawer, and a
+  source line in a policy finding are one kind of link-styled button.
+
 ## v0.46.0
 
 Phase 0059, Fleet's health bar without patterns (M11, M17, M19, M20, M21,
