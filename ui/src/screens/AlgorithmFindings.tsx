@@ -23,6 +23,8 @@ import type { Load } from "../shell/load";
 import { AXIS_LABEL, Idents, PqHybridNote, ProxyChips } from "./AlgorithmParts";
 import { PQ_HYBRID, type Build } from "./algorithmModel";
 import styles from "./Algorithms.module.css";
+import { Timestamp } from "../components/Timestamp";
+import { Notice } from "../components/Notice";
 
 /** The codes whose evidence this file sets out; the rest keep the card's own lists. */
 export const ALGORITHM_DETAIL: ReadonlySet<string> = new Set([
@@ -77,9 +79,7 @@ function Instant({ at }: { at?: string }) {
   const { f } = useI18n();
   if (!at) return <StatusOf name="notReported" />;
   return (
-    <time dateTime={f.utc(at)} title={f.utc(at)}>
-      {f.dateTime(at)}
-    </time>
+    <Timestamp at={at} />
   );
 }
 
@@ -133,7 +133,7 @@ export function AlgorithmDetail({ finding: fd, builds }: { finding: Finding; bui
             </table>
           </div>
           <Cut finding={fd} name="targets" shown={targets.length} />
-          <p className={styles.warnNote}>{t("policies.floor.warnsOnly")}</p>
+          <Notice tone="warn">{t("policies.floor.warnsOnly")}</Notice>
           {pq}
         </div>
       );
@@ -204,7 +204,7 @@ export function AlgorithmDetail({ finding: fd, builds }: { finding: Finding; bui
           </div>
           <Cut finding={fd} name="proxies" shown={on.length} />
           <Disagreement builds={builds} emptied={emptied} />
-          <p className={styles.warnNote}>{t("policies.ban.warnsOnly")}</p>
+          <Notice tone="warn">{t("policies.ban.warnsOnly")}</Notice>
         </div>
       );
     }

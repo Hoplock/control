@@ -70,21 +70,6 @@
   font: var(--t-label);
   color: var(--text-secondary);
 }
-.select,
-.menu {
-  min-block-size: var(--control-height);
-  padding: 0 var(--sp-8);
-  border: var(--border-width) solid var(--border-default);
-  border-radius: var(--r-sm);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font: var(--t-body);
-  transition: background-color var(--m-fast) var(--ease);
-}
-.menu:hover,
-.select:hover {
-  background: var(--bg-hover);
-}
 .badge {
   display: inline-flex;
   align-items: center;

@@ -112,3 +112,22 @@ a.button {
     rotate: 1turn;
   }
 }
+.text {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: start;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: var(--sp-2);
+  cursor: pointer;
+  transition: color var(--m-fast) var(--ease);
+}
+.text:hover {
+  color: var(--accent);
+}
+.text code {
+  font: var(--t-mono);
+}

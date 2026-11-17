@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import type { ApiClient } from "./api/client";
 import type { Session } from "./api/types";
+import { Button } from "./components/Button";
 import { ErrorMessage } from "./components/States";
 import { VisuallyHidden } from "./components/VisuallyHidden";
 import { useI18n } from "./i18n/I18n";
@@ -72,9 +73,9 @@ export function App({ api }: { api: ApiClient }) {
     page = (
       <main className={styles.alone} id="content">
         <ErrorMessage error={session.error} kind="outage" />
-        <button type="button" className={styles.retry} onClick={reload}>
+        <Button onClick={reload}>
           {t("common.retry")}
-        </button>
+        </Button>
       </main>
     );
   } else {

@@ -15,6 +15,7 @@ import type { Translate } from "../i18n/messages";
 import { HEALTH_STATUS } from "../shell/chrome";
 import { useDeployment } from "../shell/Shell";
 import styles from "./Screen.module.css";
+import { Timestamp } from "../components/Timestamp";
 
 /** Each health reason this console has a sentence for (instance.AllReasons). */
 export const REASON_MESSAGES: Readonly<Record<string, MessageKey>> = {
@@ -61,9 +62,7 @@ function IdentitySection({ identity, tenantsShown }: { identity: Identity; tenan
           </dd>
           <dt>{t("deployment.created")}</dt>
           <dd>
-            <time dateTime={f.utc(identity.created_at)} title={f.utc(identity.created_at)}>
-              {f.dateTime(identity.created_at)}
-            </time>
+            <Timestamp at={identity.created_at} />
           </dd>
           {tenantsShown ? (
             <>
@@ -145,9 +144,7 @@ function HealthSection({ health }: { health: Health }) {
                     </td>
                     <td>
                       {m.reported_at ? (
-                        <time dateTime={f.utc(m.reported_at)} title={f.utc(m.reported_at)}>
-                          {f.dateTime(m.reported_at)}
-                        </time>
+                        <Timestamp at={m.reported_at} />
                       ) : (
                         t("deployment.node.never")
                       )}

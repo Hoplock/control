@@ -44,14 +44,6 @@
   font: var(--t-body);
   color: var(--text-secondary);
 }
-.notice {
-  margin: 0;
-  padding: var(--sp-8) var(--sp-12);
-  border-inline-start: var(--sp-2) solid var(--s-warn);
-  background: var(--bg-sunken);
-  font: var(--t-body);
-  color: var(--text-primary);
-}
 .toolbar,
 .actions,
 .simControls {
@@ -150,17 +142,6 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-4);
-}
-.lineLink {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-primary);
-  font: var(--t-label);
-  text-decoration: underline;
-  text-decoration-color: var(--accent);
-  text-underline-offset: var(--sp-2);
-  cursor: pointer;
 }
 .rejectionList {
   display: grid;

@@ -37,19 +37,6 @@
   text-decoration-color: var(--accent);
   text-underline-offset: var(--sp-2);
 }
-.open {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: start;
-  text-decoration: underline;
-  text-decoration-color: var(--accent);
-  text-underline-offset: var(--sp-2);
-  cursor: pointer;
-  font-variant-numeric: tabular-nums;
-}
 .what,
 .links,
 .chips {
@@ -102,20 +89,6 @@
   font-style: italic;
 }
 
-.notice {
-  display: grid;
-  gap: var(--sp-6);
-  padding: var(--sp-12) var(--sp-16);
-  border: var(--border-width) solid var(--border-subtle);
-  border-inline-start: var(--focus-ring-width) solid var(--s-info);
-  border-radius: var(--r-md);
-  background: var(--bg-surface);
-}
-.noticeTitle {
-  margin: 0;
-  font: var(--t-h3);
-  color: var(--text-primary);
-}
 .noticeBody {
   display: flex;
   flex-wrap: wrap;

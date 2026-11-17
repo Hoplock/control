@@ -14,6 +14,7 @@ import { useI18n } from "../i18n/I18n";
 import { Skeleton } from "./States";
 import { Status, StatusGlyph, type Tone } from "./Status";
 import styles from "./Timeline.module.css";
+import { Timestamp } from "./Timestamp";
 
 export interface TimelineEvent {
   id: string;
@@ -84,9 +85,7 @@ export function Timeline({
               <span className={styles.title}>{e.title}</span>
               {e.status ? <Status tone={e.status.tone} label={e.status.label} /> : null}
             </span>
-            <time className={styles.at} dateTime={f.utc(e.at)} title={f.utc(e.at)}>
-              {f.dateTime(e.at)}
-            </time>
+            <Timestamp at={e.at} className={styles.at} />
             {e.meta ? <span className={styles.meta}>{e.meta}</span> : null}
           </>
         );

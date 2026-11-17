@@ -47,22 +47,6 @@
   font: var(--t-caption);
   color: var(--text-secondary);
 }
-.note {
-  margin: 0;
-  padding: var(--sp-8) var(--sp-12);
-  border-inline-start: var(--sp-2) solid var(--s-info);
-  background: var(--bg-sunken);
-  font: var(--t-body);
-  color: var(--text-primary);
-}
-.warnNote {
-  margin: 0;
-  padding: var(--sp-8) var(--sp-12);
-  border-inline-start: var(--sp-2) solid var(--s-warn);
-  background: var(--bg-sunken);
-  font: var(--t-body);
-  color: var(--text-primary);
-}
 .visuallyHidden {
   position: absolute;
   inline-size: 1px;
@@ -87,6 +71,14 @@
   text-align: start;
   vertical-align: top;
   color: var(--text-primary);
+}
+/* A table wider than its panel scrolls in .tableWrap with its first column
+   pinned, as the data table's does (DESIGN.md §4; 0070 moves these onto it). */
+.table tr > :first-child {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  background: var(--bg-surface);
 }
 .table thead th {
   white-space: nowrap;
@@ -222,14 +214,6 @@
 }
 .wide {
   grid-column: 1 / -1;
-}
-.receipt {
-  display: grid;
-  gap: var(--sp-4);
-  margin: 0;
-  padding: var(--sp-8) var(--sp-12);
-  border-inline-start: var(--sp-2) solid var(--s-allow);
-  background: var(--bg-sunken);
 }
 .reason {
   margin: 0;

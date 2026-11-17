@@ -3,7 +3,7 @@
 
 import type { MessageKey } from "../i18n/catalogue";
 import type { HealthState, Session, Supervisor } from "../api/types";
-import type { Tone } from "../components/Status";
+import { STATUS, type Tone } from "../components/Status";
 import type { Load } from "./load";
 
 /**
@@ -45,13 +45,13 @@ export interface StatusView {
  * denial (M11).
  */
 export const HEALTH_STATUS: Readonly<Record<HealthState | "unreachable", StatusView>> = {
-  healthy: { tone: "allow", label: "status.healthy" },
-  degraded: { tone: "warn", label: "status.degraded" },
-  in_progress: { tone: "info", label: "status.inProgress" },
-  unknown: { tone: "unknown", label: "status.notReported" },
-  stale: { tone: "warn", label: "status.stale" },
-  left: { tone: "unknown", label: "status.left" },
-  unreachable: { tone: "outage", label: "status.unreachable" },
+  healthy: STATUS.healthy,
+  degraded: STATUS.degraded,
+  in_progress: STATUS.inProgress,
+  unknown: STATUS.notReported,
+  stale: STATUS.stale,
+  left: STATUS.left,
+  unreachable: STATUS.unreachable,
 };
 
 export function healthStatus(health: Load<{ state: HealthState }>): StatusView {

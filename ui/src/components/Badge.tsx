@@ -1,7 +1,9 @@
 // SMALL LABELS (DESIGN.md §7): badge, chip/label, avatar, keyboard hint and
-// breadcrumb. A badge is a count or a fact, neutral unless it carries a
-// status (and then it is a Status, not a coloured badge: status hues are
-// reserved, §3.4). A chip is an operator's label (`env=prod`), mono and never
+// breadcrumb. A badge is a count or a fact, and neutral. Two facts carry a
+// hue because DESIGN.md §5 gives them one wherever they appear: `info` for
+// being supervised, `warn` for break-glass (a break-glass session, an
+// identity meant for it, a grant one made). Anything else with a hue is a
+// state, and a state is a Status (§3.4, §6). A chip is an operator's label (`env=prod`), mono and never
 // translated; a removable chip is how the filter bar shows a filter.
 
 import type { ReactNode } from "react";
@@ -9,7 +11,7 @@ import { useI18n } from "../i18n/I18n";
 import { Link } from "../router/router";
 import styles from "./Badge.module.css";
 
-export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "accent" | "info" }) {
+export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "accent" | "info" | "warn" }) {
   return (
     <span className={styles.badge} data-tone={tone}>
       {children}

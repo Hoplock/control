@@ -24,7 +24,7 @@ import { useState, type ReactNode } from "react";
 import { offered } from "../api/permit";
 import type { AuditRecord, AuditRecordPage, BlockedPage, BlockedCommand } from "../api/types";
 import { Chip } from "../components/Badge";
-import { Button } from "../components/Button";
+import { Button, TextButton } from "../components/Button";
 import { JsonViewer } from "../components/Code";
 import { CopyableId } from "../components/CopyableId";
 import { DataTable, TableSkeleton, type Column, type TableSort } from "../components/DataTable";
@@ -57,6 +57,8 @@ import { GapFacts, GapStatus } from "./Gaps";
 import { gapOfRecord, isGapRecord, RETAINED_EVENT } from "./gapModel";
 import { RetainedFactsOf } from "./Retention";
 import styles from "./Audit.module.css";
+import { Timestamp } from "../components/Timestamp";
+import { Notice } from "../components/Notice";
 
 const FORBIDDEN: Load<never> = { state: "refused", status: 403, error: { code: "forbidden" } };
 
@@ -73,9 +75,7 @@ export function When({ at }: { at?: string }) {
   const { f } = useI18n();
   if (!at) return null;
   return (
-    <time dateTime={f.utc(at)} title={f.utc(at)}>
-      {f.dateTime(at)}
-    </time>
+    <Timestamp at={at} />
   );
 }
 
@@ -208,9 +208,9 @@ export function AuditRecordsScreen() {
       header: headers[0] as string,
       sortValue: (r) => r.recorded_at,
       cell: (r) => (
-        <button type="button" className={styles.open} onClick={() => setQuery(location, { record: r.record_id })}>
+        <TextButton onClick={() => setQuery(location, { record: r.record_id })}>
           <When at={r.recorded_at} />
-        </button>
+        </TextButton>
       ),
     },
     { id: "kind", header: headers[1] as string, sortValue: (r) => r.kind, cell: (r) => kindLabel(r.kind) },
@@ -403,16 +403,13 @@ function PrincipalNotice({ principal, name }: { principal: string; name?: string
   const { t } = useI18n();
   const supervisor = principal.startsWith("sup-");
   return (
-    <section className={styles.notice} aria-labelledby="audit-principal" data-principal-notice>
-      <h2 id="audit-principal" className={styles.noticeTitle}>
-        {supervisor ? t("audit.principal.supervisor.title") : t("audit.principal.title")}
-      </h2>
+    <Notice tone="info" title={supervisor ? t("audit.principal.supervisor.title") : t("audit.principal.title")} data-principal-notice>
       <p className={styles.noticeBody}>
         <Id>{principal}</Id>
         {name ? <span translate="no">{name}</span> : null}
       </p>
-      {supervisor ? <p className={styles.noticeBody}>{t("audit.principal.supervisor.body")}</p> : null}
-    </section>
+      {supervisor ? <p>{t("audit.principal.supervisor.body")}</p> : null}
+    </Notice>
   );
 }
 

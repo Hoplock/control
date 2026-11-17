@@ -80,7 +80,7 @@ export function TargetsScreen() {
     const a = await api.call("targetDelete", { params: { tenant: tenant as string, target: target.id } });
     if (a.kind !== "ok") return { error: a.error, kind: a.kind };
     setRemoving(null);
-    toast.success(t("inventory.targets.removed", { id: target.id }));
+    toast.receipt(t("inventory.targets.removed", { id: target.id }));
     refresh();
     return null;
   };
@@ -240,7 +240,7 @@ export function TargetScreen({ id }: { id: string }) {
   const remove = async (target: Target): Promise<ConfirmFailure | null> => {
     const a = await api.call("targetDelete", { params: { tenant: tenant as string, target: target.id } });
     if (a.kind !== "ok") return { error: a.error, kind: a.kind };
-    toast.success(t("inventory.targets.removed", { id: target.id }));
+    toast.receipt(t("inventory.targets.removed", { id: target.id }));
     navigate("inventory/targets");
     return null;
   };

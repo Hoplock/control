@@ -23,6 +23,7 @@ import { Ident } from "./Ident";
 import { Skeleton } from "./States";
 import { StatusOf, type StatusName } from "./Status";
 import styles from "./FeedLag.module.css";
+import { Timestamp } from "./Timestamp";
 
 /** The event a retention pass's record carries on the control stream (M8): an event, not a kind. */
 export const RETAINED_EVENT = "operator.audit.retained";
@@ -73,9 +74,7 @@ export function FeedLagView({ lag, label }: { lag: FeedLag | null; label: string
           <dt>{t("lag.oldest")}</dt>
           <dd>
             {lag.oldest_unconfirmed_at ? (
-              <time dateTime={f.utc(lag.oldest_unconfirmed_at)} title={f.utc(lag.oldest_unconfirmed_at)}>
-                {f.dateTime(lag.oldest_unconfirmed_at)}
-              </time>
+              <Timestamp at={lag.oldest_unconfirmed_at} />
             ) : (
               t("lag.oldest.none")
             )}

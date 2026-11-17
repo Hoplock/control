@@ -63,6 +63,8 @@ import {
   type StepState,
 } from "./runbookModel";
 import styles from "./Algorithms.module.css";
+import { Timestamp } from "../components/Timestamp";
+import { Notice } from "../components/Notice";
 
 const DEFAULT_LIMIT = 500;
 
@@ -202,7 +204,7 @@ function NotOffered({ permission }: { permission: string }) {
 function Receipt({ receipt, children }: { receipt: RevocationReceipt; children?: ReactNode }) {
   const { t } = useI18n();
   return (
-    <div className={styles.receipt} data-receipt={receipt.type}>
+    <Notice tone="allow" data-receipt={receipt.type}>
       {children}
       <p className={styles.para}>{t("runbook.receipt.delivered", { count: receipt.delivered })}</p>
       <p className={styles.meta}>
@@ -211,7 +213,7 @@ function Receipt({ receipt, children }: { receipt: RevocationReceipt; children?:
       <p className={styles.meta}>
         <span>{t("runbook.receipt.event")}</span> <CopyableId value={receipt.event_id} volatile />
       </p>
-    </div>
+    </Notice>
   );
 }
 
@@ -232,7 +234,7 @@ function Runbook({ active, axis, name, builds }: { active: PolicyBundle; axis: A
         <Advisory axis={axis} name={name} />
       </section>
       {!ready ? (
-        <p className={styles.note}>{t("runbook.advisory.first")}</p>
+        <Notice tone="info">{t("runbook.advisory.first")}</Notice>
       ) : (
         <>
           {finished(progress) ? (
@@ -327,7 +329,7 @@ function BanStep({
   if (done) {
     return (
       <div className={styles.stack}>
-        <div className={styles.receipt} data-receipt="ban">
+        <Notice tone="allow" data-receipt="ban">
           <p className={styles.para}>
             {t(done.via === "applied" ? "runbook.ban.applied" : "runbook.ban.inForce", { version: done.version })}
           </p>
@@ -336,7 +338,7 @@ function BanStep({
               {t("runbook.ban.appliedFacts", { previous: applied.activate.previous, accepted: applied.activate.accepted.length })}
             </p>
           ) : null}
-        </div>
+        </Notice>
         {reach}
       </div>
     );
@@ -376,7 +378,7 @@ function BanStep({
           </code>
         </p>
       ) : (
-        <p className={styles.warnNote}>{t("runbook.ban.byHand")}</p>
+        <Notice tone="warn">{t("runbook.ban.byHand")}</Notice>
       )}
       <Field label={t("runbook.ban.source")} hint={t("runbook.ban.sourceHint")}>
         <Textarea mono rows={14} value={draft} onChange={(e) => setDraft(e.target.value)} data-runbook-source="" />
@@ -646,9 +648,7 @@ function KillStep({
                         </code>
                       </th>
                       <td>
-                        <time dateTime={f.utc(s.latest_recorded_at)} title={f.utc(s.latest_recorded_at)}>
-                          {f.dateTime(s.latest_recorded_at)}
-                        </time>
+                        <Timestamp at={s.latest_recorded_at} />
                       </td>
                       <td>{progress.killed.ended.includes(s.session_id) ? <StatusOf name="done" /> : <StatusOf name="pending" />}</td>
                     </tr>

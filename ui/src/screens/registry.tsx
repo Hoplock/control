@@ -66,7 +66,7 @@ export const SCREENS: readonly Screen[] = [
   {
     id: "fleet-algorithms",
     path: "fleet/algorithms",
-    density: "comfortable",
+    density: "compact",
     permission: "fleet:read",
     render: () => <FleetAlgorithmsScreen />,
   },

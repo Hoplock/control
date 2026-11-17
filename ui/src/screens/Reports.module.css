@@ -79,11 +79,6 @@
   font: var(--t-caption);
   color: var(--text-secondary);
 }
-.fault {
-  margin: 0;
-  font: var(--t-body);
-  color: var(--s-deny);
-}
 .actions {
   display: flex;
   flex-wrap: wrap;

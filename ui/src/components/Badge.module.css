@@ -22,6 +22,11 @@
   background: var(--bg-surface);
   color: var(--text-primary);
 }
+.badge[data-tone="warn"] {
+  border-color: var(--s-warn);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
 .chip {
   display: inline-flex;
   align-items: center;

@@ -35,6 +35,7 @@ import { rejectionKey } from "./claimMappingCodes";
 import { groupPath } from "./Identities";
 import { IdentChips, InventoryViews, usePermissions, useSetQuery } from "./InventoryParts";
 import styles from "./Inventory.module.css";
+import { Notice } from "../components/Notice";
 
 export function ClaimMappingScreen() {
   const { t } = useI18n();
@@ -86,12 +87,9 @@ export function ClaimMappingScreen() {
         {(m) => (
           <>
             {m.stale_directory_subjects > 0 ? (
-              <p className={styles.notice} role="status" data-stale={m.stale_directory_subjects}>
-                <span className={styles.denials}>
-                  <StatusOf name="inProgress" />
-                  <span>{t("claimMapping.stale", { count: m.stale_directory_subjects, version: m.version })}</span>
-                </span>
-              </p>
+              <Notice tone="info" status={<StatusOf name="inProgress" />} role="status" data-stale={m.stale_directory_subjects}>
+                <p>{t("claimMapping.stale", { count: m.stale_directory_subjects, version: m.version })}</p>
+              </Notice>
             ) : null}
             <Facts mapping={m} />
             <Entries mapping={m} />
@@ -257,7 +255,7 @@ function Connectors({ methods }: { methods: readonly Connector[] | null }) {
 function Rejections({ rejections }: { rejections: readonly MappingRejection[] }) {
   const { t } = useI18n();
   return (
-    <div className={styles.notice} role="alert" data-rejections={rejections.length}>
+    <Notice tone="deny" role="alert" data-rejections={rejections.length}>
       <p className={styles.para}>{t("claimMapping.rejected", { count: rejections.length })}</p>
       <ul className={styles.rejections}>
         {rejections.map((r, i) => {
@@ -270,7 +268,7 @@ function Rejections({ rejections }: { rejections: readonly MappingRejection[] })
           );
         })}
       </ul>
-    </div>
+    </Notice>
   );
 }
 

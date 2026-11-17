@@ -34,6 +34,7 @@ import { useLoad, type Load } from "../shell/load";
 import { useDeployment } from "../shell/Shell";
 import { basis, effectStatus, hopPath, inHopOrder, lookupOf, openingDecision, sessionOutcome } from "./explainModel";
 import styles from "./Explain.module.css";
+import { Timestamp } from "../components/Timestamp";
 
 type By = "sessions" | "decisions";
 
@@ -57,9 +58,7 @@ function When({ at }: { at?: string }) {
   const { f } = useI18n();
   if (!at) return null;
   return (
-    <time dateTime={f.utc(at)} title={f.utc(at)}>
-      {f.dateTime(at)}
-    </time>
+    <Timestamp at={at} />
   );
 }
 

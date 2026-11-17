@@ -95,7 +95,7 @@ export function SubjectsScreen() {
     const a = await api.call("subjectDelete", { params: { tenant: tenant as string, subject: s.id } });
     if (a.kind !== "ok") return { error: a.error, kind: a.kind };
     setRemoving(null);
-    toast.success(t("inventory.subjects.removed", { id: s.id }));
+    toast.receipt(t("inventory.subjects.removed", { id: s.id }));
     refresh();
     return null;
   };
@@ -140,7 +140,7 @@ export function SubjectsScreen() {
       id: "breakGlass",
       header: t("inventory.col.breakGlass"),
       sortValue: (s) => (s.break_glass ? 0 : 1),
-      cell: (s) => (s.break_glass ? <Badge tone="info">{t("inventory.subjects.breakGlass")}</Badge> : null),
+      cell: (s) => (s.break_glass ? <Badge tone="warn">{t("inventory.subjects.breakGlass")}</Badge> : null),
     },
   ];
 
@@ -329,7 +329,7 @@ export function SubjectScreen({ id }: { id: string }) {
   const remove = async (s: Subject): Promise<ConfirmFailure | null> => {
     const a = await api.call("subjectDelete", { params: { tenant: tenant as string, subject: s.id } });
     if (a.kind !== "ok") return { error: a.error, kind: a.kind };
-    toast.success(t("inventory.subjects.removed", { id: s.id }));
+    toast.receipt(t("inventory.subjects.removed", { id: s.id }));
     navigate("inventory/subjects");
     return null;
   };
@@ -349,7 +349,7 @@ export function SubjectScreen({ id }: { id: string }) {
             <span className={styles.denials}>
               <SubjectAccess subject={found} />
               {found.directory_managed ? <Badge>{t("inventory.directory.managed")}</Badge> : null}
-              {found.break_glass ? <Badge tone="info">{t("inventory.subjects.breakGlass")}</Badge> : null}
+              {found.break_glass ? <Badge tone="warn">{t("inventory.subjects.breakGlass")}</Badge> : null}
             </span>
           ) : null
         }
@@ -648,7 +648,7 @@ function BindingsPanel({
     const a = await api.call("roleUnbind", { params: { tenant: tenant as string }, body });
     if (a.kind !== "ok") return { error: a.error, kind: a.kind };
     setWithdrawing(null);
-    toast.success(t("inventory.roles.withdrawn", { role: b.role, holder: h.id }));
+    toast.receipt(t("inventory.roles.withdrawn", { role: b.role, holder: h.id }));
     list.refresh();
     return null;
   };

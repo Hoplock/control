@@ -49,6 +49,7 @@ import {
 } from "./InventoryParts";
 import { GRANT_STATES, grantStatus, parseLabels, parseList } from "./inventoryModel";
 import styles from "./Inventory.module.css";
+import { Notice } from "../components/Notice";
 
 const grantPath = (id: string) => `inventory/grants/${encodeURIComponent(id)}`;
 
@@ -218,7 +219,7 @@ export function GrantScreen({ id }: { id: string }) {
     if (a.kind !== "ok") return { error: a.error, kind: a.kind };
     setRevoking(false);
     setReason("");
-    toast.success(t("inventory.grants.revoked", { id, sessions: a.data.sessions.length }));
+    toast.receipt(t("inventory.grants.revoked", { id, sessions: a.data.sessions.length }));
     refresh();
     return null;
   };
@@ -324,7 +325,7 @@ export function GrantScreen({ id }: { id: string }) {
                   <dt>{t("inventory.col.createdBy")}</dt>
                   <dd className={styles.chips}>
                     <Ident value={d.grant.created_by.subject || d.grant.created_by.principal_id} />
-                    {d.grant.created_by.break_glass ? <Badge tone="info">{t("inventory.subjects.breakGlass")}</Badge> : null}
+                    {d.grant.created_by.break_glass ? <Badge tone="warn">{t("inventory.subjects.breakGlass")}</Badge> : null}
                   </dd>
                   <dt>{t("inventory.col.created")}</dt>
                   <dd>
@@ -519,9 +520,9 @@ export function GrantNewScreen() {
           </Field>
           {fail.form}
           {pending ? (
-            <p className={styles.notice} role="status" data-request-pending="">
+            <Notice tone="info" role="status" data-request-pending="">
               {t("inventory.grants.pending", { workflow: pending.workflow, id: pending.id })}
-            </p>
+            </Notice>
           ) : null}
           <div className={styles.actions}>
             <Button type="submit" variant="primary" loading={busy}>
