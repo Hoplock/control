@@ -268,6 +268,10 @@ jobs:
           # empty and error; and two deployments told apart from the chrome.
           - check: screenshot baseline
             args: e2e/design.spec.ts e2e/identity.spec.ts --project checks -g "baseline|deployments"
+          # §4 (0060): no sideways page scroll at 1024 and 900px (Explain and
+          # Audit at 768 too); a wider table scrolls in its own pinned container.
+          - check: widths
+            args: e2e/design.spec.ts --project checks -g "keeps to its width"
           # §10.5: every external origin blocked; renders as the baseline does.
           - check: no network at runtime
             args: e2e/design.spec.ts --project checks -g "external origin"

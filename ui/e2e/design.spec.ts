@@ -57,6 +57,35 @@ for (const screen of SCREENS) {
       });
     }
 
+    // DESIGN.md §4 (0060, item 12): full fidelity down to 1024px, the
+    // collapsed shell below it, and Explain and Audit at 768px. At each, the
+    // page never scrolls sideways, and a table wider than its place scrolls
+    // in its own container with its first column pinned.
+    if (screen.kind !== "gallery") {
+      const widths = /^(explain|audit)/.test(screen.id) ? [1024, 900, 768] : [1024, 900];
+      for (const width of widths) {
+        test(`keeps to its width at ${width}px`, async ({ browser }) => {
+          const page = await openScreen(browser, screen, { width });
+          const found = await page.evaluate(() => {
+            const out: string[] = [];
+            for (const el of [document.documentElement, document.querySelector("main")]) {
+              if (el && el.scrollWidth > el.clientWidth + 1) out.push(`${el.tagName.toLowerCase()} scrolls sideways by ${el.scrollWidth - el.clientWidth}px`);
+            }
+            for (const table of Array.from(document.querySelectorAll("table"))) {
+              const region = table.parentElement;
+              if (!region || table.getBoundingClientRect().width <= region.getBoundingClientRect().width + 1) continue;
+              if (!["auto", "scroll"].includes(getComputedStyle(region).overflowX)) out.push(`a ${Math.round(table.getBoundingClientRect().width)}px table overflows a container that does not scroll`);
+              const first = table.querySelector("tr > :first-child");
+              if (first && getComputedStyle(first).position !== "sticky") out.push(`a scrolling table's first column is not pinned (${table.querySelector("caption")?.textContent ?? "no caption"})`);
+            }
+            return out;
+          });
+          expect(found, `${screen.id} at ${width}px`).toEqual([]);
+          await page.context().close();
+        });
+      }
+    }
+
     test("renders with every external origin blocked", async ({ browser }) => {
       const elsewhere: string[] = [];
       const page = await openScreen(browser, screen, {
