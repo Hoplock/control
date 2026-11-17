@@ -26,6 +26,24 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.46.0
+
+Phase 0059, Fleet's health bar without patterns (M11, M17, M19, M20, M21,
+M23). No migration. The north-bound API is unchanged at version `5`, and
+nothing in `ext`, `server` or the contract changes.
+
+- **Fleet's health bar is now solid segments, labelled with their status and
+  count.** Each health state with a proxy in it is one segment in its status
+  colour, separated from the next by a gap, with no hatching, dots or bars.
+  A segment wide enough carries its status glyph (the same filled circle,
+  triangle, dashed circle, half-filled circle or square as everywhere else in
+  the console) and its count, so the bar reads in greyscale and without
+  colour. A segment too narrow for that, such as one revoked proxy among
+  hundreds, is still drawn at a small minimum width, and the legend beneath
+  the bar names every state with its glyph, word and count, as before. The
+  segments' order, the bar's sentence for a screen reader and the source of
+  its numbers (the deployment's fleet summary) are unchanged.
+
 ## v0.45.0
 
 Phase 0058, the console's algorithm posture and the emergency runbook (M11,

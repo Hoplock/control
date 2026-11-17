@@ -125,13 +125,14 @@ remapping rather than a rewrite.
 | `--text-secondary` | `--n-600` | `--n-600` | labels, metadata |
 | `--text-tertiary` | `--n-500` | `--n-500` | placeholders, disabled |
 | `--text-on-accent` | `#ffffff` | `--n-0` | text on filled accent |
+| `--text-on-status` | `--n-0` | `--n-0` | a glyph and count set on a status hue (Fleet's health bar) |
 | `--accent` | `--a-500` | `--a-500` | the primary action, the active navigation mark, selection |
 | `--focus-ring` | `--a-500` | `--a-500` | the focus ring (§8) |
 | `--bg-inverse` | `--n-900` | `--n-900` | a tooltip's ground |
 | `--text-inverse` | `--n-0` | `--n-0` | a tooltip's text |
 | `--scrim` | `--n-50` at 70% | `--n-0` at 70% | behind a modal dialog, a drawer, a busy overlay — never a text ground |
 
-Three of those rows carry an argument rather than a value:
+Four of those rows carry an argument rather than a value:
 
 - **`--border-subtle` is decorative and exempt from 3:1.** WCAG 1.4.11 governs
   the boundary you need in order to *identify a control*; a table rule is not
@@ -143,6 +144,11 @@ Three of those rows carry an argument rather than a value:
   simply looks wrong. Flipping the foreground rather than darkening the accent
   keeps the accent recognisably one colour across themes: near-black on it
   is 11:1.
+- **`--text-on-status` is `--n-0`: white in light mode and near-black in
+  dark**, for the same reason. The light status hues are dark and the dark
+  ones bright, so one ink cannot read on both sets, and one ink per theme
+  reads on all five: at least 5.47:1 in light (on `--s-deny`) and 7.48:1 in
+  dark (on `--s-info`). A count is text, so §10.2 holds it to 4.5:1 on each.
 - **`--bg-selected` is `--a-100` in dark.** The dark accent ramp runs the
   other way, so its `--a-900` is the pale cyan `#cffafe`, on which body
   text would be 1.02:1. `--a-100` is the dark ramp's tint, as `--a-50` is the
@@ -250,8 +256,12 @@ in a column. Uppercase is for `--t-caption` only, never for headings.
   dialog, a drawer, a menu, a search field and the rail a timeline stands in
   beside what it explains (`--rail-width`), a form's greatest width and the
   narrowest a field shares a row at (`--form-max`, `--form-column-min`), a
-  table's and a list's greatest height), so no component carries a magic
-  number.
+  table's and a list's greatest height), and Fleet's health bar's three:
+  the gap between two segments (`--chart-segment-gap`, `--sp-2`), the
+  narrowest a segment is drawn so one proxy of hundreds is still seen
+  (`--chart-segment-min`, 6px), and the narrowest that carries its glyph and
+  count (`--chart-label-min`, 72px: a glyph and five digits at `--t-label`,
+  padded) — so no component carries a magic number.
 - **Motion** — `--m-fast 120ms` (hover, focus, checkbox), `--m-base 180ms`
   (dropdown, popover, tab), `--m-slow 240ms` (dialog, drawer, page transition),
   all `cubic-bezier(0.2, 0, 0, 1)`. Nothing animates longer than 240ms. A
@@ -612,7 +622,12 @@ Not a separate pass; part of "done".
 - Tables are real `<table>` markup with `<th scope>`; live regions announce
   async results.
 - Status is never colour alone (§6). Charts — the two that exist, Fleet's
-  health bar and the audit view's counts — are readable in greyscale.
+  health bar and the audit view's counts — are readable in greyscale: the
+  audit view's bars are one neutral ink beside their figures, and every
+  segment of the health bar wide enough for it carries its state's glyph and
+  count, so no two segments of different states look alike without colour,
+  and the legend names every state, a narrower segment's included, by its
+  glyph, word and count.
 - `prefers-reduced-motion` honoured (§3.6). The console is **dark by
   default** (the operator's choice in 0052; `DEFAULT_PREFS` in
   `ui/src/prefs/prefs.ts`). An operator may choose light, or to follow the
@@ -784,7 +799,21 @@ are in the registry too. In detail:
   hand-written SVG — Fleet's health bar (0050) and the audit view's counts of
   the records on a page (0051), a table whose bars are one neutral ink beside
   their figures — and a charting dependency for two charts is a bundle cost
-  and a second visual identity at once.
+  and a second visual identity at once. **Fleet's health bar** is one bar of
+  the tenant's whole fleet, filled from the inline start in a fixed order
+  (healthy, stale, unreachable, pending, revoked): each state with a proxy in
+  it a segment as wide as its share, solid in its status hue (§3.4) with no
+  pattern, the surface showing through a `--chart-segment-gap` between two
+  segments. A segment at least `--chart-label-min` wide carries, from its
+  inline start, its §6 glyph and its count (`Intl`, §9) in
+  `--text-on-status`; a narrower one is drawn at no less than
+  `--chart-segment-min`, the width it takes coming out of the wider ones so
+  the bar never runs past its track, and is named by the legend alone. The
+  legend is every state's glyph, word and count, zeros included, and the bar
+  is one sentence for a screen reader. Its layout is a pure function
+  (`layoutBar`, `ui/src/screens/fleetModel.ts`) over the bar's measured width
+  and the three tokens as the page resolves them, so the SVG is drawn at one
+  unit to the pixel and no glyph is stretched.
 - **Bundle budget**: ≤ 350 KB gzipped JS for the active locale on first load, fonts ≤ 120 KB. The
   binary is shipped to self-hosters who may serve it over a VPN from a small
   instance.

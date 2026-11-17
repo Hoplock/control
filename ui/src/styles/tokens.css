@@ -63,6 +63,10 @@
   --text-secondary: var(--n-600);
   --text-tertiary: var(--n-500);
   --text-on-accent: light-dark(#ffffff, var(--n-0));
+  /* A glyph and a count set on a status hue (Fleet's health bar, 0059):
+     white on the light theme's dark hues, near-black on the dark theme's
+     bright ones, so it reads on all five in both. */
+  --text-on-status: var(--n-0);
   --accent: var(--a-500);
   --focus-ring: var(--a-500);
   /* The ground behind a modal overlay, and the inverted pair a tooltip uses. */
@@ -174,6 +178,13 @@
   --table-max-height: 70dvh;
   --list-max-height: 320px;
   --glyph-size: 10px;
+  /* Fleet's health bar (0059): the gap between two segments; the narrowest a
+     segment is drawn, so one proxy of hundreds is still seen; and the
+     narrowest that carries its glyph and count — a narrower one is named by
+     the legend alone. */
+  --chart-segment-gap: var(--sp-2);
+  --chart-segment-min: 6px;
+  --chart-label-min: 72px;
   --floor-width: 1024px;
 
   /* §3.7 Density: comfortable unless a screen or the operator says compact. */

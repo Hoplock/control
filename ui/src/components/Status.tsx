@@ -106,10 +106,21 @@ function Glyph({ tone }: { tone: Tone }) {
   }
 }
 
-/** The glyph alone, for a legend or a chart key; always beside its word. */
-export function StatusGlyph({ tone }: { tone: Tone }) {
+/**
+ * The glyph alone, for a legend or a chart key; always beside its word.
+ * `ink` draws it in the colour around it rather than its hue: a glyph set on
+ * its own status hue (a segment of Fleet's health bar) would vanish in it.
+ */
+export function StatusGlyph({ tone, ink = false }: { tone: Tone; ink?: boolean }) {
   return (
-    <svg className={styles.glyph} data-tone={tone} viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+    <svg
+      className={styles.glyph}
+      data-tone={tone}
+      data-ink={ink || undefined}
+      viewBox="0 0 10 10"
+      aria-hidden="true"
+      focusable="false"
+    >
       <Glyph tone={tone} />
     </svg>
   );

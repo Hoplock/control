@@ -78,6 +78,79 @@ export function segmentCounts(s: FleetSummary): Record<ChartSegment, number> {
   return { live: s.live, stale: s.stale, unreachable: s.unreachable, pending: s.pending, revoked: s.revoked };
 }
 
+/**
+ * What the health bar is laid out in, in CSS pixels: its width as drawn, and
+ * the three layout tokens (DESIGN.md §3.6) as the bar resolves them.
+ */
+export interface BarGeometry {
+  /** The bar's width. */
+  track: number;
+  /** `--chart-segment-gap`: the surface left between two segments. */
+  gap: number;
+  /** `--chart-segment-min`: the narrowest a segment is drawn, so one proxy of hundreds is seen. */
+  minWidth: number;
+  /** `--chart-label-min`: the narrowest segment that carries its glyph and count. */
+  labelMin: number;
+}
+
+/** One segment of the bar, as drawn. */
+export interface BarSegment {
+  segment: ChartSegment;
+  count: number;
+  /** From the bar's inline start: a right-to-left page measures it from the right. */
+  start: number;
+  width: number;
+  /** Whether it carries its glyph and count; a narrower one is named by the legend alone. */
+  labelled: boolean;
+}
+
+/**
+ * The health bar's layout: one segment per state with a proxy in it, in
+ * CHART_SEGMENTS' order, each as wide as its share of the fleet, with a gap
+ * between consecutive segments. A segment whose share is narrower than the
+ * minimum is drawn at the minimum, and the width it takes comes out of the
+ * segments sized by their share — so the bar still ends at its track, and a
+ * segment the minimum squeezes below the minimum in turn is held there too.
+ * Where the track cannot hold every segment at the minimum, every segment
+ * shares the room equally, and where it cannot hold the gaps, the gaps
+ * shrink: the bar never runs past its track.
+ */
+export function layoutBar(counts: Readonly<Record<ChartSegment, number>>, g: BarGeometry): BarSegment[] {
+  const shown = CHART_SEGMENTS.filter((s) => counts[s] > 0);
+  if (shown.length === 0 || !(g.track > 0)) return [];
+  const gaps = shown.length - 1;
+  const gap = gaps > 0 ? Math.min(Math.max(0, g.gap), g.track / gaps) : 0;
+  const room = Math.max(0, g.track - gap * gaps);
+  const floor = Math.min(Math.max(0, g.minWidth), room / shown.length);
+  const width = new Map<ChartSegment, number>();
+  let free: ChartSegment[] = shown;
+  let left = room;
+  while (free.length > 0) {
+    const total = free.reduce((n, s) => n + counts[s], 0);
+    const share = (s: ChartSegment) => (counts[s] / total) * left;
+    const under = free.filter((s) => share(s) < floor);
+    if (under.length === 0) {
+      for (const s of free) width.set(s, share(s));
+      break;
+    }
+    if (under.length === free.length) {
+      // Only reached by rounding: the room left is the minimum for each.
+      for (const s of free) width.set(s, left / free.length);
+      break;
+    }
+    for (const s of under) width.set(s, floor);
+    left -= floor * under.length;
+    free = free.filter((s) => !under.includes(s));
+  }
+  let at = 0;
+  return shown.map((s) => {
+    const w = width.get(s) ?? 0;
+    const out: BarSegment = { segment: s, count: counts[s], start: at, width: w, labelled: w >= g.labelMin };
+    at += w + gap;
+    return out;
+  });
+}
+
 /** The filters Fleet's URL carries, read back out of it. */
 export interface FleetFilters {
   zone?: string;

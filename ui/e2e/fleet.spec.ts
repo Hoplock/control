@@ -4,8 +4,13 @@
 // and never a fault (M19), a fetch failure as an outage and never a deny
 // (M11), one unreachable proxy as PARTIAL rather than an error page, and the
 // table paged through the bounded list (M26) by the answer's own cursor.
+// And its health bar (0059): solid segments with no pattern, each wide
+// enough one labelled with its status glyph and count, a narrower one still
+// drawn and named by the legend, distinct glyphs in greyscale, and mirrored
+// in a right-to-left page.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Locator, type Page } from "@playwright/test";
+import { NORTH, TENANT } from "./harness";
 import { openScreen } from "./open";
 import { SCREENS } from "./screens";
 
@@ -133,4 +138,253 @@ test("an error code the catalogue does not know names the code and the correlati
   await expect(unknown).toContainText("quota_exhausted");
   await expect(unknown).toContainText("corr-55e0aa13");
   await g.context().close();
+});
+
+// --- The health bar (0059) ---------------------------------------------------
+
+/** Each segment's status, as DESIGN.md §6 names its tone: the bar's vocabulary. */
+const SEGMENT_TONE: Record<string, string> = { live: "allow", stale: "warn", unreachable: "outage", pending: "info", revoked: "deny" };
+
+const bar = (page: Page) => page.locator("main figure svg[role=img]");
+
+/** The server's fleet summary with these counts in place of its own, in the browser. */
+function withSummary(counts: Record<string, number>) {
+  return {
+    before: async (context: BrowserContext) => {
+      await context.route(`${NORTH}/api/v1/tenants/${TENANT}/instance/health**`, async (route) => {
+        const real = await route.fetch();
+        const body = await real.json();
+        for (const f of body.fleet ?? []) if (f.summary) f.summary = { ...f.summary, ...counts };
+        await route.fulfill({ response: real, contentType: "application/json", body: JSON.stringify(body) });
+      });
+    },
+  };
+}
+
+/** A length token as the bar resolves it, in pixels. */
+const token = (page: Page, name: string) =>
+  bar(page).evaluate((el, n) => Number.parseFloat(getComputedStyle(el).getPropertyValue(n)), name);
+
+interface Drawn {
+  segment: string;
+  x: number;
+  w: number;
+  fill: string;
+  label: { tone: string | null; text: string; glyph: { x: number; w: number } } | null;
+}
+
+/** Every segment the bar draws, left to right on the page, with its label if it carries one. */
+async function drawn(page: Page): Promise<Drawn[]> {
+  const out = await bar(page)
+    .locator("g[data-segment]")
+    .evaluateAll((gs) =>
+      gs.map((g) => {
+        const rect = g.querySelector("rect") as SVGRectElement;
+        const box = rect.getBoundingClientRect();
+        const label = g.querySelector("foreignObject div");
+        const glyph = label?.querySelector("svg[data-tone]");
+        const gb = glyph?.getBoundingClientRect();
+        return {
+          segment: g.getAttribute("data-segment") ?? "",
+          x: box.x,
+          w: box.width,
+          fill: getComputedStyle(rect).fill,
+          label:
+            label && glyph && gb
+              ? { tone: glyph.getAttribute("data-tone"), text: (label.textContent ?? "").trim(), glyph: { x: gb.x, w: gb.width } }
+              : null,
+        };
+      }),
+    );
+  return out.sort((a, b) => a.x - b.x);
+}
+
+/** The legend's count and glyph colour for each state. */
+async function legend(page: Page): Promise<Record<string, { count: string; colour: string }>> {
+  return page.locator("main figcaption li[data-segment]").evaluateAll((lis) =>
+    Object.fromEntries(
+      lis.map((li) => [
+        li.getAttribute("data-segment") ?? "",
+        {
+          count: (li.lastElementChild?.textContent ?? "").trim(),
+          colour: getComputedStyle(li.querySelector("svg") as Element).color,
+        },
+      ]),
+    ),
+  );
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`the health bar is solid segments, each wide enough one labelled with its glyph and count, ${theme}`, async ({ browser }) => {
+    const page = await openScreen(browser, fleet, { theme });
+    // No pattern, and no fill that refers to one.
+    await expect(bar(page).locator("pattern")).toHaveCount(0);
+    const urls = await bar(page)
+      .locator("*")
+      .evaluateAll((els) => els.filter((el) => /url\(/.test(`${el.getAttribute("fill") ?? ""} ${getComputedStyle(el).fill}`)).length);
+    expect(urls).toBe(0);
+
+    // The seed's fleet: seven live, one never heard from, one revoked.
+    const segments = await drawn(page);
+    const keys = await legend(page);
+    expect(segments.map((s) => s.segment)).toEqual(["live", "unreachable", "revoked"]);
+    const labelMin = await token(page, "--chart-label-min");
+    const gap = await token(page, "--chart-segment-gap");
+    expect(labelMin).toBeGreaterThan(0);
+    expect(gap).toBeGreaterThan(0);
+    for (const s of segments) {
+      // Solid in its status hue: the very colour its legend glyph is drawn in.
+      expect(s.fill, s.segment).toBe(keys[s.segment]?.colour);
+      expect(s.w, s.segment).toBeGreaterThanOrEqual(labelMin);
+      expect(s.label, s.segment).not.toBeNull();
+      expect(s.label?.tone, s.segment).toBe(SEGMENT_TONE[s.segment]);
+      expect(s.label?.text, s.segment).toBe(keys[s.segment]?.count);
+    }
+    // Consecutive segments are separated by the gap, and the bar ends at its track.
+    for (let i = 1; i < segments.length; i++) {
+      const prev = segments[i - 1] as Drawn;
+      expect((segments[i] as Drawn).x - (prev.x + prev.w)).toBeCloseTo(gap, 1);
+    }
+    const track = await bar(page).evaluate((el) => el.getBoundingClientRect());
+    const last = segments.at(-1) as Drawn;
+    expect(last.x + last.w).toBeLessThanOrEqual(track.x + track.width + 0.5);
+    expect(segments[0]?.x).toBeCloseTo(track.x, 1);
+    await page.context().close();
+  });
+}
+
+test("a segment too narrow for its label is still drawn, and the legend names it", async ({ browser }) => {
+  // One revoked proxy of five hundred and one, substituted in the browser.
+  const page = await openScreen(browser, fleet, withSummary({ live: 500, stale: 0, unreachable: 0, pending: 0, revoked: 1 }));
+  const segments = await drawn(page);
+  expect(segments.map((s) => s.segment)).toEqual(["live", "revoked"]);
+  const [live, revoked] = segments as [Drawn, Drawn];
+  const minWidth = await token(page, "--chart-segment-min");
+  expect(minWidth).toBeGreaterThan(0);
+  expect(revoked.w).toBeCloseTo(minWidth, 1);
+  expect(revoked.label).toBeNull();
+  expect(live.label?.text).toBe("500");
+  const keys = await legend(page);
+  expect(keys.revoked?.count).toBe("1");
+  await expect(page.locator('main figcaption li[data-segment="revoked"]')).toContainText("Revoked");
+  const track = await bar(page).evaluate((el) => el.getBoundingClientRect());
+  expect(revoked.x + revoked.w).toBeLessThanOrEqual(track.x + track.width + 0.5);
+  await page.context().close();
+});
+
+/** Which pixels of a glyph's box differ from the ground around it, as drawn: a shape, whatever its colours. */
+async function shapeOf(page: Page, glyph: Locator): Promise<{ mask: boolean[][]; contrast: number }> {
+  const box = await glyph.boundingBox();
+  if (!box) throw new Error("the glyph is not drawn");
+  const margin = 2;
+  const png = await page.screenshot({
+    clip: { x: box.x - margin, y: box.y - margin, width: box.width + 2 * margin, height: box.height + 2 * margin },
+  });
+  return page.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(image.width, image.height);
+    const ctx = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+    ctx.drawImage(image, 0, 0);
+    const { data, width, height } = ctx.getImageData(0, 0, image.width, image.height);
+    const grey = (x: number, y: number) => {
+      const i = (y * width + x) * 4;
+      return ((data[i] ?? 0) + (data[i + 1] ?? 0) + (data[i + 2] ?? 0)) / 765;
+    };
+    const ground = grey(0, 0);
+    let contrast = 0;
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) contrast = Math.max(contrast, Math.abs(grey(x, y) - ground));
+    const mask: boolean[][] = [];
+    for (let y = 0; y < height; y++) {
+      const row: boolean[] = [];
+      for (let x = 0; x < width; x++) row.push(Math.abs(grey(x, y) - ground) > contrast / 2);
+      mask.push(row);
+    }
+    return { mask, contrast };
+  }, png.toString("base64"));
+}
+
+/** The share of pixels two shapes differ in, at the alignment that makes them most alike. */
+function unlike(a: boolean[][], b: boolean[][]): number {
+  const h = Math.min(a.length, b.length);
+  const w = Math.min(a[0]?.length ?? 0, b[0]?.length ?? 0);
+  let best = Infinity;
+  for (let dy = -4; dy <= 4; dy++) {
+    for (let dx = -4; dx <= 4; dx++) {
+      let n = 0;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if ((a[y]?.[x] ?? false) !== (b[y + dy]?.[x + dx] ?? false)) n++;
+      best = Math.min(best, n);
+    }
+  }
+  return best / (h * w);
+}
+
+test("in greyscale, each labelled segment still carries a distinct glyph shape", async ({ browser }) => {
+  // All five states, each wide enough for its label, substituted in the browser.
+  for (const theme of ["light", "dark"] as const) {
+    const page = await openScreen(browser, fleet, {
+      theme,
+      scale: 4,
+      ...withSummary({ live: 3, stale: 2, unreachable: 2, pending: 2, revoked: 2 }),
+    });
+    // CSSOM, which the console's style-src allows; a <style> it would refuse.
+    await page.evaluate(() => {
+      document.documentElement.style.filter = "grayscale(1)";
+    });
+    const segments = await drawn(page);
+    expect(segments.map((s) => s.segment).sort()).toEqual(["live", "pending", "revoked", "stale", "unreachable"]);
+    const shapes: Record<string, boolean[][]> = {};
+    for (const s of segments) {
+      expect(s.label, s.segment).not.toBeNull();
+      const glyph = bar(page).locator(`g[data-segment="${s.segment}"] foreignObject svg[data-tone]`);
+      const { mask, contrast } = await shapeOf(page, glyph);
+      // Seen against its own segment without colour.
+      expect(contrast, `${theme} ${s.segment}: glyph against its segment in greyscale`).toBeGreaterThan(0.3);
+      // The same shape as the legend draws for that state (in its hue, on the
+      // surface), so the measure below is seen to call one shape alike: these
+      // differ in under 0.1% of pixels, the closest two glyphs (the filled
+      // circle and the filled square) in over 5%.
+      const key = await shapeOf(page, page.locator(`main figcaption li[data-segment="${s.segment}"] svg`));
+      expect(unlike(mask, key.mask), `${theme} ${s.segment}: its legend's glyph`).toBeLessThan(0.01);
+      shapes[s.segment] = mask;
+    }
+    // ...and no two segments' glyphs alike.
+    const names = Object.keys(shapes);
+    for (const a of names) {
+      for (const b of names) {
+        if (a >= b) continue;
+        expect(unlike(shapes[a] as boolean[][], shapes[b] as boolean[][]), `${theme}: ${a} and ${b}`).toBeGreaterThan(0.03);
+      }
+    }
+    await page.context().close();
+  }
+});
+
+test("en-XB mirrors the health bar, each label at its segment's inline start", async ({ browser }) => {
+  const at = async (locale: "en-XA" | "en-XB") => {
+    const page = await openScreen(browser, fleet, { locale, noKerning: true });
+    const track = await bar(page).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.x, w: r.width };
+    });
+    const segments = await drawn(page);
+    await page.context().close();
+    return { track, segments };
+  };
+  const xa = await at("en-XA");
+  const xb = await at("en-XB");
+  // The page mirrors the bar's place; the bar mirrors its segments within it.
+  const mirror = (x: number, w: number) => xb.track.x + xa.track.w - (x - xa.track.x) - w;
+  expect(xb.track.w).toBeCloseTo(xa.track.w, 0);
+  expect(xb.segments.map((s) => s.segment)).toEqual([...xa.segments.map((s) => s.segment)].reverse());
+  for (const a of xa.segments) {
+    const b = xb.segments.find((s) => s.segment === a.segment) as Drawn;
+    expect(b.x, a.segment).toBeCloseTo(mirror(a.x, a.w), 0);
+    expect(b.w, a.segment).toBeCloseTo(a.w, 1);
+    expect(a.label && b.label, a.segment).toBeTruthy();
+    if (a.label && b.label) {
+      // The glyph opens the label from the inline start: the segment's left in en-XA, its right in en-XB.
+      expect(a.label.glyph.x - a.x, a.segment).toBeCloseTo(b.x + b.w - (b.label.glyph.x + b.label.glyph.w), 0);
+    }
+  }
 });

@@ -45,6 +45,10 @@
 .glyph[data-tone="unknown"] {
   color: var(--s-unknown);
 }
+/* On its own hue, a glyph takes the ink around it (Fleet's health bar). */
+.glyph[data-tone][data-ink] {
+  color: inherit;
+}
 .status[data-pill][data-tone="allow"] {
   border-color: var(--s-allow);
 }
