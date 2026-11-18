@@ -7,6 +7,7 @@
 - **DESIGN.md changed:** §3.3 (a link's underline is accent), §3.7 (Fleet/Audit = every view), §7 (text button, timestamp, notice; "One component per job"; "Page anatomy"; receipts; one partial heading), §9 (the glossary), §10 (check 10).
 - **Open:** seven screen tables not yet `DataTable` → **0070** (queued); no layout-shift measure on load; the palette reaches screens, not actions; Fleet ↔ a proxy's stream has no link either way; the claim-mapping write is not typed-confirmed (**0067** owns it).
 - **A host's screens must now:** use `Notice`, `Timestamp`, `TextButton` and `toast.receipt` for those jobs; give a badge a hue only for supervised/break-glass; use §9's words; pass check 10's rules and the widths job over their registry.
+- **Review:** the operator found `Notice` darker than the panels around it: it took `--bg-sunken`, which §3.2 keeps for code and logs. It is a bordered panel now (`58796a0`); the majority of the old notes was the wrong one to copy. Check a shape against DESIGN.md, not against how many screens use it.
 - **Gotchas:** main's CI for `e7833f1` (0059) failed its baseline job, so `v0.46.0` is untagged; `release-check` here used a local-only tag. Check 10 reads JSX by the syntax tree: a `<button` split over lines is still found.
 - **NEXT:** 0061 signs a person in to this console; 0070 moves the last tables; new screens register with `consistency.test.ts` by existing in `registry.tsx`.
 
@@ -127,6 +128,24 @@ primary per view, and the by-eye rules of §3.3–§3.6.
 exactly what CI diffs and needs no server: one PNG per area and theme in
 `ui/build/contact-sheet/`. The PR links the before (main's baseline) and
 after sheets.
+
+### Corrected in review
+
+- **The notice's ground** (`58796a0`). Five of the screen-local notes sat on
+  `--bg-sunken` and one, Audit's, was a bordered `--bg-surface` panel; the
+  audit took the majority. But §3.2 gives `--bg-sunken` to code, diff
+  gutters and log bodies, and on the dark theme (`#0d1015`) it is all but
+  the page's ground (`#07090c`), so every notice read as a hole between
+  panels (`#13181f`). `Notice` is now a panel: `--bg-surface`, a hairline
+  `--border-subtle` border, `--r-md`, its tone along the inline start. The
+  other sunken grounds in the screens were checked and are §3.2's: a
+  terminal, chart tracks, skeletons, and the two previews of text sent to
+  someone else (a lock's holder text, the runbook's kill reason), which
+  agree with each other.
+- **`steady()` missed some session ids.** Its pattern ended in `\b`, which
+  an id ending in `-` does not meet before a space, so about one run in 64
+  per id left a run-minted `sess-…` in a screenshot (`5cbc074`'s audit
+  records held one). It ends in a lookahead now.
 
 ### Noticed, not changed
 
