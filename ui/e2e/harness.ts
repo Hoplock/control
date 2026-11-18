@@ -166,7 +166,9 @@ export async function fitContent(page: Page): Promise<void> {
 export async function steady(page: Page): Promise<void> {
   await page.evaluate(() => {
     for (const t of Array.from(document.querySelectorAll("time"))) t.textContent = "Jan 1, 2026, 12:00:00 PM";
-    const minted = /\b(sess-|d_|g_)([A-Za-z0-9_-]{16})\b/g;
+    // The end is a lookahead, not \b: an id may end in "-", after which a space
+    // is no word boundary, and the id would go unreplaced (0060).
+    const minted = /\b(sess-|d_|g_)([A-Za-z0-9_-]{16})(?![A-Za-z0-9_-])/g;
     const directory = /\bdir-[a-z2-7]{26}\b/g;
     // The build's own commit and commit time, which Go stamps into the
     // version the Deployment view shows: every push changes them.

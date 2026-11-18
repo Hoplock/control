@@ -4,8 +4,10 @@
   gap: var(--sp-8);
   margin: 0;
   padding: var(--sp-8) var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
   border-inline-start: var(--sp-2) solid var(--s-info);
-  background: var(--bg-sunken);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
   font: var(--t-body);
   color: var(--text-primary);
 }

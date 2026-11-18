@@ -1,8 +1,10 @@
 // A NOTICE (DESIGN.md §7): a sentence set apart from the page because it is
 // about the page — a rule that holds here, a request waiting, a receipt, a
-// refusal at the form. One shape everywhere: a sunken ground, a rule along
-// its inline start in its tone's hue, and that tone's glyph, so it is never
-// colour alone (§2). Its tone is one of the status vocabulary's (§6), and it
+// refusal at the form. One shape everywhere: a panel's ground with a hairline
+// border, as the panels around it and the partial notice have — never the
+// sunken ground, which §3.2 keeps for code and logs, and which on the dark
+// theme reads as a hole in the page — a rule along its inline start in its
+// tone's hue, and that tone's glyph, so it is never colour alone (§2). Its tone is one of the status vocabulary's (§6), and it
 // is chosen for what the sentence says, never for emphasis: `info` for a
 // fact or a wait, `warn` for something that holds the operator back, `allow`
 // for a receipt of what was done, `deny` for a refusal. A screen never draws

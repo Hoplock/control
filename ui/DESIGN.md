@@ -500,7 +500,9 @@ never translated; at the page title's size for a page about one object named
 by its id), timestamp (an instant: the operator's zone, ISO-8601 UTC on
 hover and when copied), notice (a sentence about the page set apart — a
 rule, a wait, a receipt, a refusal — in one of four tones, `info`, `warn`,
-`allow`, `deny`, with its glyph or a status pill, never colour alone),
+`allow`, `deny`, with its glyph or a status pill, never colour alone; on
+a panel's ground with a hairline border and its tone along its inline
+start, never on `--bg-sunken`, which is for code and logs),
 pagination, skeleton, spinner (overlay only), code block, source
 view, diff view, empty state, error state, keyboard hint.
 
