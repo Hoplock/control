@@ -8,7 +8,7 @@
 - **Open:** seven screen tables not yet `DataTable` → **0070** (queued); no layout-shift measure on load; the palette reaches screens, not actions; Fleet ↔ a proxy's stream has no link either way; the claim-mapping write is not typed-confirmed (**0067** owns it).
 - **A host's screens must now:** use `Notice`, `Timestamp`, `TextButton` and `toast.receipt` for those jobs; give a badge a hue only for supervised/break-glass; use §9's words; pass check 10's rules and the widths job over their registry.
 - **Review:** the operator found `Notice` darker than the panels around it: it took `--bg-sunken`, which §3.2 keeps for code and logs. It is a bordered panel now (`58796a0`); the majority of the old notes was the wrong one to copy. Check a shape against DESIGN.md, not against how many screens use it.
-- **Gotchas:** main's CI for `e7833f1` (0059) failed its baseline job, so `v0.46.0` is untagged; `release-check` here used a local-only tag. Check 10 reads JSX by the syntax tree: a `<button` split over lines is still found.
+- **Gotchas:** main's CI for `e7833f1` (0059) failed its baseline job on a race this phase fixes (Fleet's loading state did not wait for the health bar), so `v0.46.0` is untagged; `release-check` here used a local-only tag. Check 10 reads JSX by the syntax tree: a `<button` split over lines is still found.
 - **NEXT:** 0061 signs a person in to this console; 0070 moves the last tables; new screens register with `consistency.test.ts` by existing in `registry.tsx`.
 
 ## Details
@@ -146,6 +146,19 @@ after sheets.
   an id ending in `-` does not meet before a space, so about one run in 64
   per id left a run-minted `sess-…` in a screenshot (`5cbc074`'s audit
   records held one). It ends in a lookahead now.
+
+- **Fleet's loading screenshot raced the health read.** The state holds
+  `GET …/proxies` open and was ready once the table's skeleton showed, but
+  the summary's bar is the shell's `GET …/instance/health`, and a loading
+  screenshot does not wait for the network. Which answered first decided
+  whether the image held the bar or its skeleton: main's run for `e7833f1`
+  failed on 29,217 pixels (3%), and delaying the health answer by 1.5 s in
+  the browser reproduced it (28,896 pixels). The state's `ready` now waits
+  for the bar (`ui/e2e/screens.ts`); with the answer held 0, 1.5 and 4 s
+  the image matches. It is 0057's rule again — a state that holds one read
+  open waits for every other read on the screen — and 0059 exposed it by
+  putting the bar in every Fleet state. `policy-candidate-loading-dark`'s
+  6 px (0055) is not this: that screen makes one read. Still open.
 
 ### Noticed, not changed
 
