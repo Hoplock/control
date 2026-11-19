@@ -1,0 +1,66 @@
+# proxy-edge: the proxy users reach. It reaches the `core` targets itself and
+# the protected zone ONLY over the relay registration proxy-relay opens to it
+# (D11). Every field is documented in the proxy repository's config.example.yaml.
+proxy:
+  id: "proxy-edge"
+  listen_addr: "0.0.0.0:2222"
+  host_key_path: "/material/hostkey_proxy_edge"
+
+control:
+  base_url: "http://control:8080"
+  # `<tenant>.<secret>`, bound to this proxy id (M22; deploy/control/seed.yaml).
+  token: "default.e2e-proxy-edge-secret"
+  cache:
+    # 0 honours the server's hint exactly, which is what the cache scenarios
+    # are about.
+    max_ttl: 0s
+    stale_after: 30s
+
+dial:
+  dial_timeout: 15s
+  default_target_port: 22
+
+logging:
+  buffer_dir: "/var/lib/hoplock/logbuf"
+  batch_size: 8
+  flush_interval: 1s
+  queue_size: 1024
+  send_timeout: 5s
+  retry_min: 500ms
+  retry_max: 5s
+  max_payload_bytes: 32768
+
+routing:
+  target_delimiter: "#"
+
+chain:
+  identity_key_path: "/material/chain_proxy_edge"
+  max_hops: 4
+  # The relay registration listener. It is on the `relay` network only, which
+  # it shares with proxy-relay and nothing else.
+  accept:
+    listen_addr: "0.0.0.0:2223"
+    authorized_keys_path: "/material/relay_authorized_keys"
+    keepalive_interval: 5s
+
+auth:
+  user:
+    methods: ["cert"]
+  target:
+    # The fallback only: every route names its own ladder (D6a).
+    method: "brokered-key"
+    ephemeral_user:
+      management_key_path: "/material/management_key"
+      provisioning_user: "root"
+      shell: "sh -c"
+      home_base: "/home"
+      target_shell: "/bin/sh"
+      key_expiry: true
+      timeout: 30s
+      reaper:
+        interval: 1m
+        grace: 5m
+    brokered_key:
+      source: "dir"
+      dir: "/material/brokered"
+      file_suffix: ".key"

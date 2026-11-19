@@ -1,0 +1,34 @@
+# This server's configuration in the end-to-end topology (deploy/README.md).
+# Every key is documented in config.example.yaml; only what differs from the
+# defaults, and why, is here.
+tenant: default
+
+listeners:
+  # Both listeners on every interface of the container. The south-bound one is
+  # reachable only on the `south` network, which only the proxies share; the
+  # north-bound one is published on the host's loopback for the suite, which
+  # drives it the way an operator's tooling would (M2).
+  south: 0.0.0.0:8080
+  north: 0.0.0.0:8081
+
+database:
+  dsn: postgres://hoplock:hoplock@postgres:5432/hoplock?sslmode=disable
+
+log:
+  level: debug
+
+fleet:
+  # The relay registration is seeded, because the contract has no way for a
+  # proxy to report one (deploy/README.md, "What this topology cannot prove").
+  # A real deployment's 60s would drop it a minute into the run.
+  relay_registration_ttl: 8760h
+
+uids:
+  # A small block, so the uid-floor scenario sees the proxy come back for a
+  # second one inside a run, as well as hold one across a restart.
+  block_size: 8
+
+credential:
+  # The tenant CA's private half is encrypted under this key at rest; compose
+  # hands it in from deploy/keys/kek, which gen-material.sh writes.
+  key_encryption_key_env: HOPLOCK_KEK

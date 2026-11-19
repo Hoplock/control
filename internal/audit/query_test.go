@@ -151,6 +151,71 @@ func TestABlockedCommandWithNoDecisionRowIsStillReported(t *testing.T) {
 	}
 }
 
+// The shape the REAL proxy sends (found by 0061's topology, where this query
+// returned nothing while every test above passed): the filter's verdict is a
+// `policy_decision` record with event `command.policy`, and it carries no
+// decision_id — the proxy stamps that on the session's `authorize` record
+// alone. The query must find the command, and reach the decision through the
+// session's own authorize record on the same proxy.
+func TestTheShowcaseQueryReadsTheRealProxysRecords(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	in := newIngester(t, st)
+	reader := audit.NewReader(st)
+	ctx := t.Context()
+
+	seedEstate(t, st)
+
+	// A decision made under a grant, so the row can answer "who approved the
+	// access": the decision's grant id is half of what the query is for.
+	if err := st.Decisions().Insert(ctx, tenantA, store.Decision{
+		ID: "dec-granted", SubjectID: "alice@example.invalid", TargetID: "db-1",
+		InputsDigest: "z", Effect: "allow", SessionID: "sess-granted", MatchedRule: "jit",
+		GrantID: "g-cab-1", Snapshot: json.RawMessage(`{"route_type":"direct"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	authz := record("rec-authz", "sess-granted")
+	authz.Kind = "authorize"
+	authz.Attributes = map[string]string{audit.AttrDecisionID: "dec-granted", "route_type": "direct"}
+
+	verdict := record("rec-verdict", "sess-granted")
+	verdict.Kind = "policy_decision"
+	verdict.Severity = contract.SeverityCritical
+	verdict.Attributes = map[string]string{
+		"event": "command.policy", "action": "block_command", "outcome": "blocked",
+		"tier": "filtered_exec", "command": "cat /etc/shadow",
+	}
+	// The channel-request refusal the proxy records beside a restricted-exec
+	// block is not a second blocked command: its action is `deny`.
+	refusal := record("rec-refusal", "sess-granted")
+	refusal.Kind = "policy_decision"
+	refusal.Attributes = map[string]string{"action": "deny", "command": "cat /etc/shadow", "request": "exec"}
+
+	mustIngest(ctx, t, in, tenantA, proxyA, authz, verdict, refusal)
+
+	page, err := reader.BlockedCommands(ctx, tenantA, store.BlockedCommandQuery{LabelName: "env", LabelValue: "prod"},
+		store.Page{Limit: store.DefaultPageLimit})
+	if err != nil {
+		t.Fatalf("BlockedCommands: %v", err)
+	}
+	if len(page.Rows) != 1 {
+		t.Fatalf("got %d rows, want the one blocked command: %+v", len(page.Rows), page.Rows)
+	}
+	got := page.Rows[0]
+	if got.Record.RecordID != "rec-verdict" || got.Command != "cat /etc/shadow" {
+		t.Errorf("row = %s %q", got.Record.RecordID, got.Command)
+	}
+	if !got.DecisionFound || got.MatchedRule != "jit" || got.DecisionID != "dec-granted" {
+		t.Fatalf("the decision did not join through the session's authorize record: found %v id %q rule %q",
+			got.DecisionFound, got.DecisionID, got.MatchedRule)
+	}
+	if got.GrantID != "g-cab-1" {
+		t.Errorf("grant = %q, want the grant the decision was made under", got.GrantID)
+	}
+}
+
 // M16: "show me every session that ran under this scan" is the query grant
 // context exists for, and it is indexed on system + reference.
 func TestSessionsAreFoundByTheGrantTheyRanUnder(t *testing.T) {

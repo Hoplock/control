@@ -47,7 +47,8 @@ GOLANGCI_LINT  ?= golangci-lint
 APIDIFF_VERSION ?= v0.0.0-20261007192929-f45ad48fbe92
 
 .PHONY: all build test vet lint exhaustive-guard fmt license-check tidy clean run migrate \
-        contract-check contract-sync conform release-check release-check-guard ui ui-check ui-e2e check help
+        contract-check contract-sync conform release-check release-check-guard ui ui-check ui-e2e check help \
+        e2e e2e-build e2e-up e2e-down vulncheck
 
 all: build
 
@@ -143,6 +144,44 @@ conform:
 	    -token '$(TOKEN)' \
 	    -expectations '$(EXPECT)' \
 	    $(CONFORM_FLAGS)
+
+# --- The end-to-end topology (PLAN §9; deploy/README.md) ---------------------
+
+E2E_COMPOSE := docker compose -f deploy/compose.yaml
+GOVULNCHECK_VERSION ?= v1.9.0
+
+## e2e: build, bring the topology up, run the scenario suite, tear it down.
+e2e: e2e-up
+	@set -e; \
+	trap '$(MAKE) --no-print-directory e2e-down' EXIT; \
+	$(GO) test -tags e2e -count=1 -v -timeout 30m ./test/e2e/
+
+## e2e-build: build the real proxy at deploy/PROXY_REVISION and this server's e2e host.
+e2e-build:
+	./deploy/build.sh
+
+## e2e-up: generate key material and start the topology, and leave it running.
+#
+# Leaving it up is what makes a failing scenario debuggable: re-run the suite
+# with `go test -tags e2e -count=1 -v -run 'TestTopology/<name>' ./test/e2e/`.
+e2e-up: e2e-build
+	./deploy/gen-material.sh
+	$(E2E_COMPOSE) up -d --build --wait --wait-timeout 180 \
+	    control proxy-edge proxy-relay target target-zone client
+
+## e2e-down: stop the topology and remove everything it generated.
+e2e-down:
+	-$(E2E_COMPOSE) down -v --remove-orphans
+	rm -rf deploy/keys deploy/control/seed.yaml deploy/.env
+
+## vulncheck: report any known vulnerability reachable from this module.
+#
+# Pinned for golangci-lint's reason: an unpinned scanner moves under a tree
+# that did not. The advisory DATABASE is deliberately not pinned — that is the
+# point of the gate (the vulncheck job in ci.yml says what to do when it goes
+# red with no code change).
+vulncheck:
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 # --- Releases (PLAN M23) ------------------------------------------------------
 

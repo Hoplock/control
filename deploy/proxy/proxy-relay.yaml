@@ -1,0 +1,71 @@
+# proxy-relay: the proxy in the protected zone. It accepts NO inbound
+# connection from any network: its SSH listener is bound to loopback inside its
+# own container, and sessions arrive over the registration it opens OUTBOUND to
+# proxy-edge (D11). Every field is documented in the proxy repository's
+# config.example.yaml.
+proxy:
+  id: "proxy-relay"
+  listen_addr: "127.0.0.1:2222"
+  host_key_path: "/material/hostkey_proxy_relay"
+
+control:
+  base_url: "http://control:8080"
+  # `<tenant>.<secret>`, bound to this proxy id (M22; deploy/control/seed.yaml).
+  token: "default.e2e-proxy-relay-secret"
+  cache:
+    # 0 honours the server's hint exactly, which is what the cache scenarios
+    # are about.
+    max_ttl: 0s
+    stale_after: 30s
+
+dial:
+  dial_timeout: 15s
+  default_target_port: 22
+
+logging:
+  buffer_dir: "/var/lib/hoplock/logbuf"
+  batch_size: 8
+  flush_interval: 1s
+  queue_size: 1024
+  send_timeout: 5s
+  retry_min: 500ms
+  retry_max: 5s
+  max_payload_bytes: 32768
+
+routing:
+  target_delimiter: "#"
+
+chain:
+  identity_key_path: "/material/chain_proxy_relay"
+  max_hops: 4
+  # The registration this proxy opens OUTBOUND, with its chain identity. It is
+  # the only way a session reaches this proxy.
+  upstream:
+    address: "proxy-edge:2223"
+    host_key_path: "/material/hostkey_proxy_edge.pub"
+    dial_timeout: 10s
+    keepalive_interval: 5s
+    min_backoff: 500ms
+    max_backoff: 5s
+
+auth:
+  user:
+    methods: ["cert"]
+  target:
+    # The fallback only: every route names its own ladder (D6a).
+    method: "brokered-key"
+    ephemeral_user:
+      management_key_path: "/material/management_key"
+      provisioning_user: "root"
+      shell: "sh -c"
+      home_base: "/home"
+      target_shell: "/bin/sh"
+      key_expiry: true
+      timeout: 30s
+      reaper:
+        interval: 1m
+        grace: 5m
+    brokered_key:
+      source: "dir"
+      dir: "/material/brokered"
+      file_suffix: ".key"

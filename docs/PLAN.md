@@ -3792,9 +3792,16 @@ not say why, and a grant the explanation names that the inputs do not hold.
   a cursor holds nothing its caller was not handed (M26.2). An item of the
   showcase join carries its record whole, under `record`, rendered exactly
   as an item of `…/audit/records`, with its target's `target_zone` and
-  `target_labels` and the decision's `matched_rule`, `route_type` and
+  `target_labels` and the decision's `decision_id`, `grant_id` (absent when
+  no grant supplied the access), `matched_rule`, `route_type` and
   `decided_at`; a decision the store no longer has is `decision_found:
-  false` and none of those three.
+  false` and none of those. A blocked command is a record whose `action` is
+  `block_command`, of kind `policy_decision` — what the real proxy records,
+  event `command.policy`, for either filtering tier — or `command`; and its
+  decision is the one the record names or, since the proxy stamps
+  `decision_id` on a session's `authorize` record and on no other, the one
+  that record names for the same session on the same proxy, which also
+  reaches the decision a cached session was served by.
   `audit/negotiated` counts sessions, and pages by each session's latest
   matching record, which each item carries as `latest_recorded_at` beside
   its `session_id`. The per-session reads keep their bound of 500 records
@@ -4156,20 +4163,46 @@ not say why, and a grant the explanation names that the inputs do not hold.
 
 ## 9. Test topology
 
-The prototype's full topology runs in one CI job with `docker compose`:
+The prototype's full topology runs in one CI job (`e2e`) with `docker compose`
+(`deploy/`, built by 0061; `deploy/README.md` is the operator's guide to it):
 
 | Node | Container |
 | --- | --- |
-| Postgres | stock image |
-| Management server | `cmd/hoplock-control` |
-| Proxy | Hoplock Proxy's image, pointed at this server |
-| Target | `sshd` image with the provisioning account and an appliance-like account |
-| Client | thin image running scenario SSH clients |
+| Postgres | stock image, migrated and seeded by an explicit start-up step |
+| Management server | `hoplock-control` exactly, started as a host starts it (`test/e2e/host`) |
+| Proxy | Hoplock Proxy, built at the commit `deploy/PROXY_REVISION` pins |
+| Protected-zone proxy | the same, accepting no inbound connection, reached over its outbound relay registration (D11) |
+| Targets | `sshd` with the provisioning account, an appliance-like account and a CA-trusting account |
+| Client | OpenSSH, on a network that reaches no target |
 
 The point of this topology is the thing neither repo can test alone: a **real
 proxy** driven by a **real PDP**. The Hoplock Proxy repository proves it enforces what a
 mock tells it; this repo proves it decides correctly in isolation; only here do
 "decides" and "enforces" meet.
+
+The suite (`test/e2e/`, build tag `e2e`) is one ordered run of product claims —
+listed, each with what it proves, in `deploy/README.md` — and it ends on four
+assertions over everything before it: no uid issued twice, nothing leaked and
+the standing accounts byte-identical, no `logging.gap` with `gap_cause:
+refused`, and `audit-verify` passing. The third is what keeps the suite honest
+since Hoplock/proxy#71: a record this server refuses no longer stalls the
+proxy's delivery, so without it every other assertion could pass while a field
+the two components spell differently was being dropped. The proxy pin is not
+`contract/UPSTREAM`, but `deploy/build.sh` refuses a proxy whose
+`api/control.yaml` differs from the vendored one.
+
+Two neighbours answer what the suite cannot. `govulncheck` gates every PR,
+because whether this server's dependencies are vulnerable today is a CI answer
+rather than a chore, and it can go red with no code change. The scheduled
+`contract upstream` workflow asks whether the vendored contract is behind
+upstream — every PR check is pin-relative by construction — and reports the
+gap, never gating a PR, because a pin behind is legitimate whenever a prompt
+names the re-vendor.
+
+What the topology cannot prove is said in `deploy/README.md`: a relay
+registration's liveness (the contract has no way to report one, so the seed
+writes it), which session a chain leg belongs to, and everything one node in
+one region cannot show (§11).
 
 ---
 
@@ -4239,7 +4272,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0058 | Management console 10: algorithm posture and the emergency runbook | **Built, `v0.45.0`.** Fleet's algorithms view at `/console/fleet/algorithms` (`fleet:read`): each `algorithm_floor` level with the key exchanges it accepts in each build and the proxies that cannot enforce it yet, what each profile a build accepts offers per axis, and the proxies that declared nothing — a build being the proxies that declared the same thing, builds that disagree `In progress` (M19), a proxy or build that said nothing there `Not reported` (M17), both lists read to their last page (M26) (`Hoplock/proxy#69`, `#72`). The floor's impact preview and a ban's per-build warning set out inside the publish-time report's finding cards — the targets a raise breaks with what each met, negotiated and offered and when, a stale or absent observation `Not reported`, the proxies that cannot enforce the level, `pq-hybrid-kex` explained and never sntrup761; the proxies a ban leaves an axis empty on with what each build offers there, `In progress` when the declaring builds disagree, a build that cannot judge it `Not judged` — each warning and never blocking. The emergency runbook at `/console/policy/runbook`: the ban written into the bundle's own `algorithm_bans` and applied after its report is read and its warnings accepted (`POST …/policy/apply`), `cache_invalidate` with `all`, then every session `GET …/audit/negotiated` lists to its last page ended with `session_kill` in batches, its `reason` shown before sending — each step offered only after the one before it answered, confirmed by typing a name, and showing its receipt (M11, M17, M19, M20, M21, M23, M26) |
 | 0059 | Management console 11: Fleet's health bar without patterns | **Built, `v0.46.0`.** The operator's ask from 0052, in their words — "I don't like the patterns in thr bar showing the health" — answered as they chose it: Fleet's health bar is solid segments in their status hues, the surface showing through a `--chart-segment-gap` between two, each segment at least `--chart-label-min` wide carrying, on the segment and from its inline start, its status glyph and its count in `--text-on-status` (white in light, near-black in dark; at least 5.47:1 on every status hue in both themes, held as text by the contrast test), so the bar is read without colour and without patterns; a narrower segment is drawn at no less than `--chart-segment-min`, the width it takes coming out of the wider ones so the bar never runs past its track, and is named by the legend alone (`layoutBar` in `fleetModel.ts`, unit-tested over the bar's measured width and the three tokens as the page resolves them). The legend (less its patterned swatch), the order, the inline-start fill, the screen reader's sentence and the data source are unchanged; the browser checks hold no pattern, each label's glyph and count, five distinct glyph shapes in greyscale, a one-in-five-hundred segment, and the bar mirrored in `en-XB`; DESIGN.md §3.2, §3.6, §8 and §11 say how it reads (M20, M11, M17, M19, M21, M23) |
 | 0060 | Management console 12: one look and feel across every screen | **Built, `v0.47.0`.** Every screen audited against `ui/DESIGN.md` and against every other, fourteen items each given a verdict with evidence (its learnings). Fixed at the source: a `Notice` for every note about a page (five screen-local shapes, two of them, none with a glyph), a `Timestamp` that copies as ISO-8601 UTC (eleven screen-local `<time>`s), a `TextButton` for a row's drawer and a source line, the sign-in page and the shell on the set's controls, break-glass one hue everywhere, Fleet's algorithms view compact as Fleet is, a destructive action's success a receipt that persists, one word per concept (DESIGN.md §9's glossary). Held by `ui/test/consistency.test.ts` (DESIGN.md §10.10) and a "widths" browser job — 1024 and 900px, Explain and Audit at 768 — each check proved by a mutation; `npm run contact-sheet` lays the baseline out for review by eye. The tables that are not yet the data table are 0070's (M20, M21, M11, M23) |
-| 0061 | Cross-repo E2E topology, CI gate & hardening | real proxy + real control plane + Postgres + target, scenario suite, `govulncheck` |
+| 0061 | Cross-repo E2E topology, CI gate & hardening | **Built, `v0.48.0`.** `deploy/`: a real proxy at `deploy/PROXY_REVISION` (its `api/control.yaml` checked against the vendored one by `deploy/build.sh`) plus a protected-zone proxy reached only by its outbound relay registration, this server started as a host starts it (`test/e2e/host`), Postgres migrated and seeded by an explicit step, real sshd targets; `test/e2e/`'s nineteen scenarios as one ordered run (§9); the CI jobs `e2e`, `govulncheck` (gating, `make vulncheck`) and the scheduled, non-gating `contract upstream` notice. The showcase join now finds the real proxy's blocked commands and names each one's decision and grant (§7). The scenarios needing a test host's fake extensions, the uid-lease refusal, the fleet configuration round trip and the stream-unhealthy hint went to 0071 (M1, M4, M8, M10, M11, M17, M23) |
 | 0062 | CA custody through the key store | the certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |
 | 0063 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
 | 0064 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
@@ -4249,6 +4282,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0068 | A host's console reaches the shell | `server.Options.Console` (and `daemon.Host.Console`) — a host's patterns, catalogue and handler — mounted under its `/host-console/<provider>/` through `north.Options.Consoles` and its existing start-up checks; the shell told the host's provider before the first paint, loading its catalogue for the active locale and refusing any key that is not `<provider>:<key>`, so a report pack's reports and parameters are named in the host's words (0056's `HostCatalogueContext`) and by their codes where it names none or fails to load. Queued by 0056, which found no field that hands a host's catalogue over. Loading a host's screen modules into the shell, and their navigation entry, stay a later phase's (M27, M15, M20, M21, M23) |
 | 0069 | A retention pass that deleted nothing is recorded too | a pass by instant that deletes nothing — the instant reaches no record past the stream's marker, or an archive holds it back entirely — writes an `operator.audit.retained` record in its own transaction (`operator.deleted` `0`, `after` the marker's `through_seq` or `0`, the marker's hash, key and signature when there is one, and with an archive `operator.held_by_archive` and `operator.archived_through_seq`), and no marker or seal, as the capture pass already records one that emptied nothing; a refused pass still records nothing. The console's retention trail shows such a pass, and the browser checks run the real held pass only in `mutations`. Queued after 0057, which found a fully held pass leaving no trace; the user ruled it is recorded (M8, M11, M23) |
 | 0070 | Every list through the data table | 0060's open item: the seven tables a screen draws itself — the Deployment view's nodes, Fleet's algorithms levels and profiles, a floor finding's targets and a ban's proxies, a policy replay's flips, the runbook's sessions — become `DataTable`, which gains what they need (a row's own data attributes, so their checks keep their selectors; a table with no toolbar inside a card), and `ui/test/consistency.test.ts`'s count of them falls to the one chart, AuditCounts (M20, M23) |
+| 0071 | E2E scenarios through a test host's extensions | the 0061 scenarios its session did not reach, on 0061's topology: an inbound action ending a session and locking and unlocking its subject, the directory de-provisioning a person with a live session, two directories feeding one tenant and the groups they share, `ephemeral-user` refused outage-class when no uid block can be had, the fleet configuration round trip, and no cache hint while the event stream is unhealthy (M9, M11, M15, M18, M28) |
 
 > **Audits are not in this table, and not in the queue.**
 > `prompts/audit/` holds prompts that run repeatedly against the whole

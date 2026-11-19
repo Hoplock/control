@@ -1,0 +1,173 @@
+# The end-to-end topology (PLAN §9; deploy/README.md): a REAL Hoplock Proxy
+# enforcing decisions from a REAL Hoplock Control, on Docker networks that make
+# the segmentation claims checkable rather than stated.
+#
+# Nodes:
+#   postgres      the store, stock image
+#   control-init  migrates, seeds and prints the CA bundle, then exits — the
+#                 explicit start-up step migrations are (PLAN §8)
+#   control       this server, both listeners
+#   proxy-edge    the proxy users reach; reaches `core` itself
+#   proxy-relay   a proxy in the protected zone that accepts NO inbound
+#                 connection, reached only over the relay registration it opens
+#                 outbound to proxy-edge (D11)
+#   target        a real sshd: ephemeral-user, brokered-key and
+#                 brokered-certificate accounts, under several names
+#   target-zone   the same image, inside the protected zone
+#   client        the OpenSSH client the scenarios drive
+#
+# Networks, and what each is load-bearing for. Every one but `north` is
+# `internal`: nothing on it reaches, or is reached from, outside the topology.
+#   north         control's north-bound listener, published on the host's
+#                 loopback for the suite (an operator's tooling, in effect)
+#   db            control ↔ postgres
+#   south-edge    proxy-edge → control's south-bound listener
+#   south-zone    proxy-relay → control's south-bound listener. A network of
+#                 its own so the protected zone shares NOTHING with the edge but
+#                 the relay network.
+#   edge          client → proxy-edge
+#   core          proxy-edge → target. The client is NOT on it.
+#   relay         proxy-relay → proxy-edge's registration listener, and nothing
+#                 else: the one path into the protected zone, opened from inside
+#   zone          proxy-relay → target-zone. proxy-edge is NOT on it, so a
+#                 session that reached zone-host provably went through
+#                 proxy-relay.
+
+name: hoplock-control-e2e
+
+x-control: &control-image
+  build:
+    context: .
+    dockerfile: control/Dockerfile
+    args: &base {BASE_IMAGE: "${E2E_BASE_IMAGE:-debian:stable-slim}"}
+  image: hoplock-control-e2e/control
+  environment:
+    HOPLOCK_KEK: ${HOPLOCK_KEK:?run deploy/gen-material.sh first}
+  volumes:
+    - ./control:/etc/hoplock:ro
+    - ca:/ca
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hoplock
+      POSTGRES_PASSWORD: hoplock
+      POSTGRES_DB: hoplock
+    networks: [db]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "hoplock", "-d", "hoplock"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+
+  # Migrations are an explicit command and never run on boot (PLAN §8), so the
+  # topology runs them the way an operator does, then seeds the bootstrap rows,
+  # then publishes the tenant CA's trust bundle for the targets to install.
+  control-init:
+    <<: *control-image
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -e;
+        hoplock-control migrate --config /etc/hoplock/control.yaml;
+        hoplock-control seed --config /etc/hoplock/control.yaml --file /etc/hoplock/seed.yaml;
+        hoplock-control ca show --config /etc/hoplock/control.yaml > /ca/trusted_user_ca_keys.tmp;
+        mv /ca/trusted_user_ca_keys.tmp /ca/trusted_user_ca_keys
+    networks: [db]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
+  control:
+    <<: *control-image
+    command: ["--config", "/etc/hoplock/control.yaml"]
+    networks: [north, db, south-edge, south-zone]
+    ports:
+      - "127.0.0.1:18081:8081"
+    depends_on:
+      control-init: {condition: service_completed_successfully}
+
+  proxy-edge:
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
+      args: *base
+    image: hoplock-control-e2e/proxy
+    command: ["-config", "/etc/hoplock/config.yaml"]
+    volumes:
+      - ./proxy/proxy-edge.yaml:/etc/hoplock/config.yaml:ro
+      - ./keys:/material:ro
+    networks: [south-edge, edge, core, relay]
+    depends_on: [control]
+
+  # No `ports`, and its SSH listener is bound to loopback inside the container
+  # (proxy/proxy-relay.yaml). Nothing on any network can open a connection to
+  # it; sessions arrive only over the registration it opened.
+  proxy-relay:
+    image: hoplock-control-e2e/proxy
+    command: ["-config", "/etc/hoplock/config.yaml"]
+    volumes:
+      - ./proxy/proxy-relay.yaml:/etc/hoplock/config.yaml:ro
+      - ./keys:/material:ro
+    networks: [south-zone, relay, zone]
+    depends_on: [control, proxy-edge]
+
+  # One sshd, several names: a target row per name (control/seed.template.yaml),
+  # so each route's rule is selected by the name the user types.
+  target:
+    build:
+      context: .
+      dockerfile: target/Dockerfile
+      args: *base
+    image: hoplock-control-e2e/target
+    volumes:
+      - ./keys:/material:ro
+      - ca:/ca:ro
+    networks:
+      core:
+        aliases: [appliance, certified, ladder, restricted, cached]
+    depends_on:
+      control-init: {condition: service_completed_successfully}
+
+  target-zone:
+    image: hoplock-control-e2e/target
+    volumes:
+      - ./keys:/material:ro
+      - ca:/ca:ro
+    networks:
+      zone:
+        aliases: [zone-host]
+    depends_on:
+      control-init: {condition: service_completed_successfully}
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+      args: *base
+    image: hoplock-control-e2e/client
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./keys:/material:ro
+    networks: [edge]
+
+volumes:
+  ca:
+
+networks:
+  north:
+  db:
+    internal: true
+  south-edge:
+    internal: true
+  south-zone:
+    internal: true
+  edge:
+    internal: true
+  core:
+    internal: true
+  relay:
+    internal: true
+  zone:
+    internal: true

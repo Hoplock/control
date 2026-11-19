@@ -59,6 +59,7 @@ func TestTheShowcaseJoinNamesEveryMemberAndAnAgedOutDecisionIsNotFound(t *testin
 	if err := f.st.Decisions().Insert(ctx, "tenant-a", store.Decision{
 		ID: "dec-found", SubjectID: "alice@example.com", Effect: "allow", SessionID: "sess-j", ProxyID: "proxy-j",
 		MatchedRule: "sre-prod", InputsDigest: "x", Inputs: json.RawMessage(`{}`), DecidedAt: decidedAt,
+		GrantID:  "g-approved",
 		Snapshot: json.RawMessage(`{"route_type":"nexthop","target":"core-1.example"}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -90,12 +91,13 @@ func TestTheShowcaseJoinNamesEveryMemberAndAnAgedOutDecisionIsNotFound(t *testin
 	}
 
 	found, names := members(t, items[0])
-	if want := []string{"action", "command", "decided_at", "decision_found", "matched_rule", "record", "route_type", "target_labels", "target_zone"}; !slices.Equal(names, want) {
+	if want := []string{"action", "command", "decided_at", "decision_found", "decision_id", "grant_id", "matched_rule", "record", "route_type", "target_labels", "target_zone"}; !slices.Equal(names, want) {
 		t.Errorf("a found decision's item names %v, want %v", names, want)
 	}
 	for member, want := range map[string]string{
 		"command": `"rm -rf /"`, "action": `"` + store.ActionBlockCommand + `"`, "target_zone": `"zone-a"`,
 		"target_labels": `{"env":"prod"}`, "decision_found": `true`, "matched_rule": `"sre-prod"`,
+		"decision_id": `"dec-found"`, "grant_id": `"g-approved"`,
 		"route_type": `"nexthop"`, "decided_at": `"2026-10-01T12:00:00Z"`,
 	} {
 		if got := string(found[member]); got != want {

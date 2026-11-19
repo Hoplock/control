@@ -26,6 +26,31 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.48.0
+
+Phase 0061, the cross-repository end-to-end topology (M1, M4, M8, M11,
+M23). No migration. The north-bound API stays at version `5`: one answer
+gains two members, and nothing in `ext`, `server` or the contract changes.
+
+- **The showcase query finds the blocked commands a real proxy records.**
+  `GET …/audit/blocked-commands` read only records of kind `command`; the
+  Hoplock Proxy records a filter's verdict as a `policy_decision` (event
+  `command.policy`, either filtering tier), so against a real proxy it
+  answered an empty list. A record of either kind whose `action` is
+  `block_command` is now a blocked command. Records already stored are
+  found too: nothing is rewritten.
+- **A blocked command reaches its decision through its session.** The proxy
+  stamps `decision_id` on a session's `authorize` record and on no other, so
+  the join answered `decision_found: false` for every session a real proxy
+  served. A record that names no decision now reaches the one its session's
+  `authorize` record names on the same proxy — which is also the decision a
+  session served from a cached decision was served by.
+- **Each blocked command names its decision and the grant behind it.** An
+  item of `…/audit/blocked-commands` gains `decision_id` and `grant_id`
+  (absent when no grant supplied the access) beside `matched_rule`,
+  `route_type` and `decided_at`: "who approved the access that made it
+  possible" is half of what the query asks.
+
 ## v0.47.0
 
 Phase 0060, one look and feel across every console screen (M11, M17, M19,

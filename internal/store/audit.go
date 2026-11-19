@@ -863,9 +863,15 @@ type BlockedCommand struct {
 	// can outlive a retention pass over decisions — and reporting it as an
 	// empty rule would be this server inventing an explanation.
 	DecisionFound bool
-	MatchedRule   string
-	RouteType     string
-	DecisionAt    time.Time
+	// DecisionID is the decision the join reached — the one the record names,
+	// or the one its session's authorize record names — and GrantID the grant
+	// that decision was made under, empty for none: "who approved the access
+	// that made it possible" is half of what PLAN §7's query asks.
+	DecisionID  string
+	GrantID     string
+	MatchedRule string
+	RouteType   string
+	DecisionAt  time.Time
 }
 
 // blockedOrder is the showcase join's order: the audit order on the record's
@@ -912,19 +918,38 @@ func blockedPageSQL(op string, tenant Tenant, q BlockedCommandQuery, p Page) (st
 		return "", nil, err
 	}
 	tail, args := o.clause(p, []any{
-		tenant, KindCommand, ActionBlockCommand, jsonPair(q.LabelName, q.LabelValue),
-		nullableTime(q.From), nullableTime(q.To),
+		tenant, blockedKinds, ActionBlockCommand, jsonPair(q.LabelName, q.LabelValue),
+		nullableTime(q.From), nullableTime(q.To), KindAuthorize,
 	})
+	// The decision is the one the record names, or — what the real proxy sends —
+	// the one its session's own `authorize` record on the same proxy names: the
+	// proxy stamps decision_id on that record and on no other, so a join on the
+	// command record's column alone found nothing for any session it served
+	// (0061). Through the authorize record a session served from a CACHED
+	// decision still reaches the decision it was served by. It is a LATERAL
+	// lookup per row, not a join on an expression, so the page is still the
+	// ordered scan of audit_records_order_idx rather than a hash join and a sort
+	// (TestTheShowcaseJoinReadsItsOrderFromAnIndex).
 	return `
 		SELECT ` + prefixed(auditColumns, "a") + `,
 		       t.zone, t.labels,
-		       d.decision_id IS NOT NULL, coalesce(d.matched_rule, ''),
-		       coalesce(d.snapshot->>'route_type', ''), d.decided_at
+		       d.decision_id IS NOT NULL, coalesce(d.decision_id, ''), coalesce(d.grant_id, ''),
+		       coalesce(d.matched_rule, ''), coalesce(d.snapshot->>'route_type', ''), d.decided_at
 		FROM audit_records a
 		JOIN targets t ON t.tenant = a.tenant AND t.hostname = a.target
-		LEFT JOIN decisions d ON d.tenant = a.tenant AND d.decision_id = a.decision_id
+		LEFT JOIN LATERAL (
+		    SELECT dd.decision_id, dd.grant_id, dd.matched_rule, dd.snapshot, dd.decided_at
+		    FROM decisions dd
+		    WHERE dd.tenant = a.tenant AND dd.decision_id = coalesce(
+		        nullif(a.decision_id, ''),
+		        (SELECT z.decision_id FROM audit_records z
+		          WHERE z.tenant = a.tenant AND z.session_id = a.session_id
+		            AND a.session_id <> '' AND z.proxy_id = a.proxy_id
+		            AND z.kind = $7 AND coalesce(z.decision_id, '') <> ''
+		          ORDER BY z.recorded_at DESC LIMIT 1))
+		    LIMIT 1) d ON true
 		WHERE a.tenant = $1
-		  AND a.kind = $2
+		  AND a.kind = ANY($2::text[])
 		  AND a.attributes->>'action' = $3
 		  AND t.labels @> $4::jsonb
 		  AND ($5::timestamptz IS NULL OR a.recorded_at >= $5)
@@ -937,7 +962,8 @@ func scanBlockedCommand(op string, rows rowScanner) (BlockedCommand, error) {
 		decidedAt *time.Time
 	)
 	dest := auditScanDest(&row.Record)
-	dest = append(dest, &row.TargetZone, &row.TargetLabels, &row.DecisionFound, &row.MatchedRule, &row.RouteType, &decidedAt)
+	dest = append(dest, &row.TargetZone, &row.TargetLabels, &row.DecisionFound,
+		&row.DecisionID, &row.GrantID, &row.MatchedRule, &row.RouteType, &decidedAt)
 	if err := rows.Scan(dest...); err != nil {
 		return BlockedCommand{}, wrap(op, err)
 	}
@@ -947,14 +973,24 @@ func scanBlockedCommand(op string, rows rowScanner) (BlockedCommand, error) {
 	return row, nil
 }
 
-// KindCommand and ActionBlockCommand are the two values the showcase join
-// filters on. They are the contract's own vocabulary — the record kind and the
-// filter action the proxy records — and they are named here so the query does
-// not carry bare strings.
+// The values the showcase join filters on, in the contract's own vocabulary —
+// record kinds and the filter action the proxy records — named here so the
+// query does not carry bare strings.
+//
+// A blocked command is a record whose `action` is block_command, of either kind
+// the contract lets it be: the real proxy records the filter's verdict as a
+// `policy_decision` (event `command.policy`, either filtering tier), and a
+// `command` record carrying the action is the shape the conformance fixtures
+// and older proxies use. Reading only `command` returned nothing against the
+// real proxy while every unit test passed (0061).
 const (
 	KindCommand        = "command"
+	KindPolicyDecision = "policy_decision"
+	KindAuthorize      = "authorize"
 	ActionBlockCommand = "block_command"
 )
+
+var blockedKinds = []string{KindCommand, KindPolicyDecision}
 
 func scanAuditRecord(op string, row rowScanner) (AuditRecord, error) {
 	var rec AuditRecord

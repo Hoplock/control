@@ -1,0 +1,97 @@
+# The end-to-end topology's seed, rendered into seed.yaml by
+# deploy/gen-material.sh (which substitutes the @@…@@ key blobs).
+#
+# `hoplock-control seed` is the database-direct bootstrap (0019): it writes the
+# rows a fresh deployment has no other way to get — the first API token, the
+# fleet's enrollment, the first subjects — and everything after it in a run goes
+# through the north-bound API, as an operator's would.
+tenant: default
+
+subjects:
+  - id: alice@e2e.example
+    display_name: Alice (sre)
+    source: local
+    principals: [alice]
+    groups: [sre]
+    keys:
+      - type: ssh-ed25519
+        blob: "@@KEY_ALICE@@"
+  - id: bob@e2e.example
+    display_name: Bob (contractor)
+    source: local
+    principals: [bob]
+    groups: [contractors]
+    keys:
+      - type: ssh-ed25519
+        blob: "@@KEY_BOB@@"
+  # The lock scenario's subject: a lock that went wrong must not strand alice,
+  # whom every other scenario uses.
+  - id: carol@e2e.example
+    display_name: Carol (sre)
+    source: local
+    principals: [carol]
+    groups: [sre]
+    keys:
+      - type: ssh-ed25519
+        blob: "@@KEY_CAROL@@"
+  - id: svc@e2e.example
+    display_name: Deploy automation
+    source: local
+    principals: [svc]
+    groups: [automation]
+    keys:
+      - type: ssh-ed25519
+        blob: "@@KEY_SVC@@"
+
+# Every hostname is a DNS name in deploy/compose.yaml. The proxy dials the name
+# the route answers with, so the row and the alias are one fact.
+targets:
+  - {id: target, hostname: target, zone: core, labels: {env: prod, kind: host}}
+  - {id: appliance, hostname: appliance, zone: core, labels: {env: prod, kind: appliance}}
+  - {id: certified, hostname: certified, zone: core, labels: {env: prod, kind: host}}
+  - {id: ladder, hostname: ladder, zone: core, labels: {env: prod, kind: host}}
+  - {id: restricted, hostname: restricted, zone: core, labels: {env: prod, kind: host}}
+  - {id: cached, hostname: cached, zone: core, labels: {env: prod, kind: host}}
+  - {id: zone-host, hostname: zone-host, zone: protected, labels: {env: prod, kind: host}}
+
+# The fleet graph (M6). proxy-edge reaches `core` itself and `protected` only
+# over the relay registration proxy-relay opens to it (D11) — so the edge has a
+# relay edge and no address, and proxy-relay has no edge at all.
+proxies:
+  - id: proxy-edge
+    zone: core
+    key:
+      type: ssh-ed25519
+      blob: "@@CHAIN_EDGE@@"
+    edges:
+      - to_zone: protected
+        direction: relay
+        next_proxy_id: proxy-relay
+        cost: 1
+    # The registration is SEEDED, and that is a gap rather than a choice: the
+    # contract has no way for a proxy to report the registrations it holds
+    # (deploy/README.md, "What this topology cannot prove"), so this row is the
+    # only way the graph learns of one, and control.yaml's
+    # fleet.relay_registration_ttl keeps it believed for the run.
+    relays: [proxy-relay]
+  - id: proxy-relay
+    zone: protected
+    key:
+      type: ssh-ed25519
+      blob: "@@CHAIN_RELAY@@"
+
+# One south-bound credential per proxy, bound to it (M22). The proxy presents
+# `<tenant>.<secret>`; only the SHA-256 is stored.
+tokens:
+  - {secret: e2e-proxy-edge-secret, proxy_id: proxy-edge, label: e2e edge proxy}
+  - {secret: e2e-proxy-relay-secret, proxy_id: proxy-relay, label: e2e relay proxy}
+
+# The suite's operator, on the north-bound API (`ht.default.<secret>`).
+api_tokens:
+  - id: e2e-operator
+    display_name: the end-to-end suite
+    secret: e2e-operator-secret
+    roles: [admin]
+
+policy:
+  file: policy.yaml
