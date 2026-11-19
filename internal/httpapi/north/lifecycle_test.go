@@ -564,7 +564,8 @@ func TestTheCodeRegistryIsHeldWhole(t *testing.T) {
 	want := []string{
 		"api_version_unexpressible", "api_version_unsupported",
 		"assertion_conflict", "assertion_from_future", "assertion_malformed", "assertion_stale",
-		"binding_disabled", "binding_not_found", "ca_not_configured", "config_key_not_fleet_owned",
+		"binding_disabled", "binding_not_found", "ca_key_not_held", "ca_key_store_unavailable",
+		"ca_not_configured", "config_key_not_fleet_owned",
 		"config_value_invalid", "decision_unexplainable", "findings_not_accepted", "forbidden",
 		"grant_request_denied", "grant_request_not_pending", "grant_revocation_undelivered",
 		"grant_workflow_failed", "grant_workflow_not_registered", "host_key_unresolved", "internal",

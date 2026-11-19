@@ -6,6 +6,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -550,6 +551,15 @@ func runCA(ctx context.Context, h Host, args []string, stdout, stderr io.Writer)
 	return fmt.Errorf("ca: unknown command %q (known: show, rotate, issue, certificates)", args[0])
 }
 
+// runCAShow prints the tenant's authority: every key of its trust bundle with
+// its custodian, as the key store itself states it, and then the bundle to
+// publish.
+//
+// A KEY THE KEY STORE DOES NOT HOLD IS SHOWN, NOT HIDDEN BEHIND AN ERROR. The
+// bundle is still what targets must trust, and "where is the key" is the
+// question being asked. When the active key is one, the command prints all of
+// it and then fails, naming the key, the store asked and the way out, so a
+// script that checks the CA sees it cannot sign.
 func runCAShow(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
 	fs, configPath, tenantFlag := caFlags("show", stderr)
 	if err := fs.Parse(args); err != nil {
@@ -561,18 +571,76 @@ func runCAShow(ctx context.Context, h Host, args []string, stdout, stderr io.Wri
 	}
 	defer closeStore()
 
-	info, err := ca.Ensure(ctx, tenant)
+	var custody *credential.CustodyError
+	if _, err := ca.Ensure(ctx, tenant); err != nil && !errors.As(err, &custody) {
+		return err
+	}
+	keys, err := ca.Custody(ctx, tenant)
 	if err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "tenant %s certificate authority\n", tenant)
-	_, _ = fmt.Fprintf(stdout, "  active key: %s (%s, custodian %s, created %s)\n",
-		info.ActiveKeyID, info.Algorithm, info.Custodian, info.CreatedAt.UTC().Format(time.RFC3339))
+	var activeErr error
+	for _, k := range keys {
+		if k.Active {
+			activeErr = k.Err
+			_, _ = fmt.Fprintf(stdout, "  active key: %s (%s, custodian %s, created %s)\n",
+				k.KeyID, k.Algorithm, custodianLine(k), k.CreatedAt.UTC().Format(time.RFC3339))
+			continue
+		}
+		_, _ = fmt.Fprintf(stdout, "  retired key: %s (%s, custodian %s, trusted until %s)\n",
+			k.KeyID, k.Algorithm, custodianLine(k), k.TrustedUntil.UTC().Format(time.RFC3339))
+	}
 	_, _ = fmt.Fprintf(stdout, "\n# TrustedUserCAKeys — publish ALL of these to every target\n")
-	for _, k := range info.TrustBundle {
+	for _, k := range keys {
 		_, _ = fmt.Fprintf(stdout, "%s\n", k.PublicKey)
 	}
+	if activeErr != nil {
+		return fmt.Errorf("ca show: tenant %s's certificate authority cannot sign: %w%s",
+			tenant, activeErr, custodyRemedy(activeErr))
+	}
 	return nil
+}
+
+// custodianLine renders where a key's private half is, as the key store said
+// or failed to say. It never guesses one from the key's name.
+func custodianLine(k credential.KeyCustody) string {
+	var custody *credential.CustodyError
+	switch {
+	case k.Err == nil && k.Custodian == "":
+		return "(the key store states none)"
+	case k.Err == nil:
+		return k.Custodian
+	case errors.As(k.Err, &custody) && custody.Unreachable:
+		return "UNKNOWN: " + custody.Message()
+	case errors.As(k.Err, &custody):
+		return "NOT HELD: " + custody.Message()
+	}
+	return "UNKNOWN: " + k.Err.Error()
+}
+
+// withCustodyRemedy adds the way out to a CA key the key store cannot produce,
+// and returns any other error as it is.
+func withCustodyRemedy(err error) error {
+	if remedy := custodyRemedy(err); remedy != "" {
+		return fmt.Errorf("%w%s", err, remedy)
+	}
+	return err
+}
+
+// custodyRemedy is what an operator does about a CA key the key store cannot
+// produce: rotate when it answered it does not hold the key, and bring the store
+// back when it could not be asked — a rotation would be the wrong answer to an
+// outage.
+func custodyRemedy(err error) string {
+	switch {
+	case errors.Is(err, credential.ErrKeyNotHeld):
+		return "; run `hoplock-control ca rotate` to generate a new key in this key store " +
+			"(the old key stays in the trust bundle for the overlap, so publish the bundle before the new key signs)"
+	case errors.Is(err, credential.ErrKeyStoreUnavailable):
+		return "; nothing is signed until the key store answers"
+	}
+	return ""
 }
 
 func runCARotate(ctx context.Context, h Host, args []string, stdout, stderr io.Writer) error {
@@ -653,7 +721,7 @@ func runCAIssue(ctx context.Context, h Host, args []string, stdout, stderr io.Wr
 	defer closeStore()
 
 	if _, err := ca.Ensure(ctx, tenant); err != nil {
-		return err
+		return withCustodyRemedy(err)
 	}
 
 	var logins []string
@@ -675,7 +743,7 @@ func runCAIssue(ctx context.Context, h Host, args []string, stdout, stderr io.Wr
 		ValidFor:      *validFor,
 	})
 	if err != nil {
-		return err
+		return withCustodyRemedy(err)
 	}
 	_, _ = fmt.Fprintf(stdout, "serial %d, key id %s, signed by %s\n", issued.Serial, issued.KeyID, issued.CAKeyID)
 	_, _ = fmt.Fprintf(stdout, "valid %s .. %s for %s on %s\n",
@@ -757,32 +825,50 @@ func openForIdentity(ctx context.Context, h Host, configPath string) (*config.Co
 	return cfg, st, st.Close, nil
 }
 
-// openCA opens the store and builds the certificate authority.
+// openCA opens the store and builds the certificate authority exactly as the
+// daemon does: the host's sections handed to HostConfig, Control's defaults
+// registered, the registry sealed, and then the one key store buildKeyStore
+// resolves — a registered ext.KeyStore, else the software custodian over the
+// key-encryption key (0062). Without the host's registry, `ca rotate` on a host
+// deployment would generate the new key in Control's own custodian while the
+// daemon asks the host's store for it.
 //
-// A deployment with no key-encryption key gets an ERROR here rather than the nil
-// the listener tolerates: a person typing `ca rotate` is asking for a certificate
+// A deployment with no key store gets an ERROR here rather than the nil the
+// listener tolerates: a person typing `ca rotate` is asking for a certificate
 // authority, and answering "there is none" without saying why would send them to
 // read code.
 func openCA(ctx context.Context, h Host, configPath, tenantFlag string) (*credential.CA, store.Tenant, func(), error) {
-	cfg, st, closeStore, err := openForIdentity(ctx, h, configPath)
+	cfg, sections, err := config.LoadHost(configPath, h.Sections)
 	if err != nil {
 		return nil, "", nil, err
 	}
-	ca, err := buildCA(cfg, st, quietLogger())
+	extensions, err := prepareExtensions(cfg, sections, h)
 	if err != nil {
-		closeStore()
+		return nil, "", nil, err
+	}
+	st, err := store.Open(ctx, cfg.Database.DSN)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	keys, err := buildKeyStore(cfg, st, extensions)
+	if err != nil {
+		st.Close()
+		return nil, "", nil, err
+	}
+	ca, err := buildCA(cfg, st, keys, quietLogger())
+	if err != nil {
+		st.Close()
 		return nil, "", nil, err
 	}
 	if ca == nil {
-		closeStore()
-		return nil, "", nil, fmt.Errorf(
-			"this deployment has no certificate authority: set credential.key_encryption_key_env to a variable holding 32 base64 bytes")
+		st.Close()
+		return nil, "", nil, fmt.Errorf("this deployment has no certificate authority: %s", noKeyStoreNote)
 	}
 	tenant := store.Tenant(cfg.Tenant)
 	if tenantFlag != "" {
 		tenant = store.Tenant(tenantFlag)
 	}
-	return ca, tenant, closeStore, nil
+	return ca, tenant, st.Close, nil
 }
 
 // quietLogger discards the structured log for a one-shot command. A CLI that

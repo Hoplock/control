@@ -26,6 +26,77 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.49.0
+
+Phase 0062, CA custody through the key store (M15, M7, M18, M11, M23). The
+certificate authority's keys now live where the retention keys already did: a
+registered `ext.KeyStore` if any, else Control's software custodian over the
+key-encryption key, else there is no CA. No migration. The north-bound API
+moves to version `6` for two new codes and one new parameter; no route or
+member is added and `north_api_min` stays `1`. Nothing in `ext` or the
+contract changes, and `server` changes only in its doc comments.
+
+### Breaking
+
+- **A host with an `ext.KeyStore` now has its CA keys generated there.** On
+  first use (`Ensure`, at start-up for the configured tenant) and on every
+  rotation, the CA generates its key in the registered key store and asks it
+  for every signer; Control's `software_keys` gains no CA row. A host whose key
+  store held only `audit-retention:*` keys must now also generate, sign with
+  and describe Ed25519 keys named `ssh-ca:<generation>` per tenant, and keep a
+  retired one for the rotation overlap. A registered key store with no
+  `credential.key_encryption_key_env` is now a working CA rather than
+  `ca_not_configured`.
+- **A CA key made earlier in Control's software custodian is refused, not
+  used,** once a key store is registered — and so is any active key the
+  resolved key store does not hold, or holds a different key under. Nothing
+  is signed with another custodian, and none of these is ever a `401`:
+  - `POST /v1/credentials/certificate` answers `503` with the code
+    `ca_key_not_held`, its message naming the key, its name in the store and
+    the store asked;
+  - `GET …/ca` answers `503 ca_key_not_held` (north-bound version `6`), with
+    `ca_key_id`, `key_ref` and `key_store`, and `hoplock-control ca issue`
+    fails with the same message;
+  - start-up logs `ssh_ca_key_not_held` for the configured tenant and
+    starts; nothing rotates on boot.
+
+  The way out is `hoplock-control ca rotate` (or `POST …/ca/rotate`): it
+  generates the new key in the resolved key store and needs nothing from the
+  old key's private half, so a routine rotation keeps the old key in the
+  trust bundle for the overlap and `--compromise` still removes it and revokes
+  what it signed. Nothing is deployed yet, so such a key is a development or
+  test database's, and no migration is owed.
+- **The `ca` subcommands (`show`, `rotate`, `issue`, `certificates`) hand a
+  host's configuration sections to `HostConfig` and seal its registry,** as
+  the daemon, `audit-verify` and `audit-retention` do, so they use the same
+  key store as the daemon.
+
+- **Phase:** 0062, CA custody through the key store.
+- **Public packages:** no identifier is added, removed or changed. The doc
+  comments of `server.Main` and `server.Options.HostConfig` name every
+  subcommand that calls `HostConfig`, including `identity connector-put` with
+  `--directory-claim` and `--directory-source`, which already did.
+- **Behaviour no API diff shows:**
+  - A key store that cannot be asked about the CA key (`ext.KindUnavailable`,
+    or a deadline) is an outage told apart from an absent key: issuance
+    answers `503 key_store_unavailable`, `GET …/ca` and `POST …/ca/rotate`
+    answer `503 ca_key_store_unavailable` (version `6`, the same three
+    parameters), and start-up logs `ssh_ca_key_store_unavailable`. None of
+    them says to rotate.
+  - A key's custodian is what the key store states for it
+    (`ext.KeyInfo.Custodian`), asked of it: `GET …/ca`'s `custodian` and
+    `ca show` no longer derive one from the key's name.
+  - `hoplock-control ca show` prints every key of the trust bundle with its
+    custodian — retired keys on lines of their own — and, when the active key
+    is one the key store cannot produce, prints all of it, says so on the
+    key's line, and exits non-zero naming the way out.
+  - With no key store at all, `ca_not_configured` (north-bound, which gains
+    `extension_point: KeyStore` beside `config_key` in version `6`),
+    `no_authority` (south-bound) and the `ca` subcommands name both ways to
+    have one: `credential.key_encryption_key_env`, or a registered
+    `ext.KeyStore`.
+  - The console's Deployment screen reads "6, answering 1 to 6".
+
 ## v0.48.0
 
 Phase 0061, the cross-repository end-to-end topology (M1, M4, M8, M11,

@@ -492,4 +492,13 @@ const (
 	// it — a tenant with none, or a deployment that configured none. 503: an
 	// operator's fix, not a deny and not a 500.
 	ErrCodeNoAuthority = "no_authority"
+	// ErrCodeCAKeyNotHeld is an issuance whose tenant's active CA key the
+	// deployment's key store answers it does not hold (0062). 503: an
+	// operator's fix — a rotation generates one there — never a deny, and
+	// nothing is signed by any other custodian.
+	ErrCodeCAKeyNotHeld = "ca_key_not_held"
+	// ErrCodeKeyStoreUnavailable is an issuance whose key store could not be
+	// asked for the CA key (0062). 503: an outage, told apart from a key the
+	// store answers it does not hold.
+	ErrCodeKeyStoreUnavailable = "key_store_unavailable"
 )

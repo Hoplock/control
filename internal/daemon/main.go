@@ -39,7 +39,8 @@ type Host struct {
 	// Sections are the top-level configuration keys the host owns.
 	Sections []string
 	// Config receives each section present in the file, re-encoded as YAML.
-	// Only Run calls it.
+	// Run calls it, and so does every subcommand that uses what a host
+	// registers (prepareExtensions; server.Main names them).
 	Config func(section string, raw []byte) error
 	// Routes are the host's north-bound routes.
 	Routes []north.HostRoute

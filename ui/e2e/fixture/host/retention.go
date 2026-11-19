@@ -15,8 +15,10 @@ package main
 //     `retention_not_archived`, and a pass by instant deletes as far as the
 //     archive holds, which is nothing;
 //   - `e2e-keys`, a key store in memory: retention is signed, and is refused
-//     without one (0024). Control's CA does not use a registered key store
-//     yet (phase 0062), so it changes nothing else the console shows.
+//     without one (0024). Control's CA keeps its keys in it too (0062); no
+//     screen reads the CA, and a key made in a run before this process is
+//     one it does not hold, which start-up logs and issuance refuses, so it
+//     changes nothing else the console shows.
 //
 // Neither binds a route.
 

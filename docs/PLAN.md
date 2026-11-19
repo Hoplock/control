@@ -1856,8 +1856,11 @@ for nothing.
   it to one caller (M24).
 - **`internal/credential`** — the per-tenant SSH certificate authority (proxy
   D6a, §6). It mints over a public key the proxy generated, so no private key
-  crosses this API; it holds its own through the `ext.KeyStore` seam, so custody
-  can move to an HSM with no second code path; and it says plainly what SSH can
+  crosses this API; it holds its own through the `ext.KeyStore` seam, in the
+  deployment's one key store (a registered `ext.KeyStore`, else the software
+  custodian), so custody can move to an HSM with no second code path, and a key
+  that store does not hold is refused (`credential.CustodyError`) rather than
+  signed by another; and it says plainly what SSH can
   and cannot enforce rather than implying a hostname scope that does not exist.
   It reaches a proxy through the `brokered-certificate` method and
   `POST /v1/credentials/certificate` (§4, §6), both upstream's
@@ -2174,10 +2177,13 @@ for nothing.
   database opened or a port bound. A host's configuration sections are accepted
   by every subcommand, and handed to the host, before the registry is sealed,
   by the daemon and by the subcommands that need what a host registers — the
-  retention commands, and `identity connector-put --directory-claim
-  --directory-source`, which is refused while no identity sync is registered —
-  so an extension a host builds
-  from its section can still be registered.
+  retention commands, the `ca` commands, and `identity connector-put
+  --directory-claim --directory-source`, which is refused while no identity
+  sync is registered — so an extension a host builds
+  from its section can still be registered. It resolves the deployment's key
+  store once (`buildKeyStore`: a registered `ext.KeyStore`, else the software
+  custodian, else none) and hands that one value to the certificate authority
+  and to the retention keys, which a source test holds.
 - **`internal/instance`** — this deployment's own identity and version set,
   its health at the three levels it has (the deployment, each node, each
   tenant's proxy fleet), the supervisory feed, and the outbound registration
@@ -3554,12 +3560,33 @@ not say why, and a grant the explanation names that the inputs do not hold.
 
   **The CA is built** (`internal/credential`): per tenant, keyed through the
   `ext.KeyStore` seam so that custody can move to an HSM without a second code
-  path, with the software custodian holding its private half as AES-256-GCM
-  ciphertext under a key-encryption key the database never sees. The daemon
-  hands the CA that software custodian only: a registered `ext.KeyStore` holds
-  the audit retention keys (§7) and is not yet consulted for the CA. 0024 found
-  it, and 0062 gives the CA the registered key store when there is one. Certificates are
-  minted over a public key **the proxy generated** — no private key ever crosses
+  path. Its keys live in the deployment's **one key store**: a registered
+  `ext.KeyStore` when there is one, else Control's software custodian, which
+  holds the private half as AES-256-GCM ciphertext under a key-encryption key
+  the database never sees; with neither there is no CA, and its routes answer
+  `503 ca_not_configured` naming both. The daemon resolves that store once
+  (`daemon.buildKeyStore`) and hands the same value to the CA and to the audit
+  retention keys (§7), and the `ca` subcommands resolve it exactly as the daemon
+  does, the host's registry included; a source test holds the one resolution.
+  The CA generates every key there (`Ensure`, `Rotate`) and asks it for every
+  signer. `tenant_ca_keys.private_ref` is the key's name in that store
+  (`ssh-ca:<key id>`), never its custodian: where the private half lives is the
+  store's to say (`ext.KeyInfo.Custodian`, asked of it), and `ca show` and
+  `GET …/ca` say what it says. **The CA never asks another custodian.** An
+  active key the store does not hold — one made before custody changed — or a
+  key it holds under that name that is not the bundle's is refused, naming the
+  key and the store: `503 ca_key_not_held` from issuance and from `GET …/ca`
+  (north-bound version 6), never a `401` (M11), and nothing is signed. A store
+  that cannot be asked is an outage told apart from it (`503
+  key_store_unavailable` south-bound, `503 ca_key_store_unavailable`
+  north-bound). Start-up logs either for the configured tenant
+  and starts, and **`ca rotate` is the way out**: it generates the new key in
+  the resolved store and needs nothing of the old one's private half, so a
+  routine rotation keeps the old key in the bundle for the overlap and a
+  compromise rotation still removes it and revokes what it signed. Nothing
+  rotates on boot, because targets must trust a new key before it signs. There
+  is no installed base, so no migration moves a key between custodians.
+  Certificates are minted over a public key **the proxy generated** — no private key ever crosses
   this API — and are scoped to a principal, a target, a session and a window of
   minutes. What SSH can enforce is the principal, the window and the critical
   options; there is no hostname field, so target scoping is enforced at issuance
@@ -3738,7 +3765,8 @@ not say why, and a grant the explanation names that the inputs do not hold.
   captures may be gone. The key is per tenant (M18), Ed25519, named
   `audit-retention:<generation>`, and held by `ext.KeyStore`: a host's, or
   Control's software custodian, whose private half is ciphertext under a
-  key-encryption key the database never sees (§6). The verifier checks each
+  key-encryption key the database never sees — the one key store the CA's keys
+  live in too (§6). The verifier checks each
   seal against the key store's signer and never against a public half a row
   holds, because a stored public key is replaced together with the marker it
   vouches for. So a writer of the database alone cannot make a deleted prefix,
@@ -4273,7 +4301,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0059 | Management console 11: Fleet's health bar without patterns | **Built, `v0.46.0`.** The operator's ask from 0052, in their words — "I don't like the patterns in thr bar showing the health" — answered as they chose it: Fleet's health bar is solid segments in their status hues, the surface showing through a `--chart-segment-gap` between two, each segment at least `--chart-label-min` wide carrying, on the segment and from its inline start, its status glyph and its count in `--text-on-status` (white in light, near-black in dark; at least 5.47:1 on every status hue in both themes, held as text by the contrast test), so the bar is read without colour and without patterns; a narrower segment is drawn at no less than `--chart-segment-min`, the width it takes coming out of the wider ones so the bar never runs past its track, and is named by the legend alone (`layoutBar` in `fleetModel.ts`, unit-tested over the bar's measured width and the three tokens as the page resolves them). The legend (less its patterned swatch), the order, the inline-start fill, the screen reader's sentence and the data source are unchanged; the browser checks hold no pattern, each label's glyph and count, five distinct glyph shapes in greyscale, a one-in-five-hundred segment, and the bar mirrored in `en-XB`; DESIGN.md §3.2, §3.6, §8 and §11 say how it reads (M20, M11, M17, M19, M21, M23) |
 | 0060 | Management console 12: one look and feel across every screen | **Built, `v0.47.0`.** Every screen audited against `ui/DESIGN.md` and against every other, fourteen items each given a verdict with evidence (its learnings). Fixed at the source: a `Notice` for every note about a page (five screen-local shapes, two of them, none with a glyph), a `Timestamp` that copies as ISO-8601 UTC (eleven screen-local `<time>`s), a `TextButton` for a row's drawer and a source line, the sign-in page and the shell on the set's controls, break-glass one hue everywhere, Fleet's algorithms view compact as Fleet is, a destructive action's success a receipt that persists, one word per concept (DESIGN.md §9's glossary). Held by `ui/test/consistency.test.ts` (DESIGN.md §10.10) and a "widths" browser job — 1024 and 900px, Explain and Audit at 768 — each check proved by a mutation; `npm run contact-sheet` lays the baseline out for review by eye. The tables that are not yet the data table are 0070's (M20, M21, M11, M23) |
 | 0061 | Cross-repo E2E topology, CI gate & hardening | **Built, `v0.48.0`.** `deploy/`: a real proxy at `deploy/PROXY_REVISION` (its `api/control.yaml` checked against the vendored one by `deploy/build.sh`) plus a protected-zone proxy reached only by its outbound relay registration, this server started as a host starts it (`test/e2e/host`), Postgres migrated and seeded by an explicit step, real sshd targets; `test/e2e/`'s nineteen scenarios as one ordered run (§9); the CI jobs `e2e`, `govulncheck` (gating, `make vulncheck`) and the scheduled, non-gating `contract upstream` notice. The showcase join now finds the real proxy's blocked commands and names each one's decision and grant (§7). The scenarios needing a test host's fake extensions, the uid-lease refusal, the fleet configuration round trip and the stream-unhealthy hint went to 0071 (M1, M4, M8, M10, M11, M17, M23) |
-| 0062 | CA custody through the key store | the certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |
+| 0062 | CA custody through the key store | **Built, `v0.49.0`.** The certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |
 | 0063 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
 | 0064 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 | 0065 | Policy's refusals as codes | the four places 0053 found the policy lifecycle answering in English only — a compiler parameter `detail`, an unreplayable record's reason, a refused simulation's reason, and a candidate diff's parse failure — given stable codes and typed parameters the console renders, so no policy refusal reaches an operator as prose it cannot translate (M21, M3, M19, M23) |
