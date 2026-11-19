@@ -419,6 +419,8 @@ export interface BlockedCommand {
   target_zone: string;
   target_labels: Record<string, string>;
   decision_found: boolean;
+  decision_id?: string;
+  grant_id?: string;
   matched_rule?: string;
   route_type?: string;
   decided_at?: string;

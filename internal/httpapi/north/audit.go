@@ -433,6 +433,8 @@ type blockedView struct {
 	TargetZone    string            `json:"target_zone"`
 	TargetLabels  map[string]string `json:"target_labels"`
 	DecisionFound bool              `json:"decision_found"`
+	DecisionID    string            `json:"decision_id,omitempty"`
+	GrantID       string            `json:"grant_id,omitempty"`
 	MatchedRule   string            `json:"matched_rule,omitempty"`
 	RouteType     string            `json:"route_type,omitempty"`
 	DecidedAt     *time.Time        `json:"decided_at,omitempty"`
@@ -448,7 +450,7 @@ func viewBlocked(rows []store.BlockedCommand) []blockedView {
 		out = append(out, blockedView{
 			Record: viewRecord(row.Record), Command: row.Command, Action: row.Action,
 			TargetZone: row.TargetZone, TargetLabels: labels, DecisionFound: row.DecisionFound,
-			MatchedRule: row.MatchedRule, RouteType: row.RouteType, DecidedAt: instant(row.DecisionAt),
+			DecisionID: row.DecisionID, GrantID: row.GrantID, MatchedRule: row.MatchedRule, RouteType: row.RouteType, DecidedAt: instant(row.DecisionAt),
 		})
 	}
 	return out
