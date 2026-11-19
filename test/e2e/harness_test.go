@@ -10,11 +10,14 @@
 // Every SSH client runs inside the `client` container, which is on the `edge`
 // network only, so a session that reached a target went through a proxy. The
 // suite reads this server's side through the north-bound API, published on the
-// host's loopback, the way an operator's tooling would.
+// host's loopback, the way an operator's tooling would — over the TLS this
+// server terminates itself (PLAN M29), verified against the run's CA.
 package e2e
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,7 +34,8 @@ import (
 )
 
 const (
-	northURL = "http://127.0.0.1:18081/api/v1/tenants/default"
+	northOrigin = "https://127.0.0.1:18081"
+	northURL    = northOrigin + "/api/v1/tenants/default"
 	// The operator's API token, seeded by deploy/control/seed.template.yaml.
 	operatorToken = "ht.default.e2e-operator-secret"
 	proxyPort     = "2222"
@@ -46,13 +50,20 @@ func deployDir() string {
 }
 
 func TestMain(m *testing.M) {
+	pool, err := topologyCA()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: %v; run `make e2e-up` first\n", err)
+		os.Exit(1)
+	}
+	httpClient = northClient(pool, nil)
+
 	// The topology is "up" when this server answers and a session through each
 	// route class works: the proxies have subscribed to their event streams and
 	// the relay has registered. Until then a scenario would fail as an outage
 	// that has nothing to do with what it tests.
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		_, err := northGet("/proxies?limit=1")
+		_, err = northGet("/proxies?limit=1")
 		if err == nil {
 			a, _ := sshE(session{who: "alice", target: "appliance", command: "true"})
 			z, _ := sshE(session{who: "alice", target: "zone-host", command: "true"})
@@ -223,7 +234,31 @@ func waitFor(t *testing.T, within time.Duration, what string, cond func() bool) 
 
 // --- the north-bound API ---
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+// httpClient is the suite's operator tooling: it trusts the run's TLS CA and
+// nothing else, so a north-bound listener that served plaintext, or another
+// certificate, fails every scenario. TestMain builds it.
+var httpClient *http.Client
+
+// topologyCA is the run's TLS CA, which deploy/gen-material.sh writes.
+func topologyCA() (*x509.CertPool, error) {
+	pem, err := os.ReadFile(filepath.Join(deployDir(), "keys", "tls_ca.pem"))
+	if err != nil {
+		return nil, fmt.Errorf("the topology's TLS CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("deploy/keys/tls_ca.pem holds no certificate")
+	}
+	return pool, nil
+}
+
+// northClient trusts pool, and offers only curves when they are given (nil:
+// the standard library's own set, hybrid first).
+func northClient(pool *x509.CertPool, curves []tls.CurveID) *http.Client {
+	return &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool, CurvePreferences: curves},
+	}}
+}
 
 func northDo(method, path string, body any) (int, []byte, error) {
 	var rd io.Reader

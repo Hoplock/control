@@ -12,7 +12,9 @@
 # debian:stable-slim's OpenSSH is 9.9 or later, so it offers
 # mlkem768x25519-sha256 and a modern host key: the default algorithm profile is
 # the secure set (Hoplock/proxy#66), and a target speaking less would fail every
-# scenario here as an outage that has nothing to do with what it tests.
+# scenario here as an outage that has nothing to do with what it tests. It is
+# also what the algorithm-floor scenario's met floor rests on, and the version
+# that scenario records (`ssh -V` in this image) is the evidence it names.
 # BASE_IMAGE is a build argument for one reason: a builder behind an egress
 # proxy can point apt at it with a base of its own. Every image here is built and
 # tested on the default.
@@ -35,5 +37,5 @@ RUN mkdir -p /run/sshd /root/.ssh /etc/ssh/sshd_config.d && chmod 700 /root/.ssh
 # about the proxy, not about the message of the day.
 COPY target/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
-EXPOSE 22
+EXPOSE 22 2222 2223
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

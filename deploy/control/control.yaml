@@ -32,3 +32,20 @@ credential:
   # The tenant CA's private half is encrypted under this key at rest; compose
   # hands it in from deploy/keys/kek, which gen-material.sh writes.
   key_encryption_key_env: HOPLOCK_KEK
+
+# This server's own TLS on both listeners (phase 0063, PLAN M29), from the
+# material gen-material.sh writes. Each listener states its posture on its own
+# start-up log line, and the wire-posture scenario asserts both: south REQUIRES
+# a hybrid post-quantum key exchange, so every proxy request in the run is a
+# handshake that negotiated one, and north PREFERS one, so the suite sees the
+# hybrid negotiated and a classical-only client still served.
+south:
+  tls:
+    certificate_file: /material/tls_control.pem
+    key_file: /material/tls_control.key
+    require_hybrid_kex: true
+
+north:
+  tls:
+    certificate_file: /material/tls_control.pem
+    key_file: /material/tls_control.key

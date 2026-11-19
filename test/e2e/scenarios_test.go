@@ -36,6 +36,8 @@ func TestTopology(t *testing.T) {
 	t.Run("jit_grant", testJIT)
 	t.Run("audit", testAudit)
 	t.Run("declared_algorithm_profiles", testDeclaredProfiles)
+	t.Run("wire_posture", testWirePosture)
+	t.Run("algorithm_floor", testAlgorithmFloor)
 
 	// The suite's closing claims, over everything above.
 	t.Run("no_uid_issued_twice", func(t *testing.T) { uids.assertStrictlyIncreasing(t) })

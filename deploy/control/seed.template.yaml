@@ -52,6 +52,13 @@ targets:
   - {id: ladder, hostname: ladder, zone: core, labels: {env: prod, kind: host}}
   - {id: restricted, hostname: restricted, zone: core, labels: {env: prod, kind: host}}
   - {id: cached, hostname: cached, zone: core, labels: {env: prod, kind: host}}
+  # The algorithm-floor scenario's (phase 0063): one host, three sshds, each
+  # name's route dialling one of them (deploy/target/entrypoint.sh).
+  - {id: pq, hostname: pq, zone: core, labels: {env: prod, kind: host}}
+  - {id: pq-classical, hostname: pq-classical, zone: core, labels: {env: prod, kind: host}}
+  - {id: pq-sntrup, hostname: pq-sntrup, zone: core, labels: {env: prod, kind: host}}
+  - {id: classical, hostname: classical, zone: core, labels: {env: prod, kind: host}}
+  - {id: sntrup, hostname: sntrup, zone: core, labels: {env: prod, kind: host}}
   - {id: zone-host, hostname: zone-host, zone: protected, labels: {env: prod, kind: host}}
 
 # The fleet graph (M6). proxy-edge reaches `core` itself and `protected` only

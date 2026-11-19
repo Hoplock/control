@@ -16,17 +16,18 @@ go test -tags e2e -count=1 -v -run 'TestTopology/multi_hop' ./test/e2e/
 make e2e-down   # stop it and delete everything it generated
 ```
 
-You need Docker with the compose plugin, Go, `git` and `ssh-keygen`.
+You need Docker with the compose plugin, Go, `git`, `ssh-keygen` and `openssl`.
 `deploy/build.sh` fetches the proxy at the pinned commit into `deploy/.proxy/`;
 set `HOPLOCK_PROXY_SRC=<checkout>` to build from a checkout you already have
-(CI does). The north-bound API is on `http://127.0.0.1:18081` with the token
+(CI does). The north-bound API is on `https://127.0.0.1:18081`, over the TLS
+this server terminates itself (below), with the token
 `ht.default.e2e-operator-secret`, which is how the suite reads this server's
 side and how you debug a failure:
 
 ```
 docker compose -f deploy/compose.yaml logs control proxy-edge proxy-relay
-curl -s -H 'Authorization: Bearer ht.default.e2e-operator-secret' \
-  http://127.0.0.1:18081/api/v1/tenants/default/sessions/<sess-…>/decisions
+curl -s --cacert deploy/keys/tls_ca.pem -H 'Authorization: Bearer ht.default.e2e-operator-secret' \
+  https://127.0.0.1:18081/api/v1/tenants/default/sessions/<sess-…>/decisions
 ```
 
 Behind an egress proxy that refuses the Debian mirror, `E2E_BASE_IMAGE` names
@@ -39,12 +40,13 @@ default, `debian:stable-slim`.
 | --- | --- | --- |
 | `postgres` | the store | `db` |
 | `control-init` | migrates, seeds, prints the CA bundle, exits — migrations are an explicit step (PLAN §8) | `db` |
-| `control` | this server: `test/e2e/host`, i.e. `hoplock-control` exactly, started as a host starts it (through `internal/daemon`, which `server.Main` forwards to) | `north`, `db`, `south-edge`, `south-zone` |
+| `control` | this server: `test/e2e/host`, i.e. `hoplock-control` exactly, started as a host starts it (through `internal/daemon`, which `server.Main` forwards to); both listeners serve TLS of their own | `north`, `db`, `south-edge`, `south-zone` |
 | `proxy-edge` | the proxy users reach; reaches `core` itself and accepts the relay registration | `south-edge`, `edge`, `core`, `relay` |
 | `proxy-relay` | the protected zone's proxy: SSH bound to loopback, no published port, reached only over the registration it opens **outbound** (D11) | `south-zone`, `relay`, `zone` |
-| `target` | sshd, under the names `target`, `appliance`, `certified`, `ladder`, `restricted`, `cached` | `core` |
+| `target` | three sshds (22, 2222, 2223), under the names `target`, `appliance`, `certified`, `ladder`, `restricted`, `cached`, `pq`, `pq-classical`, `pq-sntrup`, `classical`, `sntrup` | `core` |
 | `target-zone` | the same image as `zone-host`, inside the protected zone | `zone` |
 | `client` | the OpenSSH client every scenario runs | `edge` |
+| `probe` | the client image, run by `wire_posture` for one TLS handshake at a time (`compose run --rm probe`); profile `probe`, so `make e2e-up` never starts it | `south-edge` |
 
 Every network but `north` is `internal`. The client is not on `core`, so a
 target is reachable only through a proxy; `proxy-edge` is not on `zone`, so a
@@ -60,11 +62,32 @@ the appliance stand-in) and `causer`, which trusts this server's tenant CA
 through `TrustedUserCAKeys` and has no key at all (`brokered-certificate`). The
 CA bundle is what `hoplock-control ca show` printed at start-up, through the
 `ca` volume. Its OpenSSH is 9.9 or later, so the default algorithm profile
-reaches it (Hoplock/proxy#66).
+reaches it (Hoplock/proxy#66) and its sshd on 22 offers `mlkem768x25519-sha256`.
+
+The same host runs two more sshds with the same accounts and keys, differing
+only in key exchange (`target/entrypoint.sh`): **2222** offers classical
+exchanges only, and **2223** offers `sntrup761x25519-sha512@openssh.com` as its
+only hybrid, as OpenSSH 9.0 to 9.8 do. The `pq*` names' routes carry
+`algorithm_floor: pq-hybrid-kex` against 22, 2222 and 2223; `classical` and
+`sntrup` reach 2222 and 2223 with no floor, so a floor's outage there is the
+floor's alone.
+
+## TLS on this server's listeners
+
+Both listeners serve TLS from `control/control.yaml` (PLAN M29), with a
+certificate `gen-material.sh` signs from a throwaway CA for `control` and
+`127.0.0.1`; the CA's private half is deleted once it has signed. **South
+requires** a hybrid post-quantum key exchange (`require_hybrid_kex: true`), so
+every request a proxy makes in the run is a handshake that negotiated one;
+**north prefers** one, so the suite sees `X25519MLKEM768` with a default client
+and a classical-only client still served. The proxies trust the CA through
+`SSL_CERT_FILE` (`compose.yaml`), which Go reads on Linux, so nothing on the
+proxy is configured for it, and their `base_url` is `https://control:8080`.
 
 ## Seed and fixtures
 
-`gen-material.sh` generates every key into `deploy/keys/`, the CA's
+`gen-material.sh` generates every key into `deploy/keys/` — the listeners'
+TLS certificate and its CA among them — the tenant CA's
 key-encryption key into `deploy/.env`, and renders `control/seed.yaml` from
 `control/seed.template.yaml` — none of it committed. `seed` is the
 database-direct bootstrap (0019): four subjects (`alice` sre, `bob` contractor,
@@ -96,6 +119,8 @@ the uid assertion spans all of them.
 | `jit_grant` | denied, granted, allowed — with the grant on the showcase row — then denied again at expiry (M10) |
 | `audit` | the showcase join; the provisioning record's names; the negotiated record and its by-value query; both target observations |
 | `declared_algorithm_profiles` | the recorded declaration names every contract profile, every axis non-empty (Hoplock/proxy#72) |
+| `wire_posture` | north negotiates `X25519MLKEM768` (from `ConnectionState.CurveID`), still serves a classical-only client, and answers no plaintext; south negotiates `X25519MLKEM768` with the probe and refuses an `X25519`-only handshake, logging why; each listener's start-up line states its posture (M29) |
+| `algorithm_floor` | `pq-hybrid-kex` met on the default sshd, the stored negotiated record naming `mlkem768x25519-sha256` beside the floor; an outage, never a deny, with `target.algorithm_policy_unmet` (`key_exchange`, cause `floor`) and nothing provisioned, against the classical sshd and the `sntrup761`-only one; no floor connects to both on `curve25519-sha256`; each sshd's key-exchange observation stored by host and port, beside the host's rungs (Hoplock/proxy#69) |
 | `no_uid_issued_twice` | every uid the run produced, strictly increasing per target |
 | `nothing_leaked` | no ephemeral account or home survives; the standing accounts are byte-identical |
 | `no_refused_gap` | no `logging.gap` with `gap_cause: refused`: nothing the real proxy emitted was refused |

@@ -1,5 +1,6 @@
 #!/bin/sh
-# Generates every key the end-to-end topology uses into deploy/keys/, and renders
+# Generates every key the end-to-end topology uses into deploy/keys/ — the TLS
+# certificate this server's listeners serve included — and renders
 # deploy/control/seed.yaml from seed.template.yaml (deploy/README.md).
 #
 # Nothing here is committed: the seed names keys by their public blobs, so it
@@ -47,9 +48,46 @@ chmod 600 "$keys/brokered/appliance-fleet.key"
 sed 's/ hoplock-e2e-chain_proxy_relay$/ proxy-relay/' \
 	"$keys/chain_proxy_relay.pub" > "$keys/relay_authorized_keys"
 
+# This server's own TLS on both listeners (phase 0063, PLAN M29): a throwaway CA
+# for the run, and one certificate for `control` — the name the proxies dial —
+# and for 127.0.0.1, where the suite reaches the north-bound listener. The
+# proxies trust the CA through SSL_CERT_FILE (deploy/compose.yaml), which the Go
+# standard library reads on Linux, so nothing on the proxy is configured for it.
+# The CA's private half is deleted as soon as the certificate is signed: nothing
+# in the run signs anything else with it.
+tls=$(mktemp -d)
+trap 'rm -rf "$tls"' EXIT
+cat > "$tls/openssl.cnf" <<'CNF'
+[req]
+distinguished_name = dn
+prompt = no
+[dn]
+CN = hoplock-e2e TLS CA
+[ca]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+[leaf]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:control,DNS:localhost,IP:127.0.0.1
+authorityKeyIdentifier = keyid
+CNF
+openssl req -x509 -config "$tls/openssl.cnf" -extensions ca -days 7 -nodes \
+	-newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+	-keyout "$tls/ca.key" -out "$keys/tls_ca.pem" 2>/dev/null
+openssl req -new -config "$tls/openssl.cnf" -subj "/CN=control" -nodes \
+	-newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+	-keyout "$keys/tls_control.key" -out "$tls/control.csr" 2>/dev/null
+openssl x509 -req -in "$tls/control.csr" -CA "$keys/tls_ca.pem" -CAkey "$tls/ca.key" \
+	-set_serial 2 -days 7 -extfile "$tls/openssl.cnf" -extensions leaf \
+	-out "$keys/tls_control.pem" 2>/dev/null
+chmod 600 "$keys/tls_control.key"
+
 # The private halves stay 0600, which is what ssh insists on; every container
 # reads them as root.
-chmod 644 "$keys"/*.pub "$keys/relay_authorized_keys"
+chmod 644 "$keys"/*.pub "$keys/relay_authorized_keys" "$keys/tls_ca.pem" "$keys/tls_control.pem"
 
 # The key the tenant CA's private half is encrypted under at rest
 # (credential.key_encryption_key_env). Compose reads deploy/.env, so the server
