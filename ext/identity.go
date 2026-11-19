@@ -212,6 +212,12 @@ type IdentitySync interface {
 
 // KeyAlgorithm names a key type. It is a closed enum: an algorithm Control
 // cannot name is one it cannot ask a key store to produce.
+//
+// It has no post-quantum member, on purpose: OpenSSH defines no post-quantum
+// signature for certificates and golang.org/x/crypto/ssh implements none, so
+// such a member would be a key the CA could generate and never sign with. A
+// test in internal/credential fails the build the day x/crypto/ssh gains one,
+// and says what to add here (0063).
 type KeyAlgorithm int
 
 const (
@@ -224,6 +230,12 @@ const (
 )
 
 // String renders the algorithm as the stable code that crosses the wire.
+//
+// A value outside the enum renders as "unknown", which no algorithm is called,
+// rather than as a real algorithm's code. Nothing may legitimately produce such
+// a value, so the only place one appears is a bug or a corrupt row — and the
+// day a fourth member exists, rendering a stale value as Ed25519 would make
+// that bug look like a key (0063).
 func (a KeyAlgorithm) String() string {
 	switch a {
 	case KeyAlgorithmEd25519:
@@ -233,7 +245,7 @@ func (a KeyAlgorithm) String() string {
 	case KeyAlgorithmRSA4096:
 		return "rsa-4096"
 	}
-	return "ed25519"
+	return "unknown"
 }
 
 // KeyRef names one key. Keys are per-tenant, because a certificate authority
