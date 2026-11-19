@@ -422,6 +422,9 @@ type SouthConfig struct {
 	// handler rather than a suggestion: a timeout the proxy classifies as
 	// an outage is strictly better than a held connection.
 	RequestTimeout time.Duration `yaml:"request_timeout"`
+	// TLS is this listener's own TLS (0063, M29). With no certificate it
+	// serves plaintext, and TLS is terminated in front of it, if anywhere.
+	TLS TLSConfig `yaml:"tls"`
 }
 
 // MFAConfig is the challenge conversation this server owns (PLAN §6).
@@ -794,6 +797,9 @@ type NorthConfig struct {
 	// exists for a local development deployment over plain HTTP, and it is
 	// spelled "insecure" so that nobody sets it by accident.
 	InsecureCookies bool `yaml:"insecure_cookies"`
+	// TLS is this listener's own TLS (0063, M29). With no certificate it
+	// serves plaintext, and TLS is terminated in front of it, if anywhere.
+	TLS TLSConfig `yaml:"tls"`
 
 	// reportTimeoutDefaulted records that ReportTimeout was absent and
 	// filled from the request timeout, which is then its own bound: a file
@@ -943,7 +949,7 @@ func (n NorthConfig) validate() error {
 		return &FieldError{Field: "north.max_concurrent_reports",
 			Msg: "must be a positive number of generations, or absent for the default"}
 	}
-	return nil
+	return n.TLS.validate("north")
 }
 
 // validate reports the first identity setting that cannot be acted on.
@@ -1272,7 +1278,7 @@ func (s SouthConfig) validate() error {
 	if s.RequestTimeout <= 0 {
 		return &FieldError{Field: "south.request_timeout", Msg: "must not be negative"}
 	}
-	return nil
+	return s.TLS.validate("south")
 }
 
 // validate reports the first MFA setting that cannot be acted on.

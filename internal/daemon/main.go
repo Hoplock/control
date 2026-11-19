@@ -192,6 +192,13 @@ func start(ctx context.Context, cfg *config.Config, sections []config.HostSectio
 	if err != nil {
 		return err
 	}
+	// Each listener's TLS is built before anything is opened or bound, so a
+	// `tls:` block that cannot be honoured refuses the start outright
+	// rather than leaving a listener to fall back to plaintext (M29).
+	wire, err := buildWire(cfg)
+	if err != nil {
+		return err
+	}
 
 	attrs := []any{
 		"version", versionString(),
@@ -218,7 +225,7 @@ func start(ctx context.Context, cfg *config.Config, sections []config.HostSectio
 	defer st.Close()
 
 	// Both listeners are bound here and share nothing but the bring-up (M2).
-	if err := serve(ctx, cfg, st, extensions, h, log); err != nil {
+	if err := serve(ctx, cfg, st, extensions, h, wire, log); err != nil {
 		return err
 	}
 

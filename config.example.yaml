@@ -123,6 +123,42 @@ south:
   # that looks like one. Defaults to 10s.
   request_timeout: 10s
 
+  # This listener's own TLS (phase 0063, PLAN M29). Optional, and OFF while it
+  # names no certificate: the listener serves plaintext, as it always has, and
+  # whatever is in front of it terminates TLS, if anything does. Then the
+  # start-up log says `tls=off post_quantum_kex=not-stated-plaintext-listener`,
+  # because this server cannot vouch for a handshake it does not perform.
+  #
+  # With a certificate this server terminates TLS itself: TLS 1.3 only, and the
+  # key exchange is the Go standard library's own set, which offers the hybrid
+  # post-quantum X25519MLKEM768 first. The set is deliberately not configurable
+  # — a list typed here would freeze the posture at the day it was typed — and
+  # the start-up log line for this listener says `tls=on` and whether a hybrid
+  # exchange is `preferred` or `required`.
+  #
+  # A block that cannot be honoured REFUSES TO START: a certificate with no key,
+  # a key with no certificate, a file that cannot be read, or either setting
+  # below on a listener with no certificate. It never falls back to plaintext.
+  # Files are read once, at start-up; a certificate rotation is a restart.
+  tls:
+    # The certificate chain, PEM, leaf first.
+    certificate_file: ""
+    # Its private key, PEM.
+    key_file: ""
+    # When set, every client must present a certificate chaining to a CA in
+    # this file (PEM). It authenticates the connection only: a proxy still
+    # presents its bearer token, and nothing about who it is is read from the
+    # certificate (PLAN M2, M22).
+    client_ca_file: ""
+    # Refuses any handshake that does not negotiate a hybrid post-quantum key
+    # exchange (X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024). Off, a
+    # classical-only client still connects; on, it is refused during the
+    # handshake (a Go client reports it as "remote error: tls: bad
+    # certificate"), and the server logs the group it negotiated. Every proxy
+    # built with Go 1.24 or later offers X25519MLKEM768 already, unless it was
+    # built or run with GODEBUG=tlsmlkem=0.
+    require_hybrid_kex: false
+
 # MFA orchestration (PLAN §6). Optional; every field has the default shown.
 #
 # The contract makes MFA entirely this server's concern: the proxy relays and
@@ -368,6 +404,17 @@ north:
   # sets it by accident; a deployment reachable by anybody else must leave it
   # false.
   insecure_cookies: false
+
+  # This listener's own TLS (phase 0063, PLAN M29): the same four keys, with
+  # the same meaning, as `south.tls` above — and set separately, because the
+  # two listeners share nothing (M2). A browser that cannot do a hybrid key
+  # exchange cannot reach the console once require_hybrid_kex is on, so check
+  # the browsers your operators use before turning it on here.
+  tls:
+    certificate_file: ""
+    key_file: ""
+    client_ca_file: ""
+    require_hybrid_kex: false
 
 # Federation, sessions and the second factor (PLAN M7, §6, phase 0011).
 # Optional; every field has the default shown.
