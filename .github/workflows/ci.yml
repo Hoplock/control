@@ -590,6 +590,85 @@ jobs:
         if: always()
         run: cat server.log
 
+  # Are this module's dependencies vulnerable RIGHT NOW? A CI answer, not a
+  # periodic chore: this server holds credentials, signs certificates,
+  # terminates TLS and talks to a database (the Hoplock Proxy repository gates
+  # on the same question for the same reasons). Any finding reachable from
+  # this module fails the build.
+  #
+  # This job can go red with NO CODE CHANGE, the day a new advisory lands. That
+  # is the job working. The fix is an upgrade of the affected module, or — only
+  # where the vulnerable code is provably unreachable and no fix exists — a
+  # dated, signed-off justification recorded beside the exclusion. Never
+  # deleting or disabling the job. The scanner is pinned (Makefile,
+  # GOVULNCHECK_VERSION); the advisory database is deliberately not.
+  vulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Scan for known vulnerabilities
+        run: make vulncheck
+
+  # The cross-repository end-to-end suite (PLAN §9, deploy/README.md): a REAL
+  # Hoplock Proxy, built at the commit deploy/PROXY_REVISION pins, enforcing
+  # decisions from this server, over Postgres and real sshd targets. It is the
+  # only job where "decides" and "enforces" meet, and the one place a field
+  # spelled differently on each side can fail a test.
+  #
+  # What it costs, so nobody has to guess before routing around it: a few
+  # minutes on a standard runner — two Go builds, four small images, then the
+  # suite itself, about ninety seconds of it, most of that the outage and
+  # restart scenarios waiting on real timeouts. The topology's logs are printed
+  # when it fails, because the containers do not survive the job.
+  e2e:
+    name: end-to-end (real proxy, real control)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the pinned proxy revision
+        id: proxy
+        run: |
+          commit="$(sed -n -E 's/^commit=(.*)$/\1/p' deploy/PROXY_REVISION)"
+          test -n "$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "running against hoplock/proxy@$commit"
+
+      - name: Check out the Hoplock Proxy repository at the pin
+        uses: actions/checkout@v4
+        with:
+          repository: hoplock/proxy
+          ref: ${{ steps.proxy.outputs.commit }}
+          path: .proxy
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # deploy/build.sh refuses a proxy whose api/control.yaml differs from the
+      # vendored contract, so a pin that moved past a contract change fails
+      # here, naming both checksums, rather than as forty unrelated scenarios.
+      - name: Build and bring the topology up
+        env:
+          HOPLOCK_PROXY_SRC: ${{ github.workspace }}/.proxy
+        run: make e2e-up
+
+      - name: Run the scenario suite
+        run: go test -tags e2e -count=1 -v -timeout 25m ./test/e2e/
+
+      - name: Print the topology's logs
+        if: failure()
+        run: docker compose -f deploy/compose.yaml logs --no-color --timestamps | tail -n 2000
+
+      - name: Tear the topology down
+        if: always()
+        run: make e2e-down
+
   # Cuts the release a merged change names (PLAN M23): an annotated tag on the
   # merge commit, a GitHub Release with the same notes, and proof that the
   # version resolves through the public module proxy, which is what Hoplock
@@ -609,7 +688,7 @@ jobs:
   release:
     name: release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, lint, release-check, license, contract, conform, conform-self, console-checks, console-build, console-e2e]
+    needs: [test, lint, release-check, license, contract, conform, conform-self, console-checks, console-build, console-e2e, vulncheck, e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: write

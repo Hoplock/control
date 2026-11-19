@@ -89,7 +89,8 @@ through `contract-sync`. Never the other way around.
 | `ui/` | management console, embedded into the binary |
 | `internal/` | implementation packages (see `docs/PLAN.md` §3), including the forward-only SQL in `internal/store/migrations/` |
 | `contract/` | **vendored** contract from the proxy repo — never edited here |
-| `deploy/` | docker-compose topology: this server + Postgres + a real proxy |
+| `deploy/` | the end-to-end topology: this server, Postgres, a real proxy and a protected-zone proxy, real sshd targets (`deploy/README.md`) |
+| `test/e2e/` | the cross-repository scenario suite that drives it (build tag `e2e`) |
 | `docs/` | plan, session protocol, and per-phase learnings |
 | `prompts/` | queued and implemented phase prompts, audits, and the cross-repo request queues (`upstream/`, `downstream/`) |
 
@@ -147,6 +148,11 @@ bin/hoplock-control audit-verify --tenant default   # exit 1 on a break, retenti
 bin/hoplock-control audit-retention key            # the tenant's retention key and its public half
 bin/hoplock-control audit-retention rotate-key     # a new generation; older markers still verify
 ```
+
+The end-to-end suite runs a real Hoplock Proxy against this server
+(`deploy/README.md`): `make e2e` builds, starts, runs and tears it down, and
+needs Docker, `git` and `ssh-keygen` besides Go. `make vulncheck` runs the
+`govulncheck` gate CI runs on every pull request.
 
 The `go` directive in `go.mod` is a **floor**, not a preference: CI builds on
 both it and the latest stable release with `GOTOOLCHAIN=local`, so the floor is

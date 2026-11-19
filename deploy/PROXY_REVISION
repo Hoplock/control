@@ -1,0 +1,16 @@
+# The Hoplock Proxy revision the end-to-end topology builds (PLAN §9, 0061).
+#
+# Pinned, and recorded here, so that a failing scenario is attributable to a
+# change on ONE side: this file moves only in a commit that says so, and a
+# commit that changes nothing on this side but this line is a proxy change.
+#
+# It is deliberately NOT contract/UPSTREAM. That file pins the document this
+# server implements (M1); this one pins the proxy binary the suite runs against.
+# The two may differ, and `deploy/build.sh` refuses a pair whose api/control.yaml
+# differs from the vendored copy — a proxy speaking another contract would make
+# every disagreement look like a bug on whichever side the reader suspects.
+#
+# To move it: put the new commit below, run `make e2e`, and commit both the pin
+# and whatever the suite needed in one PR (deploy/README.md, "Moving the pin").
+repository=https://github.com/hoplock/proxy
+commit=97e97de3f335b5d07382e77ccee623f7058fae2c

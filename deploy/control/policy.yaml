@@ -1,0 +1,259 @@
+# The end-to-end topology's policy bundle (deploy/README.md).
+#
+# One rule per product claim, and each says which scenario in test/e2e it
+# backs, so a failing scenario leads to one rule rather than to a search. Every
+# target name below is a DNS name in deploy/compose.yaml: the proxy dials what
+# the route names, so a hostname here is an address there.
+schema_version: 1
+tenant: default
+description: the end-to-end topology's bundle
+timezone: UTC
+
+labels:
+  env: [prod]
+  kind: [host, appliance]
+
+groups: [sre, contractors, automation]
+
+scopes:
+  jit-target:
+    description: just-in-time access to the shared target, for a person who has none
+
+rules:
+  # JIT (M10): the same person, the same host, under a live grant of the scope.
+  # It comes BEFORE the deny below because the first matching rule wins
+  # (PLAN §5.3): without a grant this rule does not match, and the deny does.
+  - id: jit-target
+    description: a contractor with a live grant reaches the shared target
+    effect: allow
+    match:
+      subject:
+        groups: [contractors]
+      grant:
+        required: true
+        scopes: [jit-target]
+      target:
+        hostnames: [target]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [pty-req, shell, exec]
+      # The same guardrail as direct-shell: a command blocked under a grant is
+      # the showcase query's whole question (PLAN §7).
+      filter:
+        mode: blacklist
+        exec_mode: filtered
+        rules:
+          - match: "cat /etc/shadow*"
+            action: block_command
+            message: "That file is not readable through Hoplock."
+      credentials:
+        - method: brokered-key
+          username: netadmin
+          credential_ref: appliance-fleet
+
+  # Denied (M4): the deliberately vague message to the user, and the exact rule
+  # to the operator through explain. It is an explicit deny, rather than the
+  # absence of an allow, so that explain has a rule id to name.
+  - id: contractors-denied-prod
+    description: contractors reach no production host except under a grant
+    effect: deny
+    reason: contractors need a grant for production
+    match:
+      subject:
+        groups: [contractors]
+      target:
+        labels: {env: [prod]}
+
+  # Direct route, the three policy axes, the filtered-exec tier, and
+  # ephemeral-user (D6). `subsystem` is not a permitted request type, so sftp is
+  # refused while a shell succeeds; the one tunnel permitted is target:22; no
+  # global request is permitted, so tcpip-forward is refused and no listener is
+  # created.
+  - id: direct-shell
+    description: sre reaches the shared target with a fresh account per session
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [target]
+    route:
+      intent: hops-permitted
+      channels: [session, direct-tcpip]
+      requests:
+        types: [pty-req, shell, exec, env]
+      forwards:
+        direct_tcpip:
+          - host: target
+            port: 22
+      global_requests:
+        types: []
+      filter:
+        mode: blacklist
+        exec_mode: filtered
+        rules:
+          - match: "cat /etc/shadow*"
+            action: block_command
+            message: "That file is not readable through Hoplock."
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+      # The replayable record the direct-route scenario asserts on.
+      require_session_capture: true
+
+  # Multi-hop through the relay zone (D11): the target lives in the protected
+  # zone, which only proxy-relay reaches, and proxy-relay accepts no inbound
+  # connection at all.
+  - id: relay-zone
+    description: sre reaches the protected zone's host through the relay
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [zone-host]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [pty-req, shell, exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-key
+          username: netadmin
+          credential_ref: appliance-fleet
+
+  # brokered-key (D6a): the standing account, named in `username` as every
+  # credential method requires, and left byte-identical by every session.
+  - id: appliance
+    description: sre logs in to the appliance-like account with the fleet key
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [appliance]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [pty-req, shell, exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-key
+          username: netadmin
+          credential_ref: appliance-fleet
+
+  # brokered-certificate (Hoplock/proxy#68): this server signs a certificate
+  # for one session, and the CA-trusting account is left unmodified.
+  - id: certified
+    description: sre logs in to the CA-trusting account with a minted certificate
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [certified]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [pty-req, shell, exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-certificate
+          username: causer
+          key_type: ed25519
+          lifetime_seconds: 300
+    cache:
+      key: [subject, target, target-port, proxy, rule]
+      ttl_seconds: 300
+
+  # A failed issuance is an outage, never a walk down the ladder: the first
+  # rung is a certificate, the second a standing key, and the decision is
+  # cached so the proxy holds it while this server is stopped.
+  - id: ladder
+    description: a certificate first and the standing key second, cached
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [ladder]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [pty-req, shell, exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-certificate
+          username: causer
+          key_type: ed25519
+          lifetime_seconds: 300
+        - method: brokered-key
+          username: netadmin
+          credential_ref: appliance-fleet
+    cache:
+      key: [subject, target, target-port, proxy, rule]
+      ttl_seconds: 300
+
+  # Restricted exec (the second filtering tier): only `id`, exactly, and
+  # nothing a shell could wrap.
+  - id: restricted
+    description: the automation account may run id and nothing else
+    effect: allow
+    match:
+      subject:
+        groups: [automation]
+      target:
+        hostnames: [restricted]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [exec]
+      filter:
+        mode: whitelist
+        exec_mode: restricted
+        restricted_exec:
+          commands:
+            - executable: /usr/bin/id
+              form: positional
+      credentials:
+        - method: brokered-key
+          username: netadmin
+          credential_ref: appliance-fleet
+
+  # Cache + revocation: a cacheable decision, so revocation has a hint to
+  # withdraw and the stream's health decides whether one is issued at all.
+  - id: cached
+    description: sre reaches the cached host, under a five-minute hint
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [cached]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [pty-req, shell, exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-key
+          username: netadmin
+          credential_ref: appliance-fleet
+    cache:
+      key: [subject, target, target-port, proxy, rule]
+      ttl_seconds: 300

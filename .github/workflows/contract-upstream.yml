@@ -1,0 +1,43 @@
+name: contract upstream
+
+# "Is our vendored contract currently behind upstream?" — the same reasoning as
+# the govulncheck job in ci.yml, applied to M1 (0061). Nothing else answers it:
+# `make contract-check` is a checksum against contract/UPSTREAM that contacts
+# nothing, and the conform job checks the proxy out AT the pinned commit, on
+# purpose. Both are pin-relative by construction, so a pin that has fallen
+# behind is invisible to every PR check while the two components drift.
+#
+# It runs on its OWN trigger and never gates a pull request: a pin that is
+# behind is legitimate whenever a prompt names the re-vendor, and a blocking
+# check would turn any proxy merge into red CI on every unrelated Control PR.
+#
+# It can go amber with NO CHANGE to this repository, exactly as govulncheck
+# can go red with no code change: a proxy merge is enough. The fix is a sync,
+# or the phase that re-vendors (`make contract-sync`) — never deleting this
+# workflow.
+on:
+  schedule:
+    - cron: "41 5 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  behind:
+    name: is the vendored contract behind upstream?
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The whole history, so the commits between the pin and the head can be
+      # named rather than counted.
+      - name: Check out the Hoplock Proxy repository
+        uses: actions/checkout@v4
+        with:
+          repository: hoplock/proxy
+          path: .proxy
+          fetch-depth: 0
+
+      - name: Report the gap
+        run: ./scripts/contract-behind.sh .proxy

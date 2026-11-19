@@ -30,3 +30,11 @@ config.local.yaml
 
 # The mock certificate authority key the conformance run generates (never checked in).
 .mock-ca/
+
+# The end-to-end topology's generated state (deploy/README.md): the proxy
+# checkout and the binaries it builds, every key, and the seed rendered from them.
+/deploy/.proxy/
+/deploy/bin/
+/deploy/keys/
+/deploy/control/seed.yaml
+/deploy/.env
