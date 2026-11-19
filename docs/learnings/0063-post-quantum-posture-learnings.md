@@ -8,7 +8,7 @@
 - **Start-up line per listener:** `tls`, `min_tls_version`, `client_certificate_required`, `post_quantum_kex` = `required | preferred | not-stated-plaintext-listener`.
 - **`ext/` behaviour change:** `KeyAlgorithm.String()` renders an out-of-range value as `"unknown"` (was `"ed25519"`). Safe: nothing legitimately produces one (`generateKey` refuses it, so it is never stored), and `extdefault.parseAlgorithm` maps unknown codes independently. Listed under `### Breaking`.
 - **No PQ `KeyAlgorithm` member**, on purpose: no OpenSSH PQ certificate signature exists. `internal/credential/pqtripwire_test.go` fails the build when `x/crypto/ssh` offers any unclassified signature name, and says what to add.
-- **What the floor scenarios proved against the real proxy** (`hoplock/proxy@97e97de`): one target host, three sshds, **OpenSSH 10.2p1** (local run on an Ubuntu 26.04 base via `E2E_BASE_IMAGE`; CI's `debian:stable-slim` must be ≥ 9.9 and the scenario fails otherwise). `pq`:22 `pq-hybrid-kex` → stored `target_kex_algorithm: mlkem768x25519-sha256` beside `algorithm_floor: pq-hybrid-kex`; `pq-classical`:2222 (no hybrid) and `pq-sntrup`:2223 (sntrup761 only) → outage, `target.algorithm_policy_unmet` `key_exchange`/`floor`, nothing provisioned; no-floor routes to 2222 and 2223 → `curve25519-sha256`. Kex observations: `pq:22` `pq-hybrid-kex`, the other two `modern-kex`.
+- **What the floor scenarios proved against the real proxy** (`hoplock/proxy@97e97de`): one target host, three sshds; **CI on `debian:stable-slim` = `OpenSSH_10.0p2 Debian-7+deb13u4`**, and the same locally on `ubuntu:26.04` (`OpenSSH_10.2p1`). `pq`:22 `pq-hybrid-kex` → stored `target_kex_algorithm: mlkem768x25519-sha256` beside `algorithm_floor: pq-hybrid-kex`; `pq-classical`:2222 (no hybrid) and `pq-sntrup`:2223 (sntrup761 only) → outage, `target.algorithm_policy_unmet` `key_exchange`/`floor`, nothing provisioned; no-floor routes to 2222 and 2223 → `curve25519-sha256`. Kex observations: `pq:22` `pq-hybrid-kex`, the other two `modern-kex`. The scenario fails if the image's OpenSSH drops below 9.9.
 - **NEXT:** a phase touching routing has the floor to honour, proven on the wire above; one adding a listener calls `tlsconf.Build` with its own section. mTLS as the south-bound *credential* is still M2's, unbuilt.
 
 ## Details
@@ -100,9 +100,9 @@ classical until it is added here — erring towards refusing under
 - **Building locally behind this session's egress proxy:** the Debian mirror is
   refused, so the images were built on a local base (`ubuntu:26.04` from
   `mirror.gcr.io`, packages preinstalled) through `E2E_BASE_IMAGE`, exactly
-  what the README documents. CI builds the default. All 21 scenarios passed
-  locally; the first run's one failure was the new north check sending no
-  bearer token.
+  what the README documents. All 21 scenarios passed locally (the first
+  run's one failure was the new north check sending no bearer token), and
+  then in CI on the default Debian base, with the same recorded exchanges.
 
 ### Where an operator reads the posture
 - This server's listeners: each one's start-up line (above).
