@@ -124,6 +124,7 @@ decision.
 | **M26** | every north-bound list is bounded by its caller and says where it stopped | live | §3, §7, §10 |
 | **M27** | the north-bound listener is four namespaces — Control's API, a host's API, Control's console, a host's console — and no path is in two | live | §3, §10 |
 | **M28** | a lock, a quarantine and the directory's deactivation are standing denials applied above the engine; an inbound action pulls only levers an operator can pull, held to the scope its handler hands over, and its unlock can lift only the lock it placed | live | §3, §5, §6, §7, §10 |
+| **M29** | the wire posture of this server's own listeners is this server's to state and assert, not the ingress's to be trusted with | live | §3, §8, §9, §10 |
 
 - **M1 — The contract is owned upstream; this repo vendors it read-only.** The
   PEP↔PDP contract is `api/control.yaml` in the Hoplock Proxy repository,
@@ -1674,6 +1675,45 @@ decision.
   re-activation restores nothing that was revoked (M10). A provisioned
   subject's login through any door is refused while it stands, and a
   north-bound credential of the subject stops authenticating (§6).
+- **M29 — The wire posture of this server's own listeners is this server's to
+  state and assert, not the ingress's to be trusted with.** Each listener can
+  terminate TLS itself, from a `tls:` block in its own section (`south.tls`,
+  `north.tls`), and when it does the posture is code here rather than an
+  assumption about whatever sits in front: **TLS 1.3 only**; the key exchange is
+  **the Go standard library's own set** (`CurvePreferences` nil), which offers
+  `X25519MLKEM768` first, so a Go upgrade improves the posture and nothing here
+  freezes it; and **`require_hybrid_kex`**, per listener and off by default,
+  refuses a handshake whose negotiated group — `tls.ConnectionState.CurveID`,
+  read in `VerifyConnection` — is not a hybrid post-quantum one. A block that
+  cannot be honoured (a certificate and no key, a file that cannot be read, a
+  requirement or a client CA on a listener with no certificate) **refuses the
+  start**: a listener that fell back to plaintext because a path was wrong is
+  the failure this exists to prevent. Each listener **states its posture on its
+  start-up line** — `tls`, `min_tls_version`, and `post_quantum_kex`:
+  `required`, `preferred`, or `not-stated-plaintext-listener`, which is the
+  honest answer for a listener behind an ingress this server cannot see into.
+  A listener with no certificate serves plaintext exactly as before, so no
+  existing deployment gains a requirement.
+
+  Why it is a decision: before it, nothing in this repository stated, tested or
+  would notice a change in the wire posture, so "is this deployment
+  post-quantum on the wire?" had no answer here. It is the key exchange that has
+  the deadline — recorded traffic can be decrypted by whoever later has a
+  quantum computer — while a signature is worth forging only while what it signs
+  is trusted, and this server's target certificates live for minutes (§6). The
+  two listeners build their configurations with one constructor
+  (`internal/tlsconf`) and share nothing it returns: M2 forbids a shared chain,
+  not a shared pure function. A `client_ca_file` requires a client certificate
+  and authenticates the **transport only**; mTLS as the south-bound
+  *credential* is still M2's intended production form and is not this decision.
+  The proxy→target leg is not a listener's: its post-quantum posture is route
+  policy, the `algorithm_floor` (§5.2), and its proof is per session, the
+  stored `target.algorithms_negotiated` record (§7), so this decision adds no
+  knob for it. An operator reads the listeners' posture from their start-up
+  lines, the floor in force from the active policy and `GET …/fleet/algorithms`
+  (the console's algorithms view, 0058), and what each session negotiated from
+  `GET …/audit/negotiated` and the session's records (the console's audit and
+  explain views, 0051).
 
 ---
 
@@ -1713,6 +1753,7 @@ control/
 │   ├── extdefault/         # Control's own implementations behind the ext/ seam (M15)
 │   ├── instance/           # deployment identity, supervisory registration (M19)
 │   ├── console/            # the console's committed build (dist/), embedded and served under /console/ (M20, M27)
+│   ├── tlsconf/            # each listener's own *tls.Config, built from its own section, and its stated posture (M29)
 │   └── httpapi/
 │       ├── south/          # proxy-facing handlers (the contract)
 │       └── north/          # admin/operator/CI handlers
@@ -3592,6 +3633,16 @@ not say why, and a grant the explanation names that the inputs do not hold.
   options; there is no hostname field, so target scoping is enforced at issuance
   and recorded in `ssh_certificates.target`, which is what makes it auditable.
 
+  **The CA's algorithms are `ext.KeyAlgorithm`, a closed enum with no
+  post-quantum member, on purpose.** OpenSSH defines no post-quantum signature
+  for certificates and `x/crypto/ssh` implements none, so a member would be a
+  key the CA could generate and never sign with. When one exists, adding it is
+  a member, a branch in the software custodian and the CA, and a check that a
+  target's sshd accepts the type; `exhaustive` names every switch that forgot,
+  and a tripwire in `internal/credential` fails the build the day
+  `x/crypto/ssh` offers one, naming those steps. A value outside the enum
+  renders as `unknown`, never as a real algorithm.
+
   **Rotation answers the outstanding-certificate question rather than deferring
   it.** A routine rotation retires the key into the trust bundle for an overlap
   longer than the maximum certificate lifetime, so nothing it signed outlives the
@@ -4186,6 +4237,34 @@ not say why, and a grant the explanation names that the inputs do not hold.
   An instant is RFC 3339 in UTC, and a zero instant is absent, never year
   one. The guard in `internal/httpapi/north` (§3) holds it over every answer the
   package's tests produce.
+- **Each listener states and asserts its own wire (M29).** TLS, where a
+  listener's `tls:` block names a certificate, is TLS 1.3 with the standard
+  library's key-exchange set, hybrid post-quantum first; `require_hybrid_kex`
+  refuses anything else; a block that cannot be honoured refuses the start; and
+  each listener's start-up line says which. Tests prove it from
+  `tls.ConnectionState.CurveID`, never from the absence of an error.
+
+### What already survives a quantum adversary
+
+Nothing below needs changing for a post-quantum adversary, and it is written
+down so that nobody re-derives it or "fixes" it. Grover's algorithm at best
+halves the effective strength of a hash or a symmetric cipher, and at these
+sizes that leaves a margin NIST treats as adequate; none of these is a public-key
+primitive, so Shor's algorithm does not apply.
+
+- **The audit chain's SHA-256** (§7): collision and preimage resistance remain
+  far beyond reach.
+- **The CA key and the retention keys at rest, AES-256-GCM** under the
+  key-encryption key (§6): a 256-bit key keeps at least 128 bits against a
+  quantum search.
+- **Credential digests** — south-bound and API tokens stored as SHA-256 — and
+  **PBKDF2-SHA256** for passwords: the token's entropy and the work factor are
+  what matter, and neither moves.
+
+What does need a post-quantum answer is **key exchange**, which is on the wire:
+this server's listeners (M29) and the proxy→target leg's `algorithm_floor`
+(§5.2). The SSH CA's **signatures** wait for a standard (§6), which their
+minutes-long lifetime makes the right order.
 
 ---
 
@@ -4197,10 +4276,10 @@ The prototype's full topology runs in one CI job (`e2e`) with `docker compose`
 | Node | Container |
 | --- | --- |
 | Postgres | stock image, migrated and seeded by an explicit start-up step |
-| Management server | `hoplock-control` exactly, started as a host starts it (`test/e2e/host`) |
+| Management server | `hoplock-control` exactly, started as a host starts it (`test/e2e/host`), each listener serving TLS of its own (M29) |
 | Proxy | Hoplock Proxy, built at the commit `deploy/PROXY_REVISION` pins |
 | Protected-zone proxy | the same, accepting no inbound connection, reached over its outbound relay registration (D11) |
-| Targets | `sshd` with the provisioning account, an appliance-like account and a CA-trusting account |
+| Targets | `sshd` with the provisioning account, an appliance-like account and a CA-trusting account; a second and third `sshd` on the same host offering no hybrid key exchange and only `sntrup761`, for the algorithm floor |
 | Client | OpenSSH, on a network that reaches no target |
 
 The point of this topology is the thing neither repo can test alone: a **real
@@ -4226,6 +4305,15 @@ rather than a chore, and it can go red with no code change. The scheduled
 upstream — every PR check is pin-relative by construction — and reports the
 gap, never gating a PR, because a pin behind is legitimate whenever a prompt
 names the re-vendor.
+
+The topology runs with TLS on both of this server's listeners — south
+requiring a hybrid post-quantum key exchange, so every request a proxy makes is
+a handshake that negotiated one, and north preferring one — and the suite
+asserts the posture on the wire rather than reading it from the file. It also
+proves the `pq-hybrid-kex` floor against the real proxy and real sshds, on
+stored records: met with `mlkem768x25519-sha256` against the default OpenSSH,
+and an outage with `target.algorithm_policy_unmet` (cause `floor`) against an
+sshd with no hybrid and against one whose only hybrid is `sntrup761`.
 
 What the topology cannot prove is said in `deploy/README.md`: a relay
 registration's liveness (the contract has no way to report one, so the seed
@@ -4302,7 +4390,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0060 | Management console 12: one look and feel across every screen | **Built, `v0.47.0`.** Every screen audited against `ui/DESIGN.md` and against every other, fourteen items each given a verdict with evidence (its learnings). Fixed at the source: a `Notice` for every note about a page (five screen-local shapes, two of them, none with a glyph), a `Timestamp` that copies as ISO-8601 UTC (eleven screen-local `<time>`s), a `TextButton` for a row's drawer and a source line, the sign-in page and the shell on the set's controls, break-glass one hue everywhere, Fleet's algorithms view compact as Fleet is, a destructive action's success a receipt that persists, one word per concept (DESIGN.md §9's glossary). Held by `ui/test/consistency.test.ts` (DESIGN.md §10.10) and a "widths" browser job — 1024 and 900px, Explain and Audit at 768 — each check proved by a mutation; `npm run contact-sheet` lays the baseline out for review by eye. The tables that are not yet the data table are 0070's (M20, M21, M11, M23) |
 | 0061 | Cross-repo E2E topology, CI gate & hardening | **Built, `v0.48.0`.** `deploy/`: a real proxy at `deploy/PROXY_REVISION` (its `api/control.yaml` checked against the vendored one by `deploy/build.sh`) plus a protected-zone proxy reached only by its outbound relay registration, this server started as a host starts it (`test/e2e/host`), Postgres migrated and seeded by an explicit step, real sshd targets; `test/e2e/`'s nineteen scenarios as one ordered run (§9); the CI jobs `e2e`, `govulncheck` (gating, `make vulncheck`) and the scheduled, non-gating `contract upstream` notice. The showcase join now finds the real proxy's blocked commands and names each one's decision and grant (§7). The scenarios needing a test host's fake extensions, the uid-lease refusal, the fleet configuration round trip and the stream-unhealthy hint went to 0071 (M1, M4, M8, M10, M11, M17, M23) |
 | 0062 | CA custody through the key store | **Built, `v0.49.0`.** The certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |
-| 0063 | Post-quantum posture | TLS on this server's own listeners with the wire posture stated and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so, and the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
+| 0063 | Post-quantum posture | **M29**: TLS on this server's own listeners (`south.tls`, `north.tls`; `internal/tlsconf`), TLS 1.3 with the standard library's hybrid-first key exchange, the posture stated on each listener's start-up line and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so (`require_hybrid_kex`), and a block that cannot be honoured refusing the start; the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign, with a tripwire for the day `x/crypto/ssh` has one (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
 | 0064 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
 | 0065 | Policy's refusals as codes | the four places 0053 found the policy lifecycle answering in English only — a compiler parameter `detail`, an unreplayable record's reason, a refused simulation's reason, and a candidate diff's parse failure — given stable codes and typed parameters the console renders, so no policy refusal reaches an operator as prose it cannot translate (M21, M3, M19, M23) |
 | 0066 | Management console 13: a visual policy editor | the operator's ask after 0053 — "a more visual way of editing policies" — as a second view of 0053's candidate: rules in evaluation order as cards, with the default deny last; reordering by drag and by keyboard; every enumerated field a choice from the closed vocabulary (M3), generated from the server's enums and held to them by a test; a lossless round trip through a comment-preserving document, so a version is still its source (§5.6); rejections and findings on the cards they name; and a trace showing which rule a request would land on, by dry-run. No change to the schema, the compiler or storage. Queued after 0060, so it holds itself to 0060's consistency checks (M3, M4, M20, M21, M23) |
