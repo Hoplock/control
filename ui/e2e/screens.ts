@@ -72,6 +72,9 @@ const outage = (correlation: string): Substitute => ({
 });
 const main = (page: Page) => page.locator("main#content");
 
+/** Fleet's summary bar, drawn once the shell's health read has answered. */
+const fleetBar = (page: Page) => main(page).locator("[aria-labelledby=fleet-summary] svg[data-total]");
+
 /** Fixture steps that run after the seed, before any check (global-setup.ts). */
 export const SEEDS: readonly ((admin: APIRequestContext) => Promise<void>)[] = [
   seedFleet,
@@ -1191,7 +1194,16 @@ export const SCREENS: readonly E2EScreen[] = [
     kind: "console",
     path: "/console/fleet",
     densities: true,
-    ready: (page) => main(page).locator("table tbody tr[data-row]").first().waitFor(),
+    // Ready is the table AND the summary's bar. They are two reads that answer
+    // in either order — the table is GET …/proxies, the bar the shell's
+    // GET …/instance/health — so a screen ready on the table alone was ready
+    // by whichever came first, and the bar test reading the segments once saw
+    // none (0061: CI on PR #162; with the health answer held 1.5 s in the
+    // browser it failed every time). The loading state had the same race (0060).
+    ready: async (page) => {
+      await main(page).locator("table tbody tr[data-row]").first().waitFor();
+      await fleetBar(page).waitFor();
+    },
     states: {
       loading: {
         substitute: [[`${API}/proxies`, { kind: "hang" }]],
@@ -1200,7 +1212,7 @@ export const SCREENS: readonly E2EScreen[] = [
         // caught the bar or its skeleton by which answer came first (0060).
         ready: async (page) => {
           await main(page).locator("[data-state=loading]").waitFor();
-          await main(page).locator("[aria-labelledby=fleet-summary] svg[data-total]").waitFor();
+          await fleetBar(page).waitFor();
         },
       },
       empty: {

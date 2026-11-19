@@ -88,6 +88,20 @@ in 0062–0070 depends on it; move it up if the user wants it next (that is a
 renumber, PROTOCOL §6). The prompt's known-gaps list named "a UI"; the console
 (0049–0060) has since been built, so it is not listed.
 
+### A console flake fixed on the way (Fleet's health bar)
+CI's `console fleet and RBAC` failed once on this PR at `fleet.spec.ts:218`
+("the health bar is solid segments…"): the bar's segments read as `[]`. The
+cause was not this phase's code. Fleet's default `ready` (`ui/e2e/screens.ts`)
+waited for the proxies table only, but the summary bar is drawn from a second
+read — the shell's `GET …/instance/health` — and the two answer in either
+order. When the table won, the test read the segments once (`evaluateAll`,
+which does not retry) before the bar existed. 0060's 440600b had fixed exactly
+this race for the loading state alone. Holding the health answer 1.5 s or 4 s
+in the browser reproduced it every time; the default `ready` now waits for the
+bar too (`fleetBar`, shared with the loading state), and with the answer held
+0, 1.5 and 4 s it passes. Any new Fleet state, or any screen drawn from more
+than one read, needs its `ready` to wait for every read it draws.
+
 ### Known gaps (the next prompts' seed)
 Multi-node event fan-out and HA, external anchoring for the audit chain,
 device posture, real scale and geo testing (PLAN §11), plus the two the
