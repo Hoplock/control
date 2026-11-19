@@ -60,6 +60,7 @@ import {
 } from "./PolicyParts";
 import { isRollback, readVersion, rejectionsOf, versionName, versionStatus } from "./policyModel";
 import styles from "./Policy.module.css";
+import { Timestamp } from "../components/Timestamp";
 
 const DEFAULT_LIMIT = 100;
 
@@ -90,9 +91,7 @@ function useSetQuery(): (next: Record<string, string | undefined>) => void {
 function Instant({ at }: { at: string }) {
   const { f } = useI18n();
   return (
-    <time dateTime={f.utc(at)} title={f.utc(at)}>
-      {f.dateTime(at)}
-    </time>
+    <Timestamp at={at} />
   );
 }
 
@@ -170,7 +169,7 @@ export function PolicyScreen() {
 
   const done = (r: PolicyActivation) => {
     setActivating(null);
-    toast.success(activationMessage(t, r));
+    toast.receipt(activationMessage(t, r));
     refresh();
     refreshActive();
   };
@@ -360,7 +359,7 @@ export function PolicyVersionScreen({ version: raw }: { version: string }) {
 
   const done = (r: PolicyActivation) => {
     setActivating(null);
-    toast.success(activationMessage(t, r));
+    toast.receipt(activationMessage(t, r));
     refresh();
     refreshActive();
   };

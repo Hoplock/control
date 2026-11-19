@@ -24,7 +24,7 @@ import type {
   Simulation,
 } from "../api/types";
 import { Badge, Chip } from "../components/Badge";
-import { Button } from "../components/Button";
+import { Button, TextButton } from "../components/Button";
 import { JsonViewer, sourceLineId, SourceView, type SourceNote } from "../components/Code";
 import { CopyableId } from "../components/CopyableId";
 import { ConfirmDialog, type ConfirmFailure } from "../components/Dialog";
@@ -56,6 +56,8 @@ import {
   versionName,
 } from "./policyModel";
 import styles from "./Policy.module.css";
+import { Timestamp } from "../components/Timestamp";
+import { Notice } from "../components/Notice";
 
 /** A version's name, as data: mono, LTR, never translated (DESIGN.md §9). */
 export function VersionName({ version, title = false }: { version: number; title?: boolean }) {
@@ -83,9 +85,9 @@ function Place({ rule, line, onLine }: { rule?: string; line?: number; onLine?(l
     <span className={styles.place}>
       {line ? (
         onLine ? (
-          <button type="button" className={styles.lineLink} onClick={() => onLine(line)}>
+          <TextButton onClick={() => onLine(line)}>
             {t("policies.place.line", { line })}
-          </button>
+          </TextButton>
         ) : (
           <span>{t("policies.place.line", { line })}</span>
         )
@@ -482,9 +484,7 @@ function FlipGroups({ title, groups, kind }: { title: string; groups: readonly F
                     <Ident>{x.target}</Ident>
                   </td>
                   <td>
-                    <time dateTime={f.utc(x.decided_at)} title={f.utc(x.decided_at)}>
-                      {f.dateTime(x.decided_at)}
-                    </time>
+                    <Timestamp at={x.decided_at} />
                   </td>
                 </tr>
               ))}
@@ -518,17 +518,13 @@ export function ReplayResult({ replay }: { replay: Replay }) {
         <div>
           <dt>{t("policies.sim.window")}</dt>
           <dd>
-            <time dateTime={f.utc(replay.from)} title={f.utc(replay.from)}>
-              {f.dateTime(replay.from)}
-            </time>
+            <Timestamp at={replay.from} />
             {" – "}
-            <time dateTime={f.utc(replay.to)} title={f.utc(replay.to)}>
-              {f.dateTime(replay.to)}
-            </time>
+            <Timestamp at={replay.to} />
           </dd>
         </div>
       </dl>
-      {replay.truncated ? <p className={styles.notice}>{t("policies.sim.truncated", { count: f.number(replay.replayed) })}</p> : null}
+      {replay.truncated ? <Notice tone="warn">{t("policies.sim.truncated", { count: f.number(replay.replayed) })}</Notice> : null}
       {replay.replayed === 0 ? (
         <EmptyState title={t("policies.sim.empty.title")} body={t("policies.sim.empty.body")} />
       ) : flipped === 0 ? (

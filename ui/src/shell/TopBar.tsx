@@ -13,6 +13,8 @@
 
 import type { Health, Identity, Session, Supervisor } from "../api/types";
 import { Avatar } from "../components/Badge";
+import { Button } from "../components/Button";
+import { Select } from "../components/Field";
 import { Ident, shortInstanceId } from "../components/Ident";
 import { Menu } from "../components/Menu";
 import { Status } from "../components/Status";
@@ -53,15 +55,11 @@ export function TopBar(p: TopBarProps) {
 
   return (
     <header className={styles.bar}>
-      <button
-        type="button"
-        className={styles.menu}
-        aria-expanded={p.navOpen}
-        aria-controls="console-nav"
-        onClick={() => p.onNav(!p.navOpen)}
-      >
-        {p.navOpen ? t("shell.nav.close") : t("shell.nav.open")}
-      </button>
+      <span className={styles.menu}>
+        <Button aria-expanded={p.navOpen} aria-controls="console-nav" onClick={() => p.onNav(!p.navOpen)}>
+          {p.navOpen ? t("shell.nav.close") : t("shell.nav.open")}
+        </Button>
+      </span>
 
       <div className={styles.deployment}>
         {id && name ? (
@@ -100,13 +98,13 @@ export function TopBar(p: TopBarProps) {
       {showsTenant(p.tenants) && p.tenant ? (
         <label className={styles.field} data-testid="tenant-switch">
           <span className={styles.fieldLabel}>{t("chrome.tenant.label")}</span>
-          <select className={styles.select} value={p.tenant} onChange={(e) => p.onTenant(e.currentTarget.value)}>
+          <Select value={p.tenant} onChange={(e) => p.onTenant(e.currentTarget.value)}>
             {p.tenants.map((tenant) => (
               <option key={tenant} value={tenant} translate="no">
                 {tenant}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
       ) : null}
 

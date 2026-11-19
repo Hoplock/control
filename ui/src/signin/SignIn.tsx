@@ -15,6 +15,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { ApiClient } from "../api/client";
 import type { FederationStart, SessionIssued, SignInMethods } from "../api/types";
+import { Button } from "../components/Button";
+import { Field, Input } from "../components/Field";
 import { ErrorMessage } from "../components/States";
 import { VisuallyHidden } from "../components/VisuallyHidden";
 import { useI18n } from "../i18n/I18n";
@@ -108,10 +110,8 @@ export function SignIn({ api, onSignedIn }: { api: ApiClient; onSignedIn(): void
           >
             <h2 className={styles.heading}>{t("signIn.tenant.heading")}</h2>
             <p className={styles.help}>{t("signIn.tenant.help")}</p>
-            <label className={styles.field}>
-              <span className={styles.label}>{t("signIn.tenant.label")}</span>
-              <input
-                className={styles.input}
+            <Field label={t("signIn.tenant.label")}>
+              <Input
                 name="tenant"
                 value={draft}
                 onChange={(e) => setDraft(e.currentTarget.value)}
@@ -120,10 +120,10 @@ export function SignIn({ api, onSignedIn }: { api: ApiClient; onSignedIn(): void
                 dir="ltr"
                 required
               />
-            </label>
-            <button type="submit" className={styles.primary}>
+            </Field>
+            <Button type="submit" variant="primary" className={styles.wide}>
               {t("signIn.tenant.continue")}
-            </button>
+            </Button>
           </form>
         ) : methods.state === "loading" ? (
           <div className={styles.skeleton} aria-busy="true">
@@ -139,9 +139,9 @@ export function SignIn({ api, onSignedIn }: { api: ApiClient; onSignedIn(): void
                 {methods.data.methods.map((m) => (
                   <li key={m.name} data-connector={m.name}>
                     {m.kind === "oidc" ? (
-                      <button type="button" className={styles.primary} disabled={busy} onClick={() => start(m.name)}>
+                      <Button variant="primary" className={styles.wide} disabled={busy} onClick={() => start(m.name)}>
                         {t("signIn.method.continue", { name: m.display_name || m.name })}
-                      </button>
+                      </Button>
                     ) : (
                       <p className={styles.help}>{t("signIn.method.saml", { name: m.display_name || m.name })}</p>
                     )}
@@ -160,42 +160,34 @@ export function SignIn({ api, onSignedIn }: { api: ApiClient; onSignedIn(): void
               </ul>
             )}
             {tenant ? (
-              <button type="button" className={styles.quiet} onClick={() => setTenant(null)}>
+              <Button variant="ghost" className={styles.start} onClick={() => setTenant(null)}>
                 {t("signIn.tenant.change")}
-              </button>
+              </Button>
             ) : null}
             {methods.data.local_login ? (
               <div className={styles.breakGlass}>
-                <button
-                  type="button"
-                  className={styles.quiet}
+                <Button
+                  variant="ghost"
+                  className={styles.start}
                   aria-expanded={breakGlass}
                   aria-controls="break-glass"
                   onClick={() => setBreakGlass(!breakGlass)}
                 >
                   {t("signIn.breakGlass.toggle")}
-                </button>
+                </Button>
                 {breakGlass ? (
                   <form id="break-glass" className={styles.form} onSubmit={local}>
                     <h2 className={styles.heading}>{t("signIn.breakGlass.heading")}</h2>
                     <p className={styles.help}>{t("signIn.breakGlass.help")}</p>
-                    <label className={styles.field}>
-                      <span className={styles.label}>{t("signIn.breakGlass.login")}</span>
-                      <input className={styles.input} name="login" autoComplete="username" dir="ltr" required />
-                    </label>
-                    <label className={styles.field}>
-                      <span className={styles.label}>{t("signIn.breakGlass.password")}</span>
-                      <input
-                        className={styles.input}
-                        name="password"
-                        type="password"
-                        autoComplete="current-password"
-                        required
-                      />
-                    </label>
-                    <button type="submit" className={styles.warning} disabled={busy}>
+                    <Field label={t("signIn.breakGlass.login")}>
+                      <Input name="login" autoComplete="username" dir="ltr" required />
+                    </Field>
+                    <Field label={t("signIn.breakGlass.password")}>
+                      <Input name="password" type="password" autoComplete="current-password" required />
+                    </Field>
+                    <Button type="submit" className={styles.start} loading={busy}>
                       {t("signIn.breakGlass.submit")}
-                    </button>
+                    </Button>
                   </form>
                 ) : null}
               </div>
@@ -256,9 +248,9 @@ export function SignInCallback({ api, connector, onSignedIn }: { api: ApiClient;
           <ErrorMessage error={result.error} kind={result.state} />
         )}
         {result === "expired" || result.state === "refused" || result.state === "outage" ? (
-          <button type="button" className={styles.primary} onClick={again}>
+          <Button variant="primary" className={styles.wide} onClick={again}>
             {t("signIn.again")}
-          </button>
+          </Button>
         ) : null}
       </section>
     </main>

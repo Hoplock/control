@@ -35,6 +35,8 @@ import {
 } from "./algorithmModel";
 import { AXIS_LABEL, Idents, PqHybridNote, ProxyChips, READ_LIMIT } from "./AlgorithmParts";
 import styles from "./Algorithms.module.css";
+import { Timestamp } from "../components/Timestamp";
+import { Notice } from "../components/Notice";
 
 
 /** Fleet's views (0050's proxies, 0058's algorithms): each its own deep link. */
@@ -193,7 +195,7 @@ function Posture({ data }: { data: Posture }) {
             </tbody>
           </table>
         </div>
-        {levels.some((l) => l.state === "inProgress") ? <p className={styles.note}>{t("algorithms.levels.inProgress")}</p> : null}
+        {levels.some((l) => l.state === "inProgress") ? <Notice tone="info">{t("algorithms.levels.inProgress")}</Notice> : null}
         <PqHybridNote />
       </section>
 
@@ -284,9 +286,7 @@ function BuildCard({ build: b }: { build: Build }) {
         </h3>
         <span className={styles.meta}>
           {t("algorithms.proxies", { count: b.proxies.length })} · {t("algorithms.build.declaredAt")}{" "}
-          <time dateTime={f.utc(b.declaredAt)} title={f.utc(b.declaredAt)}>
-            {f.dateTime(b.declaredAt)}
-          </time>
+          <Timestamp at={b.declaredAt} />
         </span>
       </header>
       <ProxyChips ids={b.proxies} />

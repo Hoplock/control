@@ -1195,7 +1195,13 @@ export const SCREENS: readonly E2EScreen[] = [
     states: {
       loading: {
         substitute: [[`${API}/proxies`, { kind: "hang" }]],
-        ready: (page) => main(page).locator("[data-state=loading]").waitFor(),
+        // The summary's bar is the shell's health read, not the held list: a
+        // loading screenshot does not wait for the network, so without this it
+        // caught the bar or its skeleton by which answer came first (0060).
+        ready: async (page) => {
+          await main(page).locator("[data-state=loading]").waitFor();
+          await main(page).locator("[aria-labelledby=fleet-summary] svg[data-total]").waitFor();
+        },
       },
       empty: {
         substitute: [

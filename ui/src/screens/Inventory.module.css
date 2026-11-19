@@ -113,14 +113,6 @@
   align-items: flex-end;
   gap: var(--sp-8) var(--sp-12);
 }
-.notice {
-  margin: 0;
-  padding: var(--sp-8) var(--sp-12);
-  border-inline-start: var(--sp-2) solid var(--s-info);
-  background: var(--bg-sunken);
-  font: var(--t-body);
-  color: var(--text-primary);
-}
 /* Standing denials (0055): each denial a block of its own inside its panel,
    headed by its status, and the text a lock's holder will see set apart as
    a quotation of what their terminal prints. */

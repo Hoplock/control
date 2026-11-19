@@ -11,6 +11,7 @@ import { useLoad, type Load } from "../shell/load";
 import { useDeployment } from "../shell/Shell";
 import { buildsOf, PQ_HYBRID, PQ_HYBRID_KEX, readAll, SNTRUP_KEX, type Build } from "./algorithmModel";
 import styles from "./Algorithms.module.css";
+import { Notice } from "../components/Notice";
 
 /** At most this many proxy ids are listed beside a build or a level; the count says the rest. */
 const SHOWN = 12;
@@ -68,7 +69,7 @@ export function ProxyChips({ ids }: { ids: readonly string[] }) {
 export function PqHybridNote() {
   const { t } = useI18n();
   return (
-    <div className={styles.note} data-pq-note="">
+    <Notice tone="info" data-pq-note="">
       <p className={styles.para}>{t("algorithms.pq.explain", { level: `\u2068${PQ_HYBRID}\u2069` })}</p>
       <dl className={styles.facts}>
         <dt>{t("algorithms.pq.accepted")}</dt>
@@ -84,7 +85,7 @@ export function PqHybridNote() {
           </code>
         </dd>
       </dl>
-    </div>
+    </Notice>
   );
 }
 

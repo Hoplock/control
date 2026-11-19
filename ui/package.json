@@ -22,7 +22,8 @@
     "budget": "node scripts/budget.mjs",
     "check": "npm run typecheck && npm run lint:tokens && npm run lint:strings && npm test && npm run build && npm run budget && npm run build:pseudo",
     "e2e": "npm run build:pseudo && npm run build:gallery && playwright test",
-    "e2e:update": "npm run build:pseudo && npm run build:gallery && playwright test --update-snapshots"
+    "e2e:update": "npm run build:pseudo && npm run build:gallery && playwright test --update-snapshots",
+    "contact-sheet": "node scripts/contact-sheet.mjs"
   },
   "dependencies": {
     "@formatjs/icu-messageformat-parser": "3.5.22",

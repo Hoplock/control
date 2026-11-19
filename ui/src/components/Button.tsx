@@ -57,6 +57,17 @@ export function ButtonLink({
   return <Link {...rest} className={[styles.button, className].filter(Boolean).join(" ")} data-variant={variant} />;
 }
 
+/**
+ * A button set as a link's text, for an action inside the page rather than
+ * a place to go: opening a row's detail drawer (Fleet's proxy, an audit
+ * record), going to a source line. It inherits the text it sits in — a
+ * cell's, or an identifier's mono when it wraps one — and is underlined in
+ * the accent, as a console link is. Never for a destructive action.
+ */
+export function TextButton({ className, type = "button", ...rest }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "style">) {
+  return <button {...rest} type={type} className={[styles.text, className].filter(Boolean).join(" ")} />;
+}
+
 export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "aria-label" | "children"> {
   /** The accessible name: required, because the button has no visible text. */
   label: string;

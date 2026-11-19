@@ -1,7 +1,11 @@
-// TOASTS (DESIGN.md §7): for successful, reversible things, and they leave
-// by themselves. An error is never only a toast — a failed mutation reports
-// inline, at the form — so an error toast is a second notice of something
-// already reported in place, and it stays until it is dismissed.
+// TOASTS (DESIGN.md §7). `success` is for successful, reversible things, and
+// it leaves by itself. `receipt` is the success of a destructive action — one
+// confirmed by typing its object's name (ConfirmDialog) — and it stays until
+// it is dismissed, because what it says (a grant revoked, the sessions it
+// ended) should not vanish while the operator looks away; the audit trail,
+// not the toast, is the record. An error is never only a toast — a failed
+// mutation reports inline, at the form — so an error toast is a second
+// notice of something already reported in place, and it stays too.
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { useI18n } from "../i18n/I18n";
@@ -11,16 +15,17 @@ import styles from "./Toast.module.css";
 
 interface ToastItem {
   id: number;
-  kind: "success" | "error";
+  kind: "success" | "receipt" | "error";
   text: string;
 }
 
 interface Toasts {
   success(text: string): void;
+  receipt(text: string): void;
   error(text: string): void;
 }
 
-const Context = createContext<Toasts>({ success: () => {}, error: () => {} });
+const Context = createContext<Toasts>({ success: () => {}, receipt: () => {}, error: () => {} });
 
 const SUCCESS_MS = 5000;
 
@@ -36,7 +41,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     },
     [dismiss],
   );
-  const api = useMemo(() => ({ success: (s: string) => push("success", s), error: (s: string) => push("error", s) }), [push]);
+  const api = useMemo(
+    () => ({
+      success: (s: string) => push("success", s),
+      receipt: (s: string) => push("receipt", s),
+      error: (s: string) => push("error", s),
+    }),
+    [push],
+  );
   return (
     <Context.Provider value={api}>
       {children}
@@ -58,7 +70,7 @@ export function ToastRegion({
     <div className={styles.region}>
       <div role="status" className={styles.stack}>
         {items
-          .filter((i) => i.kind === "success")
+          .filter((i) => i.kind !== "error")
           .map((i) => (
             <Toast key={i.id} item={i} onDismiss={onDismiss} closeLabel={closeLabel} />
           ))}
@@ -77,7 +89,7 @@ export function ToastRegion({
 function Toast({ item, onDismiss, closeLabel }: { item: ToastItem; onDismiss(id: number): void; closeLabel: string }) {
   return (
     <div className={styles.toast} data-kind={item.kind}>
-      <StatusGlyph tone={item.kind === "success" ? "allow" : "warn"} />
+      <StatusGlyph tone={item.kind === "error" ? "outage" : "allow"} />
       <p className={styles.text}>{item.text}</p>
       <IconButton
         label={closeLabel}

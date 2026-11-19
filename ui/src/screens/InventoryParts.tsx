@@ -20,6 +20,7 @@ import { useLoad, type Load } from "../shell/load";
 import { useDeployment } from "../shell/Shell";
 import { problemKey, refusedField } from "./inventoryModel";
 import styles from "./Inventory.module.css";
+import { Timestamp } from "../components/Timestamp";
 
 export const DEFAULT_LIMIT = 100;
 
@@ -105,9 +106,7 @@ export function Instant({ at }: { at?: string }) {
   const { f } = useI18n();
   if (!at) return null;
   return (
-    <time dateTime={f.utc(at)} title={f.utc(at)}>
-      {f.dateTime(at)}
-    </time>
+    <Timestamp at={at} />
   );
 }
 

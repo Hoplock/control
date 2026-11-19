@@ -42,6 +42,7 @@ import {
   type LineProblem,
 } from "./standingModel";
 import styles from "./Inventory.module.css";
+import { Notice } from "../components/Notice";
 
 const subjectPath = (id: string) => `inventory/subjects/${encodeURIComponent(id)}`;
 
@@ -105,14 +106,14 @@ function Placed({ by }: { by: Lock["locked_by"] }) {
           <Link to={subjectPath(p.subject)} className={styles.link}>
             <Ident value={p.subject} />
           </Link>
-          {p.breakGlass ? <Badge tone="info">{t("inventory.subjects.breakGlass")}</Badge> : null}
+          {p.breakGlass ? <Badge tone="warn">{t("inventory.subjects.breakGlass")}</Badge> : null}
         </span>
       );
     case "credential":
       return (
         <span className={styles.chips}>
           <Ident value={p.principal} />
-          {p.breakGlass ? <Badge tone="info">{t("inventory.subjects.breakGlass")}</Badge> : null}
+          {p.breakGlass ? <Badge tone="warn">{t("inventory.subjects.breakGlass")}</Badge> : null}
         </span>
       );
   }
@@ -220,18 +221,15 @@ function Denial({ name, title, children, actions }: { name: "locked" | "quaranti
 function Undelivered({ text, error, onRetry, busy }: { text: string; error: ApiError; onRetry(): void; busy: boolean }) {
   const { t } = useI18n();
   return (
-    <div className={styles.notice} role="status" data-undelivered="">
+    <Notice tone="info" status={<StatusOf name="pending" />} role="status" data-undelivered="">
       <div className={styles.panelHead}>
-        <span className={styles.denials}>
-          <StatusOf name="pending" />
-          <span>{text}</span>
-        </span>
+        <span>{text}</span>
         <Button onClick={onRetry} loading={busy} data-retry-delivery="">
           {t("inventory.standing.undelivered.retry")}
         </Button>
       </div>
       {error.correlation_id ? <CopyableId value={error.correlation_id} /> : null}
-    </div>
+    </Notice>
   );
 }
 
@@ -293,7 +291,7 @@ export function SubjectStanding({ subject, canRevoke, onChanged }: { subject: Su
   const lock = (body: { reason: string; reason_code: string }) =>
     lever.place(
       () => api.call<LockAnswer>("subjectLock", { params, body }),
-      (a) => toast.success(t(a.placed ? "inventory.lock.placed" : "inventory.lock.already", { id: subject.id })),
+      (a) => toast.receipt(t(a.placed ? "inventory.lock.placed" : "inventory.lock.already", { id: subject.id })),
       () => {
         setDialog(null);
         onChanged();
@@ -303,7 +301,7 @@ export function SubjectStanding({ subject, canRevoke, onChanged }: { subject: Su
     const a = await api.call<UnlockAnswer>("subjectUnlock", { params, body: {} });
     if (a.kind !== "ok") return { error: a.error, kind: a.kind };
     setDialog(null);
-    toast.success(t(a.data.unlocked ? "inventory.unlock.done" : "inventory.unlock.none", { id: subject.id }));
+    toast.receipt(t(a.data.unlocked ? "inventory.unlock.done" : "inventory.unlock.none", { id: subject.id }));
     onChanged();
     return null;
   };
@@ -330,7 +328,7 @@ export function SubjectStanding({ subject, canRevoke, onChanged }: { subject: Su
           busy={lever.busy}
         />
       ) : null}
-      {subject.record_missing ? <p className={styles.notice}>{t("inventory.standing.recordMissing.body")}</p> : null}
+      {subject.record_missing ? <Notice tone="info">{t("inventory.standing.recordMissing.body")}</Notice> : null}
       {none ? <p className={styles.para}>{t("inventory.standing.none.subject")}</p> : null}
       {subject.lock ? (
         <Denial
@@ -483,7 +481,7 @@ export function TargetStanding({ target, canRevoke, onChanged }: { target: Targe
       (a) => {
         setReason("");
         setCode("");
-        toast.success(t(a.placed ? "inventory.quarantine.placed" : "inventory.quarantine.already", { id: target.id }));
+        toast.receipt(t(a.placed ? "inventory.quarantine.placed" : "inventory.quarantine.already", { id: target.id }));
       },
       () => {
         setDialog(null);
@@ -494,7 +492,7 @@ export function TargetStanding({ target, canRevoke, onChanged }: { target: Targe
     const a = await api.call<ReleaseAnswer>("targetRelease", { params, body: {} });
     if (a.kind !== "ok") return { error: a.error, kind: a.kind };
     setDialog(null);
-    toast.success(t(a.data.released ? "inventory.release.done" : "inventory.release.none", { id: target.id }));
+    toast.receipt(t(a.data.released ? "inventory.release.done" : "inventory.release.none", { id: target.id }));
     onChanged();
     return null;
   };
@@ -613,9 +611,9 @@ export function DirectoryPanel({ subject }: { subject: Subject }) {
           <Ident value={d.external_id} />
         </dd>
       </dl>
-      <p className={styles.notice} data-directory-managed="">
+      <Notice tone="info" data-directory-managed="">
         {t("inventory.directory.noEdit")}
-      </p>
+      </Notice>
     </section>
   );
 }

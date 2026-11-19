@@ -164,8 +164,8 @@ test("a paged audit query follows next to its last page, and a cut answer says s
 
 test("every filter is in the URL under /console/, and a filtered link opens filtered", async ({ browser }) => {
   const page = await open(browser, "/console/audit/records");
-  await main(page).getByLabel("Subject", { exact: true }).fill("grace");
-  await main(page).getByLabel("Subject", { exact: true }).press("Enter");
+  await main(page).getByLabel("Identity", { exact: true }).fill("grace");
+  await main(page).getByLabel("Identity", { exact: true }).press("Enter");
   await main(page).getByLabel("Kind").selectOption("command");
   await expect(page).toHaveURL(/\/console\/audit\/records\?(.*&)?subject=grace/);
   await expect(page).toHaveURL(/kind=command/);
@@ -174,7 +174,7 @@ test("every filter is in the URL under /console/, and a filtered link opens filt
   const url = page.url();
   const again = await open(browser, url);
   await expect(main(again).locator("table tbody tr[data-row]")).toHaveCount(3);
-  await expect(main(again).getByLabel("Subject", { exact: true })).toHaveValue("grace");
+  await expect(main(again).getByLabel("Identity", { exact: true })).toHaveValue("grace");
   await again.context().close();
   await page.context().close();
 });

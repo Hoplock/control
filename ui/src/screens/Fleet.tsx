@@ -14,7 +14,7 @@ import { useMemo, useState } from "react";
 import { offered } from "../api/permit";
 import type { FleetHealth, Proxy, ProxyPage, Withdrawn } from "../api/types";
 import { Badge, Chip } from "../components/Badge";
-import { Button } from "../components/Button";
+import { Button, TextButton } from "../components/Button";
 import { CodeBlock, JsonViewer } from "../components/Code";
 import { CopyableId } from "../components/CopyableId";
 import { DataTable, TableSkeleton, type Column, type TableSort } from "../components/DataTable";
@@ -36,6 +36,7 @@ import { FleetChart } from "./FleetChart";
 import { FleetViews } from "./FleetAlgorithms";
 import { applyFilters, configStatus, proxyHealth, unreachable, type FleetFilters } from "./fleetModel";
 import styles from "./Fleet.module.css";
+import { Timestamp } from "../components/Timestamp";
 
 /** How often Fleet re-reads its page while visible. */
 const REFRESH_MS = 30_000;
@@ -72,9 +73,7 @@ function Instant({ at, never }: { at?: string; never: string }) {
   const { f } = useI18n();
   if (!at) return <span className={styles.quiet}>{never}</span>;
   return (
-    <time dateTime={f.utc(at)} title={f.utc(at)}>
-      {f.dateTime(at)}
-    </time>
+    <Timestamp at={at} />
   );
 }
 
@@ -146,7 +145,7 @@ export function FleetScreen() {
     const a = await api.call<Withdrawn>("proxyWithdraw", { params: { tenant: tenant as string, proxy: p.proxy_id } });
     if (a.kind === "ok") {
       setWithdrawing(null);
-      toast.success(t("fleet.withdraw.done", { id: p.proxy_id, tokens: a.data.tokens_revoked }));
+      toast.receipt(t("fleet.withdraw.done", { id: p.proxy_id, tokens: a.data.tokens_revoked }));
       refresh();
       refreshDeployment();
       return null;
@@ -160,16 +159,14 @@ export function FleetScreen() {
       header: t("fleet.col.proxy"),
       sortValue: (p) => p.proxy_id,
       cell: (p) => (
-        <button
-          type="button"
-          className={styles.open}
+        <TextButton
           onClick={() => setQuery({ proxy: p.proxy_id })}
           aria-label={t("fleet.open", { id: p.proxy_id })}
         >
           <code dir="ltr" translate="no">
             {p.proxy_id}
           </code>
-        </button>
+        </TextButton>
       ),
     },
     {
@@ -206,7 +203,7 @@ export function FleetScreen() {
       header: t("fleet.col.relays"),
       numeric: true,
       sortValue: (p) => p.relay_registrations.length,
-      cell: (p) => (p.relay_registrations.length ? <Badge tone="info">{f.number(p.relay_registrations.length)}</Badge> : <span className={styles.quiet}>{t("fleet.none")}</span>),
+      cell: (p) => (p.relay_registrations.length ? <Badge>{f.number(p.relay_registrations.length)}</Badge> : <span className={styles.quiet}>{t("fleet.none")}</span>),
     },
     {
       id: "config",

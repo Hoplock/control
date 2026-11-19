@@ -16,12 +16,3 @@
   max-inline-size: var(--content-max);
   padding: var(--sp-64) var(--sp-24);
 }
-.retry {
-  min-block-size: var(--control-height);
-  padding: 0 var(--sp-12);
-  border: var(--border-width) solid var(--border-default);
-  border-radius: var(--r-md);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font: var(--t-body);
-}

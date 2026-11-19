@@ -25,6 +25,8 @@ import { EmptyState, ErrorMessage, ErrorState, PartialNotice, Skeleton, SpinnerO
 import { STATUS, Status, StatusGlyph, StatusOf, type StatusName, type Tone } from "../src/components/Status";
 import { Tabs } from "../src/components/Tabs";
 import { ToastRegion } from "../src/components/Toast";
+import { Notice } from "../src/components/Notice";
+import { Timestamp } from "../src/components/Timestamp";
 import { TimeRangePicker } from "../src/components/TimeRange";
 import { Timeline, TimelineSkeleton, type TimelineEvent } from "../src/components/Timeline";
 import { Tree } from "../src/components/Tree";
@@ -337,6 +339,18 @@ function Feedback() {
       <div data-component="partial">
         <PartialNotice gaps={[t("fleet.partial.unreachable", { count: 1, ids: "px-edge-07" }), t("fleet.partial.summary")]} />
       </div>
+      <div data-component="notice">
+        <Notice tone="info">{t("algorithms.levels.inProgress")}</Notice>
+        <Notice tone="warn">{t("policies.floor.warnsOnly")}</Notice>
+        <Notice tone="allow">{t("runbook.ban.inForce", { version: 3 })}</Notice>
+        <Notice tone="deny">{t("claimMapping.rejected", { count: 2 })}</Notice>
+        <Notice tone="info" status={<StatusOf name="pending" />}>
+          {t("inventory.standing.undelivered.lock", { id: "noor" })}
+        </Notice>
+      </div>
+      <div data-component="timestamp">
+        <Timestamp at="2026-01-05T09:00:00Z" />
+      </div>
     </div>
   );
 }
@@ -559,8 +573,9 @@ function Overlay({ which }: { which: string }) {
           closeLabel={t("component.toast.dismiss")}
           onDismiss={close}
           items={[
-            { id: 1, kind: "success", text: t("fleet.withdraw.done", { id: "px-spare-09", tokens: 1 }) },
-            { id: 2, kind: "error", text: t("error.unavailable") },
+            { id: 1, kind: "success", text: t("inventory.targets.saved", { id: "db-01" }) },
+            { id: 2, kind: "receipt", text: t("fleet.withdraw.done", { id: "px-spare-09", tokens: 1 }) },
+            { id: 3, kind: "error", text: t("error.unavailable") },
           ]}
         />
       );
