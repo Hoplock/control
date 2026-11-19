@@ -47,11 +47,14 @@ import (
 // caller owns its exit code and its signals, and cancelling ctx stops the
 // daemon. A host with commands of its own dispatches them before calling Main;
 // Control does not route to them. Every subcommand that reads the
-// configuration accepts the host's sections. The daemon, audit-verify and
-// audit-retention hand them to HostConfig and seal o.Registry, because those
-// three use what a host registers: audit-verify and audit-retention check and
-// sign retention with the host's ext.KeyStore exactly as the daemon does
-// (0024). No other subcommand calls HostConfig.
+// configuration accepts the host's sections. The daemon and the subcommands
+// that use what a host registers hand them to HostConfig and seal o.Registry:
+// audit-verify and audit-retention, which check and sign retention with the
+// host's ext.KeyStore exactly as the daemon does (0024); every ca subcommand
+// (show, rotate, issue, certificates), whose certificate authority keeps its
+// keys in that same key store (0062); and identity connector-put with
+// --directory-claim and --directory-source, which is refused while no
+// ext.IdentitySync is registered (0040). No other subcommand calls HostConfig.
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer, o Options) error {
 	return daemon.Main(ctx, args, stdout, stderr, o.host())
 }
@@ -95,9 +98,10 @@ type Options struct {
 	// may not shadow `listeners`. Every other unknown key is still an
 	// error. Declaring sections requires HostConfig.
 	HostSections []string
-	// HostConfig is called by Run, and by the audit-verify and
-	// audit-retention subcommands (see Main), once per section present in
-	// the file and in file order, with that section re-encoded as YAML —
+	// HostConfig is called by Run, and by the subcommands that use what a
+	// host registers — audit-verify, audit-retention, every ca subcommand,
+	// and identity connector-put tying a directory (see Main) — once per
+	// section present in the file and in file order, with that section re-encoded as YAML —
 	// before the registry is sealed, so a host may register an extension it
 	// builds from its section there, and before anything serves. An error
 	// fails start-up. Absent sections are not called.

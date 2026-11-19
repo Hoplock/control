@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/credential"
+	"github.com/hoplock/control/internal/credential/credentialtest"
 	"github.com/hoplock/control/internal/extdefault"
 	"github.com/hoplock/control/internal/httpapi/south"
 	"github.com/hoplock/control/internal/store"
@@ -546,6 +548,87 @@ func TestNoAuthorityIs503(t *testing.T) {
 		if res.Code != http.StatusServiceUnavailable {
 			t.Fatalf("issue = %d, want 503: %s", res.Code, res.Body)
 		}
+		// Either way of having a key store is named (0062).
+		var env contract.ErrorResponse
+		decode(t, res, &env)
+		for _, want := range []string{"credential.key_encryption_key_env", "ext.KeyStore"} {
+			if !strings.Contains(env.Error.Message, want) {
+				t.Errorf("the answer %q does not name %s", env.Error.Message, want)
+			}
+		}
+	})
+}
+
+// A CA key the key store does not produce is an operator's 503, never a 401
+// (M11), and nothing is signed (0062): a key the store answers it does not hold
+// — made in Control's custodian before custody moved — and a store that cannot
+// be asked are told apart by code, and each message names the key and the
+// store asked.
+func TestACAKeyTheKeyStoreCannotProduceIs503AndNeverA401(t *testing.T) {
+	t.Parallel()
+	const storeName = "registered ext.KeyStore " + credentialtest.Provider
+	hsm := func(t *testing.T, h *harness, keys *credentialtest.KeyStore) *credential.CA {
+		t.Helper()
+		ca, err := credential.New(h.store, keys, credential.WithKeyStoreName(storeName),
+			credential.WithLogger(slog.New(slog.DiscardHandler)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.rebuild(t, func(o *south.Options) { o.CA = ca })
+		return ca
+	}
+	certificates := func(t *testing.T, h *harness) int {
+		t.Helper()
+		var n int
+		if err := h.store.Pool().QueryRow(t.Context(), `SELECT count(*) FROM ssh_certificates`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	check := func(t *testing.T, h *harness, code string, says ...string) {
+		t.Helper()
+		decisionID := decisionFor(t, h, "cert-host.example.com")
+		line, _ := sessionKey(t)
+		res := issue(t, h, contract.CertificateRequest{SessionID: "s", DecisionID: decisionID,
+			Target: "cert-host.example.com", Username: "netadmin", PublicKey: line})
+		if res.Code == http.StatusUnauthorized || res.Code != http.StatusServiceUnavailable {
+			t.Fatalf("issue = %d, want 503 and never 401: %s", res.Code, res.Body)
+		}
+		var env contract.ErrorResponse
+		decode(t, res, &env)
+		if env.Error.Code != code {
+			t.Errorf("code = %q, want %q", env.Error.Code, code)
+		}
+		for _, want := range says {
+			if !strings.Contains(env.Error.Message, want) {
+				t.Errorf("the message %q does not say %q", env.Error.Message, want)
+			}
+		}
+		if n := certificates(t, h); n != 0 {
+			t.Errorf("%d certificates were recorded for a refused issuance", n)
+		}
+	}
+
+	t.Run("a key the store does not hold", func(t *testing.T) {
+		h, software := certHarness(t, true)
+		before, err := software.Describe(t.Context(), testTenant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hsm(t, h, credentialtest.New("pkcs11:slot-test"))
+		check(t, h, contract.ErrCodeCAKeyNotHeld, before.ActiveKeyID, credentialtest.Provider, "does not hold", "rotate")
+	})
+
+	t.Run("a store that cannot be asked", func(t *testing.T) {
+		h, _ := certHarness(t, false)
+		keys := credentialtest.New("pkcs11:slot-test")
+		ca := hsm(t, h, keys)
+		info, err := ca.Ensure(t.Context(), testTenant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys.SetDown(true)
+		check(t, h, contract.ErrCodeKeyStoreUnavailable, info.ActiveKeyID, credentialtest.Provider, "could not be asked")
 	})
 }
 

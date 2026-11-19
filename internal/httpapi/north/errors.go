@@ -76,9 +76,10 @@ const (
 	// CodeMethodNotAllowed is the wrong verb on a real path.
 	CodeMethodNotAllowed = "method_not_allowed"
 	// CodeCANotConfigured is a certificate-authority route on a deployment
-	// with no key-encryption key. It is its own code rather than an internal
-	// error because it is a CONFIGURATION answer, and the message names the
-	// key to set.
+	// with no key store: no key-encryption key and no registered
+	// ext.KeyStore. It is its own code rather than an internal error because
+	// it is a CONFIGURATION answer, and the answer names both ways to have
+	// one.
 	CodeCANotConfigured = "ca_not_configured"
 	// CodeRetentionKeyNotConfigured is a retention pass on a deployment with
 	// no key store to sign it (0024): no key-encryption key and no

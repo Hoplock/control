@@ -179,20 +179,24 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	// Retention is signed by the deployment's key store (0024), and refused
 	// without one: a marker nothing signed is one a writer of the database
 	// could have written.
+	//
+	// The key store is resolved ONCE, here, and the same value is handed to
+	// the certificate authority below (0062): one deployment, one place its
+	// keys live.
 	keys, err := buildKeyStore(cfg, st, extensions)
 	if err != nil {
 		return err
 	}
-	if keys == nil {
+	if keys.store == nil {
 		log.Warn("this deployment has no key store, so audit retention is refused",
 			"event", "retention_key_not_configured",
-			"note", "set credential.key_encryption_key_env to a variable holding 32 base64 bytes, or register an ext.KeyStore",
+			"note", noKeyStoreNote,
 		)
 	}
 	// With an archive registered, retention never deletes what it has not
 	// confirmed (0025); with none, retention is what it always was.
 	emitter, err := audit.NewEmitter(ingest,
-		audit.WithRetentionSigner(audit.NewRetentionKeys(keys)), audit.WithArchive(feed != nil))
+		audit.WithRetentionSigner(audit.NewRetentionKeys(keys.store)), audit.WithArchive(feed != nil))
 	if err != nil {
 		return err
 	}
@@ -254,8 +258,9 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	// The certificate authority (0011) serves both listeners: the north-bound
 	// surface manages it, and the south-bound one mints the per-session
 	// certificates `brokered-certificate` routes ask for (Hoplock/proxy#68).
-	// Nil when no key-encryption key is configured; both answer for that.
-	ca, err := buildCA(cfg, st, log)
+	// Its keys live in the key store resolved above, the retention keys' own
+	// (0062). Nil when there is none; both listeners answer for that.
+	ca, err := buildCA(cfg, st, keys, log)
 	if err != nil {
 		return err
 	}

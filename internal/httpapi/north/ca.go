@@ -38,19 +38,58 @@ type caResponse struct {
 }
 
 // requireCA answers the configuration error when this deployment has no
-// certificate authority, so the three CA handlers do not each have to.
+// certificate authority, so the three CA handlers do not each have to. Its
+// message names both ways to have one: the software custodian's key-encryption
+// key, or a registered key store.
 func (s *Server) requireCA(w http.ResponseWriter, r *http.Request) bool {
 	if s.ca != nil {
 		return true
 	}
 	writeError(w, http.StatusServiceUnavailable, Error{
 		Code: CodeCANotConfigured, CorrelationID: CorrelationIDFrom(r.Context()),
-		Message: "this deployment has no certificate authority: set credential.key_encryption_key_env and restart",
+		Message: "this deployment has no certificate authority: set credential.key_encryption_key_env, " +
+			"or register an ext.KeyStore, and restart",
 		Parameters: map[string]any{
 			"config_key": "credential.key_encryption_key_env",
 		},
 	})
 	return false
+}
+
+// custodyFailed answers a CA key the key store cannot produce (0062), and
+// reports whether err was one. Neither answer is ever a 401 (M11), and both
+// name the key and the store asked in their message, never in a parameter: the
+// codes are this surface's existing ones, whose parameters a client already
+// knows, so no code and no member is added and the API's version does not move.
+//
+//   - a store that could not be asked is `503 unavailable` — served on a retry
+//     once the store answers;
+//   - a key the store answers it does not hold is `500 internal` — no retry
+//     serves it, and a rotation is the way out, which the message says.
+//
+// The store's own words are logged with the correlation id, never answered.
+func (s *Server) custodyFailed(w http.ResponseWriter, r *http.Request, err error) bool {
+	var custody *credential.CustodyError
+	if !errors.As(err, &custody) {
+		return false
+	}
+	id := CorrelationIDFrom(r.Context())
+	status, answer := http.StatusInternalServerError, Error{
+		Code: CodeInternal, CorrelationID: id,
+		Message: custody.Message() + "; nothing was signed: rotate the certificate authority to generate a key in this key store",
+	}
+	if custody.Unreachable {
+		status, answer = http.StatusServiceUnavailable, Error{
+			Code: CodeUnavailable, CorrelationID: id,
+			Message: custody.Message() + "; nothing was signed, and a retry is served once the key store answers",
+		}
+	}
+	s.log.ErrorContext(r.Context(), "a certificate-authority key could not be had from the key store",
+		"event", "northbound_ca_custody", "unreachable", custody.Unreachable, "path", r.URL.Path,
+		"correlation_id", id, "tenant", custody.Tenant.String(), "ca_key_id", custody.KeyID,
+		"key_ref", custody.Ref, "key_store", custody.KeyStore, "error", err.Error())
+	writeError(w, status, answer)
+	return true
 }
 
 func (s *Server) handleCADescribe(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +107,9 @@ func (s *Server) handleCADescribe(w http.ResponseWriter, r *http.Request) {
 			Message:    "this tenant has no certificate authority yet",
 			Parameters: map[string]any{"tenant": tenant.String()},
 		})
+		return
+	}
+	if s.custodyFailed(w, r, err) {
 		return
 	}
 	if err != nil {
@@ -144,6 +186,9 @@ func (s *Server) handleCARotate(w http.ResponseWriter, r *http.Request) {
 			Message:    "this tenant has no certificate authority to rotate",
 			Parameters: map[string]any{"tenant": tenant.String()},
 		})
+		return
+	}
+	if s.custodyFailed(w, r, err) {
 		return
 	}
 	if err != nil {

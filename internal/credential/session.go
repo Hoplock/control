@@ -135,8 +135,10 @@ func decisionMismatch(reason string) error {
 // IssueForSession binds an issuance to a decision this server made, and signs.
 //
 // Its answers: a certificate; a [*MintRefusal] (401); a [*MalformedRequestError]
-// (400); [ErrNoCA] (503: an operator's fix); anything else is an outage — a
-// store failure reading the decision or writing the row is never a refusal.
+// (400); [ErrNoCA] (503: an operator's fix); a [*CustodyError] (503: the key
+// store does not hold the active key, or could not be asked, and nothing was
+// signed); anything else is an outage — a store failure reading the decision
+// or writing the row is never a refusal.
 //
 // The request's session_id is deliberately NOT required to equal the stored
 // decision's: a cached decision serves many sessions, and each asks for its own
@@ -194,7 +196,8 @@ func (c *CA) IssueForSession(ctx context.Context, tenant store.Tenant, req Sessi
 	if err != nil {
 		return SessionCertificate{}, err
 	}
-	info, err := c.Describe(ctx, tenant)
+	// The key store was asked for the signer already; the bundle is public.
+	info, _, err := c.bundle(ctx, tenant)
 	if err != nil {
 		return SessionCertificate{}, err
 	}

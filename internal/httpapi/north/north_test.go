@@ -933,6 +933,10 @@ func TestADeploymentWithNoKeyEncryptionKeyStillServesEverythingElse(t *testing.T
 	if e.Parameters["config_key"] != "credential.key_encryption_key_env" {
 		t.Errorf("the answer does not name the key to set: %v", e.Parameters)
 	}
+	// A registered key store is the other way to have a CA (0062).
+	if !strings.Contains(e.Message, "credential.key_encryption_key_env") || !strings.Contains(e.Message, "ext.KeyStore") {
+		t.Errorf("the answer %q does not name both ways to configure a CA", e.Message)
+	}
 
 	// And a route that does not need the CA still works.
 	req, err = http.NewRequest("GET", ts.URL+"/api/v1/session", nil)

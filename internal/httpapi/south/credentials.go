@@ -29,7 +29,11 @@ import (
 //     may be served under it, a target or account it did not name, or a
 //     decision made for another proxy;
 //   - 503 through [noAuthority] — a tenant with no CA, or a deployment with
-//     no `credential.key_encryption_key_env`;
+//     no key store (no `credential.key_encryption_key_env` and no registered
+//     ext.KeyStore);
+//   - 503 through [noCustody] — the tenant's active CA key is one the key
+//     store answers it does not hold, or the store could not be asked, and
+//     nothing was signed (0062);
 //
 // and everything else — a store failure reading the decision or writing the
 // row — is a 5xx, never a 401 (M11).
@@ -54,7 +58,8 @@ func (h handlers) IssueCertificate(ctx context.Context, req *contract.Certificat
 		return nil, invalid("session_id and public_key are required")
 	}
 	if h.s.ca == nil {
-		return nil, noAuthority("no certificate authority is configured on this server; set credential.key_encryption_key_env")
+		return nil, noAuthority("no certificate authority is configured on this server; " +
+			"set credential.key_encryption_key_env, or register an ext.KeyStore")
 	}
 
 	cert, err := h.s.ca.IssueForSession(ctx, caller.Tenant, credential.SessionRequest{
@@ -67,6 +72,7 @@ func (h handlers) IssueCertificate(ctx context.Context, req *contract.Certificat
 	})
 	var refusal *credential.MintRefusal
 	var malformed *credential.MalformedRequestError
+	var custody *credential.CustodyError
 	switch {
 	case errors.As(err, &refusal):
 		h.s.logDeny(ctx, contract.PathCredentialCertificate, refusal.Reason,
@@ -76,6 +82,13 @@ func (h handlers) IssueCertificate(ctx context.Context, req *contract.Certificat
 		return nil, invalid(malformed.Message)
 	case errors.Is(err, credential.ErrNoCA):
 		return nil, noAuthority("no certificate authority is configured for this tenant")
+	case errors.As(err, &custody):
+		h.s.log.ErrorContext(ctx, "a certificate could not be signed: the key store did not produce the CA key",
+			"event", "certificate_custody", "path", contract.PathCredentialCertificate,
+			"tenant", custody.Tenant.String(), "ca_key_id", custody.KeyID, "key_ref", custody.Ref,
+			"key_store", custody.KeyStore, "unreachable", custody.Unreachable, "error", custody.Error(),
+			"decision_id", req.DecisionID, "session_id", req.SessionID)
+		return nil, noCustody(custody)
 	case err != nil:
 		return nil, err
 	}

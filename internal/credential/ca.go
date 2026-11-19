@@ -4,6 +4,7 @@
 package credential
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -92,14 +93,91 @@ var (
 	// ErrPrincipalNotPermitted reports a certificate that does not carry the
 	// login it is being used for.
 	ErrPrincipalNotPermitted = errors.New("credential: the certificate does not permit that login")
+	// ErrKeyNotHeld reports a CA key the key store answered it does not
+	// hold. A [*CustodyError] carries it, naming the key and the store.
+	ErrKeyNotHeld = errors.New("credential: the key store does not hold the CA key")
+	// ErrKeyStoreUnavailable reports a key store that could not be asked
+	// about a CA key: ext.KindUnavailable, or a deadline. A [*CustodyError]
+	// carries it, naming the key and the store. It is an outage, and it is
+	// never read as the key being absent.
+	ErrKeyStoreUnavailable = errors.New("credential: the key store could not be asked about the CA key")
 )
+
+// errDifferentKey is what a key store holding some other key under a CA key's
+// name is reported with: the store holds a key there, but not the one the trust
+// bundle records, so it does not hold this one.
+var errDifferentKey = errors.New("it holds a different key under that name than this tenant's trust bundle records")
+
+// CustodyError is a CA key the key store cannot produce: one it answers it does
+// not hold, or one it could not be asked about.
+//
+// NOTHING IS SIGNED EITHER WAY, AND NOTHING ELSE IS ASKED. The CA has one key
+// store, the one the deployment resolved (a registered ext.KeyStore, else
+// Control's software custodian), and it never reaches for another to sign: that
+// would be the second code path M15 rules out, and it would sign with a key the
+// operator believes is somewhere else. Neither is a 401 either (M11): it is the
+// operator's to fix, by `ca rotate` when the key is not held, and by bringing
+// the store back when it could not be asked.
+type CustodyError struct {
+	// Tenant owns the key.
+	Tenant store.Tenant
+	// KeyID is the CA key's generation, as `tenant_ca_keys.key_id` names it.
+	KeyID string
+	// Ref is its name in the key store, `tenant_ca_keys.private_ref`:
+	// `ssh-ca:<KeyID>`.
+	Ref string
+	// KeyStore names the key store that was asked.
+	KeyStore string
+	// Op is what it was asked: "describe", "sign with" or "generate".
+	Op string
+	// Unreachable is true when the store could not be asked, and false
+	// when it answered that it does not hold the key.
+	Unreachable bool
+	// Err is the store's own answer. It is logged and never disclosed: a
+	// vendor's error text is not this server's to promise is safe to show.
+	Err error
+}
+
+// Message states the error without the key store's own words, for an answer a
+// caller is shown.
+func (e *CustodyError) Message() string {
+	if e.Unreachable {
+		return fmt.Sprintf("the key store, %s, could not be asked to %s tenant %s's CA key %s (%s)",
+			e.KeyStore, e.Op, e.Tenant, e.KeyID, e.Ref)
+	}
+	return fmt.Sprintf("the key store, %s, does not hold tenant %s's CA key %s (%s)",
+		e.KeyStore, e.Tenant, e.KeyID, e.Ref)
+}
+
+// Error is Message with the key store's own answer, for the log.
+func (e *CustodyError) Error() string {
+	msg := "credential: " + e.Message()
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+// Unwrap answers [ErrKeyNotHeld] or [ErrKeyStoreUnavailable], and the store's
+// own error.
+func (e *CustodyError) Unwrap() []error {
+	sentinel := ErrKeyNotHeld
+	if e.Unreachable {
+		sentinel = ErrKeyStoreUnavailable
+	}
+	if e.Err == nil {
+		return []error{sentinel}
+	}
+	return []error{sentinel, e.Err}
+}
 
 // CA issues short-lived target certificates.
 type CA struct {
-	st   *store.Store
-	keys ext.KeyStore
-	log  *slog.Logger
-	now  func() time.Time
+	st       *store.Store
+	keys     ext.KeyStore
+	keysName string
+	log      *slog.Logger
+	now      func() time.Time
 
 	validity    time.Duration
 	maxValidity time.Duration
@@ -119,6 +197,18 @@ func WithKeyStore(ks ext.KeyStore) Option {
 	return func(c *CA) {
 		if ks != nil {
 			c.keys = ks
+		}
+	}
+}
+
+// WithKeyStoreName names the key store for an operator: the provider of a
+// registered ext.KeyStore, or Control's software custodian. A [*CustodyError]
+// says which store was asked, because "the key is not there" is only useful
+// next to where "there" is.
+func WithKeyStoreName(name string) Option {
+	return func(c *CA) {
+		if name != "" {
+			c.keysName = name
 		}
 	}
 }
@@ -184,6 +274,7 @@ func New(st *store.Store, ks ext.KeyStore, opts ...Option) (*CA, error) {
 	c := &CA{
 		st:          st,
 		keys:        ks,
+		keysName:    "unnamed",
 		log:         slog.Default(),
 		now:         time.Now,
 		validity:    DefaultValidity,
@@ -213,7 +304,9 @@ type Info struct {
 	TrustBundle []TrustedKey
 	// CreatedAt is when the active key came into being.
 	CreatedAt time.Time
-	// Custodian says where the private half lives.
+	// Custodian says where the active key's private half lives, in the key
+	// store's own words: its `ext.KeyInfo.Custodian` for the key, asked of
+	// it, and never derived from a name.
 	Custodian string
 }
 
@@ -274,46 +367,151 @@ func (c *CA) Ensure(ctx context.Context, tenant store.Tenant) (Info, error) {
 	return c.Describe(ctx, tenant)
 }
 
-// Describe returns the tenant's authority and trust bundle.
+// Describe returns the tenant's authority and trust bundle, with the active
+// key's custodian as the key store states it.
+//
+// The key store is asked about the active key, so a key it does not hold, or a
+// store that cannot be asked, is a [*CustodyError] here rather than an answer
+// naming a custodian that is not true.
 func (c *CA) Describe(ctx context.Context, tenant store.Tenant) (Info, error) {
-	keys, err := c.st.CAKeys().List(ctx, tenant)
+	info, active, err := c.bundle(ctx, tenant)
 	if err != nil {
 		return Info{}, err
 	}
+	held, err := c.describeKey(ctx, tenant, active)
+	if err != nil {
+		return Info{}, err
+	}
+	info.Custodian = held.Custodian
+	return info, nil
+}
+
+// KeyCustody is one key of a tenant's trust bundle and where its private half
+// is, as the key store answers.
+type KeyCustody struct {
+	// KeyID names the key's generation.
+	KeyID string
+	// Ref is its name in the key store.
+	Ref string
+	// Algorithm is the key's type.
+	Algorithm string
+	// PublicKey is its `authorized_keys` line, from the trust bundle.
+	PublicKey string
+	// Active reports whether it signs.
+	Active bool
+	// CreatedAt is when it came into being.
+	CreatedAt time.Time
+	// TrustedUntil is when a retired key leaves the bundle; zero on the
+	// active one.
+	TrustedUntil time.Time
+	// Custodian is the key store's own `ext.KeyInfo.Custodian` for the key,
+	// set only when it holds it.
+	Custodian string
+	// Err is nil when the key store holds the key: a [*CustodyError] when it
+	// does not or could not be asked, and the store's failure otherwise.
+	Err error
+}
+
+// Custody asks the key store about every key in the tenant's trust bundle, the
+// active one first. A key it does not hold, or cannot be asked about, is
+// reported on that key's row rather than as the call's error, so an operator
+// sees every key's custody at once — which is what `ca show` prints. The
+// error is reserved for the lifecycle itself: no CA ([ErrNoCA]), or the
+// database.
+func (c *CA) Custody(ctx context.Context, tenant store.Tenant) ([]KeyCustody, error) {
+	keys, err := c.trusted(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]KeyCustody, 0, len(keys))
+	for _, k := range keys {
+		line, lerr := authorizedLine(tenant, k)
+		if lerr != nil {
+			return nil, lerr
+		}
+		row := KeyCustody{
+			KeyID: k.KeyID, Ref: k.PrivateRef, Algorithm: k.Algorithm, PublicKey: line,
+			Active: k.Active, CreatedAt: k.CreatedAt, TrustedUntil: k.TrustedUntil,
+		}
+		held, herr := c.describeKey(ctx, tenant, k)
+		if herr != nil {
+			row.Err = herr
+		} else {
+			row.Custodian = held.Custodian
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+// trusted returns the tenant's active key, first, and every retired key still
+// inside its overlap: the keys of its trust bundle.
+func (c *CA) trusted(ctx context.Context, tenant store.Tenant) ([]store.CAKey, error) {
+	keys, err := c.st.CAKeys().List(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
 	now := c.now()
+	var active []store.CAKey
+	var retired []store.CAKey
+	for _, k := range keys {
+		switch {
+		case k.Active:
+			active = append(active, k)
+		case k.TrustedUntil.IsZero() || now.Before(k.TrustedUntil):
+			retired = append(retired, k)
+		}
+	}
+	if len(active) == 0 {
+		return nil, ErrNoCA
+	}
+	return append(active, retired...), nil
+}
+
+// bundle reads the tenant's authority and trust bundle from the CA's own
+// lifecycle (`tenant_ca_keys`), without asking the key store: what a target
+// must trust is public, and issuance and verification need nothing else. It
+// returns the active key's row beside it.
+func (c *CA) bundle(ctx context.Context, tenant store.Tenant) (Info, store.CAKey, error) {
+	keys, err := c.trusted(ctx, tenant)
+	if err != nil {
+		return Info{}, store.CAKey{}, err
+	}
 
 	var info Info
 	for _, k := range keys {
-		pub, perr := ssh.ParsePublicKey(k.PublicKey)
-		if perr != nil {
-			// A row whose public key does not parse is an outage, not
-			// a key to skip: a trust bundle silently missing an entry
-			// is a fleet-wide authentication failure that looks like a
-			// policy problem.
-			return Info{}, fmt.Errorf("credential: tenant %s's CA key %s does not parse", tenant, k.KeyID)
+		line, err := authorizedLine(tenant, k)
+		if err != nil {
+			return Info{}, store.CAKey{}, err
 		}
-		line := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub)))
-
-		switch {
-		case k.Active:
+		if k.Active {
 			info.ActiveKeyID = k.KeyID
 			info.Algorithm = k.Algorithm
 			info.ActivePublicKey = line
 			info.CreatedAt = k.CreatedAt
-			info.Custodian = custodianOf(k.PrivateRef)
 			info.TrustBundle = append(info.TrustBundle, TrustedKey{
 				KeyID: k.KeyID, PublicKey: line, Active: true,
 			})
-		case k.TrustedUntil.IsZero() || now.Before(k.TrustedUntil):
-			info.TrustBundle = append(info.TrustBundle, TrustedKey{
-				KeyID: k.KeyID, PublicKey: line, TrustedUntil: k.TrustedUntil,
-			})
+			continue
 		}
+		info.TrustBundle = append(info.TrustBundle, TrustedKey{
+			KeyID: k.KeyID, PublicKey: line, TrustedUntil: k.TrustedUntil,
+		})
 	}
-	if info.ActiveKeyID == "" {
-		return Info{}, ErrNoCA
+	return info, keys[0], nil
+}
+
+// authorizedLine renders a CA key's public half as an `authorized_keys` line.
+//
+// A row whose public key does not parse is an outage, not a key to skip: a
+// trust bundle silently missing an entry is a fleet-wide authentication failure
+// that looks like a policy problem.
+func authorizedLine(tenant store.Tenant, k store.CAKey) (string, error) {
+	pub, err := ssh.ParsePublicKey(k.PublicKey)
+	if err != nil {
+		return "", fmt.Errorf("credential: tenant %s's CA key %s does not parse", tenant, k.KeyID)
 	}
-	return info, nil
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), nil
 }
 
 // RotateRequest asks for a new CA key.
@@ -482,7 +680,9 @@ type Issued struct {
 	ValidBefore time.Time
 }
 
-// Issue signs one short-lived certificate.
+// Issue signs one short-lived certificate, with the active key's signer from the
+// CA's key store. A key that store does not hold, or a store that cannot be
+// asked, is a [*CustodyError], and nothing is signed or recorded.
 func (c *CA) Issue(ctx context.Context, tenant store.Tenant, req IssueRequest) (Issued, error) {
 	if req.SubjectID == "" {
 		return Issued{}, fmt.Errorf("credential: a certificate must name the subject it is for")
@@ -663,7 +863,8 @@ func (c *CA) Verify(ctx context.Context, tenant store.Tenant, certificate string
 		at = c.now()
 	}
 
-	info, err := c.Describe(ctx, tenant)
+	// The bundle is public, so verification asks the key store nothing.
+	info, _, err := c.bundle(ctx, tenant)
 	if err != nil {
 		return err
 	}
@@ -756,13 +957,14 @@ func (c *CA) OutstandingPage(ctx context.Context, tenant store.Tenant, p store.P
 }
 
 // generate makes a new CA key in the key store and returns its public half.
+//
+// The key is made in the CA's one key store and nowhere else: a store that
+// cannot be asked is a [*CustodyError], and nothing falls back to another.
 func (c *CA) generate(ctx context.Context, tenant store.Tenant, keyID string) (ssh.PublicKey, error) {
-	info, err := c.keys.Generate(ctx, ext.KeyRef{
-		Tenant: ext.Tenant(tenant),
-		Name:   keyRefName(keyID),
-	}, c.algorithm)
+	ref := keyRefName(keyID)
+	info, err := c.keys.Generate(ctx, ext.KeyRef{Tenant: ext.Tenant(tenant), Name: ref}, c.algorithm)
 	if err != nil {
-		return nil, err
+		return nil, c.custodyError(tenant, keyID, ref, "generate", err)
 	}
 	pub, err := ssh.NewPublicKey(info.Public)
 	if err != nil {
@@ -771,33 +973,77 @@ func (c *CA) generate(ctx context.Context, tenant store.Tenant, keyID string) (s
 	return pub, nil
 }
 
-// signer resolves the active key's signer through the key store seam.
+// describeKey asks the key store about one CA key: the store's own description
+// of it, once the public half it holds is the one the trust bundle records.
+func (c *CA) describeKey(ctx context.Context, tenant store.Tenant, key store.CAKey) (ext.KeyInfo, error) {
+	info, err := c.keys.Describe(ctx, ext.KeyRef{Tenant: ext.Tenant(tenant), Name: key.PrivateRef})
+	if err != nil {
+		return ext.KeyInfo{}, c.custodyError(tenant, key.KeyID, key.PrivateRef, "describe", err)
+	}
+	pub, err := ssh.NewPublicKey(info.Public)
+	if err != nil || !bytes.Equal(pub.Marshal(), key.PublicKey) {
+		return ext.KeyInfo{}, c.notHeld(tenant, key, "describe")
+	}
+	return info, nil
+}
+
+// signer resolves the active key's signer through the key store seam: the one
+// key store this CA was built with, and no other.
+//
+// A signer whose public half is not the key's the trust bundle records is not
+// this key, whatever it is called, and nothing is signed with it: a certificate
+// it signed would be trusted by no target, or — worse — by targets that trust
+// some other key.
 func (c *CA) signer(ctx context.Context, tenant store.Tenant, key store.CAKey) (ssh.Signer, error) {
 	cryptoSigner, err := c.keys.Signer(ctx, ext.KeyRef{
 		Tenant: ext.Tenant(tenant),
 		Name:   key.PrivateRef,
 	})
 	if err != nil {
-		return nil, err
+		return nil, c.custodyError(tenant, key.KeyID, key.PrivateRef, "sign with", err)
 	}
 	signer, err := ssh.NewSignerFromSigner(cryptoSigner)
 	if err != nil {
 		return nil, fmt.Errorf("credential: tenant %s's CA key cannot sign SSH certificates", tenant)
 	}
+	if !bytes.Equal(signer.PublicKey().Marshal(), key.PublicKey) {
+		return nil, c.notHeld(tenant, key, "sign with")
+	}
 	return signer, nil
 }
 
-// keyRefName is the name a CA key generation has in the key store. The role and
-// the generation are both in it, because rotation creates a new name.
-func keyRefName(keyID string) string { return CAKeyName + ":" + keyID }
-
-// custodianOf renders the custodian an operator sees from a stored ref.
-func custodianOf(privateRef string) string {
-	if idx := strings.Index(privateRef, ":"); idx > 0 && !strings.HasPrefix(privateRef, CAKeyName+":") {
-		return privateRef[:idx]
+// custodyError classifies a key store's answer about one CA key. Absent is
+// [ErrKeyNotHeld] (never for a generation, where it cannot mean that), and
+// unreachable — ext.KindUnavailable or a deadline — is
+// [ErrKeyStoreUnavailable]; the two are never confused, because "rotate" is
+// the answer to one and the wrong answer to the other. Anything else is the
+// store's failure, an outage, wrapped with the key it was about.
+func (c *CA) custodyError(tenant store.Tenant, keyID, ref, op string, err error) error {
+	custody := &CustodyError{Tenant: tenant, KeyID: keyID, Ref: ref, KeyStore: c.keysName, Op: op, Err: err}
+	switch {
+	case ext.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded):
+		custody.Unreachable = true
+		return custody
+	case ext.IsNotFound(err) && op != "generate":
+		return custody
 	}
-	return "software"
+	return fmt.Errorf("credential: the key store, %s, failed to %s tenant %s's CA key %s (%s): %w",
+		c.keysName, op, tenant, keyID, ref, err)
 }
+
+// notHeld is a key store holding some other key under a CA key's name.
+func (c *CA) notHeld(tenant store.Tenant, key store.CAKey, op string) error {
+	return &CustodyError{
+		Tenant: tenant, KeyID: key.KeyID, Ref: key.PrivateRef, KeyStore: c.keysName, Op: op,
+		Err: errDifferentKey,
+	}
+}
+
+// keyRefName is the name a CA key generation has in the key store, which is
+// what `tenant_ca_keys.private_ref` records. The role and the generation are
+// both in it, because rotation creates a new name. It names the key, never the
+// custodian: where the key lives is the key store's to say (`ext.KeyInfo`).
+func keyRefName(keyID string) string { return CAKeyName + ":" + keyID }
 
 // newKeyID names a generation: the day it was made, plus enough entropy that
 // two rotations on one day do not collide.

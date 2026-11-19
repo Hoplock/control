@@ -179,42 +179,42 @@ func buildFederation(
 	)
 }
 
-// buildCA wires the certificate authority, or returns nil when this deployment
-// has no key-encryption key.
+// buildCA wires the certificate authority over the deployment's key store, or
+// returns nil when it has none.
 //
-// NIL IS A LEGITIMATE ANSWER AND AN ERROR IS NOT. The software custodian refuses
-// to hold a CA private key without a key to encrypt it with, and a deployment
-// that has not set one has no CA — but it still has a console, a policy surface
-// and an audit store, so refusing to boot over it would make the product
-// unreachable to fix. The north-bound CA routes then answer
-// `ca_not_configured` naming the key to set.
+// THE KEY STORE IS AN ARGUMENT, NOT SOMETHING BUILT HERE. It is the one
+// buildKeyStore resolved — a registered ext.KeyStore, else Control's software
+// custodian over the key-encryption key — and the same value the retention keys
+// are signed with, so the CA and retention can never disagree about where this
+// deployment's keys live. The CA generates its keys there and asks it for every
+// signer; a key it does not hold is refused (credential.CustodyError), and no
+// other custodian is asked.
 //
-// A MISCONFIGURED key, on the other hand, IS an error: a variable that is named
-// and unset, or set to something that is not 32 base64 bytes, is an operator who
-// believes they have a CA.
-func buildCA(cfg *config.Config, st *store.Store, log *slog.Logger) (*credential.CA, error) {
-	kek, err := keyEncryptionKey(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if kek == nil {
+// NIL IS A LEGITIMATE ANSWER AND AN ERROR IS NOT. A deployment with neither a
+// key-encryption key nor a registered key store has no CA — but it still has a
+// console, a policy surface and an audit store, so refusing to boot over it
+// would make the product unreachable to fix. The north-bound CA routes then
+// answer `ca_not_configured` naming both ways to configure one.
+func buildCA(cfg *config.Config, st *store.Store, keys keyCustody, log *slog.Logger) (*credential.CA, error) {
+	if keys.store == nil {
 		log.Warn("this deployment has no certificate authority",
 			"event", "ssh_ca_not_configured",
-			"note", "set credential.key_encryption_key_env to a variable holding 32 base64 bytes",
+			"note", noKeyStoreNote,
 		)
 		return nil, nil
 	}
-	keys, err := extdefault.NewSoftwareKeyStore(st, kek)
-	if err != nil {
-		return nil, err
-	}
-	return credential.New(st, keys,
+	return credential.New(st, keys.store,
+		credential.WithKeyStoreName(keys.name),
 		credential.WithValidity(cfg.Credential.CertificateValidity),
 		credential.WithMaxValidity(cfg.Credential.MaxCertificateValidity),
 		credential.WithRotationOverlap(cfg.Credential.RotationOverlap),
 		credential.WithLogger(log),
 	)
 }
+
+// noKeyStoreNote is what a deployment with no key store is told to set: either
+// of the two ways to have one.
+const noKeyStoreNote = "set credential.key_encryption_key_env to a variable holding 32 base64 bytes, or register an ext.KeyStore"
 
 // keyEncryptionKey reads the software custodian's key-encryption key: nil when
 // the deployment names none, an error when it names one that cannot be used.
@@ -237,27 +237,52 @@ func keyEncryptionKey(cfg *config.Config) ([]byte, error) {
 	return kek, nil
 }
 
-// buildKeyStore is where this deployment's retention keys live (0024,
-// `ext.PointKeyStore`): a registered ext.KeyStore, or Control's software
-// custodian over the key-encryption key, or — with neither — none, and then
-// retention is refused rather than written unsigned. The daemon and
-// `audit-verify` both build it here, so the verifier checks against exactly the
-// key store the server signed with.
-func buildKeyStore(cfg *config.Config, st *store.Store, extensions *ext.Extensions) (ext.KeyStore, error) {
+// keyCustody is this deployment's one key store — where the CA's keys and the
+// retention keys live — and the name an operator knows it by. The zero value is
+// none.
+type keyCustody struct {
+	store ext.KeyStore
+	name  string
+}
+
+// softwareKeyStoreName is what Control's software custodian is called in a
+// message naming the key store that was asked.
+const softwareKeyStoreName = "Control's software custodian"
+
+// buildKeyStore is where this deployment's keys live (`ext.PointKeyStore`): a
+// registered ext.KeyStore, or Control's software custodian over the
+// key-encryption key, or — with neither — none. It is the ONE resolution: the
+// CA (0062) and the retention keys (0024) are both handed what it returns, and
+// nothing else in this package builds a key store. The daemon, `audit-verify`,
+// `audit-retention` and the `ca` subcommands all build it here, after the
+// host's registry is sealed, so a command signs and verifies with exactly the
+// key store the server does.
+func buildKeyStore(cfg *config.Config, st *store.Store, extensions *ext.Extensions) (keyCustody, error) {
 	if extensions != nil {
 		if ks, ok := extensions.KeyStore(); ok {
-			return ks, nil
+			return keyCustody{store: ks, name: registeredKeyStoreName(extensions)}, nil
 		}
 	}
 	kek, err := keyEncryptionKey(cfg)
 	if err != nil || kek == nil {
-		return nil, err
+		return keyCustody{}, err
 	}
 	software, err := extdefault.NewSoftwareKeyStore(st, kek)
 	if err != nil {
-		return nil, err
+		return keyCustody{}, err
 	}
-	return software, nil
+	return keyCustody{store: software, name: softwareKeyStoreName}, nil
+}
+
+// registeredKeyStoreName names the registered key store by its registration,
+// which is what the start-up log and `GET …/extensions` call it too.
+func registeredKeyStoreName(x *ext.Extensions) string {
+	for _, s := range x.Status() {
+		if s.Info.Point == ext.PointKeyStore && s.Registered() {
+			return "registered ext.KeyStore " + s.Registrations[0].String()
+		}
+	}
+	return "registered ext.KeyStore"
 }
 
 // decodeKEK reads a base64 key, accepting both alphabets and both paddings —

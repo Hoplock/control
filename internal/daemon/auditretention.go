@@ -63,12 +63,12 @@ func openRetentionKeys(ctx context.Context, h Host, configPath string) (*config.
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	ks, err := buildKeyStore(cfg, st, extensions)
+	keys, err := buildKeyStore(cfg, st, extensions)
 	if err != nil {
 		st.Close()
 		return nil, nil, nil, err
 	}
-	return cfg, st, audit.NewRetentionKeys(ks), nil
+	return cfg, st, audit.NewRetentionKeys(keys.store), nil
 }
 
 // openRetention is openRetentionKeys for a command that signs, with the emitter

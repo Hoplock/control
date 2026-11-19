@@ -242,13 +242,19 @@ type CAKey struct {
 	Algorithm string
 	// PublicKey is the SSH wire encoding of the public half.
 	PublicKey []byte
-	// PrivateRef names the custodian: "software", "pkcs11:slot-3",
-	// "aws-kms:arn:...". It is recorded so that an auditor asking "where is
-	// the CA key" has an answer that does not depend on asking an engineer.
+	// PrivateRef is the key's name in the deployment's key store — the
+	// `ext.KeyRef.Name` the CA generates it under and asks for its signer
+	// by, `ssh-ca:<KeyID>` — and NOT its custodian. Migration 0007's comment
+	// on `tenant_ca_keys.private_ref` says it names the custodian
+	// ("software", "pkcs11:..."); no code ever wrote that, and 0062 settled
+	// it in code: where a key's private half lives is the key store's to
+	// say (`ext.KeyInfo.Custodian`, asked of it), so a row cannot claim a
+	// custodian the store would not confirm.
 	PrivateRef string
-	// PrivateKey is AES-256-GCM ciphertext, and is written only by the
-	// software custodian. A key store holding the private half elsewhere
-	// leaves it nil.
+	// PrivateKey is never written. Migration 0007 added the column for the
+	// software custodian's ciphertext, which lives in `software_keys`
+	// instead, beside every other key it holds; a key store holding the
+	// private half elsewhere has nothing to put here either.
 	PrivateKey []byte
 	// Active is whether new certificates are signed with this key. At most
 	// one per tenant.

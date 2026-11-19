@@ -272,14 +272,15 @@ func New(o Options) (*Server, error) {
 		return nil, fmt.Errorf("httpapi/north: the standing-denial service is required: a lock and a quarantine are " +
 			"levers an operator can pull, and a listener that cannot pull them is an incident discovered mid-incident")
 	}
-	// A NIL CA IS ALLOWED, and it is the one dependency that is. The software
-	// custodian refuses to exist without a key-encryption key
-	// (`credential.key_encryption_key_env`), so a deployment that has not set
-	// one has no certificate authority — and refusing to start the whole
-	// north-bound surface over that would make the console unreachable to fix
-	// it. The routes are still registered, so the isolation test still covers
-	// them, and they answer [CodeCANotConfigured] naming the key to set: an
-	// operator-shaped answer beats a listener that will not bind.
+	// A NIL CA IS ALLOWED, and it is the one dependency that is. A deployment
+	// with no key store — no key-encryption key
+	// (`credential.key_encryption_key_env`) for the software custodian, and
+	// no registered ext.KeyStore — has no certificate authority, and refusing
+	// to start the whole north-bound surface over that would make the console
+	// unreachable to fix it. The routes are still registered, so the
+	// isolation test still covers them, and they answer [CodeCANotConfigured]
+	// naming both ways to have one: an operator-shaped answer beats a
+	// listener that will not bind.
 	codes, err := declareHost(o.HostProvider, o.HostRoutes, o.HostErrorCodes)
 	if err != nil {
 		return nil, err
@@ -484,12 +485,33 @@ func (s *Server) requireTenant(w http.ResponseWriter, r *http.Request) (store.Te
 // It is here rather than in the CA because the listener is what knows a tenant
 // is going to be served: a deployment configured for one tenant gets its CA on
 // boot, so the first session does not pay for a key generation.
+//
+// A CA KEY THE KEY STORE CANNOT PRODUCE IS SAID, NOT FATAL, AND NOT FIXED HERE
+// (0062). An active key the store does not hold — made in another custodian
+// before custody changed — or a store that cannot be asked is logged for the
+// tenant, naming the key and the store, and the server starts: its policy, its
+// console and its audit store work without the CA, and issuance answers 503
+// until an operator acts. Nothing rotates on boot, because targets must trust a
+// new key before it signs (PLAN §6); `ca rotate` is the way out.
 func (s *Server) Ensure(ctx context.Context, tenant store.Tenant) error {
 	if tenant == "" || s.ca == nil {
 		return nil
 	}
 	_, err := s.ca.Ensure(ctx, tenant)
-	return err
+	var custody *credential.CustodyError
+	if !errors.As(err, &custody) {
+		return err
+	}
+	event, note := "ssh_ca_key_not_held",
+		"issuance is refused until `hoplock-control ca rotate` generates a key in this key store; "+
+			"publish the trust bundle it prints before the new key signs"
+	if custody.Unreachable {
+		event, note = "ssh_ca_key_store_unavailable", "issuance is refused until the key store answers"
+	}
+	s.log.ErrorContext(ctx, "this tenant's certificate authority cannot sign",
+		"event", event, "tenant", tenant.String(), "ca_key_id", custody.KeyID, "key_ref", custody.Ref,
+		"key_store", custody.KeyStore, "error", custody.Error(), "note", note)
+	return nil
 }
 
 // errNoPrincipal and errTrailingBody are the two internal faults this package

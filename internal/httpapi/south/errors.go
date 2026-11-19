@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/credential"
 )
 
 // The error mapper, and the reason it is a file of its own.
@@ -67,6 +68,20 @@ func refuseToMint(code, message string) error { return contract.RefusedToMint(co
 // operator's fix, so it is neither a deny nor a 500.
 func noAuthority(message string) error {
 	return contract.Unavailable(contract.ErrCodeNoAuthority, message)
+}
+
+// noCustody builds the 503 for an issuance whose CA key the key store did not
+// produce (0062): one it answers it does not hold, or one it could not be asked
+// for. The two are told apart by code, because a rotation is the answer to one
+// and the wrong answer to the other. Like [noAuthority] it is an operator's to
+// fix, so it is neither a deny nor a 500 — and the message names the key and
+// the store asked, never the store's own words.
+func noCustody(custody *credential.CustodyError) error {
+	if custody.Unreachable {
+		return contract.Unavailable(contract.ErrCodeKeyStoreUnavailable, custody.Message()+"; nothing was signed")
+	}
+	return contract.Unavailable(contract.ErrCodeCAKeyNotHeld,
+		custody.Message()+"; nothing was signed: rotate the certificate authority to generate a key in this key store")
 }
 
 // statusFor maps a handler's error onto the status code and envelope the
