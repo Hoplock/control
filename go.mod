@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/beevik/etree v1.7.0
-	github.com/jackc/pgx/v5 v5.5.3
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/russellhaering/goxmldsig v1.6.1
 	golang.org/x/crypto v0.57.0
 	gopkg.in/yaml.v3 v3.0.1
