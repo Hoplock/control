@@ -26,10 +26,10 @@ import (
 // A CA KEY THE KEY STORE CANNOT PRODUCE, ON THE OPERATOR'S SURFACE (0062).
 //
 // Start-up says so for the tenant and starts anyway; `GET …/ca` will not name a
-// custodian the store does not confirm, answering a 5xx that names the key and
-// the store (an absent key `500 internal`, a store that cannot be asked `503
-// unavailable`, never a 401); and `POST …/ca/rotate` is the way out, needing
-// nothing from the key it retires.
+// custodian the store does not confirm, answering `503 ca_key_not_held` for an
+// absent key and `503 ca_key_store_unavailable` for a store that cannot be
+// asked, each naming the key and the store, never a 401; and `POST …/ca/rotate`
+// is the way out, needing nothing from the key it retires.
 func TestTheCARoutesAnswerForAKeyTheStoreCannotProduce(t *testing.T) {
 	var logs bytes.Buffer
 	st := storetest.New(t)
@@ -104,12 +104,16 @@ func TestTheCARoutesAnswerForAKeyTheStoreCannotProduce(t *testing.T) {
 		}
 		return resp, e
 	}
-	says := func(e north.Error, want ...string) {
+	says := func(e north.Error, keyID string, want ...string) {
 		t.Helper()
 		for _, w := range want {
 			if !strings.Contains(e.Message, w) {
 				t.Errorf("the answer %q does not say %q", e.Message, w)
 			}
+		}
+		if e.Parameters["ca_key_id"] != keyID || e.Parameters["key_ref"] != credential.CAKeyName+":"+keyID ||
+			e.Parameters["key_store"] != storeName {
+			t.Errorf("the parameters %v do not name key %s and the store %q", e.Parameters, keyID, storeName)
 		}
 		if e.CorrelationID == "" {
 			t.Error("the answer carries no correlation id")
@@ -117,10 +121,10 @@ func TestTheCARoutesAnswerForAKeyTheStoreCannotProduce(t *testing.T) {
 	}
 
 	resp, e := call("GET", "/ca")
-	if resp.StatusCode != http.StatusInternalServerError || e.Code != north.CodeInternal {
-		t.Fatalf("GET …/ca over a key the store does not hold: %d %q; want 500 internal", resp.StatusCode, e.Code)
+	if resp.StatusCode != http.StatusServiceUnavailable || e.Code != north.CodeCAKeyNotHeld {
+		t.Fatalf("GET …/ca over a key the store does not hold: %d %q; want 503 ca_key_not_held", resp.StatusCode, e.Code)
 	}
-	says(e, stranded.ActiveKeyID, storeName, "does not hold", "rotate")
+	says(e, stranded.ActiveKeyID, stranded.ActiveKeyID, storeName, "does not hold", "rotate")
 
 	// The way out: the new key in the resolved store, the old one kept for
 	// the overlap.
@@ -130,6 +134,7 @@ func TestTheCARoutesAnswerForAKeyTheStoreCannotProduce(t *testing.T) {
 	}
 	var rotated struct {
 		PreviousKeyID string `json:"previous_key_id"`
+		NewKeyID      string `json:"new_key_id"`
 		CA            struct {
 			Custodian   string                  `json:"custodian"`
 			TrustBundle []credential.TrustedKey `json:"trust_bundle"`
@@ -138,7 +143,7 @@ func TestTheCARoutesAnswerForAKeyTheStoreCannotProduce(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&rotated); err != nil {
 		t.Fatal(err)
 	}
-	if rotated.PreviousKeyID != stranded.ActiveKeyID || rotated.CA.Custodian != custodian ||
+	if rotated.PreviousKeyID != stranded.ActiveKeyID || rotated.CA.Custodian != custodian || rotated.NewKeyID == "" ||
 		len(rotated.CA.TrustBundle) != 2 || keys.Len() != 1 {
 		t.Fatalf("the rotation: %+v, %d keys in the store", rotated, keys.Len())
 	}
@@ -151,10 +156,16 @@ func TestTheCARoutesAnswerForAKeyTheStoreCannotProduce(t *testing.T) {
 	keys.SetDown(true)
 	for _, route := range [][2]string{{"GET", "/ca"}, {"POST", "/ca/rotate"}} {
 		resp, e := call(route[0], route[1])
-		if resp.StatusCode != http.StatusServiceUnavailable || e.Code != north.CodeUnavailable {
-			t.Errorf("%s …%s with the store down: %d %q; want 503 unavailable", route[0], route[1], resp.StatusCode, e.Code)
+		if resp.StatusCode != http.StatusServiceUnavailable || e.Code != north.CodeCAKeyStoreUnavailable {
+			t.Errorf("%s …%s with the store down: %d %q; want 503 ca_key_store_unavailable",
+				route[0], route[1], resp.StatusCode, e.Code)
 		}
-		says(e, storeName, "could not be asked")
+		// GET asks about the active key; a rotation asks to make the next one.
+		if route[0] == "GET" {
+			says(e, rotated.NewKeyID, storeName, "could not be asked")
+		} else if !strings.Contains(e.Message, "could not be asked") || e.Parameters["key_store"] != storeName {
+			t.Errorf("the rotation's answer: %q %v", e.Message, e.Parameters)
+		}
 		if strings.Contains(e.Message, "does not hold") || strings.Contains(e.Message, "rotate the") {
 			t.Errorf("an outage was answered as an absent key: %q", e.Message)
 		}

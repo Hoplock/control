@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/credential"
 	"github.com/hoplock/control/internal/identity"
 	"github.com/hoplock/control/internal/store"
@@ -38,9 +39,9 @@ type caResponse struct {
 }
 
 // requireCA answers the configuration error when this deployment has no
-// certificate authority, so the three CA handlers do not each have to. Its
-// message names both ways to have one: the software custodian's key-encryption
-// key, or a registered key store.
+// certificate authority, so the three CA handlers do not each have to. It names
+// both ways to have one: the software custodian's key-encryption key, or a
+// registered key store.
 func (s *Server) requireCA(w http.ResponseWriter, r *http.Request) bool {
 	if s.ca != nil {
 		return true
@@ -50,45 +51,45 @@ func (s *Server) requireCA(w http.ResponseWriter, r *http.Request) bool {
 		Message: "this deployment has no certificate authority: set credential.key_encryption_key_env, " +
 			"or register an ext.KeyStore, and restart",
 		Parameters: map[string]any{
-			"config_key": "credential.key_encryption_key_env",
+			"config_key":      "credential.key_encryption_key_env",
+			"extension_point": ext.PointKeyStore.String(),
 		},
 	})
 	return false
 }
 
 // custodyFailed answers a CA key the key store cannot produce (0062), and
-// reports whether err was one. Neither answer is ever a 401 (M11), and both
-// name the key and the store asked in their message, never in a parameter: the
-// codes are this surface's existing ones, whose parameters a client already
-// knows, so no code and no member is added and the API's version does not move.
-//
-//   - a store that could not be asked is `503 unavailable` — served on a retry
-//     once the store answers;
-//   - a key the store answers it does not hold is `500 internal` — no retry
-//     serves it, and a rotation is the way out, which the message says.
-//
-// The store's own words are logged with the correlation id, never answered.
+// reports whether err was one. A key the store does not hold
+// ([CodeCAKeyNotHeld]) and a store that could not be asked
+// ([CodeCAKeyStoreUnavailable]) are told apart by code; both are 503 and
+// neither is ever a 401 (M11). The parameters name the key and the store; the
+// store's own words are logged with the correlation id, never answered.
 func (s *Server) custodyFailed(w http.ResponseWriter, r *http.Request, err error) bool {
 	var custody *credential.CustodyError
 	if !errors.As(err, &custody) {
 		return false
 	}
 	id := CorrelationIDFrom(r.Context())
-	status, answer := http.StatusInternalServerError, Error{
-		Code: CodeInternal, CorrelationID: id,
+	params := map[string]any{
+		"ca_key_id": custody.KeyID,
+		"key_ref":   custody.Ref,
+		"key_store": custody.KeyStore,
+	}
+	answer := Error{
+		Code: CodeCAKeyNotHeld, CorrelationID: id, Parameters: params,
 		Message: custody.Message() + "; nothing was signed: rotate the certificate authority to generate a key in this key store",
 	}
 	if custody.Unreachable {
-		status, answer = http.StatusServiceUnavailable, Error{
-			Code: CodeUnavailable, CorrelationID: id,
+		answer = Error{
+			Code: CodeCAKeyStoreUnavailable, CorrelationID: id, Parameters: params,
 			Message: custody.Message() + "; nothing was signed, and a retry is served once the key store answers",
 		}
 	}
 	s.log.ErrorContext(r.Context(), "a certificate-authority key could not be had from the key store",
-		"event", "northbound_ca_custody", "unreachable", custody.Unreachable, "path", r.URL.Path,
+		"event", "northbound_ca_custody", "code", answer.Code, "path", r.URL.Path,
 		"correlation_id", id, "tenant", custody.Tenant.String(), "ca_key_id", custody.KeyID,
 		"key_ref", custody.Ref, "key_store", custody.KeyStore, "error", err.Error())
-	writeError(w, status, answer)
+	writeError(w, http.StatusServiceUnavailable, answer)
 	return true
 }
 

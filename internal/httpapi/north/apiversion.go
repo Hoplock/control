@@ -58,13 +58,15 @@ import (
 // (0051), 4 adds the group reads and the holder filters on the subject and
 // role-binding lists (0054), and 5 adds the claim mapping's `group_map`, the
 // first member added after version 1, and `?record=missing` on the subject
-// list (0055). A new request header or query parameter is additive, like a new
+// list (0055), and 6 adds the codes `ca_key_not_held` and
+// `ca_key_store_unavailable` on the certificate-authority routes and
+// `extension_point` on `ca_not_configured` (0062). A new request header or query parameter is additive, like a new
 // route, and it still moves the version, so that a client can tell whether a
 // deployment honours it.
 const (
 	// APIVersion is the version this server serves by default and the
 	// newest it answers in.
-	APIVersion = 5
+	APIVersion = 6
 	// MinAPIVersion is the oldest version it still answers in.
 	MinAPIVersion = 1
 	// APIVersionHeader carries the declared version in, and the served one

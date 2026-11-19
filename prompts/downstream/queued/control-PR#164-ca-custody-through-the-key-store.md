@@ -5,8 +5,9 @@ phase 0062, released as `v0.49.0`. The certificate authority's keys now live in
 the deployment's one key store — a registered `ext.KeyStore` if any, else
 Control's software custodian — the same one the retention keys already used,
 and a CA key that store does not hold is refused rather than signed by another
-custodian. `ext`'s interfaces, the contract and the north-bound API version are
-untouched; `server` changes only in its doc comments. The obligations are its
+custodian. `ext`'s interfaces and the contract are untouched; `server` changes
+only in its doc comments; the north-bound API moves to version 6 for two new
+codes. The obligations are its
 `## Cross-repo impact` section's, for `hoplock/enterprise`.
 
 ```
@@ -34,8 +35,9 @@ per tenant, beside the `audit-retention:*` keys it already holds, and keep a
 retired one through the rotation overlap (Control never destroys one); it
 should answer ext.KindNotFound for an absent key and ext.KindUnavailable when
 it cannot be asked — Control tells the two apart (`503 ca_key_not_held` vs
-`503 key_store_unavailable` on POST /v1/credentials/certificate; `500
-internal` vs `503 unavailable` on GET …/ca) — and state a truthful
+`503 key_store_unavailable` on POST /v1/credentials/certificate; `503
+ca_key_not_held` vs `503 ca_key_store_unavailable` on GET …/ca, each with
+`ca_key_id`, `key_ref` and `key_store`) — and state a truthful
 KeyInfo.Custodian, which is now what `ca show` and GET …/ca report; (2) a CA
 key made in Control's software custodian before Enterprise's key store was
 registered is refused, not used — only a test fixture or development database,
@@ -45,7 +47,11 @@ certificates) now call HostConfig and seal the host's registry, as the daemon,
 audit-verify and audit-retention do, and the doc comments of server.Main and
 server.Options.HostConfig name every subcommand that does; no `server`
 identifier changed; (4) the pin, and what its binary now does: no migration;
-north-bound API still version 5.
+the north-bound API is version 6 (north_api_min still 1) — the codes
+`ca_key_not_held` and `ca_key_store_unavailable` on the CA routes, and
+`extension_point` beside `config_key` on `ca_not_configured` — so a client of
+Enterprise's that declares a version, or lists Control's codes, learns them,
+and Control's Deployment screen reads "6, answering 1 to 6".
 
 Work on the branch this session was given, whatever it is named — if the name
 is yours to choose, claude/sync-<short-description>. Commit with the `sync`

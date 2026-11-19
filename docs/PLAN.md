@@ -3575,10 +3575,11 @@ not say why, and a grant the explanation names that the inputs do not hold.
   `GET …/ca` say what it says. **The CA never asks another custodian.** An
   active key the store does not hold — one made before custody changed — or a
   key it holds under that name that is not the bundle's is refused, naming the
-  key and the store: `503 ca_key_not_held` from issuance, `500 internal` from
-  `GET …/ca`, never a `401` (M11), and nothing is signed. A store that cannot be
-  asked is an outage told apart from it (`503 key_store_unavailable`; `503
-  unavailable` north-bound). Start-up logs either for the configured tenant
+  key and the store: `503 ca_key_not_held` from issuance and from `GET …/ca`
+  (north-bound version 6), never a `401` (M11), and nothing is signed. A store
+  that cannot be asked is an outage told apart from it (`503
+  key_store_unavailable` south-bound, `503 ca_key_store_unavailable`
+  north-bound). Start-up logs either for the configured tenant
   and starts, and **`ca rotate` is the way out**: it generates the new key in
   the resolved store and needs nothing of the old one's private half, so a
   routine rotation keeps the old key in the bundle for the overlap and a

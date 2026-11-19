@@ -79,8 +79,23 @@ const (
 	// with no key store: no key-encryption key and no registered
 	// ext.KeyStore. It is its own code rather than an internal error because
 	// it is a CONFIGURATION answer, and the answer names both ways to have
-	// one.
+	// one (`config_key`, and since version 6 `extension_point`).
 	CodeCANotConfigured = "ca_not_configured"
+	// CodeCAKeyNotHeld is a certificate-authority route for a tenant whose
+	// active CA key the deployment's key store answers it does not hold, or
+	// holds a different key under (0062, version 6): a key made in another
+	// custodian before custody changed. 503 — an operator's fix — never a
+	// 401 (M11), and nothing is signed by any other custodian. Its
+	// parameters name the key (`ca_key_id`, `key_ref`) and the store asked
+	// (`key_store`); the way out is a rotation, which generates the new key
+	// in that store.
+	CodeCAKeyNotHeld = "ca_key_not_held"
+	// CodeCAKeyStoreUnavailable is a certificate-authority route whose key
+	// store could not be asked (0062, version 6): ext's KindUnavailable, or a
+	// deadline. An outage, 503, told apart from a key the store answers it
+	// does not hold, because a rotation is the answer to that and the wrong
+	// answer to this. Its parameters are CodeCAKeyNotHeld's.
+	CodeCAKeyStoreUnavailable = "ca_key_store_unavailable"
 	// CodeRetentionKeyNotConfigured is a retention pass on a deployment with
 	// no key store to sign it (0024): no key-encryption key and no
 	// registered ext.KeyStore. It is a configuration answer, like
@@ -228,7 +243,7 @@ var AllCodes = []string{
 	CodeUnauthenticated, CodeForbidden, CodeTenantOutOfScope, CodeTenantAmbiguous,
 	CodeSubjectRequired,
 	CodeNotFound, CodeInvalidRequest, CodeLoginRefused, CodeInternal, CodeMethodNotAllowed,
-	CodeCANotConfigured, CodeRetentionKeyNotConfigured, CodeRetentionUnverified, CodeRetentionNotArchived,
+	CodeCANotConfigured, CodeCAKeyNotHeld, CodeCAKeyStoreUnavailable, CodeRetentionKeyNotConfigured, CodeRetentionUnverified, CodeRetentionNotArchived,
 	CodeGrantRequestDenied, CodeGrantWorkflowFailed, CodeGrantRequestNotPending,
 	CodeGrantRevocationUndelivered, CodeGrantWorkflowNotRegistered,
 	CodeProviderNotFound, CodePushNotSupported, CodeBindingNotFound, CodeBindingDisabled,
