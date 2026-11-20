@@ -848,10 +848,14 @@ decision.
      skew** — one customer on 1.4, another on 1.7 — so the north-bound surface
      gets an explicit version, negotiated on the same principle as
      `policy_version` does south-bound (§4): the client names what it can read,
-     and the server never answers outside it. **This retires an assumption
-     phase 0064 currently rests on** — "this product ships its proxy and its
-     server together and has no installed base" stops being true the moment
-     anyone operates a fleet of deployments, and 0064 must say so.
+     and the server never answers outside it. **The two surfaces part ways
+     here.** South-bound, proxy and server ship together and have no installed
+     base, so this server serves exactly one `policy_version` and refuses every
+     other (§4, 0064). North-bound, that stops being true the moment anyone
+     operates a fleet of deployments: a supervisor reads many releases at once,
+     so this surface keeps a range (`MinAPIVersion` to `APIVersion`) and its
+     own negotiation. The two numbers move independently and for different
+     reasons, and neither is folded into the other.
   3. **Outbound supervisory registration.** A supervised deployment sits behind
      NAT and the supervisor cannot dial in. Rather than invent a mechanism, use
      the one the fleet already proved one level down: proxy D11 has a downstream
@@ -2314,48 +2318,79 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   after it.
 
   This is the obligation that fails the worst: get it wrong and every session
-  through an older proxy in the fleet breaks at once, as an outage rather than a
-  deny, at exactly the moment a fleet is mid-upgrade. A server holding policy it
-  cannot express within the declared version says so (`5xx`, M11) instead of
-  sending fields that will be refused — the proxy's mock does exactly this and
-  is the reference behaviour.
+  through a proxy of another build breaks at once, as an outage rather than a
+  deny. A server holding policy it cannot express within the declared version
+  says so (`5xx`, M11) instead of sending fields that will be refused.
+
+  **This server serves exactly one vocabulary: the vendored document's** (0064).
+  Hoplock Control ships with its proxy, and the two move together: there is no
+  installed base of older proxies to answer, so a fleet mid-upgrade is a
+  **rollout-ordering problem rather than a code path**. A vocabulary change is a
+  coordinated cutover of proxy and server, and until a proxy of the other build
+  is replaced every session through it is refused — loudly, and visibly before
+  any user finds it (below). Three answers, and they stay three:
+
+  - **`policy_version` absent, or below the field's `minimum`:** `400
+    invalid_request` (below).
+  - **`policy_version` is the one this server serves:** answered as the policy
+    says. The assembly takes no version at all, so it has nothing to thin —
+    `TestOnlyTheGateReadsTheDeclaredVocabulary` holds that only validation, the
+    gate and the two records read the declared number.
+  - **Any other `policy_version`, lower or higher:** a `5xx`
+    (`policy_version_unsupported`) naming the number the proxy declared, the
+    number this server serves, and the `proxy_id`, so the operator reading it
+    concludes "this proxy is the wrong build" rather than "the server is
+    broken". Never `401`, because a mismatch says nothing about the user (M11);
+    never a thinned `200`, because dropping a permission is merely wrong and
+    dropping a **restriction** is a breach. The gate runs after validation and
+    before anything is read, so the answer is the same on every route — a
+    route the policy denies included — and a wrong build is never told `401`
+    on one target and `5xx` on the next.
+
+  That is **stricter than the contract requires, never looser.** The contract
+  sanctions a `5xx` naming the mismatch for a server that cannot express its
+  policy in the declared vocabulary, and leaves a server free to answer an older
+  vocabulary every route it can express — which the proxy's `cmd/mock-control`
+  does, route by route. Until 0064 this server did the same, with tiers (`5` for
+  a ladder naming `brokered-certificate`, `6` for a floor or a ban); every route
+  a tier refused is refused here too, and so is every route a tier served below
+  the current vocabulary. A future need to serve a second vocabulary — an
+  installed base this product does not have — would bring that back as a
+  deliberate decision, with a per-field table this server must then keep true
+  for every field. It needs the argument above, not just the conclusion: the
+  refusal is loud because a dropped restriction is a breach.
+
+  **The wrong build is named before a user finds it.** What each proxy declares
+  is recorded on its row as its `contract_version` before the gate can refuse
+  it (`fleet.RecordDeclaredVocabulary`, bounded by M5 like the algorithm
+  declaration), and one judgment, `fleet.VocabularyUnsupported`, says which
+  proxies are refused: the fleet view marks each
+  `contract_version_unsupported`, the tenant's fleet summary counts them and
+  goes `degraded` with the reason `proxies_contract_unsupported`, the
+  pre-publish query's verdict for each says it can serve no route, and the
+  publish-time report warns `satisfiability.contract_version_unsupported`,
+  naming each. A proxy that has declared nothing is none of these (M17).
 
   **The vocabulary is `6`, and the vendored document is `4.7.0`**
-  (`hoplock/proxy@976faaa`, vendored by 0019). Vocabulary `4` is the two
-  enforcement axes and the session bounds (§5.2), stated by `4.1.0`
-  (`Hoplock/proxy#56`). The tiers live in `internal/contract/enums.go`
-  (`VocabularyBaseline` `4`, `VocabularyBrokeredCertificate` `5`,
-  `VocabularyAlgorithmFloor` `6`, and `PolicyVersion` is the last), and
-  `requiredVersion` (`internal/decision/vocabulary.go`) answers each route's
-  tier from what it carries: a route naming `brokered-certificate` needs `5`,
-  one carrying a floor or a ban needs `6`, and every other route is answered
-  to a proxy declaring `4` unchanged. `Hoplock/proxy#65`
-  (merged) made it `4.2.0` for fleet configuration (proxy D18).
-  `Hoplock/proxy#66` (merged) made it `4.3.0` for the `default`
-  algorithm-profile tightening. `Hoplock/proxy#68` (merged) made it `4.4.0`
-  for the `brokered-certificate` credential method (§6), and it moved the
-  vocabulary to `5`. `Hoplock/proxy#69` (merged) made it `4.5.0` for the
-  algorithm floor and bans (§5.2), and it moved the vocabulary to **`6`**,
-  which upstream exports as `control.PolicyVersion`. `Hoplock/proxy#71`
-  (merged) made it `4.6.0` for what a `400` from a log endpoint costs and for
-  `session_id: ""` on any kind (§7), and left the vocabulary at `6`.
-  `Hoplock/proxy#72` (merged) made it `4.7.0` for
-  `capabilities.algorithm_profiles`, what each profile offers per build (§5.2,
-  M17), and left the vocabulary at `6`.
-  The vocabulary stood still at `4` through the first three PRs, and at `6`
-  through `#71` and `#72`. That the document moved while the vocabulary did
-  not is the normal case rather than an anomaly. The number governs
-  `/v1/authorize` and nothing else: `#56` added a field to the event stream,
-  `#65` added an event type and two endpoints, `#66` changed what an existing
-  value means at the target's handshake, and `#71` changed what the log
-  endpoints' answers mean.
-  `#68` moved it because a new **enum value** inside the authorize response is
-  vocabulary exactly as a field is, and `#69` because it added two **fields**
-  to that response, `algorithm_floor` and `algorithm_bans`. The endpoint `#68`
-  added moved nothing (below). Neither did what `#69` and `#72` added to the
-  request's `capabilities`, nor what `#69` added to the capability report,
-  because the number governs none of it. Read both numbers out of
-  `contract/control.yaml`, never from this line (0064).
+  (`hoplock/proxy@976faaa`, vendored by 0019). Read both out of
+  `contract/control.yaml`, never from this line. Each is spelled **once** in
+  the tree, in `internal/contract/version.go` (`PolicyVersion`,
+  `DocumentVersion`, and `PolicyVersionMinimum` for the field's `minimum`), and
+  `TestTheNumbersAreTheVendoredDocuments` reads every statement of the current
+  vocabulary, the field's `minimum` and `info.version` out of the vendored
+  document and fails when any disagrees — so a `make contract-sync` that moves
+  either number stops there, and a human decides what the new number means for
+  this server. `TestNoSecondVersionLiteral` keeps every other file — code,
+  fixtures, deployment manifests, seed data, the console's e2e fixtures — from
+  spelling either. The history of the two numbers: `Hoplock/proxy#56` made the
+  document `4.1.0` (a field on the event stream), `#65` `4.2.0` (fleet
+  configuration, proxy D18), `#66` `4.3.0` (the `default` algorithm-profile
+  tightening), `#68` `4.4.0` and vocabulary `5` (the `brokered-certificate`
+  method, §6), `#69` `4.5.0` and vocabulary **`6`** (the algorithm floor and
+  bans, §5.2), `#71` `4.6.0` (what a `400` from a log endpoint costs, and
+  `session_id: ""` on any kind, §7), and `#72` `4.7.0`
+  (`capabilities.algorithm_profiles`, §5.2, M17). That the document moved
+  while the vocabulary did not is the normal case rather than an anomaly.
 
   **`policy_version` is REQUIRED on the request, with no absent-value default.**
   A request that omits it is refused — `400 invalid_request`, not a guessed
@@ -2398,6 +2433,10 @@ Seven obligations are easy to miss and are graded by the conformance suite:
     proxy now sets a refused record aside rather than retrying it (§7). No
     field changed on the authorize response, so the vocabulary did not move.
 
+  One supported vocabulary is therefore **not** a promise that the answerable
+  shapes stand still, and the tie keys off the vendored document, never off the
+  number.
+
   **A fourth kind moves both numbers, and it is the kind the mechanism exists
   for.** A new field or a new enum value inside the authorize response is
   vocabulary. An unknown `target_auth_ladder[].method` refuses the whole
@@ -2405,26 +2444,24 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   a method must never be sent it. `#68`'s `brokered-certificate` is the live
   case for a value: it moved `policy_version` from `4` to `5`. `#69`'s
   `algorithm_floor` and `algorithm_bans` are the live case for fields: they
-  moved it from `5` to `6` in one revision. The gate 0008 built is where each
-  is tiered (`requiredVersion`, `internal/decision/vocabulary.go`). It
-  answers `6` for a response carrying a floor or a ban, `5` for one whose
-  ladder names the method, and a baseline `4` otherwise, and it runs before
-  the capability checks, so a proxy too old for a field is told so rather
-  than told it lacks a capability it could not have declared. So a proxy is
-  refused exactly the routes it cannot read, with the `5xx` above, and served
-  the rest unchanged, which is what the proxy's mock does too. Dropping the
-  rung, the floor or the ban and answering the remainder would be the thinned
-  answer this obligation exists to forbid.
+  moved it from `5` to `6` in one revision. What `#69` and `#72` added to the
+  request's `capabilities`, and what `#69` added to the capability report,
+  moved only the document, because the number governs none of it. The next such
+  revision is a sync that moves `PolicyVersion` (the tie test stops it until it
+  does) and, with it, which proxies this server answers: every proxy still
+  declaring the old number is refused from that deploy on, and is named in the
+  fleet view as it is.
 
   **The floor has a per-level form of the same rule, and it is a capability
   rather than a version.** This server MUST NOT send an `algorithm_floor`
   level that the asking proxy did not declare in
   `capabilities.algorithm_floors`, and an absent declaration declares none.
   The rule covers a level added in a later build, which the number alone
-  cannot: a proxy at vocabulary `6` may enforce fewer levels than the contract
-  names. A route whose level the proxy did not declare is refused as a rung
-  the build cannot provide is refused (M17, §5.2). The floor is never stripped
-  to make the route fit.
+  cannot: a proxy declaring the served vocabulary may enforce fewer levels than
+  the contract names. A route whose level the proxy did not declare is refused
+  as a rung the build cannot provide is refused (M17, §5.2), and the operator
+  looks at that proxy's build rather than at the rollout. The floor is never
+  stripped to make the route fit.
 
   **A ban has the same per-proxy form** (`Hoplock/proxy#72`). The proxy
   refuses a route whose bans leave an axis nothing to offer, judged on its own
@@ -2432,28 +2469,31 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   (`capabilities.algorithm_profiles` beside `algorithm_floors`). So this server
   judges a route's bans against the asking proxy's declaration and refuses the
   route to exactly the proxies on which an axis would be left empty, as a
-  capability shortfall (M17, §5.2). The ban is never stripped to make the
-  route fit.
+  capability shortfall (M17, §5.2), whatever version they declared. The ban is
+  never stripped to make the route fit.
 
-  So the drift check keys off the checksum in `contract/UPSTREAM` and never off
-  `policy_version` (0002, 0064). Nor may it assume the document version only
-  rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`, and
-  `Hoplock/proxy#56` then moved it up to `4.1.0` for a field on the event
-  stream, `Hoplock/proxy#65` to `4.2.0` for a new event type and two new
-  endpoints, and `Hoplock/proxy#66` to `4.3.0` for a tightening — the
-  vocabulary stood still at `4` through all four, which is the whole point.
-  `Hoplock/proxy#68` then moved both, to `4.4.0` and vocabulary `5`, for a new
-  method. It is the first vocabulary move since the collapse.
-  `Hoplock/proxy#69` moved both again, to `4.5.0` and vocabulary `6`, for two
-  new fields. `Hoplock/proxy#71` moved only the document, to `4.6.0`, for the
-  log endpoints, and `Hoplock/proxy#72` only the document again, to `4.7.0`,
-  for a declaration on the request.
-  `#66` also shows that a version string does not name a document: `4.3.0` is
-  the number `#53` moved the document down *from*, so two different contracts
-  have now carried it. The checksum is what identifies the vendored copy.
-  `#65` is also the contract's own proof that a new event **type** needs no
-  bump: "a proxy ignores a type it does not recognise" was already in
-  `RevocationEvent.type`, and it is what licenses `config_changed`.
+  **The drift check keys off the checksum in `contract/UPSTREAM`, never off
+  either number** (0002, 0064). Nor may anything assume the document version
+  only rises: the collapse noted below moved it **down**, `4.3.0` → `4.0.0`,
+  while the vocabulary stood still at `4`, and `#66` then moved it back to
+  `4.3.0` — so two different contracts have carried that string, and a version
+  string identifies no document. `#65` is also the contract's own proof that a
+  new event **type** needs no bump: "a proxy ignores a type it does not
+  recognise" was already in `RevocationEvent.type`, and it is what licenses
+  `config_changed`.
+
+  **The conformance suite grades this in two layers** (0002, 0064), and they
+  must stay apart. The **contract's** cases run against every server: an absent
+  `policy_version` is `400`; the lowest vocabulary the field admits is refused
+  with a `5xx` naming it or answered with nothing dropped; a route carrying
+  `brokered-certificate`, a floor or a ban is never answered to it. **This
+  server's** cases run only where its expectation file says
+  `authorize.vocabularies: single`: every other vocabulary, lower and higher, is
+  refused on every route, a deny route included, naming both numbers and the
+  proxy. The proxy's mock says `per-route`, and its one case of that layer —
+  one vocabulary below the current one, a floor or a ban refused and everything
+  else answered — runs only there. A case moved up a layer is how one of the two
+  CI legs starts failing for no reason anyone can see.
 
   **One live vocabulary, and removing versions is not removing versioning.**
   Upstream `Hoplock/proxy#53` (merged) collapsed the contract: it deleted the
@@ -2461,25 +2501,26 @@ Seven obligations are easy to miss and are graded by the conformance suite:
   and `api/README.md`, so both documents now read in the present tense with no
   "since version N" annotation on any field and no revision sections to cite.
   Proxy and Control ship together and no older peer has ever been deployed, so a
-  shape kept alive for one was debt bought for nothing.
+  shape kept alive for one was debt bought for nothing. 0064 is the same argument
+  made on this side.
 
-  **What that did not touch is everything above.** `policy_version` is still on
-  the wire, still required, still honoured; the MUST-NOT-answer-above rule still
-  stands; the `5xx` for a proxy this server cannot serve still stands. The
-  mechanism is what carries the **next** vocabulary, and a revision now *replaces*
-  the current one rather than running beside it. `#68` and `#69` are the
-  revisions it has carried so far. The contract states vocabulary `6` in the
-  present tense, and the tiers above are the server's half of the replacement.
-  A session that reads "one
-  vocabulary" as "there is nothing to negotiate" would delete the only thing
-  standing between a fleet mid-upgrade and a silently widened session; 0064
-  narrows what this server *supports* to one value and explicitly may not remove
-  the field.
+  **What neither touched is the mechanism.** `policy_version` is still on the
+  wire, still required, still read on every authorize request; the
+  MUST-NOT-answer-above rule still stands; the `5xx` for a proxy this server
+  cannot serve still stands, and is now the answer to every vocabulary but one.
+  The mechanism is what carries the **next** vocabulary, and a revision
+  *replaces* the current one rather than running beside it. A session that reads
+  "one vocabulary" as "there is nothing to negotiate" would delete the only thing
+  standing between a proxy of another build and a silently widened session:
+  this server narrows what it *supports* to one value, and removing the field
+  would take a contract change (§3.2 of `docs/CROSS-REPO-PROTOCOL.md`).
 
   **The `device_field.<name>` namespace is not a version axis** (§5.2). It is
   deliberately open, so a name inside it is not a new policy field and demands no
-  bump: version-aware assembly cannot gate a device field, because there is no
-  version to gate it on, and it must not try.
+  bump, and one supported vocabulary is not one closed set of device fields:
+  nothing version-shaped may gate a device field, because there is no version to
+  gate it on, and collapsing the two would break every customer-written driver
+  (proxy D13).
 
   What makes that openness safe is the layer below: the proxy skips a rung whose
   fields its driver does not declare, so a field an enforcing proxy cannot honour
@@ -4391,7 +4432,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0061 | Cross-repo E2E topology, CI gate & hardening | **Built, `v0.48.0`.** `deploy/`: a real proxy at `deploy/PROXY_REVISION` (its `api/control.yaml` checked against the vendored one by `deploy/build.sh`) plus a protected-zone proxy reached only by its outbound relay registration, this server started as a host starts it (`test/e2e/host`), Postgres migrated and seeded by an explicit step, real sshd targets; `test/e2e/`'s nineteen scenarios as one ordered run (§9); the CI jobs `e2e`, `govulncheck` (gating, `make vulncheck`) and the scheduled, non-gating `contract upstream` notice. The showcase join now finds the real proxy's blocked commands and names each one's decision and grant (§7). The scenarios needing a test host's fake extensions, the uid-lease refusal, the fleet configuration round trip and the stream-unhealthy hint went to 0071 (M1, M4, M8, M10, M11, M17, M23) |
 | 0062 | CA custody through the key store | **Built, `v0.49.0`.** The certificate authority's keys held where retention's already are: a registered `ext.KeyStore` if any, else Control's software custodian over the key-encryption key, else no CA (`ca_not_configured`) — one resolution (`daemon.buildKeyStore`) for the CA, retention and the `ca` subcommands, which take the host's registry as `audit-verify` does; no installed base, so no migration: a key the resolved store does not hold is refused (a `5xx`, never a `401`) and never signed by another custodian, each key's custodian shown from the key store, and `ca rotate` the way into the resolved store (M15, M7, M18, M11, M23) |
 | 0063 | Post-quantum posture | **M29**: TLS on this server's own listeners (`south.tls`, `north.tls`; `internal/tlsconf`), TLS 1.3 with the standard library's hybrid-first key exchange, the posture stated on each listener's start-up line and asserted rather than inherited from the ingress, a hybrid key exchange required where an operator says so (`require_hybrid_kex`), and a block that cannot be honoured refusing the start; the algorithm vocabulary plumbed so a post-quantum signature is an enum member rather than a redesign, with a tripwire for the day `x/crypto/ssh` has one (M2, M13); the proxy→target leg's `pq-hybrid-kex` floor asserted end to end from what the real proxy records (`Hoplock/proxy#69`) |
-| 0064 | One contract version, end to end | a single supported `policy_version` tied to the vendored document, a loud refusal for any other and a `400` for an absent one, no thinning path |
+| 0064 | One contract version, end to end | **Built, `v0.51.0`.** One supported `policy_version` and one document version, each spelled once (`internal/contract/version.go`) and tied to the vendored document by a test that fails when either moves; no second literal anywhere in the tree (`TestNoSecondVersionLiteral`); every other declared vocabulary, lower or higher, refused before anything is read with a `500` naming both numbers and the `proxy_id`, an absent one `400`; the tiers folded in and no thinning path left; the conformance suite's negotiation cases split into the contract's layer and this server's (`authorize.vocabularies`); a proxy of the wrong build named in the fleet view, the fleet summary and health, the pre-publish query and the publish-time report (north API `7`) |
 | 0065 | Policy's refusals as codes | the four places 0053 found the policy lifecycle answering in English only — a compiler parameter `detail`, an unreplayable record's reason, a refused simulation's reason, and a candidate diff's parse failure — given stable codes and typed parameters the console renders, so no policy refusal reaches an operator as prose it cannot translate (M21, M3, M19, M23) |
 | 0066 | Management console 13: a visual policy editor | the operator's ask after 0053 — "a more visual way of editing policies" — as a second view of 0053's candidate: rules in evaluation order as cards, with the default deny last; reordering by drag and by keyboard; every enumerated field a choice from the closed vocabulary (M3), generated from the server's enums and held to them by a test; a lossless round trip through a comment-preserving document, so a version is still its source (§5.6); rejections and findings on the cards they name; and a trace showing which rule a request would land on, by dry-run. No change to the schema, the compiler or storage. Queued after 0060, so it holds itself to 0060's consistency checks (M3, M4, M20, M21, M23) |
 | 0067 | Management console 14: a visual claim-mapping editor | the operator's ask after 0055 — "turn [the Document section] into a more visual configuration" — as the default view of the claim-mapping screen, the YAML kept beside it: claims as rows that become attributes, with their permitted values; group entries grouped by the name they read, each scoped to directories chosen from the tenant's sources and saying what it serves; every field held as typed to the server's own patterns, generated and held by a test, and every `mapping.*` rejection on the row it names; a lossless round trip through 0066's comment-preserving document; a dry run the API gains (`POST …/identity/claim-mapping/validate`, storing nothing, mapping samples through the server's own code) behind a "what would this produce" preview and a change summary; the tenant's directory sources as a bounded list (`GET …/identity/directories`); and the write confirmed as the activation it is. No change to the schema, the semantics or storage. Queued after 0066, whose document model and components it reuses, and after 0060 (M7, M4, M19, M20, M21, M23, M26) |
@@ -5360,23 +5401,14 @@ cross-tenant notes, above).
 Prompts may add or re-order later phases; any prompt that introduces new queued
 prompts MUST preserve the numbering invariants in `docs/PROTOCOL.md`.
 
-> **On 0064 running last.** It is an audit, and an audit wants everything that
-> could hold a version number to exist first. The position is not an invitation
-> to build multi-version machinery in the meantime: this product ships its proxy
-> and its server together and has no installed base, so every phase before it
-> should already carry one version in one place, and 0064 should find little.
-> What it does own is the decision that a mismatch is a **loud refusal** rather
-> than a thinned answer, and the documents that still describe a mid-upgrade
-> fleet (§4 above among them).
->
-> 0019's tiers (§4) are not new machinery: `5` for `brokered-certificate`
-> (`Hoplock/proxy#68`) and `6` for a floor or a ban (`Hoplock/proxy#69`). They
-> are cases in the gate 0008 already built for the next vocabulary, and they
-> refuse rather than thin. 0064 may fold them into the single-version refusal,
-> because that refusal is stricter. What 0064 may not do is let a proxy be sent
-> vocabulary above what it declared. Nor may it fold in the per-level floor
-> rule or the per-proxy ban refusal (`Hoplock/proxy#72`), each a capability
-> (M17) rather than a version.
+> **On 0064 running last.** It was an audit, and an audit wants everything that
+> could hold a version number to exist first. It found one constant already in
+> one place and the document version beside it, the tiers 0019 built in the gate
+> 0008 left for the next vocabulary, four fixtures and two store tests spelling
+> a number, and a stored `contract_version` nothing on the wire had ever set.
+> What it owned is the decision that a mismatch is a **loud refusal** rather
+> than a thinned answer, and the documents that still described a mid-upgrade
+> fleet. Its learnings say how each was settled.
 
 ---
 

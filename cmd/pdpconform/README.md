@@ -144,6 +144,7 @@ Each route is `{login, subject, target, port, proxy_id}`; `subject` defaults to
 | `full` | The richest route the server serves, for the envelope-shape assertion. |
 | `ladder` | A route whose `target_auth_ladder` carries a **`brokered-key`** entry. Every entry must name `params.username`; a fixture asserting a brokered-key shape without one encodes a contract nobody serves. |
 | `negotiation` | The route the version cases run against. Point it at the richest policy the server serves: the more vocabulary it carries, the more a thinned low-version answer has to drop to be caught. |
+| `vocabularies` | **Required.** Which policy vocabularies *this server* answers in — a fact about the server, never about the contract, and the key that keeps the two layers of the negotiation rule apart (below). `single`: it serves exactly the current vocabulary and refuses every other, lower or higher, on every route, naming the declared number, the served one and the proxy id (Hoplock Control, 0064). `per-route`: it answers an older vocabulary every route that vocabulary can express (Hoplock Proxy's `cmd/mock-control`). |
 | `device_fields.with_fields` | An `ephemeral-account` route carrying `device_field.<name>` parameters. |
 | `device_fields.without_fields` | A comparable route carrying none. The suite finds the lowest `policy_version` at which **this** one is served and asserts the one above is served there too. |
 | `defaults.*` | Four **pairs** — see below. |
@@ -228,15 +229,15 @@ the group against a server whose fixtures publish no document.
 
 | Key | Meaning |
 | --- | --- |
-| `route` | A route whose ladder names `brokered-certificate`. Below vocabulary 5 it must be refused with a `5xx` naming both numbers. When its entry sets `lifetime_seconds`, an issued certificate's `valid_before` must be no later than that bound from now, with the proxy's 30 seconds of skew; set one, or that half of the case grades nothing (`-v` says which). |
+| `route` | A route whose ladder names `brokered-certificate`. Declared at the lowest vocabulary the field admits, it must be refused with a `5xx` naming the declared number. When its entry sets `lifetime_seconds`, an issued certificate's `valid_before` must be no later than that bound from now, with the proxy's 30 seconds of skew; set one, or that half of the case grades nothing (`-v` says which). |
 | `username` | The account the route names: the issued certificate's only principal. |
 
 ### `algorithms` (`Hoplock/proxy#69`, `#72`)
 
 | Key | Meaning |
 | --- | --- |
-| `floor`, `floor_level` | A route carrying `algorithm_floor` at that level: refused below vocabulary 6, answered to a proxy declaring the level in `capabilities.algorithm_floors`, and a `5xx` — never stripped — to one that does not, or that sends no capabilities. |
-| `ban` | A route carrying `algorithm_bans` and no floor: refused below vocabulary 6, answered with the bans as authored at 6, and answered the same when the request also declares `capabilities.algorithm_profiles` with an offer the bans leave something on every axis (`Hoplock/proxy#72`). |
+| `floor`, `floor_level` | A route carrying `algorithm_floor` at that level: refused at the lowest vocabulary, answered to a proxy declaring the level in `capabilities.algorithm_floors`, and a `5xx` — never stripped — to one that does not, or that sends no capabilities. |
+| `ban` | A route carrying `algorithm_bans` and no floor: refused at the lowest vocabulary, answered with the bans as authored at the current one, and answered the same when the request also declares `capabilities.algorithm_profiles` with an offer the bans leave something on every axis (`Hoplock/proxy#72`). |
 | `bans` | That route's bans exactly as authored, one list per axis (`key_exchanges`, `ciphers`, `macs`, `host_keys`, `public_key_auth`). The answer must carry these lists, in this order, and nothing else. |
 | `kex_target` | The target a key-exchange capability report is about. The report answers `200 {"accepted": true}`; a report with rungs and no `observed_at`, one carrying neither observation, and a `kex` with no `floor_met` answer `400`. |
 
@@ -253,18 +254,34 @@ Three assertions are worth knowing about because they are written against a
 next contract revision:
 
 - **Vocabulary negotiation** sends the same authorize request at the current
-  version and at `1`. A `5xx` is a pass — it is the correct answer when the
-  policy needs vocabulary the caller cannot read. A `200` is a pass only if it
-  dropped no policy field the current-version answer carried; a thinned snapshot
-  that drops a restriction and returns `200` is the failure, and a `401` is
-  never right (a version mismatch is a rollout problem, not a decision about a
-  user). The comparison is against the current-version answer rather than
-  against a table of which field arrived in which revision — the contract states
-  **one live vocabulary in the present tense** and carries no such table.
-- **An absent `policy_version` is its own case**, distinct from the `1` case.
-  They look similar and are not: `1` is a proxy that told the truth about being
-  old, and absent is a proxy that said nothing. Only the first can be answered
-  safely. The answer must be `400 invalid_request`.
+  version and at the lowest the field admits (its `minimum`). A `5xx` is a
+  pass — it is the correct answer when the server will not answer that
+  vocabulary. A `200` is a pass only if it dropped no policy field the
+  current-version answer carried; a thinned snapshot that drops a restriction
+  and returns `200` is the failure, and a `401` is never right (a version
+  mismatch is a rollout problem, not a decision about a user). The comparison
+  is against the current-version answer rather than against a table of which
+  field arrived in which revision — the contract states **one live vocabulary
+  in the present tense** and carries no such table.
+- **An absent `policy_version` is its own case**, distinct from the low one.
+  They look similar and are not: a low number is a proxy that told the truth
+  about being old, and absent is a proxy that said nothing. Only the first can
+  be answered safely. The answer must be `400 invalid_request`.
+- **The negotiation rule is graded in two layers, and they must stay apart.**
+  The cases above, the lowest-vocabulary refusals of a `brokered-certificate`
+  route and of a floor or a ban, and the requirement that a refusal names the
+  declared number, are the **contract's**: they run against every server. The
+  cases named `(single)` run only where `authorize.vocabularies` is `single`:
+  every vocabulary from the minimum to the one below the current, and the one
+  above it, refused on the negotiation, direct and deny routes, the refusal
+  naming the served number and the proxy as well; and the served version
+  answered on the same routes. The case named `(per-route)` runs only where it
+  is `per-route`: one vocabulary below the current one, a floor or a ban
+  refused and every other route answered. Moving a `(single)` case into the
+  contract's layer fails the mock, which answers older vocabularies correctly;
+  moving the `(per-route)` one fails this server, which serves one. Neither
+  failure would name its cause, so `TestEachServerSaysWhichVocabulariesItAnswers`
+  pins which file says which.
 - **A device field demands no version bump.** The suite finds the lowest version
   at which the comparable route *without* device fields is served, and asserts
   the route *with* them is served at the same one. Pinning that to a number
