@@ -25,6 +25,7 @@ import type { APIRequestContext } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SOUTH, TENANT, UI } from "../harness";
+import { POLICY_VERSION } from "./contract";
 
 /** The cipher the runbook's advisory names. */
 export const BANNED = "aes128-ctr";
@@ -75,7 +76,7 @@ async function declare(api: APIRequestContext, proxy: string, session: string, t
       target,
       target_port: 22,
       auth_method: "publickey",
-      policy_version: 6,
+      policy_version: POLICY_VERSION,
       capabilities,
       conn: { session_id: session, proxy_id: proxy, client_addr: "10.20.0.9:52000", hop_trail: trail, timestamp: "2026-11-01T09:00:00Z" },
     },

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -252,24 +253,44 @@ func TestAuthorizeEndToEnd(t *testing.T) {
 		h.requireEnvelope(t, res)
 	})
 
-	t.Run("a version below what the route needs is a 5xx naming the mismatch", func(t *testing.T) {
-		req := authorizeRequest("edge-host.example.com", "proxy-1")
-		one := int32(1)
-		req.PolicyVersion = &one
-		res := h.post(t, contract.PathAuthorize, req)
-		if res.Code != http.StatusInternalServerError {
-			t.Fatalf("authorize = %d, want 500: %s", res.Code, res.Body)
-		}
-		var env contract.ErrorResponse
-		if err := json.Unmarshal(res.Body.Bytes(), &env); err != nil {
-			t.Fatalf("envelope does not decode: %v", err)
-		}
-		if env.Error.Code != contract.ErrCodeVersionUnsupported {
-			t.Errorf("error.code = %q, want %q", env.Error.Code, contract.ErrCodeVersionUnsupported)
-		}
-		if !strings.Contains(env.Error.Message, "policy vocabulary") {
-			t.Errorf("message = %q, want it to name the mismatch so an operator knows which proxy to upgrade",
-				env.Error.Message)
+	// This server serves one vocabulary (0064): lower and higher are the
+	// same 500, naming both numbers and the proxy, so an operator reading it
+	// concludes "this proxy is the wrong build", never "access denied".
+	for name, declared := range map[string]int32{
+		"a lower":  contract.PolicyVersion - 1,
+		"a higher": contract.PolicyVersion + 1,
+	} {
+		t.Run(name+" policy_version is a 500 naming both numbers and the proxy", func(t *testing.T) {
+			req := authorizeRequest("edge-host.example.com", "proxy-1")
+			req.PolicyVersion = &declared
+			res := h.post(t, contract.PathAuthorize, req)
+			if res.Code != http.StatusInternalServerError {
+				t.Fatalf("authorize = %d, want 500 — never 401 (M11) and never an answer: %s", res.Code, res.Body)
+			}
+			var env contract.ErrorResponse
+			if err := json.Unmarshal(res.Body.Bytes(), &env); err != nil {
+				t.Fatalf("envelope does not decode: %v", err)
+			}
+			if env.Error.Code != contract.ErrCodeVersionUnsupported {
+				t.Errorf("error.code = %q, want %q", env.Error.Code, contract.ErrCodeVersionUnsupported)
+			}
+			for _, part := range []string{
+				"policy_version " + strconv.Itoa(int(declared)),
+				"policy_version " + strconv.Itoa(int(contract.PolicyVersion)),
+				`"proxy-1"`,
+			} {
+				if !strings.Contains(env.Error.Message, part) {
+					t.Errorf("message = %q, want it to name %s so an operator knows which build is wrong",
+						env.Error.Message, part)
+				}
+			}
+		})
+	}
+
+	t.Run("the served policy_version is answered", func(t *testing.T) {
+		res := h.post(t, contract.PathAuthorize, authorizeRequest("edge-host.example.com", "proxy-1"))
+		if res.Code != http.StatusOK {
+			t.Fatalf("authorize = %d, want 200: %s", res.Code, res.Body)
 		}
 	})
 }

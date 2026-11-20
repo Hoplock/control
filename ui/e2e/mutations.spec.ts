@@ -88,7 +88,10 @@ test("an author validates, simulates, compares, uploads and activates a candidat
   // Corrected: valid, with its publish-time report.
   await main.locator("[data-candidate-source]").fill(c.valid);
   await main.locator("[data-validate]").click();
-  await expect(main.locator("[data-report] [data-finding][data-severity=warning]")).toHaveCount(1);
+  // Two warnings: the rule's cache hint, and the fixture fleet's proxy of the
+  // wrong contract build (px-edge-05, 0064), which every report names.
+  await expect(main.locator("[data-report] [data-finding][data-severity=warning]")).toHaveCount(2);
+  await expect(main.locator('[data-report] [data-finding="satisfiability.contract_version_unsupported/"]')).toContainText("px-edge-05");
 
   // Simulated against the recorded traffic: both directions flip. Four
   // decisions flip: sess-e2e-allow and sess-e2e-rule-deny (0053), and the two
@@ -114,12 +117,15 @@ test("an author validates, simulates, compares, uploads and activates a candidat
   await expect(page).toHaveURL(/\/console\/policy\/versions\/4$/);
   await expect(main.locator("header [data-tone]").first()).toHaveText("Superseded");
 
-  // Activated: typed confirmation, the warning accepted by its id.
+  // Activated: typed confirmation, each warning accepted by its id.
   await main.locator("[data-activate=activate]").click();
   const dialog = page.locator("dialog[open]");
   const confirm = dialog.locator("button[type=submit]");
+  const acceptAll = async () => {
+    for (const box of await dialog.locator("[data-accept]").all()) await box.check();
+  };
   await dialog.locator("[data-activation-gate=ok]").waitFor();
-  await dialog.locator("[data-accept]").check();
+  await acceptAll();
   await dialog.locator("[data-confirm-input]").fill("v");
   await expect(confirm).toBeDisabled();
   await dialog.locator("[data-confirm-input]").fill("v4");
@@ -130,7 +136,7 @@ test("an author validates, simulates, compares, uploads and activates a candidat
   const record = await page.request.get("/api/v1/tenants/default/audit/records?limit=5");
   expect(JSON.stringify(await record.json())).toContain("authoring.cache_hint_spans_sources/office-db-read");
 
-  // Rolled back to v2: refused while its warning is not accepted, inline; then done.
+  // Rolled back to v2: refused while its warnings are not accepted, inline; then done.
   await page.goto("/console/policy/versions/2");
   await main.locator("[data-activate=rollback]").click();
   await dialog.locator("[data-activation-gate=ok]").waitFor();
@@ -138,7 +144,7 @@ test("an author validates, simulates, compares, uploads and activates a candidat
   await dialog.locator("button[type=submit]").click();
   await expect(dialog.locator("[role=alert][data-error-code=findings_not_accepted]")).toBeVisible();
   await expect(dialog).toHaveCount(1);
-  await dialog.locator("[data-accept]").check();
+  await acceptAll();
   await dialog.locator("button[type=submit]").click();
   await expect(dialog).toHaveCount(0);
   await expect(page.locator("[role=status]").filter({ hasText: /Rolled back to \u2068?v2/ })).toHaveCount(1);

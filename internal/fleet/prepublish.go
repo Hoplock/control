@@ -254,9 +254,27 @@ func (r *Registry) CheckPolicy(ctx context.Context, tenant store.Tenant, reqs []
 	return out, nil
 }
 
-// proxyVerdict adapts a stored row onto [CheckProxy].
+// proxyVerdict adapts a stored row onto [CheckProxy], and adds the one thing a
+// stored row knows that a declared capability set does not: which vocabulary
+// the proxy last declared. A proxy of the wrong build has every authorize
+// request refused (0064), so whatever its build implements it serves no route,
+// and the verdict says so in the operator's terms rather than as a missing
+// rung.
 func proxyVerdict(p store.Proxy, req RouteRequirement, live bool) ProxyVerdict {
-	return CheckProxy(p.ID, Zone(p.Zone), UnmarshalCapabilities(p.DeclaredCapabilities), live, req)
+	v := CheckProxy(p.ID, Zone(p.Zone), UnmarshalCapabilities(p.DeclaredCapabilities), live, req)
+	if VocabularyUnsupported(p.ContractVersion) {
+		v.OK = false
+		v.Missing = append(v.Missing, UnsupportedVocabularyReason(p.ContractVersion))
+	}
+	return v
+}
+
+// UnsupportedVocabularyReason is what a verdict, and the publish-time report,
+// say about a proxy whose declared vocabulary this server does not serve.
+func UnsupportedVocabularyReason(declared int) string {
+	return "declares policy_version " + strconv.Itoa(declared) + " and this server serves " +
+		strconv.Itoa(int(contract.PolicyVersion)) + " only, so every authorize request from it is refused: " +
+		"it is a build of a different contract revision"
 }
 
 // CheckProxy reports whether one proxy's declared capabilities can serve a route.

@@ -113,12 +113,15 @@ type Proxy struct {
 	State EnrollmentState
 	// LastHeartbeatAt is zero when the proxy has never reported.
 	LastHeartbeatAt time.Time
-	// ContractVersion is the policy vocabulary the proxy declared at
-	// enrollment. It is a FLEET-READINESS signal — "can this zone be routed
-	// through yet" — and never the authority on what a given connection may
-	// be answered with: the proxy declares that per call in `policy_version`
-	// on the authorize request, and 0008 answers within that. A stored value
-	// can be stale; a request field cannot.
+	// ContractVersion is the policy vocabulary the proxy last declared — on
+	// its latest authorize request (SetContractVersion, 0064), or at
+	// enrollment or a heartbeat before it asked — and zero when it has
+	// declared none. It is a FLEET-READINESS signal: this server serves one
+	// vocabulary, so a proxy whose stored number is any other is the wrong
+	// build, and the fleet view says so. It is never the authority on what a
+	// given connection is answered: the proxy declares that per call in
+	// `policy_version`, and the gate judges the call. A stored value can be
+	// stale; a request field cannot.
 	ContractVersion int
 	// DeclaredCapabilities is what this proxy's BUILD says it can provide
 	// (M17), stored as the proxy sent it. The device-field namespace is open

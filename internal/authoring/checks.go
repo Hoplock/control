@@ -104,6 +104,7 @@ func controlFindings(b *model.Bundle, prog *compile.Program, facts Facts, interp
 		rules[r.ID] = r
 	}
 	var out []Finding
+	out = append(out, contractVersionFindings(facts)...)
 	out = append(out, satisfiability(facts)...)
 	for i := 0; i < prog.Len(); i++ {
 		rule := prog.Rule(i)
@@ -129,6 +130,40 @@ type proxyShortfall struct {
 	Live     bool           `json:"live"`
 	Missing  []string       `json:"missing"`
 	Provides map[string]any `json:"provides"`
+}
+
+// wrongBuild is one proxy the contract-version finding names.
+type wrongBuild struct {
+	ProxyID  string `json:"proxy_id"`
+	Zone     string `json:"zone"`
+	Declared int    `json:"declared"`
+}
+
+// contractVersionFindings names every enrolled proxy of the wrong contract
+// build (0064). It is about the fleet rather than about any rule — the proxy is
+// refused every authorize request whatever is published — and it is said here,
+// before publish, because otherwise the first to find it is a user. A proxy
+// that has declared nothing is not named: absence of evidence (M17).
+func contractVersionFindings(facts Facts) []Finding {
+	var wrong []wrongBuild
+	for _, p := range facts.Proxies {
+		if p.State != store.EnrollmentEnrolled || !fleet.VocabularyUnsupported(p.ContractVersion) {
+			continue
+		}
+		wrong = append(wrong, wrongBuild{ProxyID: p.ID, Zone: p.Zone, Declared: p.ContractVersion})
+	}
+	if len(wrong) == 0 {
+		return nil
+	}
+	slices.SortFunc(wrong, func(a, b wrongBuild) int { return strings.Compare(a.ProxyID, b.ProxyID) })
+	return []Finding{{
+		ID: findingID(CodeContractVersionUnsupported), Severity: SeverityWarning, Code: CodeContractVersionUnsupported,
+		Source:     SourceControl,
+		Parameters: capped(map[string]any{"served": int(contract.PolicyVersion)}, "proxies", wrong),
+		Message: fmt.Sprintf("%d enrolled proxy(ies) last declared a policy vocabulary other than %d, the one this server "+
+			"serves, so every authorize request from each is refused whatever this bundle says: they are builds of a "+
+			"different contract revision, and proxy and server move together", len(wrong), contract.PolicyVersion),
+	}}
 }
 
 type targetShortfall struct {

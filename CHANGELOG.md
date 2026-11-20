@@ -26,6 +26,68 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.51.0
+
+Phase 0064, one contract version, end to end (M1, M11, M17, M19, M23). This
+server now serves exactly one policy vocabulary, the vendored contract's (`6`),
+and refuses every other; a proxy of the wrong build is named in the fleet view,
+the fleet's health and the publish-time report before a user finds it. The
+contract is unchanged and still vendored at `4.7.0`. The north-bound API moves
+to version `7` for two members, one health reason and one publish-time finding;
+no route is added and `north_api_min` stays `1`. No migration; `ext` and
+`server` are untouched.
+
+### Breaking
+
+- **An authorize request declaring any `policy_version` other than `6` is
+  refused,** lower or higher, with `500 policy_version_unsupported` naming the
+  version declared, the version served and the `proxy_id`. A proxy declaring
+  `4` or `5` was answered every route its vocabulary could express; it is now
+  refused every route. The refusal comes before the policy is read, so it is
+  the same on a route the policy denies. Deploy proxy and server builds of the
+  same contract revision together. An absent `policy_version`, or one below
+  `1`, is still `400 invalid_request`, and nothing is ever `401`.
+- **A north-bound client of version `1` to `6`** reading `GET …/proxies` or
+  `GET …/instance/health` while any proxy declares a vocabulary this server
+  does not serve is answered `500 api_version_unexpressible`, never a body
+  that leaves the fact out. With every proxy on the served vocabulary it is
+  served exactly as before.
+- **Every publish-time report warns while an enrolled proxy is of the wrong
+  build** (`satisfiability.contract_version_unsupported`), so activation waits
+  until that warning is accepted by its id, as for any warning.
+- **`cmd/pdpconform`'s expectation file requires `authorize.vocabularies`**:
+  `single` for a server that serves one vocabulary (this one), `per-route` for
+  one that answers older vocabularies route by route (the proxy's mock). A
+  file without it is refused.
+
+### The one vocabulary
+
+- **`internal/contract/version.go` is the one place** the served vocabulary
+  (`PolicyVersion`), the field's minimum and the vendored document's version
+  are spelled; a test ties each to `contract/control.yaml`, and another refuses
+  either number anywhere else in the tree.
+- **A proxy's `contract_version` is what it last declared on
+  `/v1/authorize`**, recorded before the version is judged; nothing on the
+  wire set it before.
+
+### Naming the wrong build (north API `7`)
+
+- **`contract_version_unsupported`** on a proxy in `GET …/proxies`: `true` when
+  its `contract_version` is a vocabulary this server does not serve; absent
+  otherwise, a proxy that has declared nothing included.
+- **`contract_version_unsupported`** in a tenant's fleet `summary` on
+  `GET …/instance/health`: how many enrolled proxies; absent at zero.
+- **The health reason `proxies_contract_unsupported`**, with `tenant` and
+  `count`, makes that tenant's fleet `degraded`.
+- **The publish-time finding `satisfiability.contract_version_unsupported`**:
+  one warning per report, naming each such proxy (`proxy_id`, `zone`,
+  `declared`) beside `served`. The pre-publish query's verdict for each says it
+  can serve no route.
+- **The console** shows such a proxy `Unsupported` beside the number it
+  declared, in Fleet's table and the proxy's detail; the fleet summary counts
+  them; Deployment and the policy report say why; and the summary's contract
+  versions read a proxy that has declared nothing as "none declared".
+
 ## v0.50.0
 
 Phase 0063, post-quantum posture (M29, M2, M13, M15, M23). Each listener can

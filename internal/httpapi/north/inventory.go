@@ -1198,12 +1198,17 @@ type proxyView struct {
 	LastHeartbeatAt    *time.Time            `json:"last_heartbeat_at,omitempty"`
 	SubscriptionSeenAt *time.Time            `json:"subscription_seen_at,omitempty"`
 	ContractVersion    int                   `json:"contract_version"`
-	Capabilities       fleet.Capabilities    `json:"capabilities"`
-	RelayRegistrations []string              `json:"relay_registrations"`
-	Config             fleet.ConfigRollout   `json:"config"`
-	SessionCount       int                   `json:"session_count"`
-	LastError          string                `json:"last_error,omitempty"`
-	LastErrorAt        *time.Time            `json:"last_error_at,omitempty"`
+	// ContractVersionUnsupported is set when contract_version is a policy
+	// vocabulary this server does not serve, so every authorize request from
+	// the proxy is refused (0064); absent otherwise, a proxy that has declared
+	// nothing included.
+	ContractVersionUnsupported bool                `json:"contract_version_unsupported,omitempty" since:"7"`
+	Capabilities               fleet.Capabilities  `json:"capabilities"`
+	RelayRegistrations         []string            `json:"relay_registrations"`
+	Config                     fleet.ConfigRollout `json:"config"`
+	SessionCount               int                 `json:"session_count"`
+	LastError                  string              `json:"last_error,omitempty"`
+	LastErrorAt                *time.Time          `json:"last_error_at,omitempty"`
 }
 
 func viewProxies(rows []fleet.ProxyHealth) []proxyView {
@@ -1216,7 +1221,8 @@ func viewProxies(rows []fleet.ProxyHealth) []proxyView {
 		out = append(out, proxyView{
 			ProxyID: h.ProxyID, Zone: h.Zone, State: h.State, Live: h.Live,
 			LastHeartbeatAt: instant(h.LastHeartbeatAt), SubscriptionSeenAt: instant(h.SubscriptionSeenAt),
-			ContractVersion: h.ContractVersion, Capabilities: h.Capabilities, RelayRegistrations: relays,
+			ContractVersion: h.ContractVersion, ContractVersionUnsupported: h.ContractUnsupported,
+			Capabilities: h.Capabilities, RelayRegistrations: relays,
 			Config: h.Config, SessionCount: h.SessionCount, LastError: h.LastError, LastErrorAt: instant(h.LastErrorAt),
 		})
 	}

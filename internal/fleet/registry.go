@@ -48,6 +48,9 @@ type Registry struct {
 	// decision path writes when a build changed or the memory is older than
 	// DeclarationRecheck, and not on every call (M5).
 	declared sync.Map
+	// vocabularies is what this node last wrote of each proxy's declared
+	// policy vocabulary, on the same rule as declared (0064, M5).
+	vocabularies sync.Map
 }
 
 // Option configures a Registry.
@@ -565,9 +568,18 @@ type ProxyHealth struct {
 	// SubscriptionSeenAt is when its event subscription was last seen, zero
 	// when it holds none or when the signal is unavailable.
 	SubscriptionSeenAt time.Time
-	// ContractVersion is the vocabulary it declared at enrollment. It is a
-	// readiness signal, never the authority for a connection.
+	// ContractVersion is the policy vocabulary it last declared on an
+	// authorize request (0064; at enrollment or a heartbeat before it asked),
+	// zero when it has declared none. It is a readiness signal, never the
+	// authority for a connection: the request's own declaration is.
 	ContractVersion int
+	// ContractUnsupported is set when ContractVersion is a vocabulary this
+	// server does not serve, so every authorize request from this proxy is
+	// refused (0064). It is a FLEET-READINESS FAILURE and the fleet view says
+	// so, because otherwise the first to find the wrong build is a user whose
+	// session became an outage. A proxy that has declared nothing is not
+	// one: absence of evidence is not a failure (M17).
+	ContractUnsupported bool
 	// Capabilities is what its build declares (M17).
 	Capabilities Capabilities
 	// RelayRegistrations are the downstream proxies currently registered with
@@ -640,19 +652,20 @@ func (r *Registry) HealthPage(ctx context.Context, tenant store.Tenant, p store.
 		cfg := byProxy[px.ID]
 		cfg.ProxyID = px.ID
 		out.Rows = append(out.Rows, ProxyHealth{
-			ProxyID:            px.ID,
-			Zone:               Zone(px.Zone),
-			State:              px.State,
-			Live:               r.isLive(px, subs, now),
-			LastHeartbeatAt:    px.LastHeartbeatAt,
-			SubscriptionSeenAt: subs[px.ID],
-			ContractVersion:    px.ContractVersion,
-			Capabilities:       UnmarshalCapabilities(px.DeclaredCapabilities),
-			RelayRegistrations: relays[px.ID],
-			Config:             rolloutOf(cfg),
-			SessionCount:       px.SessionCount,
-			LastError:          px.LastError,
-			LastErrorAt:        px.LastErrorAt,
+			ProxyID:             px.ID,
+			Zone:                Zone(px.Zone),
+			State:               px.State,
+			Live:                r.isLive(px, subs, now),
+			LastHeartbeatAt:     px.LastHeartbeatAt,
+			SubscriptionSeenAt:  subs[px.ID],
+			ContractVersion:     px.ContractVersion,
+			ContractUnsupported: VocabularyUnsupported(px.ContractVersion),
+			Capabilities:        UnmarshalCapabilities(px.DeclaredCapabilities),
+			RelayRegistrations:  relays[px.ID],
+			Config:              rolloutOf(cfg),
+			SessionCount:        px.SessionCount,
+			LastError:           px.LastError,
+			LastErrorAt:         px.LastErrorAt,
 		})
 	}
 	return out, nil

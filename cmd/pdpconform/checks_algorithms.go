@@ -50,27 +50,59 @@ func declaring(levels ...string) map[string]any {
 // their vocabulary tier, the per-level declaration, and the key-exchange report.
 func (s *Suite) CheckAlgorithms() {
 	e := &s.expect.Algorithms
-	floorTier := contract.VocabularyAlgorithmFloor
-	below := floorTier - 1
+	// A floor and a ban are the current vocabulary's own additions
+	// (Hoplock/proxy#69), so they are answered at contract.PolicyVersion.
+	served := contract.PolicyVersion
 
-	s.run(groupAlgorithms, "a floor or a ban is refused to a proxy declaring 5, and everything else is answered there", func(c *Case) {
+	s.run(groupAlgorithms, "a floor or a ban is refused to a proxy declaring the lowest vocabulary, never answered without it", func(c *Case) {
+		// The contract's layer: below the vocabulary that introduced them on
+		// any server, so it names no tier.
 		for _, route := range []AuthorizeRoute{e.Floor, e.Ban} {
-			r, err := s.authorizeWithCapabilities(route, below, declaring(e.FloorLevel))
+			r, err := s.authorizeWithCapabilities(route, contract.PolicyVersionMinimum, declaring(e.FloorLevel))
 			c.must(err == nil, "request failed: %v", err)
-			s.requireVersionRefusal(c, r, below, floorTier)
+			s.requireVersionRefusal(c, r, contract.PolicyVersionMinimum, route.ProxyID)
 		}
-		// A brokered-certificate route needs only 5, and a route with
-		// neither is answered unchanged: the tier is per route.
-		cert, _, err := s.authorizeAt(s.expect.Certificate.Route, below)
-		c.must(err == nil, "request failed: %v", err)
-		c.require(cert.status == 200, "a brokered-certificate route at %d answered %d: %s", below, cert.status, snippet(cert.body))
-		plain, err := s.authorize(s.expect.Authorize.Direct, below)
-		c.must(err == nil, "request failed: %v", err)
-		c.require(plain.status == 200, "a route with neither at %d answered %d: %s", below, plain.status, snippet(plain.body))
 	})
 
+	switch s.expect.Authorize.Vocabularies {
+	case vocabulariesPerRoute:
+		// THE PER-ROUTE SERVER'S LAYER (Hoplock Proxy's cmd/mock-control):
+		// one vocabulary below the current one, a floor or a ban is refused
+		// and every other route is answered. It holds while the floor and
+		// the bans are the newest vocabulary's additions; a contract sync
+		// that moves PolicyVersion revisits it, and internal/contract's tie
+		// test will already have stopped that sync.
+		below := served - 1
+		s.run(groupAlgorithms, "(per-route) a floor or a ban is refused one vocabulary below the current one, and everything else is answered there", func(c *Case) {
+			for _, route := range []AuthorizeRoute{e.Floor, e.Ban} {
+				r, err := s.authorizeWithCapabilities(route, below, declaring(e.FloorLevel))
+				c.must(err == nil, "request failed: %v", err)
+				s.requireVersionRefusal(c, r, below, route.ProxyID)
+			}
+			cert, _, err := s.authorizeAt(s.expect.Certificate.Route, below)
+			c.must(err == nil, "request failed: %v", err)
+			c.require(cert.status == 200, "a brokered-certificate route at %d answered %d: %s", below, cert.status, snippet(cert.body))
+			plain, err := s.authorize(s.expect.Authorize.Direct, below)
+			c.must(err == nil, "request failed: %v", err)
+			c.require(plain.status == 200, "a route with neither at %d answered %d: %s", below, plain.status, snippet(plain.body))
+		})
+	case vocabulariesSingle:
+		// THIS SERVER'S LAYER (0064): one vocabulary below the current one,
+		// the floor and ban routes are refused as every route is — and a
+		// route that carries neither is refused too, because this server
+		// serves one vocabulary and not the routes an older one can read.
+		below := served - 1
+		s.run(groupAlgorithms, "(single) one vocabulary below the current one, a floor, a ban and a route with neither are all refused", func(c *Case) {
+			for _, route := range []AuthorizeRoute{e.Floor, e.Ban, s.expect.Certificate.Route, s.expect.Authorize.Direct} {
+				r, err := s.authorizeWithCapabilities(route, below, declaring(e.FloorLevel))
+				c.must(err == nil, "request failed: %v", err)
+				s.requireVersionRefusal(c, r, below, route.ProxyID)
+			}
+		})
+	}
+
 	s.run(groupAlgorithms, "a declared floor level is answered; an undeclared one, or no capabilities, is a 5xx and never stripped", func(c *Case) {
-		r, err := s.authorizeWithCapabilities(e.Floor, floorTier, declaring(e.FloorLevel))
+		r, err := s.authorizeWithCapabilities(e.Floor, served, declaring(e.FloorLevel))
 		c.must(err == nil, "request failed: %v", err)
 		c.must(r.status == 200, "a declared level answered %d: %s", r.status, snippet(r.body))
 		var got contract.AuthorizeResponse
@@ -86,7 +118,7 @@ func (s *Suite) CheckAlgorithms() {
 			"another level declared": declaring(other),
 			"no capabilities at all": nil,
 		} {
-			r, err := s.authorizeWithCapabilities(e.Floor, floorTier, caps)
+			r, err := s.authorizeWithCapabilities(e.Floor, served, caps)
 			c.must(err == nil, "%s: request failed: %v", name, err)
 			c.require(r.status >= 500, "%s: answered %d, want a 5xx — never the route with its floor stripped: %s",
 				name, r.status, snippet(r.body))
@@ -98,7 +130,7 @@ func (s *Suite) CheckAlgorithms() {
 	})
 
 	s.run(groupAlgorithms, "a ban is carried on the answer as authored", func(c *Case) {
-		r, err := s.authorizeWithCapabilities(e.Ban, floorTier, declaring(e.FloorLevel))
+		r, err := s.authorizeWithCapabilities(e.Ban, served, declaring(e.FloorLevel))
 		c.must(err == nil, "request failed: %v", err)
 		c.must(r.status == 200, "the ban route answered %d: %s", r.status, snippet(r.body))
 		c.require(r.has("algorithm_bans"), "the route's algorithm_bans are not on the answer: %s", snippet(r.body))
@@ -112,13 +144,13 @@ func (s *Suite) CheckAlgorithms() {
 	// to offer is answered exactly as it is without one — never a 400 for the
 	// new key, never a refusal.
 	s.run(groupAlgorithms, "a declaration of each profile's offer that the ban leaves something on every axis changes nothing", func(c *Case) {
-		without, err := s.authorizeWithCapabilities(e.Ban, floorTier, declaring(e.FloorLevel))
+		without, err := s.authorizeWithCapabilities(e.Ban, served, declaring(e.FloorLevel))
 		c.must(err == nil, "request failed: %v", err)
 		c.must(without.status == 200, "the ban route answered %d without the declaration: %s", without.status, snippet(without.body))
 
 		caps := declaring(e.FloorLevel)
 		caps["algorithm_profiles"] = []map[string]any{offerSurviving(contract.AlgorithmProfileDefault, e.Bans)}
-		with, err := s.authorizeWithCapabilities(e.Ban, floorTier, caps)
+		with, err := s.authorizeWithCapabilities(e.Ban, served, caps)
 		c.must(err == nil, "request failed: %v", err)
 		c.must(with.status == 200, "with algorithm_profiles declared the ban route answered %d, want 200 as without it: %s",
 			with.status, snippet(with.body))

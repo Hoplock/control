@@ -23,6 +23,12 @@ import (
 // disable a case, and a suite whose cases can be disabled by a typo is a suite
 // that grades nothing.
 
+// The two answers authorize.vocabularies takes.
+const (
+	vocabulariesSingle   = "single"
+	vocabulariesPerRoute = "per-route"
+)
+
 // Expectations describes the server under test.
 type Expectations struct {
 	// ProxyID is the proxy the suite presents itself as on every ConnMeta.
@@ -195,6 +201,28 @@ type AuthorizeExpectations struct {
 	// the richest policy the server serves: the more vocabulary it carries, the
 	// more a thinned low-version answer has to drop to be caught.
 	Negotiation AuthorizeRoute `yaml:"negotiation"`
+
+	// Vocabularies says which policy vocabularies THIS SERVER answers in, and
+	// it is a fact about the server, never about the contract. The contract's
+	// rule is the same for both answers and is graded either way: never a
+	// thinned 200, never a 401 for a version mismatch, and a refusal that
+	// names the declared number. What differs is what a server does with a
+	// vocabulary below the current one, which the contract leaves to it ("a
+	// revision replaces this vocabulary rather than running beside it"):
+	//
+	//   - "single": it serves exactly contract.PolicyVersion, and refuses every
+	//     other declared vocabulary, lower or higher, on every route — a deny
+	//     route included — with a 5xx naming the declared number, the served
+	//     one and the proxy id. Hoplock Control (0064).
+	//   - "per-route": it answers an older vocabulary every route that
+	//     vocabulary can express, and refuses only the rest. Hoplock Proxy's
+	//     cmd/mock-control.
+	//
+	// It is required, so a file cannot drop the server's layer by omission.
+	// Moving a "single" case up into the contract layer is how the mock
+	// starts failing for no reason anyone can see; moving a "per-route" one up
+	// is how this server does.
+	Vocabularies string `yaml:"vocabularies"`
 
 	// DeviceFields grades `device_field.<name>`. WithFields is a route whose
 	// ephemeral-account rung carries device fields; WithoutFields is a
@@ -385,6 +413,7 @@ func (e *Expectations) validate() error {
 	need("authorize.full.target", e.Authorize.Full.Target)
 	need("authorize.ladder.target", e.Authorize.Ladder.Target)
 	need("authorize.negotiation.target", e.Authorize.Negotiation.Target)
+	need("authorize.vocabularies", e.Authorize.Vocabularies)
 	need("authorize.device_fields.with_fields.target", e.Authorize.DeviceFields.WithFields.Target)
 	need("authorize.device_fields.without_fields.target", e.Authorize.DeviceFields.WithoutFields.Target)
 	need("hostkeys.first_sighting.target", e.HostKeys.FirstSighting.Target)
@@ -425,6 +454,10 @@ func (e *Expectations) validate() error {
 		need(name+".set.target", pair.Set.Target)
 	}
 
+	if v := e.Authorize.Vocabularies; v != "" && v != vocabulariesSingle && v != vocabulariesPerRoute {
+		missing = append(missing, fmt.Sprintf("authorize.vocabularies must be %q or %q, not %q",
+			vocabulariesSingle, vocabulariesPerRoute, v))
+	}
 	if e.UIDs.Exhaustion.RangeMax <= e.UIDs.Exhaustion.RangeMin {
 		missing = append(missing, "uids.exhaustion.range_max must exceed range_min")
 	}

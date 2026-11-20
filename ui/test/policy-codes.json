@@ -212,6 +212,7 @@
     "authoring.cache_hint_outlives_condition",
     "authoring.cache_hint_spans_sources",
     "authoring.interpreter_in_allow_list",
+    "satisfiability.contract_version_unsupported",
     "satisfiability.no_proxy_provides",
     "satisfiability.proxies_unreported",
     "satisfiability.target_cannot_take",

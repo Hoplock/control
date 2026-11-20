@@ -199,6 +199,28 @@ func (r proxyRepo) RecordHealth(ctx context.Context, tenant Tenant, h ProxyHealt
 	return nil
 }
 
+// SetContractVersion records the vocabulary a proxy last declared. The
+// predicate makes the unchanged case a no-op, so two nodes recording the same
+// number race to nothing.
+func (r proxyRepo) SetContractVersion(ctx context.Context, tenant Tenant, proxyID string, version int) error {
+	const op = "store.Proxies.SetContractVersion"
+	if err := checkTenant(op, tenant); err != nil {
+		return err
+	}
+	if proxyID == "" {
+		return invalid(op, "proxy id is required")
+	}
+
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	_, err := r.s.db.Exec(ctx, `
+		UPDATE proxies SET contract_version = $3, updated_at = now()
+		WHERE tenant = $1 AND proxy_id = $2 AND contract_version IS DISTINCT FROM $3`,
+		tenant, proxyID, version)
+	return wrap(op, err)
+}
+
 func (r proxyRepo) Delete(ctx context.Context, tenant Tenant, proxyID string) error {
 	const op = "store.Proxies.Delete"
 	if err := checkTenant(op, tenant); err != nil {

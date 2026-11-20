@@ -41,6 +41,9 @@ type FleetSummary struct {
 	// ContractVersions is how many enrolled proxies declared each contract
 	// vocabulary, by version.
 	ContractVersions map[string]int
+	// ContractUnsupported counts enrolled proxies whose declared vocabulary
+	// this server does not serve (0064): every request from each is refused.
+	ContractUnsupported int
 	// RelayRegistrations counts live relay registrations (proxy D11).
 	RelayRegistrations int
 	// RecentErrors counts proxies whose last error is within
@@ -107,6 +110,9 @@ func (s *FleetSummary) add(p ProxyHealth, now time.Time) {
 		s.ConfigDrifted++
 	}
 	s.ContractVersions[strconv.Itoa(p.ContractVersion)]++
+	if p.ContractUnsupported {
+		s.ContractUnsupported++
+	}
 	s.RelayRegistrations += len(p.RelayRegistrations)
 	if !p.LastErrorAt.IsZero() && now.Sub(p.LastErrorAt) <= RecentErrorWindow {
 		s.RecentErrors++

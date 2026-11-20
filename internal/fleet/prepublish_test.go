@@ -13,6 +13,7 @@ import (
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/policy/model"
 	"github.com/hoplock/control/internal/store"
+	"github.com/hoplock/control/internal/store/storetest"
 )
 
 const appliancePolicy = `schema_version: 1
@@ -547,5 +548,75 @@ func TestARecordAgesOut(t *testing.T) {
 	}
 	if !slices.Equal(got.Execution, absent.Execution) || !slices.Equal(got.Reach, absent.Reach) {
 		t.Error("an expired record and an absent one answered differently")
+	}
+}
+
+// A PROXY OF THE WRONG BUILD IS A FLEET-READINESS FAILURE (0064). This server
+// serves one vocabulary, so a proxy whose last declaration is any other has
+// every authorize request refused. The fleet view, the summary and the
+// pre-publish query all say so from the same judgment, and a proxy that has
+// declared nothing is not evidence of anything.
+func TestAProxyOfTheWrongBuildIsNamedEverywhereAnOperatorLooks(t *testing.T) {
+	t.Parallel()
+	st, r, _ := newRegistry(t)
+	ctx := t.Context()
+
+	caps := fleet.Capabilities{CredentialMethods: []contract.TargetAuthMethod{contract.TargetAuthEphemeralUser}}
+	enrolled(t, r, testTenant, "p-right", "prod", nil, caps)
+	enrolled(t, r, testTenant, "p-wrong", "prod", nil, caps)
+	if err := r.RecordDeclaredVocabulary(ctx, testTenant, "p-wrong", contract.PolicyVersion-1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Proxies().Upsert(ctx, testTenant, storetest.Proxy("p-silent", "prod")); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := r.HealthPage(ctx, testTenant, store.Page{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range page.Rows {
+		if want := p.ProxyID == "p-wrong"; p.ContractUnsupported != want {
+			t.Errorf("%s (declared %d): contract unsupported = %v, want %v", p.ProxyID, p.ContractVersion, p.ContractUnsupported, want)
+		}
+	}
+	sum, err := r.Summary(ctx, testTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.ContractUnsupported != 1 {
+		t.Errorf("summary counts %d proxies of the wrong build, want 1", sum.ContractUnsupported)
+	}
+
+	const src = `schema_version: 1
+tenant: acme
+rules:
+  - id: plain
+    effect: allow
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+      credentials: [{method: ephemeral-user, username: jit}]
+`
+	answers, err := r.CheckPolicy(ctx, testTenant, fleet.Requirements(parseBundle(t, src)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range answers[0].Proxies {
+		switch v.ProxyID {
+		case "p-right":
+			if !v.OK {
+				t.Errorf("the right build cannot serve the route: %v", v.Missing)
+			}
+		case "p-wrong":
+			want := fleet.UnsupportedVocabularyReason(int(contract.PolicyVersion - 1))
+			if v.OK || !slices.Contains(v.Missing, want) {
+				t.Errorf("the wrong build's verdict = %+v; want it unable, saying %q", v, want)
+			}
+		}
+	}
+	if !answers[0].Satisfiable() {
+		t.Error("the route is unsatisfiable although the right build serves it")
 	}
 }

@@ -756,3 +756,47 @@ func TestAFloorABuildDeclaresIsNoFinding(t *testing.T) {
 		t.Errorf("modern-kex, which proxy-1 declares: %+v, want nothing", fs)
 	}
 }
+
+// A proxy of the wrong contract build is named before publish (0064): one
+// warning for the report, naming each enrolled proxy whose declared vocabulary
+// this server does not serve and what it declared. The right build, a proxy
+// that declared nothing and a revoked one are not named.
+func TestAProxyOfTheWrongBuildIsAWarningBeforePublish(t *testing.T) {
+	t.Parallel()
+	served, older := int(contract.PolicyVersion), int(contract.PolicyVersion)-1
+	facts := Facts{Proxies: []store.Proxy{
+		{ID: "proxy-right", Zone: "prod", State: store.EnrollmentEnrolled, ContractVersion: served},
+		{ID: "proxy-wrong", Zone: "prod", State: store.EnrollmentEnrolled, ContractVersion: older},
+		{ID: "proxy-newer", Zone: "edge", State: store.EnrollmentEnrolled, ContractVersion: served + 1},
+		{ID: "proxy-silent", Zone: "prod", State: store.EnrollmentEnrolled},
+		{ID: "proxy-gone", Zone: "prod", State: store.EnrollmentRevoked, ContractVersion: older},
+	}}
+	fs := run(t, restrictedRule("logs", "app.example.com", "account-restricted", "/usr/bin/uptime"), facts)
+	got := withCode(fs, CodeContractVersionUnsupported)
+	if len(got) != 1 {
+		t.Fatalf("findings = %+v, want one", got)
+	}
+	f := got[0]
+	if f.Severity != SeverityWarning || f.Rule != "" || f.ID != findingID(CodeContractVersionUnsupported) {
+		t.Errorf("finding = %+v, want a document-scope warning with a stable id", f)
+	}
+	if f.Parameters["served"] != served {
+		t.Errorf("served = %v, want %d", f.Parameters["served"], served)
+	}
+	want := []wrongBuild{
+		{ProxyID: "proxy-newer", Zone: "edge", Declared: served + 1},
+		{ProxyID: "proxy-wrong", Zone: "prod", Declared: older},
+	}
+	if names := f.Parameters["proxies"].([]wrongBuild); !slices.Equal(names, want) {
+		t.Errorf("proxies = %+v, want %+v", names, want)
+	}
+	if f.Parameters["proxies_count"] != 2 || f.Parameters["proxies_truncated"] != false {
+		t.Errorf("count/truncated = %v/%v", f.Parameters["proxies_count"], f.Parameters["proxies_truncated"])
+	}
+
+	fs = run(t, restrictedRule("logs", "app.example.com", "account-restricted", "/usr/bin/uptime"),
+		Facts{Proxies: facts.Proxies[:1]})
+	if got := withCode(fs, CodeContractVersionUnsupported); len(got) != 0 {
+		t.Errorf("a fleet on the served vocabulary was warned: %+v", got)
+	}
+}

@@ -25,38 +25,82 @@ func atVersion(version int32, target string) *contract.AuthorizeRequest {
 	return req
 }
 
-// requireMismatch asserts an outage naming both numbers, and never a deny.
-func requireMismatch(t *testing.T, h *harness, req *contract.AuthorizeRequest, needed int32) {
+// requireMismatch asserts an outage naming both numbers and the proxy, and
+// never a deny or an answer.
+func requireMismatch(t *testing.T, h *harness, req *contract.AuthorizeRequest) {
 	t.Helper()
 	out, err := h.authorize(t, req)
 	if out.Deny != nil {
-		t.Fatal("a vocabulary mismatch was DENIED; it is a rollout problem, not a statement about the user (M11)")
+		t.Fatalf("a proxy declaring %d was DENIED %s; a mismatch is a rollout problem, not a statement about the user (M11)",
+			*req.PolicyVersion, req.Target)
 	}
 	if out.Response != nil {
-		t.Fatalf("a proxy declaring %d was answered; the route needs %d and must be refused whole, never thinned",
-			*req.PolicyVersion, needed)
+		t.Fatalf("a proxy declaring %d was answered %s; this server serves %d only, and an answer in any other "+
+			"vocabulary is either one it cannot read or one with restrictions dropped", *req.PolicyVersion, req.Target, contract.PolicyVersion)
 	}
 	var mismatch *decision.VersionMismatchError
 	if !errors.As(err, &mismatch) {
-		t.Fatalf("error = %v, want a *decision.VersionMismatchError", err)
+		t.Fatalf("%s at %d: error = %v, want a *decision.VersionMismatchError", req.Target, *req.PolicyVersion, err)
 	}
-	if mismatch.Needed != needed || mismatch.Declared != *req.PolicyVersion {
-		t.Errorf("mismatch = %+v, want needed=%d declared=%d", mismatch, needed, *req.PolicyVersion)
+	want := decision.VersionMismatchError{Declared: *req.PolicyVersion, Served: contract.PolicyVersion, ProxyID: req.Conn.ProxyID}
+	if *mismatch != want {
+		t.Errorf("mismatch = %+v, want %+v", *mismatch, want)
+	}
+	msg := mismatch.Error()
+	for _, part := range []string{
+		strconv.Itoa(int(*req.PolicyVersion)), strconv.Itoa(int(contract.PolicyVersion)), req.Conn.ProxyID,
+	} {
+		if !strings.Contains(msg, part) {
+			t.Errorf("the refusal %q does not name %q", msg, part)
+		}
 	}
 }
 
-// brokered-certificate is vocabulary 5 (Hoplock/proxy#68). A proxy declaring 4
-// is refused that route WHOLE — never answered with the brokered-key rung alone,
-// which would drop a rung the policy wrote — and still gets every route it can
-// read.
-func TestTheBrokeredCertificateTier(t *testing.T) {
+// otherVocabularies is every declared vocabulary this server does not serve,
+// from the field's minimum to two past the current one.
+func otherVocabularies() []int32 {
+	var out []int32
+	for v := contract.PolicyVersionMinimum; v <= contract.PolicyVersion+2; v++ {
+		if v != contract.PolicyVersion {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// A PROXY IS NEVER SENT VOCABULARY ABOVE WHAT IT DECLARED (PLAN §4, 0064). This
+// server serves exactly contract.PolicyVersion, so the only answers it gives
+// are to a proxy declaring that, and every other declaration — lower or
+// higher, on a route carrying the newest vocabulary or none of it, and on a
+// route the policy denies — is the same 5xx. A proxy would refuse a whole
+// response over an unknown `method` value or field, and the user would see an
+// outage; a thinned answer would be a widened session. Neither can happen
+// when the only answer is in the one vocabulary the proxy declared.
+//
+// Until 0064 the gate was tiered, and a proxy declaring 4 was answered every
+// route without `brokered-certificate`, a floor or a ban. Each of those routes
+// is refused below: the single-version rule is stricter than the tiers in every
+// case, which is what made folding them in safe.
+func TestEveryOtherVocabularyIsRefusedOnEveryRoute(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 
-	requireMismatch(t, h, atVersion(contract.VocabularyBaseline, "cert-host.example.com"),
-		contract.VocabularyBrokeredCertificate)
+	routes := map[string]string{
+		"brokered-certificate":                  "cert-host.example.com",
+		"the baseline":                          "edge-host.example.com",
+		"a target this server has no record of": "nowhere.example.com",
+	}
+	for name, target := range routes {
+		for _, v := range otherVocabularies() {
+			t.Run(name+" at "+strconv.Itoa(int(v)), func(t *testing.T) {
+				requireMismatch(t, h, atVersion(v, target))
+			})
+		}
+	}
 
-	resp := h.mustAllow(t, atVersion(contract.VocabularyBrokeredCertificate, "cert-host.example.com"))
+	// The served version is answered exactly as the policy says, the
+	// certificate rung and the brokered key both on the ladder.
+	resp := h.mustAllow(t, atVersion(contract.PolicyVersion, "cert-host.example.com"))
 	if len(resp.TargetAuthLadder) != 2 || resp.TargetAuthLadder[0].Method != contract.TargetAuthBrokeredCertificate {
 		t.Fatalf("ladder = %+v, want the certificate rung first and both rungs", resp.TargetAuthLadder)
 	}
@@ -67,38 +111,66 @@ func TestTheBrokeredCertificateTier(t *testing.T) {
 			t.Errorf("the certificate rung carries %q, outside the three policy names", name)
 		}
 	}
+	h.mustAllow(t, atVersion(contract.PolicyVersion, "edge-host.example.com"))
+	// The unknown target is an outage of its own at the served version — and
+	// a different one, so the refusals above were the version's.
+	_, err := h.authorize(t, atVersion(contract.PolicyVersion, "nowhere.example.com"))
+	var mismatch *decision.VersionMismatchError
+	if err == nil || errors.As(err, &mismatch) {
+		t.Fatalf("the unknown target at the served version = %v; want its own outage, not a version mismatch", err)
+	}
+}
 
-	// A route without the method is answered to the older proxy unchanged.
-	h.mustAllow(t, atVersion(contract.VocabularyBaseline, "edge-host.example.com"))
+// The floor and the bans are refused at every other vocabulary like any other
+// route, and answered as authored at the served one: never stripped to fit.
+func TestAFloorOrABanIsRefusedAtEveryOtherVocabulary(t *testing.T) {
+	t.Parallel()
+	for name, lines := range map[string]string{
+		"a floor": "      algorithm_floor: modern-kex\n",
+		"a ban":   "      algorithm_bans: {ciphers: [aes128-ctr]}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.activate(t, algorithmBundle(lines))
+			for _, v := range otherVocabularies() {
+				req := atVersion(v, "edge-host.example.com")
+				req.Capabilities = upstreamCaps(t)
+				requireMismatch(t, h, req)
+			}
+			req := atVersion(contract.PolicyVersion, "edge-host.example.com")
+			req.Capabilities = upstreamCaps(t)
+			resp := h.mustAllow(t, req)
+			if resp.AlgorithmFloor == "" && resp.AlgorithmBans.Empty() {
+				t.Fatal("the served version was answered without the route's floor or ban")
+			}
+		})
+	}
+}
 
-	// At ANY rung: a ladder that names the method second needs 5 as surely
-	// as one that names it first, and is never answered with its first rung
-	// alone.
-	h.republish(t, `
+// The gate runs before anything is read: a standing denial, which is decided
+// above the engine, does not reach a proxy of the wrong build either. Its
+// answer would be a 401 at one vocabulary and a 5xx at the next, which is the
+// nondeterminism the early gate exists to remove.
+func TestTheGateRunsBeforeEvaluation(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.activate(t, `
 schema_version: 1
 tenant: acme
 rules:
-  - id: certificate-second
-    effect: allow
+  - id: nothing
+    effect: deny
+    reason: nobody reaches edge-host in this test
     match:
       target:
         hostnames: [edge-host.example.com]
-    route:
-      intent: hops-permitted
-      channels: [session]
-      filter:
-        mode: blacklist
-      credentials:
-        - method: brokered-key
-          username: netadmin
-          credential_ref: vault://edge
-        - method: brokered-certificate
-          username: netadmin
 `)
-	requireMismatch(t, h, atVersion(contract.VocabularyBaseline, "edge-host.example.com"),
-		contract.VocabularyBrokeredCertificate)
-	if resp := h.mustAllow(t, atVersion(contract.VocabularyBrokeredCertificate, "edge-host.example.com")); len(resp.TargetAuthLadder) != 2 {
-		t.Fatalf("ladder = %+v, want both rungs", resp.TargetAuthLadder)
+	for _, v := range otherVocabularies() {
+		requireMismatch(t, h, atVersion(v, "edge-host.example.com"))
+	}
+	if out, err := h.authorize(t, atVersion(contract.PolicyVersion, "edge-host.example.com")); err != nil || out.Deny == nil {
+		t.Fatalf("the authored deny at the served version = %+v, %v; want the deny", out, err)
 	}
 }
 
@@ -176,48 +248,27 @@ func requireCapabilityRefusal(t *testing.T, h *harness, req *contract.AuthorizeR
 	}
 }
 
-// A floor or a ban is vocabulary 6 (Hoplock/proxy#69): refused whole to a proxy
-// declaring 5 with a 5xx naming both numbers, while a brokered-certificate route
-// is still answered at 5 and a route with neither is answered unchanged.
-func TestTheAlgorithmFloorTier(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-
-	// Neither: answered to a proxy declaring 5.
-	h.mustAllow(t, atVersion(contract.VocabularyBrokeredCertificate, "edge-host.example.com"))
-	// Only brokered-certificate: still answered at 5.
-	h.mustAllow(t, atVersion(contract.VocabularyBrokeredCertificate, "cert-host.example.com"))
-
-	h.republish(t, algorithmBundle("      algorithm_floor: modern-kex\n"))
-	requireMismatch(t, h, atVersion(contract.VocabularyBrokeredCertificate, "edge-host.example.com"),
-		contract.VocabularyAlgorithmFloor)
-
-	h.republish(t, algorithmBundle("      algorithm_bans: {ciphers: [aes128-ctr]}\n"))
-	requireMismatch(t, h, atVersion(contract.VocabularyBrokeredCertificate, "edge-host.example.com"),
-		contract.VocabularyAlgorithmFloor)
-}
-
 // A floor level is sent only to a proxy that declared it.
 func TestAFloorIsSentOnlyToAProxyThatDeclaredIt(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.activate(t, algorithmBundle("      algorithm_floor: pq-hybrid-kex\n"))
 
-	req := atVersion(contract.VocabularyAlgorithmFloor, "edge-host.example.com")
+	req := atVersion(contract.PolicyVersion, "edge-host.example.com")
 	req.Capabilities = upstreamCaps(t)
 	resp := h.mustAllow(t, req)
 	if resp.AlgorithmFloor != contract.AlgorithmFloorPQHybridKex {
 		t.Fatalf("algorithm_floor = %q, want pq-hybrid-kex", resp.AlgorithmFloor)
 	}
 
-	without := atVersion(contract.VocabularyAlgorithmFloor, "edge-host.example.com")
+	without := atVersion(contract.PolicyVersion, "edge-host.example.com")
 	without.Capabilities = upstreamCaps(t)
 	without.Capabilities.AlgorithmFloors = []contract.AlgorithmFloorCapability{{
 		Level: contract.AlgorithmFloorModernKex, KeyExchanges: []string{"curve25519-sha256"},
 	}}
 	requireCapabilityRefusal(t, h, without, "algorithm_floor")
 
-	absent := atVersion(contract.VocabularyAlgorithmFloor, "edge-host.example.com")
+	absent := atVersion(contract.PolicyVersion, "edge-host.example.com")
 	absent.Capabilities = nil
 	requireCapabilityRefusal(t, h, absent, "algorithm_floor")
 }
@@ -279,11 +330,11 @@ func TestABanIsJudgedPerProxyFromItsOwnDeclaration(t *testing.T) {
 			h := newHarness(t)
 			h.activate(t, algorithmBundle(tc.lines))
 
-			refused := atVersion(contract.VocabularyAlgorithmFloor, "edge-host.example.com")
+			refused := atVersion(contract.PolicyVersion, "edge-host.example.com")
 			refused.Capabilities = upstreamCaps(t)
 			requireCapabilityRefusal(t, h, refused, "algorithm_bans")
 
-			other := atVersion(contract.VocabularyAlgorithmFloor, "edge-host.example.com")
+			other := atVersion(contract.PolicyVersion, "edge-host.example.com")
 			other.Capabilities = upstreamCaps(t)
 			tc.widen(other.Capabilities)
 			resp := h.mustAllow(t, other)
@@ -291,7 +342,7 @@ func TestABanIsJudgedPerProxyFromItsOwnDeclaration(t *testing.T) {
 				t.Fatal("the ban was stripped from the answer")
 			}
 
-			unknown := atVersion(contract.VocabularyAlgorithmFloor, "edge-host.example.com")
+			unknown := atVersion(contract.PolicyVersion, "edge-host.example.com")
 			unknown.Capabilities = upstreamCaps(t)
 			unknown.Capabilities.AlgorithmProfiles = nil
 			if resp := h.mustAllow(t, unknown); resp.AlgorithmBans.Empty() {
@@ -316,7 +367,7 @@ func TestTheAlgorithmDeclarationIsRecordedOncePerBuild(t *testing.T) {
 	h := newHarness(t)
 	ctx := t.Context()
 
-	req := atVersion(contract.VocabularyAlgorithmFloor, "edge-host.example.com")
+	req := atVersion(contract.PolicyVersion, "edge-host.example.com")
 	req.Capabilities = upstreamCaps(t)
 	h.mustAllow(t, req)
 	first, err := h.store.ProxyAlgorithmDeclarations().List(ctx, testTenant)
@@ -331,7 +382,7 @@ func TestTheAlgorithmDeclarationIsRecordedOncePerBuild(t *testing.T) {
 		t.Error("an unchanged declaration was rewritten")
 	}
 
-	changed := atVersion(contract.VocabularyAlgorithmFloor, "edge-host.example.com")
+	changed := atVersion(contract.PolicyVersion, "edge-host.example.com")
 	changed.Capabilities = upstreamCaps(t)
 	changed.Capabilities.AlgorithmFloors = changed.Capabilities.AlgorithmFloors[:1]
 	h.mustAllow(t, changed)
@@ -339,13 +390,4 @@ func TestTheAlgorithmDeclarationIsRecordedOncePerBuild(t *testing.T) {
 	if after[0].Digest == first[0].Digest {
 		t.Error("a changed build's declaration was not recorded")
 	}
-}
-
-// republish activates a new policy after the harness has already answered, and
-// moves the frozen clock past the program cache's refresh so the next call
-// reads it.
-func (h *harness) republish(t *testing.T, source string) {
-	t.Helper()
-	h.activate(t, source)
-	h.clock = h.clock.Add(time.Second)
 }

@@ -110,3 +110,29 @@ func writeTemp(t *testing.T, content string) string {
 	}
 	return path
 }
+
+// THE TWO LAYERS OF THE NEGOTIATION RULE STAY WHERE THEY ARE (0064). This
+// server serves one vocabulary and its file says `single`; the proxy's mock
+// answers older vocabularies route by route and its file says `per-route`. A
+// session that changed either would move a server's cases onto the other
+// server, and the first sign would be a CI leg failing for no reason anyone
+// could see in the diff.
+func TestEachServerSaysWhichVocabulariesItAnswers(t *testing.T) {
+	for file, want := range map[string]string{
+		"control-expectations.yaml": vocabulariesSingle,
+		"mock-expectations.yaml":    vocabulariesPerRoute,
+	} {
+		e, err := LoadExpectations(filepath.Join("testdata", file))
+		if err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		if e.Authorize.Vocabularies != want {
+			t.Errorf("%s says authorize.vocabularies %q, want %q", file, e.Authorize.Vocabularies, want)
+		}
+	}
+
+	path := writeTemp(t, "proxy_id: p\nauthorize:\n  vocabularies: several\n")
+	if _, err := LoadExpectations(path); err == nil || !strings.Contains(err.Error(), "authorize.vocabularies must be") {
+		t.Errorf("a value that is neither answer was accepted: %v", err)
+	}
+}

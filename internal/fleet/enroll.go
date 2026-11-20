@@ -135,8 +135,9 @@ type EnrollmentRequest struct {
 	// PublicKey is the key it enrolls with.
 	PublicKey []byte
 	// ContractVersion is the policy vocabulary this build implements. Stored as
-	// a fleet-readiness signal; never the authority on what a connection may
-	// be answered with (that is `policy_version` on each authorize request).
+	// a fleet-readiness signal, and replaced by what the proxy declares on its
+	// authorize requests (0064); never the authority on what a connection is
+	// answered (that is `policy_version` on each authorize request).
 	ContractVersion int
 	// Capabilities is what this build declares it can provide (M17).
 	Capabilities Capabilities

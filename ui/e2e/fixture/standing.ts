@@ -24,6 +24,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { APIRequestContext } from "@playwright/test";
 import { SOUTH, TENANT, UI } from "../harness";
+import { POLICY_VERSION } from "./contract";
 
 const API = `/api/v1/tenants/${TENANT}`;
 const IDS = join(UI, "build", "e2e", "standing.json");
@@ -150,7 +151,7 @@ export async function seedStanding(admin: APIRequestContext): Promise<void> {
       target: "api-01.core.internal",
       target_port: 22,
       auth_method: "publickey",
-      policy_version: 6,
+      policy_version: POLICY_VERSION,
       conn: { session_id: "sess-e2e-directory", proxy_id: "px-core-01", client_addr: "10.20.0.11:52210", timestamp: "2026-11-01T09:00:00Z" },
     },
   });

@@ -769,22 +769,42 @@ func TestVocabularyNegotiation(t *testing.T) {
 		}
 	})
 
-	t.Run("a version below what the route needs is an outage naming the mismatch", func(t *testing.T) {
+	t.Run("a version below the field's minimum is malformed, not a mismatch", func(t *testing.T) {
 		req := request("edge-host.example.com", "proxy-1")
-		one := int32(1)
-		req.PolicyVersion = &one
-		out, err := h.authorize(t, req)
-		if out.Deny != nil {
-			t.Fatal("a version mismatch was DENIED; it is a rollout problem, not a statement about the user")
-		}
-		var mismatch *decision.VersionMismatchError
-		if !errors.As(err, &mismatch) {
-			t.Fatalf("error = %v, want a *decision.VersionMismatchError", err)
-		}
-		if mismatch.Needed != contract.VocabularyBaseline || mismatch.Declared != 1 {
-			t.Errorf("mismatch = %+v, want needed=%d declared=1", mismatch, contract.VocabularyBaseline)
+		below := contract.PolicyVersionMinimum - 1
+		req.PolicyVersion = &below
+		_, err := h.authorize(t, req)
+		var status *contract.StatusError
+		if !errors.As(err, &status) || !errors.Is(status.Class, contract.ErrInvalidRequest) {
+			t.Fatalf("error = %v, want an invalid-request classification", err)
 		}
 	})
+
+	for name, declared := range map[string]int32{
+		"a lower version":  contract.PolicyVersion - 1,
+		"the lowest":       contract.PolicyVersionMinimum,
+		"a higher version": contract.PolicyVersion + 1,
+	} {
+		t.Run(name+" is an outage naming both numbers and the proxy", func(t *testing.T) {
+			req := request("edge-host.example.com", "proxy-1")
+			req.PolicyVersion = &declared
+			out, err := h.authorize(t, req)
+			if out.Deny != nil {
+				t.Fatal("a version mismatch was DENIED; it is a rollout problem, not a statement about the user")
+			}
+			if out.Response != nil {
+				t.Fatal("a version mismatch was answered; this server serves one vocabulary")
+			}
+			var mismatch *decision.VersionMismatchError
+			if !errors.As(err, &mismatch) {
+				t.Fatalf("error = %v, want a *decision.VersionMismatchError", err)
+			}
+			want := decision.VersionMismatchError{Declared: declared, Served: contract.PolicyVersion, ProxyID: "proxy-1"}
+			if *mismatch != want {
+				t.Errorf("mismatch = %+v, want %+v", *mismatch, want)
+			}
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------

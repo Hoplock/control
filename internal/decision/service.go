@@ -176,6 +176,24 @@ func (s *Service) Authorize(ctx context.Context, tenant store.Tenant, req *contr
 		return Outcome{}, err
 	}
 
+	// What the proxy declared is kept on its row for the fleet view and the
+	// publish-time report BEFORE the gate below can refuse it, because the
+	// proxy the gate refuses is exactly the one an operator must be able to
+	// find on a screen (0064). Best effort, like the algorithm declaration:
+	// the request is the authority, and the stored copy is a readiness
+	// signal.
+	if err := s.fleet.RecordDeclaredVocabulary(ctx, tenant, req.Conn.ProxyID, *req.PolicyVersion); err != nil {
+		s.log.WarnContext(ctx, "a proxy's declared policy vocabulary could not be recorded",
+			"event", "policy_version_unrecorded",
+			"proxy_id", req.Conn.ProxyID,
+			"tenant", tenant.String(),
+			"error", err.Error(),
+		)
+	}
+	if err := checkVersion(req); err != nil {
+		return Outcome{}, err
+	}
+
 	// The budget, applied to everything below it. A request that runs out
 	// of it answers — as an outage the proxy can classify — rather than
 	// holding the handshake open (M5).
@@ -361,17 +379,10 @@ func (s *Service) serve(
 		return nil, nil, err
 	}
 
-	// The version gate runs over the assembled response, because the
-	// question it answers is about what is being sent rather than about what
-	// this build can express — and BEFORE the capability checks, because a
-	// proxy that cannot read a field has made no declaration about it worth
-	// checking: a vocabulary-5 proxy asked for a floor is refused naming both
-	// numbers, not for a level it never knew to declare. Nothing after it
-	// changes which tiers the response needs; the cache hint rides on every
-	// vocabulary.
-	if err := checkVersion(resp, declaredVersion(req)); err != nil {
-		return nil, nil, err
-	}
+	// The vocabulary was settled before anything was read (checkVersion in
+	// Authorize): this proxy reads contract.PolicyVersion, which is every
+	// field the assembly can produce, so nothing here is gated on a version
+	// and nothing is thinned for one.
 
 	// What the asking proxy's build declares about algorithms is kept per
 	// proxy for the publish-time report and the fleet view (Hoplock/proxy#72).
@@ -503,17 +514,12 @@ func validate(req *contract.AuthorizeRequest) error {
 		// guessing for a proxy that cannot say what it reads is guessing
 		// which restrictions it would silently drop.
 		return contract.Invalid("policy_version is required")
-	case *req.PolicyVersion < 1:
-		return contract.Invalid("policy_version must be a positive vocabulary number")
+	case *req.PolicyVersion < contract.PolicyVersionMinimum:
+		// Below the field's minimum is not a vocabulary at all, so it is
+		// malformed rather than a mismatch.
+		return contract.Invalid(fmt.Sprintf("policy_version must be at least %d", contract.PolicyVersionMinimum))
 	}
 	return nil
-}
-
-func declaredVersion(req *contract.AuthorizeRequest) int32 {
-	if req.PolicyVersion == nil {
-		return 0
-	}
-	return *req.PolicyVersion
 }
 
 // considerExternal asks the external systems this decision depends on, inside

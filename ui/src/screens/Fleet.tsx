@@ -196,7 +196,15 @@ export function FleetScreen() {
       header: t("fleet.col.contract"),
       numeric: true,
       sortValue: (p) => p.contract_version,
-      cell: (p) => (p.contract_version ? f.number(p.contract_version) : <span className={styles.quiet}>{t("fleet.none")}</span>),
+      cell: (p) =>
+        p.contract_version ? (
+          <span className={styles.config}>
+            {p.contract_version_unsupported ? <StatusOf name="unsupported" /> : null}
+            {f.number(p.contract_version)}
+          </span>
+        ) : (
+          <span className={styles.quiet}>{t("fleet.none")}</span>
+        ),
     },
     {
       id: "relays",
@@ -469,6 +477,17 @@ function Summary({ health, fleet }: { health: "loading" | "ok" | "refused" | "ou
           <dt>{t("fleet.summary.drifted")}</dt>
           <dd>{f.number(s.config_drifted)}</dd>
         </div>
+        {s.contract_version_unsupported ? (
+          <div>
+            <dt>{t("fleet.summary.unsupported")}</dt>
+            <dd>
+              <span className={styles.config}>
+                <StatusOf name="unsupported" />
+                {f.number(s.contract_version_unsupported)}
+              </span>
+            </dd>
+          </div>
+        ) : null}
         <div>
           <dt>{t("fleet.summary.relays")}</dt>
           <dd>{f.number(s.relay_registrations)}</dd>
@@ -477,7 +496,12 @@ function Summary({ health, fleet }: { health: "loading" | "ok" | "refused" | "ou
           <dt>{t("fleet.summary.contracts")}</dt>
           <dd>
             {versions.length
-              ? f.list(versions.map(([v, n]) => t("fleet.summary.contract", { version: v, count: n })))
+              ? f.list(
+                  versions.map(([v, n]) =>
+                    // 0 is a proxy that has declared no vocabulary yet (0064), not a version.
+                    v === "0" ? t("fleet.summary.contractNone", { count: n }) : t("fleet.summary.contract", { version: v, count: n }),
+                  ),
+                )
               : t("fleet.none")}
           </dd>
         </div>
@@ -495,7 +519,11 @@ function ProxyDetail({ proxy: p, canWithdraw, onWithdraw }: { proxy: Proxy; canW
       <div className={styles.detailStatus}>
         <StatusOf name={proxyHealth(p)} pill />
         <StatusOf name={configStatus(c)} pill />
+        {p.contract_version_unsupported ? <StatusOf name="unsupported" pill /> : null}
       </div>
+      {p.contract_version_unsupported ? (
+        <p className={styles.quiet}>{t("fleet.contract.unsupported", { declared: f.number(p.contract_version) })}</p>
+      ) : null}
       <dl className={styles.fields}>
         <dt>{t("fleet.col.zone")}</dt>
         <dd>

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -525,8 +526,11 @@ func TestRecordHealthOnlyReplacesWhatItNames(t *testing.T) {
 	st := storetest.New(t)
 	ctx := t.Context()
 
+	// Any two vocabularies will do: what is graded is that a report naming
+	// none leaves the stored one alone and a report naming one replaces it.
+	served, other := int(contract.PolicyVersion), int(contract.PolicyVersion)+1
 	p := storetest.Proxy("p-a", "region")
-	p.ContractVersion = 4
+	p.ContractVersion = served
 	p.DeclaredCapabilities = json.RawMessage(`{"execution":["account-confined"]}`)
 	if err := st.Proxies().Upsert(ctx, tenantA, p); err != nil {
 		t.Fatalf("Upsert: %v", err)
@@ -541,8 +545,8 @@ func TestRecordHealthOnlyReplacesWhatItNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.ContractVersion != 4 {
-		t.Errorf("contract version = %d, want it left at 4", got.ContractVersion)
+	if got.ContractVersion != served {
+		t.Errorf("contract version = %d, want it left at %d", got.ContractVersion, served)
 	}
 	if !hasRung(t, got.DeclaredCapabilities, "account-confined") {
 		t.Errorf("declared capabilities = %s, want them left alone", got.DeclaredCapabilities)
@@ -559,9 +563,8 @@ func TestRecordHealthOnlyReplacesWhatItNames(t *testing.T) {
 
 	// A named capability set replaces the stored one, and a named version
 	// replaces the stored version.
-	version := 5
 	if err := st.Proxies().RecordHealth(ctx, tenantA, store.ProxyHealthReport{
-		ProxyID: "p-a", At: fleetNow(), ContractVersion: &version,
+		ProxyID: "p-a", At: fleetNow(), ContractVersion: &other,
 		DeclaredCapabilities: json.RawMessage(`{}`),
 		LastError:            "boom",
 	}); err != nil {
@@ -571,8 +574,8 @@ func TestRecordHealthOnlyReplacesWhatItNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.ContractVersion != 5 {
-		t.Errorf("contract version = %d, want 5", got.ContractVersion)
+	if got.ContractVersion != other {
+		t.Errorf("contract version = %d, want %d", got.ContractVersion, other)
 	}
 	if string(got.DeclaredCapabilities) != "{}" {
 		t.Errorf("declared capabilities = %s, want {}", got.DeclaredCapabilities)
@@ -863,5 +866,59 @@ func TestTheDriftedPageIsExactlyWhatDriftedSelects(t *testing.T) {
 	all, err := st.ProxyConfigs().PageStates(ctx, tenantA, false, store.Page{Limit: store.MaxPageLimit})
 	if err != nil || len(all.Rows) != len(cases) || all.More {
 		t.Errorf("the whole view = %d rows (more %t), %v; want all %d", len(all.Rows), all.More, err, len(cases))
+	}
+}
+
+// The vocabulary a proxy declared on authorize is written only when it moved
+// (0064), and a proxy with no row is left alone rather than created: this is a
+// readiness signal, never an enrollment path.
+func TestSetContractVersionWritesOnlyAChange(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+
+	if err := st.Proxies().Upsert(ctx, tenantA, storetest.Proxy("p-a", "region")); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	served := int(contract.PolicyVersion)
+	if err := st.Proxies().SetContractVersion(ctx, tenantA, "p-a", served); err != nil {
+		t.Fatalf("SetContractVersion: %v", err)
+	}
+	first, err := st.Proxies().Get(ctx, tenantA, "p-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ContractVersion != served {
+		t.Fatalf("contract version = %d, want %d", first.ContractVersion, served)
+	}
+
+	// The same number again changes nothing, the row's update time included.
+	if err := st.Proxies().SetContractVersion(ctx, tenantA, "p-a", served); err != nil {
+		t.Fatalf("SetContractVersion: %v", err)
+	}
+	var before, after time.Time
+	row := `SELECT updated_at FROM proxies WHERE tenant = $1 AND proxy_id = 'p-a'`
+	if err := st.Pool().QueryRow(ctx, row, tenantA).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Proxies().SetContractVersion(ctx, tenantA, "p-a", served); err != nil {
+		t.Fatalf("SetContractVersion: %v", err)
+	}
+	if err := st.Pool().QueryRow(ctx, row, tenantA).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.Equal(before) {
+		t.Errorf("an unchanged vocabulary was rewritten: updated_at %v → %v", before, after)
+	}
+
+	// Another tenant's identically named proxy is not touched (M18).
+	if err := st.Proxies().SetContractVersion(ctx, tenantB, "p-a", served+1); err != nil {
+		t.Fatalf("SetContractVersion in another tenant: %v", err)
+	}
+	if got, _ := st.Proxies().Get(ctx, tenantA, "p-a"); got.ContractVersion != served {
+		t.Errorf("another tenant's write moved this one's contract version to %d", got.ContractVersion)
+	}
+	if _, err := st.Proxies().Get(ctx, tenantB, "p-a"); !store.IsNotFound(err) {
+		t.Errorf("a proxy with no row was created by recording its vocabulary: %v", err)
 	}
 }

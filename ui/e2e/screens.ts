@@ -1441,15 +1441,17 @@ export const SCREENS: readonly E2EScreen[] = [
     densities: false,
     ready: (page) => main(page).locator("[data-source-view] tr[data-noted]").first().waitFor(),
     states: {},
-    // The dialog, its one warning listed to accept by id, and a refusal: the
-    // name typed, the warning not accepted, so the server answers 409 and the
-    // dialog says so where the author is (nothing is activated).
+    // The dialog, its warnings listed to accept by id — the rule's, and since
+    // 0064 the fixture fleet's proxy of the wrong contract build — and a
+    // refusal: the name typed, the warnings not accepted, so the server
+    // answers 409 and the dialog says so where the author is (nothing is
+    // activated).
     prepare: async (page) => {
       // A role that cannot activate is offered no button (rbac.spec.ts holds that).
       if ((await main(page).locator("[data-activate]").count()) === 0) return;
       await main(page).locator("[data-activate]").click();
       const dialog = page.locator("dialog[open]");
-      await dialog.locator("[data-activation-gate=ok] [data-finding]").waitFor();
+      await dialog.locator("[data-activation-gate=ok] [data-finding]").first().waitFor();
       await dialog.locator("[data-confirm-input]").fill("v3");
       await dialog.locator("button[type=submit]").click();
       await dialog.locator("[role=alert][data-error-code=findings_not_accepted]").waitFor();

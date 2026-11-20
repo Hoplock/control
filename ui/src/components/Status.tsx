@@ -58,6 +58,10 @@ export const STATUS = {
   refusedAtIngest: { tone: "warn", label: "status.refusedAtIngest" },
   unreachable: { tone: "outage", label: "status.unreachable" },
   fetchFailed: { tone: "outage", label: "status.fetchFailed" },
+  // A proxy whose declared policy vocabulary this server does not serve
+  // (0064): every session through it is refused with a 5xx — an outage of
+  // that proxy's sessions, never a deny (M11).
+  unsupported: { tone: "outage", label: "status.unsupported" },
   unserved: { tone: "outage", label: "status.unserved" },
   // A report pack that could not list its reports, and a generation that ended broken (0056).
   unavailable: { tone: "outage", label: "status.unavailable" },

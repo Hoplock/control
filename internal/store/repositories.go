@@ -254,6 +254,13 @@ type ProxyRepository interface {
 	// for is not a row to create, it is an unenrolled proxy, and creating
 	// the row would be the auto-enrollment 0006 exists to refuse.
 	RecordHealth(ctx context.Context, tenant Tenant, h ProxyHealthReport) error
+	// SetContractVersion records the policy vocabulary a proxy declared on
+	// its latest authorize request (0064). It writes only when the stored
+	// number differs, so the steady state of a fleet on one build costs no
+	// write. A proxy with no row is left alone and is not an error: the row is
+	// enrollment's to create, and this is a readiness signal, never an
+	// enrollment path.
+	SetContractVersion(ctx context.Context, tenant Tenant, proxyID string, version int) error
 	// Delete removes a proxy. Absent is ErrNotFound.
 	Delete(ctx context.Context, tenant Tenant, proxyID string) error
 }

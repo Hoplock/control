@@ -79,6 +79,10 @@ authorize:
     login: alice
     subject: alice@example.com
     target: build-01.company.com
+  # The mock answers an older vocabulary every route that vocabulary can
+  # express, and refuses only the routes it cannot. Hoplock Control serves one
+  # vocabulary and says `single`; the contract allows both (0064).
+  vocabularies: per-route
 
   device_fields:
     with_fields:
