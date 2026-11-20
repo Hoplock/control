@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/hoplock/control/internal/contract"
@@ -111,6 +112,41 @@ func (r *Registry) RecordAlgorithmDeclaration(ctx context.Context, tenant store.
 		return err
 	}
 	r.declared.Store(key, declared{digest: digest, at: now})
+	return nil
+}
+
+// RecordDeclaredVocabulary keeps the policy vocabulary a proxy declared on its
+// latest authorize request, as its row's contract version (0064).
+//
+// It is what makes the fleet view and the publish-time report name a proxy of
+// the wrong build before a user finds it: this server serves exactly one
+// vocabulary, so a proxy whose stored number is any other has every authorize
+// request refused, and an operator must be able to see which one. It is
+// recorded on the request the gate REFUSES as much as on one it answers —
+// that is the proxy the signal exists for.
+//
+// It is a write the decision path causes, so it is bounded the way
+// [Registry.RecordAlgorithmDeclaration] is (M5): a write when the number
+// changed or when this node's memory of writing it is older than
+// [DeclarationRecheck], and the store's own predicate makes an unchanged
+// number a no-op. The memory moves only after a write lands. A failure is the
+// caller's to log: the declaration on the request is what the gate judges.
+func (r *Registry) RecordDeclaredVocabulary(ctx context.Context, tenant store.Tenant, proxyID string, version int32) error {
+	if proxyID == "" || version < contract.PolicyVersionMinimum {
+		return nil
+	}
+	key := string(tenant) + "\x00" + proxyID
+	digest := strconv.Itoa(int(version))
+	now := r.now()
+	if last, ok := r.vocabularies.Load(key); ok {
+		if d := last.(declared); d.digest == digest && now.Sub(d.at) < DeclarationRecheck {
+			return nil
+		}
+	}
+	if err := r.st.Proxies().SetContractVersion(ctx, tenant, proxyID, int(version)); err != nil {
+		return err
+	}
+	r.vocabularies.Store(key, declared{digest: digest, at: now})
 	return nil
 }
 

@@ -12,93 +12,98 @@ import (
 // Vocabulary negotiation (PLAN §4), in one place.
 //
 // The proxy declares the highest policy vocabulary it implements in
-// `policy_version`, and decodes this response STRICTLY: a field it does not
-// understand is not dropped, it fails the session closed — as an outage in
-// front of a user rather than a deny. That rule is what makes the vocabulary
-// safe to extend, and it only works if this server never answers above the
-// declared version.
+// `policy_version`, and decodes the authorize response STRICTLY: a field or an
+// enum value it does not understand is not dropped, it fails the session
+// closed — as an outage in front of a user rather than a deny. That rule is
+// what makes the vocabulary safe to extend, and it only works if this server
+// never answers above the declared version.
 //
-// Two halves, and both are built:
+// THIS SERVER SERVES EXACTLY ONE VOCABULARY: contract.PolicyVersion, the
+// vendored document's (0064). Proxy and server ship together and move
+// together, so a fleet mid-upgrade is a rollout-ordering problem rather than a
+// code path, and there is no older vocabulary here to answer within. Three
+// answers, and they must stay three:
 //
-//   - `policy_version` is REQUIRED and has no absent-value default. A request
-//     that omits it is refused `400 invalid_request` — not answered at a
-//     guessed version, and never `401`, because a deny is a decision about a
-//     user and this is a malformed caller.
-//   - when the policy needs vocabulary the proxy cannot read, the answer is a
-//     `5xx` naming the mismatch, never a thinned snapshot. Dropping a
-//     permission is merely wrong; dropping a RESTRICTION is a breach, and a
-//     mid-upgrade fleet that silently enforces less than its policy says is
-//     the exact failure this exists to prevent.
+//   - `policy_version` ABSENT, or below the field's minimum: `400
+//     invalid_request` (validate). A malformed caller that never said what it
+//     reads — not answered at a guessed version, because guessing a version is
+//     guessing which restrictions it would silently drop, and never `401`.
+//   - `policy_version` is PolicyVersion: answered as the policy says. The
+//     assembly takes no version at all, so there is nothing in it to thin.
+//   - ANY OTHER `policy_version`, lower or higher: a `5xx` naming the number
+//     the proxy declared, the number this server serves, and the proxy
+//     (checkVersion). An operator reading it must conclude "this proxy is the
+//     wrong build", not "the server is broken". It is not a deny (M11): a
+//     version mismatch says nothing about the user. And it is never a thinned
+//     `200`: dropping a permission is merely wrong, dropping a RESTRICTION is
+//     a silently widened session, which is the failure this whole obligation
+//     exists to prevent.
 //
-// THE TIERS. Upstream states the contract in the present tense, with no
-// "since version N" on any field, so the tiers are this server's to keep — the
-// same three the proxy's cmd/mock-control keeps (baselineVocabulary,
-// vocabularyBrokeredCertificate, vocabularyAlgorithmFloor), and each a constant
-// of its own in internal/contract rather than an offset from PolicyVersion:
+// WHAT THIS REPLACED. Until 0064 the gate was tiered: a route naming
+// `brokered-certificate` needed vocabulary 5 and one carrying a floor or a ban
+// needed 6, so a proxy declaring 4 was refused only the routes it could not
+// read and served the rest. Those tiers refused rather than thinned, and
+// folding them into this gate is safe only because this gate is stricter:
+// every route a tier refused is refused here too, and so is every route a tier
+// served below PolicyVersion. A future session that wants to serve a second
+// vocabulary again needs the argument above, not just this conclusion — and it
+// would be adding a per-field "needs vocabulary N" table that this server must
+// then keep true for every field, which is the code that is never exercised
+// until the day it is wrong.
 //
-//	contract.VocabularyAlgorithmFloor (6)       algorithm_floor, or a non-empty algorithm_bans
-//	contract.VocabularyBrokeredCertificate (5)  a ladder naming brokered-certificate at any rung
-//	contract.VocabularyBaseline (4)             everything else
+// WHAT IS NOT A VERSION, and must not be folded into this gate:
 //
-// A proxy one or two revisions behind therefore still gets every route it CAN
-// read, and is refused — whole, with a 5xx naming both numbers — exactly the
-// routes it cannot. Never a thinned answer: a ladder with the certificate rung
-// dropped, or a route with its floor or ban removed, is a dropped restriction
-// (PLAN §4).
+//   - The `device_field.<name>` namespace. It is open on purpose: a name in it
+//     is not a new policy field and demands no bump. Whether a driver accepts
+//     a name is a CAPABILITY question (M17), answered in capability.go.
+//   - The per-level floor rule. A proxy declaring PolicyVersion may still
+//     enforce fewer `algorithm_floor` levels than the contract names, so a
+//     level it did not declare in `capabilities.algorithm_floors` is refused as
+//     a capability shortfall beside the rungs, and the operator looks at that
+//     proxy's build rather than at the rollout.
+//   - The per-proxy ban rule (Hoplock/proxy#72): a route whose bans leave an
+//     axis of the asking proxy's declared lists empty is a capability
+//     shortfall too, whatever version it declared.
 
-// requiredVersion reports the lowest policy vocabulary that can express this
-// response.
-//
-// It answers per RESPONSE and not per build, which is the point: the refusal is
-// per route. Every field added to the contract needs a case here, highest tier
-// first, or this server hands it to a proxy that fails the session closed on
-// it.
-//
-// The `device_field.<name>` namespace is deliberately NOT a case here and must
-// never become one. It is an open namespace: a name inside it is not a new
-// policy field, it demands no bump, and there is no version to gate it on — an
-// older proxy parses a route bearing device fields exactly as it parses one
-// without them. Whether a driver accepts a given name is a CAPABILITY question
-// (M17), answered in capability.go against what the enforcing proxy declared.
-// So is whether the proxy enforces a floor level, or can apply a ban without
-// emptying an axis: those are per proxy (Hoplock/proxy#72), never a version.
-func requiredVersion(resp *contract.AuthorizeResponse) int32 {
-	if resp.AlgorithmFloor != "" || !resp.AlgorithmBans.Empty() {
-		return contract.VocabularyAlgorithmFloor
-	}
-	for _, rung := range resp.TargetAuthLadder {
-		if rung.Method == contract.TargetAuthBrokeredCertificate {
-			return contract.VocabularyBrokeredCertificate
-		}
-	}
-	return contract.VocabularyBaseline
-}
-
-// VersionMismatchError is policy this server cannot express within the
-// vocabulary the caller declared.
+// VersionMismatchError is a request declaring a policy vocabulary this server
+// does not serve.
 //
 // It is a `5xx` on purpose (M11): it is a rollout problem, not a statement
 // about the user. It is also a different answer from an ABSENT
 // `policy_version`, which is a malformed request and a `400` — a declared wrong
-// version is a fleet mid-upgrade, an absent one is a caller that cannot say
-// what it reads, and folding the two together loses which of them happened.
+// version is a proxy built against a different contract revision, an absent
+// one is a caller that cannot say what it reads, and folding the two together
+// loses which of them happened.
 type VersionMismatchError struct {
+	// Declared is what the proxy said it reads.
 	Declared int32
-	Needed   int32
+	// Served is the one vocabulary this server answers in.
+	Served int32
+	// ProxyID is the proxy that asked, so the operator knows which build to
+	// look at.
+	ProxyID string
 }
 
+// Error is safe to disclose: it names two numbers and the caller's own id.
 func (e *VersionMismatchError) Error() string {
-	return fmt.Sprintf("decision: this route needs policy vocabulary %d; the proxy declared %d",
-		e.Needed, e.Declared)
+	return fmt.Sprintf("proxy %q declared policy_version %d and this server serves policy_version %d only: "+
+		"the proxy and this server are builds of different contract revisions, and they move together — "+
+		"deploy the proxy build that declares %d, or the server that serves %d",
+		e.ProxyID, e.Declared, e.Served, e.Served, e.Declared)
 }
 
-// checkVersion is the gate every answer passes through.
+// checkVersion is the gate every authorize request passes through, after
+// validation and BEFORE anything is read or evaluated.
 //
-// It runs AFTER assembly and before anything is returned, because the question
-// it answers is about the response rather than about the build.
-func checkVersion(resp *contract.AuthorizeResponse, declared int32) error {
-	if needed := requiredVersion(resp); declared < needed {
-		return &VersionMismatchError{Declared: declared, Needed: needed}
+// It runs first because its answer does not depend on the policy: a proxy
+// that cannot read this server's vocabulary cannot read any answer from it, a
+// deny included, so the refusal is the same for every route — deterministic,
+// which is what lets the conformance suite assert it exactly. Running it after
+// evaluation would answer the same wrong build `401` on one target and `5xx`
+// on the next, and send its operator to debug permissions for the first.
+func checkVersion(req *contract.AuthorizeRequest) error {
+	if declared := *req.PolicyVersion; declared != contract.PolicyVersion {
+		return &VersionMismatchError{Declared: declared, Served: contract.PolicyVersion, ProxyID: req.Conn.ProxyID}
 	}
 	return nil
 }

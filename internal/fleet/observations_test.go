@@ -9,6 +9,7 @@ import (
 	"github.com/hoplock/control/internal/contract"
 	"github.com/hoplock/control/internal/fleet"
 	"github.com/hoplock/control/internal/store"
+	"github.com/hoplock/control/internal/store/storetest"
 )
 
 // The declaration a proxy's build makes is recorded from the decision path, and
@@ -141,5 +142,65 @@ func TestObservationPagesDecodeAsTheWholeTenantReadersDo(t *testing.T) {
 	if o := kex.Rows[0]; o.Port != 22 || o.FloorMet != contract.FloorMetModernKex ||
 		o.Negotiated != contract.KexCurve25519 || o.ReportedBy != "proxy-1" || !o.Fresh(c.now(), r.TargetObservationTTL()) {
 		t.Errorf("kex page row = %+v, want db-1:22 as reported", o)
+	}
+}
+
+// The vocabulary a proxy declared is recorded from the decision path on the
+// rule the algorithm declaration follows (0064, M5): two nodes converge on the
+// latest number whichever node a proxy reaches, and inside the recheck an
+// unchanged number costs no write.
+func TestTwoNodesConvergeOnAProxysDeclaredVocabulary(t *testing.T) {
+	t.Parallel()
+	st, nodeA, c := newRegistry(t)
+	nodeB := fleet.New(st, fleet.WithClock(c.now))
+	ctx := t.Context()
+	if err := st.Proxies().Upsert(ctx, testTenant, storetest.Proxy("proxy-1", "region")); err != nil {
+		t.Fatal(err)
+	}
+	served, older := contract.PolicyVersion, contract.PolicyVersion-1
+
+	stored := func() int {
+		t.Helper()
+		p, err := st.Proxies().Get(ctx, testTenant, "proxy-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p.ContractVersion
+	}
+	record := func(r *fleet.Registry, v int32) {
+		t.Helper()
+		if err := r.RecordDeclaredVocabulary(ctx, testTenant, "proxy-1", v); err != nil {
+			t.Fatalf("RecordDeclaredVocabulary: %v", err)
+		}
+	}
+
+	record(nodeA, served) // the right build, on A
+	record(nodeB, older)  // rolled back to the wrong one, on B
+	if got := stored(); got != int(older) {
+		t.Fatalf("stored %d, want %d: the wrong build is the one the fleet view must name", got, older)
+	}
+	record(nodeA, served) // upgraded again, on A: A remembers writing this itself
+	c.advance(fleet.DeclarationRecheck)
+	record(nodeA, served)
+	if got := stored(); got != int(served) {
+		t.Fatalf("stored %d for a proxy declaring %d: node A's memory suppressed the write that corrects node B's", got, served)
+	}
+
+	// Inside the recheck the memory saves the write.
+	if err := st.Proxies().SetContractVersion(ctx, testTenant, "proxy-1", int(older)); err != nil {
+		t.Fatal(err)
+	}
+	c.advance(fleet.DeclarationRecheck / 2)
+	record(nodeA, served)
+	if got := stored(); got != int(older) {
+		t.Error("an unchanged vocabulary inside the recheck interval reached the store")
+	}
+
+	// Below the field's minimum is not a vocabulary, and nothing is written.
+	if err := nodeB.RecordDeclaredVocabulary(ctx, testTenant, "proxy-1", contract.PolicyVersionMinimum-1); err != nil {
+		t.Fatal(err)
+	}
+	if got := stored(); got != int(older) {
+		t.Errorf("a malformed version was recorded as %d", got)
 	}
 }

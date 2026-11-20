@@ -94,7 +94,7 @@ func enrolled(t *testing.T, r *fleet.Registry, tenant store.Tenant, proxyID stri
 		ProxyID:         proxyID,
 		Zone:            zone,
 		PublicKey:       []byte("key-" + proxyID),
-		ContractVersion: 4,
+		ContractVersion: int(contract.PolicyVersion),
 		Capabilities:    caps,
 		Edges:           edges,
 	}); err != nil {
@@ -467,8 +467,8 @@ func TestHealthReportsWhatAnOperatorNeeds(t *testing.T) {
 	if h.LastErrorAt.IsZero() {
 		t.Error("the last error carries no time")
 	}
-	if h.ContractVersion != 4 {
-		t.Errorf("contract version = %d, want 4", h.ContractVersion)
+	if h.ContractVersion != int(contract.PolicyVersion) {
+		t.Errorf("contract version = %d, want %d", h.ContractVersion, contract.PolicyVersion)
 	}
 	if !h.Capabilities.HasExecutionRung(contract.ExecutionAccountConfined) {
 		t.Error("the declared capabilities are not in the fleet view")

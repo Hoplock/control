@@ -239,6 +239,9 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 		"Proxies.RecordHealth": func() error {
 			return s.Proxies().RecordHealth(ctx, "", ProxyHealthReport{ProxyID: "p", At: nowForTest()})
 		},
+		"Proxies.SetContractVersion": func() error {
+			return s.Proxies().SetContractVersion(ctx, "", "p", 1)
+		},
 		"Proxies.Delete": func() error { return s.Proxies().Delete(ctx, "", "p") },
 		"PolicyBundles.Insert": func() error {
 			return s.PolicyBundles().Insert(ctx, "", PolicyBundle{Version: 1, Hash: "h"})

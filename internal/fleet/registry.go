@@ -48,6 +48,9 @@ type Registry struct {
 	// decision path writes when a build changed or the memory is older than
 	// DeclarationRecheck, and not on every call (M5).
 	declared sync.Map
+	// vocabularies is what this node last wrote of each proxy's declared
+	// policy vocabulary, on the same rule as declared (0064, M5).
+	vocabularies sync.Map
 }
 
 // Option configures a Registry.
