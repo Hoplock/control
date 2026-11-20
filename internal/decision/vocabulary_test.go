@@ -391,12 +391,3 @@ func TestTheAlgorithmDeclarationIsRecordedOncePerBuild(t *testing.T) {
 		t.Error("a changed build's declaration was not recorded")
 	}
 }
-
-// republish activates a new policy after the harness has already answered, and
-// moves the frozen clock past the program cache's refresh so the next call
-// reads it.
-func (h *harness) republish(t *testing.T, source string) {
-	t.Helper()
-	h.activate(t, source)
-	h.clock = h.clock.Add(time.Second)
-}
