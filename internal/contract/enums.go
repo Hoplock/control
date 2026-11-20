@@ -12,43 +12,9 @@ package contract
 // The types are named (M13): the `exhaustive` linter only sees named enums, and
 // a switch that forgot a new rung is exactly the failure it exists to catch.
 
-// PolicyVersion is the policy vocabulary this server speaks — the number a
-// proxy declares on AuthorizeRequest and the highest this server may answer
-// within (PLAN §4).
-//
-// It is NOT the document's own version (`info.version`). The two move
-// independently and neither is derived from the other: policy_version governs
-// /v1/authorize and nothing else, so a field on another endpoint, a whole new
-// endpoint, and a tightening all move the document without moving this number
-// — and upstream Hoplock/proxy#53 moved the document version DOWN, 4.3.0 to
-// 4.0.0, while this stood still at 4. A version string therefore identifies no
-// document; the checksum in contract/UPSTREAM does.
-//
-// It is the vocabulary of the vendored document, and nothing ties the two
-// together but this line until phase 0064: a re-vendor that moves the number
-// must move this constant in the same change, or this server hands a proxy a
-// field it refuses the whole response over.
-const PolicyVersion int32 = VocabularyAlgorithmFloor
-
-// The vocabulary tiers: the policy_version that first carried each field a
-// response may hold (PLAN §4). Each is a constant of its own and never an
-// offset from PolicyVersion, because a later revision moves PolicyVersion and
-// leaves every earlier tier where it was — Hoplock/proxy#69 moved it to 6 and
-// `brokered-certificate` stayed a 5. The decision path's requiredVersion picks
-// one per response; the proxy's cmd/mock-control keeps the same three
-// (baselineVocabulary, vocabularyBrokeredCertificate, vocabularyAlgorithmFloor).
-const (
-	// VocabularyBaseline is the vocabulary every response this server can
-	// build without either of the fields below needs.
-	VocabularyBaseline int32 = 4
-	// VocabularyBrokeredCertificate added the `brokered-certificate` method
-	// (Hoplock/proxy#68). An unknown method refuses the whole response,
-	// exactly as an unknown field does, which is why a method moves it.
-	VocabularyBrokeredCertificate int32 = 5
-	// VocabularyAlgorithmFloor added `algorithm_floor` and `algorithm_bans`
-	// (Hoplock/proxy#69).
-	VocabularyAlgorithmFloor int32 = 6
-)
+// PolicyVersion and DocumentVersion, the two numbers the vendored document
+// carries, are in version.go: that file is the one place the tree spells
+// either (0064).
 
 // The paths the contract defines.
 const (
