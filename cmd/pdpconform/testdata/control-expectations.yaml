@@ -100,6 +100,14 @@ authorize:
     login: alice
     subject: alice@example.com
     target: build-01.company.com
+  # THIS SERVER serves exactly one policy vocabulary, the vendored document's
+  # (0064): every other declared vocabulary, lower or higher, is refused on
+  # every route with a 5xx naming the declared number, the served one and the
+  # proxy. That is a fact about this server, not about the contract, which is
+  # why it is here and not in the suite's contract-level cases: the proxy's
+  # cmd/mock-control answers older vocabularies route by route, correctly, and
+  # its file says `per-route`.
+  vocabularies: single
   device_fields:
     with_fields:
       login: alice

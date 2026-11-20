@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,21 +38,49 @@ func (s *Suite) authorizeAt(route AuthorizeRoute, version int32) (*response, str
 	return r, req.Conn.SessionID, err
 }
 
-// requireVersionRefusal asserts the answer to a route asked below its tier: a
-// 5xx with the envelope naming both numbers, and never a 401 or a thinned 200.
-func (s *Suite) requireVersionRefusal(c *Case, r *response, declared, needed int32) {
+// requireVersionRefusal asserts the answer to a request declaring a vocabulary
+// the server will not answer it in.
+//
+// THE CONTRACT'S LAYER, graded against every server: a 5xx with the envelope,
+// naming the number the proxy declared, and never a 401 (a mismatch is a
+// rollout problem, not a decision about a user — M11) or a 200 (a stripped
+// answer is a widened session). What the server names BESIDE the declared
+// number is its own business: the vocabulary the route needs, for a server
+// that answers older vocabularies route by route, or the one vocabulary it
+// serves.
+//
+// THE SERVER'S LAYER, graded only where the expectation file says
+// `authorize.vocabularies: single`: the refusal also names the one vocabulary
+// the server serves and the proxy that asked, because the operator reading it
+// has to conclude "this proxy is the wrong build" and needs both to act.
+func (s *Suite) requireVersionRefusal(c *Case, r *response, declared int32, proxyID string) {
 	c.require(r.status != 401, "a version mismatch answered 401; it is a rollout problem, not a decision about a user (M11)")
-	c.require(r.status != 200, "the route was answered at vocabulary %d; it needs %d, and a stripped answer is a widened session", declared, needed)
+	c.require(r.status != 200, "a proxy declaring vocabulary %d was answered 200; a vocabulary it cannot read is refused whole, never stripped to fit", declared)
 	if !c.require(r.status >= 500, "want a 5xx, got %d: %s", r.status, snippet(r.body)) {
 		return
 	}
 	s.requireEnvelope(c, r)
 	var env contract.ErrorResponse
-	if r.into(&env) == nil {
-		msg := env.Error.Message
-		c.require(strings.Contains(msg, strconv.Itoa(int(declared))) && strings.Contains(msg, strconv.Itoa(int(needed))),
-			"the refusal %q does not name both numbers (%d declared, %d needed)", msg, declared, needed)
+	if r.into(&env) != nil {
+		return
 	}
+	msg := env.Error.Message
+	c.require(namesNumber(msg, declared), "the refusal %q does not name the declared vocabulary %d", msg, declared)
+	if s.expect.Authorize.Vocabularies == vocabulariesSingle {
+		if proxyID == "" {
+			proxyID = s.expect.ProxyID
+		}
+		c.require(namesNumber(msg, contract.PolicyVersion),
+			"the refusal %q does not name %d, the one vocabulary this server serves", msg, contract.PolicyVersion)
+		c.require(strings.Contains(msg, proxyID),
+			"the refusal %q does not name the proxy %q; the operator cannot tell which build is wrong", msg, proxyID)
+	}
+}
+
+// namesNumber reports whether a message names n as a number of its own, so
+// that "1" is not found inside "/v1/" or "16".
+func namesNumber(msg string, n int32) bool {
+	return regexp.MustCompile(`(^|[^0-9A-Za-z])` + strconv.Itoa(int(n)) + `($|[^0-9A-Za-z])`).MatchString(msg)
 }
 
 // CheckCertificate grades brokered certificates (Hoplock/proxy#68): the
@@ -60,10 +89,13 @@ func (s *Suite) requireVersionRefusal(c *Case, r *response, declared, needed int
 func (s *Suite) CheckCertificate() {
 	e := &s.expect.Certificate
 
-	s.run(groupCertificate, "a route naming brokered-certificate is refused to a proxy declaring 4, with a 5xx naming both numbers", func(c *Case) {
-		r, _, err := s.authorizeAt(e.Route, contract.VocabularyBaseline)
+	s.run(groupCertificate, "a route naming brokered-certificate is refused to a proxy declaring the lowest vocabulary, never answered without it", func(c *Case) {
+		// The lowest vocabulary the field admits is below the one that
+		// introduced the method on any server, so this is the contract's
+		// rule and grades the mock and this server alike; it names no tier.
+		r, _, err := s.authorizeAt(e.Route, contract.PolicyVersionMinimum)
 		c.must(err == nil, "request failed: %v", err)
-		s.requireVersionRefusal(c, r, contract.VocabularyBaseline, contract.VocabularyBrokeredCertificate)
+		s.requireVersionRefusal(c, r, contract.PolicyVersionMinimum, e.Route.ProxyID)
 	})
 
 	s.run(groupCertificate, "the ladder entry carries policy only: username, and at most key_type and lifetime_seconds", func(c *Case) {

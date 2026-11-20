@@ -308,7 +308,7 @@ func (s *Suite) checkVocabulary() {
 	route := s.expect.Authorize.Negotiation
 
 	s.run(groupVocabulary, "a request with no policy_version is refused with 400", func(c *Case) {
-		// Deliberately its own case, distinct from the version-1 case below.
+		// Deliberately its own case, distinct from the low-version case below.
 		// They look similar and are not: 1 is a proxy that told the truth about
 		// being old, and absent is a proxy that said nothing. Only the first
 		// can be answered safely, because guessing a version for the second is
@@ -324,24 +324,29 @@ func (s *Suite) checkVocabulary() {
 		c.require(r.status != 401, "an absent policy_version answered 401; a malformed caller is not a denied user (M11)")
 	})
 
+	// THE CONTRACT'S LAYER: graded against every server. The low version is
+	// the lowest the field admits, below every vocabulary any revision has
+	// added a field in, so the case names no tier and cannot go stale.
+	lowest := contract.PolicyVersionMinimum
 	s.run(groupVocabulary, "a low declared version is answered safely, never thinned", func(c *Case) {
+		c.must(lowest < contract.PolicyVersion, "the current vocabulary %d is the lowest the field admits, so there is no low version to declare", contract.PolicyVersion)
 		current, err := s.authorize(route, contract.PolicyVersion)
 		c.must(err == nil, "current-version request failed: %v", err)
 		c.must(current.status == 200, "current-version request: want 200, got %d: %s",
 			current.status, snippet(current.body))
 
-		low, err := s.authorize(route, 1)
-		c.must(err == nil, "version-1 request failed: %v", err)
+		low, err := s.authorize(route, lowest)
+		c.must(err == nil, "version-%d request failed: %v", lowest, err)
 
 		switch {
 		case low.status >= 500:
 			// The correct answer when the policy needs vocabulary the caller
 			// cannot read: say so rather than send fields that will be refused.
 			s.requireEnvelope(c, low)
-			c.note("answered %d — the server holds policy it cannot express at version 1 and says so", low.status)
+			c.note("answered %d — the server will not answer vocabulary %d and says so", low.status, lowest)
 		case low.status == 401:
 			c.require(false,
-				"version 1 was answered 401; a version mismatch is a rollout problem, not a decision about the user (M11)")
+				"version %d was answered 401; a version mismatch is a rollout problem, not a decision about the user (M11)", lowest)
 		case low.status == 200:
 			// A 200 is a pass only if nothing was dropped. A thinned snapshot
 			// that drops a restriction and returns 200 is the failure this
@@ -357,16 +362,71 @@ func (s *Suite) checkVocabulary() {
 				}
 			}
 			c.require(len(dropped) == 0,
-				"version 1 was answered 200 with %s dropped from the current-version answer; "+
+				"version %d was answered 200 with %s dropped from the current-version answer; "+
 					"an unknown field may be a restriction, and a dropped restriction is a silently widened session — "+
 					"the correct answer is a 5xx naming the mismatch",
-				strings.Join(dropped, ", "))
+				lowest, strings.Join(dropped, ", "))
 			if len(dropped) == 0 {
-				c.note("answered 200 and identical in policy content: this route needs nothing above version 1")
+				c.note("answered 200 and identical in policy content: this route needs nothing above version %d", lowest)
 			}
 		default:
-			c.require(false, "version 1 was answered %d: %s", low.status, snippet(low.body))
+			c.require(false, "version %d was answered %d: %s", lowest, low.status, snippet(low.body))
 		}
+	})
+
+	if s.expect.Authorize.Vocabularies == vocabulariesSingle {
+		s.checkSingleVersion(route)
+	}
+}
+
+// checkSingleVersion grades THIS SERVER'S LAYER of the negotiation rule: a
+// server whose expectation file says `authorize.vocabularies: single` serves
+// exactly contract.PolicyVersion, and refuses every other declared vocabulary
+// — lower or higher, on every route, a deny route included — with a 5xx naming
+// the declared number, the served one and the proxy (0064).
+//
+// None of it is the contract's: the proxy's cmd/mock-control answers an older
+// vocabulary every route that vocabulary can express, and a newer one the
+// current vocabulary, both correctly. That is why these cases are run only
+// where the file says so, and why they must never move up into checkVocabulary.
+func (s *Suite) checkSingleVersion(route AuthorizeRoute) {
+	routes := []AuthorizeRoute{route, s.expect.Authorize.Direct, s.expect.Authorize.Deny}
+	refusedAt := func(c *Case, version int32) {
+		for _, r := range routes {
+			got, err := s.authorize(r, version)
+			c.must(err == nil, "%s at %d: request failed: %v", r.Target, version, err)
+			s.requireVersionRefusal(c, got, version, r.ProxyID)
+		}
+	}
+
+	s.run(groupVocabulary, "(single) a lower declared version is refused on every route, deterministically, naming both numbers and the proxy", func(c *Case) {
+		// The deny route is the one that shows the refusal is deterministic:
+		// a server that judged the version after the policy would answer the
+		// same wrong build 401 there and 5xx elsewhere, and send its
+		// operator to debug permissions for the first.
+		for v := contract.PolicyVersionMinimum; v < contract.PolicyVersion; v++ {
+			refusedAt(c, v)
+		}
+		c.note("every vocabulary from %d to %d refused on %d routes", contract.PolicyVersionMinimum, contract.PolicyVersion-1, len(routes))
+	})
+
+	s.run(groupVocabulary, "(single) a higher declared version is refused, never answered best-effort", func(c *Case) {
+		// A proxy declaring a vocabulary this server has never heard of is
+		// a build of a later contract revision. Answering it in this
+		// server's vocabulary would be legal on the wire and is still wrong
+		// here: the two are meant to move together, and an answer hides
+		// that they did not.
+		refusedAt(c, contract.PolicyVersion+1)
+	})
+
+	s.run(groupVocabulary, "(single) the served version is answered on the same routes", func(c *Case) {
+		for _, r := range []AuthorizeRoute{route, s.expect.Authorize.Direct} {
+			got := s.mustAuthorize(c, r, contract.PolicyVersion)
+			c.require(got.status == 200, "%s at %d answered %d", r.Target, contract.PolicyVersion, got.status)
+		}
+		deny, err := s.authorize(s.expect.Authorize.Deny, contract.PolicyVersion)
+		c.must(err == nil, "request failed: %v", err)
+		c.require(deny.status == 401, "the deny route at %d answered %d, want 401: the refusal above is a version's, not the route's", contract.PolicyVersion, deny.status)
 	})
 }
 
@@ -438,7 +498,7 @@ func (s *Suite) checkDeviceFields() {
 // lowestServedVersion finds the lowest declared vocabulary at which a route is
 // answered 200.
 func (s *Suite) lowestServedVersion(route AuthorizeRoute) (int32, bool) {
-	for v := int32(1); v <= contract.PolicyVersion; v++ {
+	for v := contract.PolicyVersionMinimum; v <= contract.PolicyVersion; v++ {
 		r, err := s.authorize(route, v)
 		if err != nil {
 			return 0, false

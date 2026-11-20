@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -32,7 +33,7 @@ func (s *Suite) CheckErrors() {
 		// Well-formed JSON, wrong shape: no identity, no target, no conn. This
 		// is the case a server passes by accident when it decodes leniently and
 		// then denies whatever it ended up with.
-		r, err := s.postJSON(contract.PathAuthorize, []byte(`{"policy_version": 4}`))
+		r, err := s.postJSON(contract.PathAuthorize, fmt.Appendf(nil, `{"policy_version": %d}`, contract.PolicyVersion))
 		c.must(err == nil, "request failed: %v", err)
 		c.require(r.status == 400,
 			"want 400 for a request with no identity, target, or conn, got %d: %s", r.status, snippet(r.body))
