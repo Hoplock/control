@@ -43,4 +43,26 @@ do
 	fi
 done
 
+# Two more sshds on the same host, with the same accounts, keys and settings —
+# only the key exchange differs — for the algorithm-floor scenario (phase 0063;
+# Hoplock Proxy deploy/target/entrypoint.sh does the same on 2222). A route
+# whose floor is pq-hybrid-kex that fails against either can only have failed
+# on the floor, and the no-floor routes to the same two ports prove it.
+#
+#   2222  classical key exchanges only: no hybrid of any kind.
+#   2223  sntrup761x25519-sha512@openssh.com as its ONLY hybrid, beside the same
+#         classical list — what OpenSSH 9.0 to 9.8 offer by default. The proxy's
+#         SSH library implements no sntrup761, so this sshd does not meet
+#         pq-hybrid-kex either, and the scenario asserts that it does not.
+#
+# Each list is written out rather than derived, and started before the main
+# sshd and fatal if it will not start (`set -e`): a missing listener would fail
+# a floor scenario as "the target could not be reached", which reads like a
+# network fault.
+classical="curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group16-sha512,diffie-hellman-group14-sha256"
+/usr/sbin/sshd -p 2222 -o "KexAlgorithms=$classical" \
+	-o PidFile=/run/sshd-classical.pid -E /var/log/sshd-classical.log
+/usr/sbin/sshd -p 2223 -o "KexAlgorithms=sntrup761x25519-sha512@openssh.com,$classical" \
+	-o PidFile=/run/sshd-sntrup.pid -E /var/log/sshd-sntrup.log
+
 exec /usr/sbin/sshd -D -e

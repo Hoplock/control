@@ -24,6 +24,7 @@ import (
 	"github.com/hoplock/control/internal/revoke"
 	"github.com/hoplock/control/internal/standing"
 	"github.com/hoplock/control/internal/store"
+	"github.com/hoplock/control/internal/tlsconf"
 )
 
 // shutdownGrace is how long an in-flight request has to finish once the
@@ -41,7 +42,7 @@ const shutdownGrace = 15 * time.Second
 // deployment where half the product is up. The north-bound listener arrives here
 // with 0011 rather than 0019 because this phase is what M2 was waiting for: the
 // credential model. 0019 adds routes to a listener that already authenticates.
-func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions *ext.Extensions, h Host, log *slog.Logger) error {
+func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions *ext.Extensions, h Host, wire listenerWire, log *slog.Logger) error {
 	// The event broker is built FIRST, because the fleet registry reads it:
 	// a cache hint is only issued to a proxy holding a live subscription
 	// (M9, PLAN §5.4), and that read is [fleet.SubscriptionState]. Before
@@ -288,13 +289,17 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		// sends nothing. Without it, a handful of such connections is a
 		// listener that has stopped accepting.
 		ReadHeaderTimeout: cfg.South.RequestTimeout,
+		// The south-bound listener's own TLS, or nil for plaintext (M29).
+		TLSConfig: wire.south,
 	}
 
-	log.Info("south-bound listener starting",
+	// The posture is on this one line, so "is this listener post-quantum on
+	// the wire?" is answered without reading anything else (M29).
+	log.Info("south-bound listener starting", append([]any{
 		"address", cfg.Listeners.South,
 		"routes", handler.Routes(),
 		"heartbeat_interval_seconds", bus.AdvertisedHeartbeatSeconds(),
-	)
+	}, tlsconf.PostureOf(cfg.South.TLS).LogAttrs()...)...)
 
 	// Requests pending in a registered workflow are asked about on a clock.
 	// Without a workflow nothing is ever pending, and Watch returns at once.
@@ -441,7 +446,7 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 	}
 	self.SetListener("south", true)
 	go func() {
-		err := srv.Serve(southLn)
+		err := serveListener(srv, southLn)
 		self.SetListener("south", false)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
@@ -449,10 +454,10 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		errs <- err
 	}()
 
-	log.Info("north-bound listener starting",
+	log.Info("north-bound listener starting", append([]any{
 		"address", cfg.Listeners.North,
 		"routes", len(northHandler.Routes()),
-	)
+	}, tlsconf.PostureOf(cfg.North.TLS).LogAttrs()...)...)
 	for _, route := range northHandler.Routes() {
 		// A host's routes are logged at Info rather than Debug: an operator
 		// must be able to see, without turning anything on, which routes on
@@ -471,8 +476,9 @@ func serve(ctx context.Context, cfg *config.Config, st *store.Store, extensions 
 		return err
 	}
 	self.SetListener("north", true)
+	northSrv.TLSConfig = wire.north
 	go func() {
-		err := northSrv.Serve(northLn)
+		err := serveListener(northSrv, northLn)
 		self.SetListener("north", false)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil

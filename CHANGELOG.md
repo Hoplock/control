@@ -26,6 +26,42 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.50.0
+
+Phase 0063, post-quantum posture (M29, M2, M13, M15, M23). Each listener can
+now terminate TLS itself, states its wire posture at start-up, and can require
+a hybrid post-quantum key exchange. A configuration with no `tls:` block
+behaves exactly as before. No migration; the north-bound API and the contract
+are unchanged, and `server` is untouched.
+
+### Breaking
+
+- **`ext.KeyAlgorithm.String` renders a value outside the enum as `"unknown"`,**
+  where it rendered `"ed25519"`. Nothing may legitimately produce such a value;
+  a host that relied on the old fallback was reading a stale or corrupt value
+  as a real algorithm. The three members render as before.
+
+### Listener TLS
+
+- **`south.tls` and `north.tls`**, one block per listener, each with
+  `certificate_file`, `key_file`, `client_ca_file` and `require_hybrid_kex`.
+  With no certificate the listener serves plaintext, as before. With one, it
+  serves TLS 1.3 only, with the Go standard library's own key-exchange set,
+  which offers `X25519MLKEM768` first.
+- **`require_hybrid_kex: true`** refuses any handshake that did not negotiate
+  `X25519MLKEM768`, `SecP256r1MLKEM768` or `SecP384r1MLKEM1024`; the server logs
+  the group it negotiated. Off by default.
+- **`client_ca_file`** requires a client certificate chaining to it. It
+  authenticates the connection only: a proxy still presents its bearer token.
+- **A `tls:` block that cannot be honoured refuses the start** — a certificate
+  with no key, a key with no certificate, a file that cannot be read, or
+  `require_hybrid_kex` or `client_ca_file` on a listener with no certificate.
+  The daemon never falls back to plaintext. Files are read once, at start-up.
+- **Each listener's start-up line states its posture**: `tls` (`on`/`off`),
+  `min_tls_version`, `client_certificate_required`, and `post_quantum_kex` —
+  `required`, `preferred`, or `not-stated-plaintext-listener` for a listener
+  behind something else that terminates TLS.
+
 ## v0.49.0
 
 Phase 0062, CA custody through the key store (M15, M7, M18, M11, M23). The

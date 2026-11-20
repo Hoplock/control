@@ -6,7 +6,8 @@
 #   postgres      the store, stock image
 #   control-init  migrates, seeds and prints the CA bundle, then exits — the
 #                 explicit start-up step migrations are (PLAN §8)
-#   control       this server, both listeners
+#   control       this server, both listeners, each serving TLS of its own
+#                 (deploy/control/control.yaml; PLAN M29)
 #   proxy-edge    the proxy users reach; reaches `core` itself
 #   proxy-relay   a proxy in the protected zone that accepts NO inbound
 #                 connection, reached only over the relay registration it opens
@@ -15,13 +16,17 @@
 #                 brokered-certificate accounts, under several names
 #   target-zone   the same image, inside the protected zone
 #   client        the OpenSSH client the scenarios drive
+#   probe         the client image on the south network, for one TLS handshake
+#                 at a time: not started by `make e2e-up` (profile `probe`), and
+#                 run by the wire-posture scenario with `compose run --rm`
 #
 # Networks, and what each is load-bearing for. Every one but `north` is
 # `internal`: nothing on it reaches, or is reached from, outside the topology.
 #   north         control's north-bound listener, published on the host's
 #                 loopback for the suite (an operator's tooling, in effect)
 #   db            control ↔ postgres
-#   south-edge    proxy-edge → control's south-bound listener
+#   south-edge    proxy-edge → control's south-bound listener (and, for the
+#                 length of one handshake, the probe)
 #   south-zone    proxy-relay → control's south-bound listener. A network of
 #                 its own so the protected zone shares NOTHING with the edge but
 #                 the relay network.
@@ -45,6 +50,8 @@ x-control: &control-image
     HOPLOCK_KEK: ${HOPLOCK_KEK:?run deploy/gen-material.sh first}
   volumes:
     - ./control:/etc/hoplock:ro
+    # The listeners' TLS certificate and key (gen-material.sh).
+    - ./keys:/material:ro
     - ca:/ca
 
 services:
@@ -95,6 +102,12 @@ services:
       args: *base
     image: hoplock-control-e2e/proxy
     command: ["-config", "/etc/hoplock/config.yaml"]
+    # The proxy dials https://control:8080 and verifies it against the run's
+    # TLS CA. SSL_CERT_FILE is read by the Go standard library on Linux, so the
+    # proxy is configured for nothing: it trusts this CA the way it would trust
+    # a real deployment's.
+    environment:
+      SSL_CERT_FILE: /material/tls_ca.pem
     volumes:
       - ./proxy/proxy-edge.yaml:/etc/hoplock/config.yaml:ro
       - ./keys:/material:ro
@@ -107,14 +120,25 @@ services:
   proxy-relay:
     image: hoplock-control-e2e/proxy
     command: ["-config", "/etc/hoplock/config.yaml"]
+    # The proxy dials https://control:8080 and verifies it against the run's
+    # TLS CA. SSL_CERT_FILE is read by the Go standard library on Linux, so the
+    # proxy is configured for nothing: it trusts this CA the way it would trust
+    # a real deployment's.
+    environment:
+      SSL_CERT_FILE: /material/tls_ca.pem
     volumes:
       - ./proxy/proxy-relay.yaml:/etc/hoplock/config.yaml:ro
       - ./keys:/material:ro
     networks: [south-zone, relay, zone]
     depends_on: [control, proxy-edge]
 
-  # One sshd, several names: a target row per name (control/seed.template.yaml),
-  # so each route's rule is selected by the name the user types.
+  # One host, several names: a target row per name (control/seed.template.yaml),
+  # so each route's rule is selected by the name the user types. It runs three
+  # sshds (target/entrypoint.sh): 22 offers OpenSSH's defaults, ML-KEM hybrid
+  # first; 2222 offers classical key exchanges only; 2223 offers sntrup761 as
+  # its only hybrid, as OpenSSH 9.0 to 9.8 do. The pq-* names are the
+  # algorithm-floor scenario's, one per sshd, and classical/sntrup reach the
+  # same two sshds with no floor.
   target:
     build:
       context: .
@@ -126,7 +150,8 @@ services:
       - ca:/ca:ro
     networks:
       core:
-        aliases: [appliance, certified, ladder, restricted, cached]
+        aliases: [appliance, certified, ladder, restricted, cached,
+                  pq, pq-classical, pq-sntrup, classical, sntrup]
     depends_on:
       control-init: {condition: service_completed_successfully}
 
@@ -151,6 +176,18 @@ services:
     volumes:
       - ./keys:/material:ro
     networks: [edge]
+
+  # The wire-posture scenario's TLS client on the south network (PLAN M29): it
+  # proves the south-bound listener refuses a classical-only handshake, which
+  # nothing a proxy does can show. A profile keeps it out of `up`, so the
+  # south network holds the proxies and this server and nothing else, except
+  # for the length of one `compose run --rm probe`.
+  probe:
+    image: hoplock-control-e2e/client
+    profiles: [probe]
+    volumes:
+      - ./keys:/material:ro
+    networks: [south-edge]
 
 volumes:
   ca:

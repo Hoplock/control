@@ -257,3 +257,125 @@ rules:
     cache:
       key: [subject, target, target-port, proxy, rule]
       ttl_seconds: 300
+
+  # The algorithm floor (Hoplock/proxy#69, phase 0063), one rule per sshd on the
+  # target host. pq-hybrid-kex against the sshd on 22 is met, and the stored
+  # negotiated record names mlkem768x25519-sha256 beside the floor.
+  - id: pq-floor-met
+    description: a post-quantum floor the default sshd meets
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [pq]
+    route:
+      intent: hops-permitted
+      channels: [session]
+      requests:
+        types: [exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+      algorithm_floor: pq-hybrid-kex
+
+  # The same floor against the sshd that offers no hybrid: an outage, never a
+  # deny, stored as target.algorithm_policy_unmet with cause floor.
+  - id: pq-floor-classical
+    description: the same floor against the classical-only sshd, an outage
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [pq-classical]
+    route:
+      intent: hops-permitted
+      port: 2222
+      channels: [session]
+      requests:
+        types: [exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+      algorithm_floor: pq-hybrid-kex
+
+  # The same floor against the sshd whose only hybrid is sntrup761, as OpenSSH
+  # 9.0 to 9.8 offer: it does not meet the level either.
+  - id: pq-floor-sntrup
+    description: the same floor against an sshd whose only hybrid is sntrup761
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [pq-sntrup]
+    route:
+      intent: hops-permitted
+      port: 2223
+      channels: [session]
+      requests:
+        types: [exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+      algorithm_floor: pq-hybrid-kex
+
+  # The classical-only sshd with NO floor connects, so the outage above is the
+  # floor's and nothing else's.
+  - id: no-floor-classical
+    description: the classical-only sshd with no floor connects
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [classical]
+    route:
+      intent: hops-permitted
+      port: 2222
+      channels: [session]
+      requests:
+        types: [exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+
+  # And the sntrup761 sshd with no floor connects too, on a classical exchange.
+  - id: no-floor-sntrup
+    description: the sntrup761 sshd with no floor connects
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        hostnames: [sntrup]
+    route:
+      intent: hops-permitted
+      port: 2223
+      channels: [session]
+      requests:
+        types: [exec]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900

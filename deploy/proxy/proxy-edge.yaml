@@ -7,7 +7,9 @@ proxy:
   host_key_path: "/material/hostkey_proxy_edge"
 
 control:
-  base_url: "http://control:8080"
+  # TLS, terminated by this server itself (PLAN M29), verified against the
+  # run's CA through SSL_CERT_FILE (deploy/compose.yaml).
+  base_url: "https://control:8080"
   # `<tenant>.<secret>`, bound to this proxy id (M22; deploy/control/seed.yaml).
   token: "default.e2e-proxy-edge-secret"
   cache:
