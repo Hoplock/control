@@ -4,6 +4,8 @@
 // info badge, and health reads in the status vocabulary — an upgrade is in
 // progress, unknown is Not reported, an unread health is an outage.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Health, Identity, Session, Supervisor } from "../src/api/types";
@@ -12,6 +14,17 @@ import { currentTenant, healthStatus, holds, liveSupervisors, showsTenant, tenan
 import type { Load } from "../src/shell/load";
 import { TopBar, type TopBarProps } from "../src/shell/TopBar";
 import { operatorKey } from "../src/prefs/prefs";
+import { root } from "./source";
+
+// The vendored contract's own version, as a deployment of this build reports
+// it — read out of the document rather than spelled here, because the tree
+// spells it once (internal/contract/version.go; version_literal_test.go).
+function vendoredVersion(): string {
+  const m = /^  version: (\S+)$/m.exec(readFileSync(join(root, "..", "contract", "control.yaml"), "utf8"));
+  if (!m?.[1]) throw new Error("contract/control.yaml carries no info.version");
+  return m[1];
+}
+const CONTRACT = vendoredVersion();
 
 const scope = { roles: ["auditor"], permissions: ["instance:read"] };
 
@@ -34,7 +47,7 @@ const identity: Load<Identity> = {
     instance_id: "inst-0123456789abcdef0123456789abcdef",
     display_name: "Production EU",
     created_at: "2026-01-01T00:00:00Z",
-    versions: { software: "v0.37.0", contract: "1.4.0", contract_commit: "abcdef0123456789", north_api: 2, north_api_min: 1 },
+    versions: { software: "v0.37.0", contract: CONTRACT, contract_commit: "abcdef0123456789", north_api: 2, north_api_min: 1 },
     tenants: [],
   },
 };
@@ -110,7 +123,7 @@ describe("the deployment's identity (M19)", () => {
     expect(html).toMatch(/<code [^>]*dir="ltr" translate="no" title="inst-0123456789abcdef0123456789abcdef"/);
     expect(html).toContain(">inst-01234567</code>");
     expect(html).toContain("Version v0.37.0");
-    expect(html).toContain("Contract 1.4.0");
+    expect(html).toContain(`Contract ${CONTRACT}`);
   });
 
   it("says so when the identity cannot be read, rather than showing nothing", () => {

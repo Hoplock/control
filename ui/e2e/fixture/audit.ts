@@ -23,6 +23,7 @@
 
 import { request, type APIRequestContext } from "@playwright/test";
 import { NORTH, SOUTH, TENANT } from "../harness";
+import { POLICY_VERSION } from "./contract";
 
 const SUPERVISOR = `ht.${TENANT}.e2e-supervisor-token`;
 
@@ -45,7 +46,7 @@ async function authorize(api: APIRequestContext, a: Ask): Promise<string | null>
       target: a.target,
       target_port: 22,
       auth_method: "publickey",
-      policy_version: 6,
+      policy_version: POLICY_VERSION,
       conn: { session_id: a.session, proxy_id: a.proxy, client_addr: a.client, hop_trail: a.trail, timestamp: a.at },
     },
   });
