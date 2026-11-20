@@ -88,7 +88,9 @@ targets:
 #   px-core-02      live, pending_restart (settings waiting on a restart)
 #   px-dmz-03       live, rejected the document (last_error)
 #   px-dmz-04       live, fetch_failed (an outage, never a deny)
-#   px-edge-05      live, applied an older document: a rollout in progress
+#   px-edge-05      live, applied an older document: a rollout in progress;
+#                   and its build declares the previous policy vocabulary,
+#                   which this server does not serve: Unsupported (0064)
 #   px-edge-06      live, has never reported its configuration
 #   px-edge-07      enrolled, never heard from: unreachable (the partial gap)
 #   px-old-08       withdrawn: revoked

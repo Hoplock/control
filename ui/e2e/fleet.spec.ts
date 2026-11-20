@@ -24,6 +24,7 @@ async function cell(page: Page, id: string, column: number) {
   return { tone: await s.getAttribute("data-tone"), text: (await s.innerText()).trim() };
 }
 const HEALTH = 2;
+const CONTRACT = 4;
 const CONFIG = 6;
 
 test("shows each configuration state as the proxy reported it", async ({ browser }) => {
@@ -54,6 +55,23 @@ test("shows each configuration state as the proxy reported it", async ({ browser
   await page.keyboard.press("Escape");
   await row(page, "px-edge-06").locator("th button").click();
   await expect(page.locator("dialog[open]")).toContainText("never reported its configuration");
+  await page.context().close();
+});
+
+// A proxy of the wrong contract build (0064): this server serves one policy
+// vocabulary, so a proxy that declared another is refused every session —
+// Unsupported beside the number it declared, an outage and never a deny
+// (M11), in the table, its detail, and the summary's count. A proxy on the
+// served vocabulary shows its number and no status.
+test("names a proxy of the wrong contract build Unsupported", async ({ browser }) => {
+  const page = await openScreen(browser, fleet);
+  expect(await cell(page, "px-edge-05", CONTRACT)).toEqual({ tone: "outage", text: "Unsupported" });
+  await expect(row(page, "px-core-01").locator("> *").nth(CONTRACT).locator("[data-tone]")).toHaveCount(0);
+  await expect(page.getByText("Unsupported contract")).toBeVisible();
+  await row(page, "px-edge-05").locator("th button").click();
+  const drawer = page.locator("dialog[open]");
+  await expect(drawer.locator("[data-tone=outage]").filter({ hasText: "Unsupported" })).toHaveCount(1);
+  await expect(drawer).toContainText("every session through this proxy is refused");
   await page.context().close();
 });
 

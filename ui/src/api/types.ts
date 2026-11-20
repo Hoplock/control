@@ -111,6 +111,8 @@ export interface FleetSummary {
   revoked: number;
   config_drifted: number;
   contract_versions: Record<string, number>;
+  /** Enrolled proxies whose declared vocabulary this server does not serve (north API 7; absent at zero). */
+  contract_version_unsupported?: number;
   relay_registrations: number;
   recent_errors: number;
   truncated: boolean;
@@ -173,6 +175,8 @@ export interface Proxy {
   last_heartbeat_at?: string;
   subscription_seen_at?: string;
   contract_version: number;
+  /** Set when contract_version is a vocabulary this server does not serve (north API 7; absent otherwise). */
+  contract_version_unsupported?: boolean;
   capabilities: Record<string, unknown>;
   relay_registrations: string[];
   config: ConfigRollout;

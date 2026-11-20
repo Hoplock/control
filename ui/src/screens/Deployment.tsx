@@ -34,6 +34,7 @@ export const REASON_MESSAGES: Readonly<Record<string, MessageKey>> = {
   proxies_stale: "reason.proxies_stale",
   proxies_unreachable: "reason.proxies_unreachable",
   config_drift: "reason.config_drift",
+  proxies_contract_unsupported: "reason.proxies_contract_unsupported",
   stale: "reason.stale",
   not_observed: "reason.not_observed",
 };

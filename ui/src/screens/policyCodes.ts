@@ -100,6 +100,7 @@ export const FINDING: Readonly<Record<string, MessageKey>> = {
   "authoring.cache_hint_outlives_condition": "policies.finding.authoring.cache_hint_outlives_condition",
   "authoring.cache_hint_spans_sources": "policies.finding.authoring.cache_hint_spans_sources",
   "authoring.interpreter_in_allow_list": "policies.finding.authoring.interpreter_in_allow_list",
+  "satisfiability.contract_version_unsupported": "policies.finding.satisfiability.contract_version_unsupported",
   "satisfiability.no_proxy_provides": "policies.finding.satisfiability.no_proxy_provides",
   "satisfiability.proxies_unreported": "policies.finding.satisfiability.proxies_unreported",
   "satisfiability.target_cannot_take": "policies.finding.satisfiability.target_cannot_take",

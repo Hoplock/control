@@ -6,6 +6,7 @@
 
 import type { APIRequestContext } from "@playwright/test";
 import { SOUTH, TENANT } from "../harness";
+import { POLICY_VERSION } from "./contract";
 
 interface Published {
   changed: { proxy_id: string; version: string; hash: string }[];
@@ -28,6 +29,21 @@ async function report(api: APIRequestContext, proxy: string, body: Record<string
     data: { reported_at: "2026-11-01T08:00:00Z", ...body },
   });
   if (!res.ok()) throw new Error(`report ${proxy}: ${res.status()} ${await res.text()}`);
+}
+
+async function declareVocabulary(api: APIRequestContext, proxy: string, version: number): Promise<void> {
+  const res = await api.post(`${SOUTH}/v1/authorize`, {
+    headers: { authorization: `Bearer ${TENANT}.e2e-${proxy}` },
+    data: {
+      identity: { subject: "grace", login: "grace", source: "local", groups: [] },
+      target: "api-01.core.internal",
+      target_port: 22,
+      auth_method: "publickey",
+      policy_version: version,
+      conn: { session_id: `sess-e2e-vocabulary-${proxy}`, proxy_id: proxy, client_addr: "10.20.0.9:52001", timestamp: "2026-11-01T08:30:00Z" },
+    },
+  });
+  if (res.status() !== 500) throw new Error(`declare vocabulary ${version} at ${proxy}: want 500, got ${res.status()} ${await res.text()}`);
 }
 
 /** `admin` is an admin's signed-in API context. */
@@ -69,6 +85,11 @@ export async function seedFleet(admin: APIRequestContext): Promise<void> {
     desired_version: e1.version, desired_hash: e1.hash, running_version: e1.version, running_hash: e1.hash, state: "applied",
   });
   await publish(admin, "px-edge-05", 150);
+  // And it is mid-upgrade the other way too: its build declares the previous
+  // policy vocabulary, which this server does not serve (0064), so its
+  // authorize request is refused with a 5xx naming both numbers — and the
+  // vocabulary it declared is recorded, so Fleet names it Unsupported.
+  await declareVocabulary(admin, "px-edge-05", POLICY_VERSION - 1);
   // Never reported: a document is desired and the proxy has said nothing.
   await publish(admin, "px-edge-06", 100);
 }

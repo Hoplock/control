@@ -382,7 +382,7 @@ One component renders all of it, so a status looks identical everywhere:
 | allowed / healthy / active / applied / valid / running / caught up / declared / done | `--s-allow` | filled circle | `Allowed`, `Healthy`, `Active`, `Applied`, `Valid`, `Running`, `Caught up`, `Declared`, `Done` |
 | denied / revoked / expired / invalid / blocking / locked / quarantined / deactivated | `--s-deny` | filled square | `Denied`, `Revoked`, `Expired`, `Invalid`, `Blocking`, `Locked`, `Quarantined`, `Deactivated` |
 | degraded / stale / expiring / rejected / warning / not started / failing / refused at ingest | `--s-warn` | filled triangle | `Degraded`, `Stale`, `Expiring`, `Rejected`, `Warning`, `Not started`, `Failing`, `Refused at ingest` |
-| unreachable / outage / fetch failed / unserved / unavailable / failed / evicted | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unserved`, `Unavailable`, `Failed`, `Evicted` |
+| unreachable / outage / fetch failed / unsupported / unserved / unavailable / failed / evicted | `--s-outage` | hollow circle, dashed | `Unreachable`, `Fetch failed`, `Unsupported`, `Unserved`, `Unavailable`, `Failed`, `Evicted` |
 | pending / scheduled / in progress / pending restart / advice / behind | `--s-info` | half-filled circle | `Pending`, `Scheduled`, `In progress`, `Pending restart`, `Advice`, `Behind` |
 | unknown / not reported / left / superseded / not registered / not declared / not judged | `--n-400` | hollow circle, dotted | `Not reported`, `Left`, `Superseded`, `Not registered`, `Not declared`, `Not judged` |
 
@@ -396,7 +396,12 @@ A proxy's configuration is read as the proxy **reported** it (proxy D18):
 degraded, not a deny; `Fetch failed` is the proxy not reaching Control for it
 — an outage; an older document applied while a newer one is desired is a
 rollout `In progress`. A proxy that has never reported is `Not reported`,
-never `Applied`.
+never `Applied`. A proxy whose declared policy vocabulary this server does
+not serve is **`Unsupported`** beside the number it declared (PLAN §4, 0064):
+every session through it is refused with a `5xx`, so it is an outage of that
+proxy's sessions and never a deny (M11), and it is said beside its contract
+version rather than folded into its health, which answers whether it is
+reachable. A proxy that has declared nothing shows no number and no status.
 
 A decision is read as its effect: `Allowed`, `Denied`, or **`Unserved`** — an
 allow the server could not answer (PLAN §5.6), which is an outage and never a
