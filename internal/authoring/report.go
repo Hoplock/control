@@ -56,6 +56,12 @@ const (
 	// CodeProxiesUnreported: no proxy in the tenant has declared what it
 	// can serve, so no rule can be judged against a build. Advice.
 	CodeProxiesUnreported = "satisfiability.proxies_unreported"
+	// CodeContractVersionUnsupported: enrolled proxies whose last declared
+	// policy vocabulary this server does not serve, so authorize refuses
+	// every request from each, whatever the bundle says (0064). One per
+	// report, naming each such proxy and the vocabulary it declared.
+	// Warning: a definite shortfall, and on a build rather than on a rule.
+	CodeContractVersionUnsupported = "satisfiability.contract_version_unsupported"
 	// CodeNoProxyProvides: no proxy that has declared its capabilities can
 	// serve the route — a rung, a method, a platform or a device field. On
 	// the proxy that is a SKIPPED RUNG, so the ladder gets shorter with no
@@ -116,7 +122,7 @@ const (
 // ControlCodes is every finding code Control's own checks produce, so a test
 // can hold the set and a client can enumerate it.
 var ControlCodes = []string{
-	CodeProxiesUnreported, CodeNoProxyProvides, CodeTargetCannotTake, CodeTargetUnproven,
+	CodeProxiesUnreported, CodeContractVersionUnsupported, CodeNoProxyProvides, CodeTargetCannotTake, CodeTargetUnproven,
 	CodeInterpreter, CodeCacheHintOutlives, CodeCacheHintSpansSources,
 	CodeFloorUndeclared, CodeAxisEmptied, CodeAlgorithmUnknown, CodeBanUnmatched,
 	CodeTargetBelowFloor, CodeTargetNotReported, CodePolicyUnmet, CodePolicyUnmetTruncated,

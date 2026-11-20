@@ -14,6 +14,7 @@ import (
 
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/contract"
+	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/store"
 	"github.com/hoplock/control/internal/store/storetest"
 )
@@ -227,5 +228,64 @@ func TestTheFleetViewNamesEveryMemberAndNeverAYearOneInstant(t *testing.T) {
 	if got, want := string(body["liveness"]),
 		`{"heartbeat_ttl_seconds":90,"relay_registration_ttl_seconds":60,"target_capability_ttl_seconds":86400,"report_after_seconds":21600}`; got != want {
 		t.Errorf("liveness = %s, want %s", got, want)
+	}
+}
+
+// A PROXY OF THE WRONG CONTRACT BUILD IS NAMED IN THE FLEET VIEW (0064, north
+// API 7): `contract_version_unsupported` beside the vocabulary it declared,
+// absent for the right build and for a proxy that declared nothing. A client
+// of 6 is served the same page while no proxy holds it, and refused rather
+// than served a page that calls a refused proxy healthy once one does.
+func TestTheFleetViewNamesAProxyOfTheWrongBuild(t *testing.T) {
+	f := newServer(t)
+	token := adminToken(t, f, "tenant-a")
+	ctx := t.Context()
+	for _, id := range []string{"p-right", "p-silent"} {
+		if err := f.st.Proxies().Upsert(ctx, "tenant-a", storetest.Proxy(id, "zone-a")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.st.Proxies().SetContractVersion(ctx, "tenant-a", "p-right", int(contract.PolicyVersion)); err != nil {
+		t.Fatal(err)
+	}
+
+	const path = "/api/v1/tenants/tenant-a/proxies"
+	if resp := versioned(t, f, token, path, "6"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("a client of 6 reading a fleet on the served vocabulary: %d", resp.StatusCode)
+	}
+
+	if err := f.st.Proxies().Upsert(ctx, "tenant-a", storetest.Proxy("p-wrong", "zone-a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.Proxies().SetContractVersion(ctx, "tenant-a", "p-wrong", int(contract.PolicyVersion)-1); err != nil {
+		t.Fatal(err)
+	}
+	body := getJSON(t, f, path, token)
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(body["proxies"], &items); err != nil || len(items) != 3 {
+		t.Fatalf("proxies = %s (%v)", body["proxies"], err)
+	}
+	for _, it := range items {
+		var id string
+		_ = json.Unmarshal(it["proxy_id"], &id)
+		flag, present := it["contract_version_unsupported"]
+		switch id {
+		case "p-wrong":
+			if string(flag) != "true" {
+				t.Errorf("the wrong build: contract_version_unsupported = %s, want true", flag)
+			}
+		default:
+			if present {
+				t.Errorf("%s carries contract_version_unsupported = %s; it is absent unless set", id, flag)
+			}
+		}
+	}
+
+	resp := versioned(t, f, token, path, "6")
+	var e north.Error
+	decodeInto(t, resp, &e)
+	if resp.StatusCode != http.StatusInternalServerError || e.Code != north.CodeAPIVersionUnexpressible {
+		t.Fatalf("a client of 6 reading a wrong build: %d %+v, want 500 %s — never a page without the flag",
+			resp.StatusCode, e, north.CodeAPIVersionUnexpressible)
 	}
 }

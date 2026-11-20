@@ -58,8 +58,12 @@ const (
 	ReasonProxiesStale          = "proxies_stale"
 	ReasonProxiesUnreachable    = "proxies_unreachable"
 	ReasonConfigDrift           = "config_drift"
-	ReasonStale                 = "stale"
-	ReasonNotObserved           = "not_observed"
+	// ReasonProxiesContractUnsupported: enrolled proxies whose declared
+	// policy vocabulary this server does not serve, so every authorize
+	// request from each is refused (0064). North API version 7.
+	ReasonProxiesContractUnsupported = "proxies_contract_unsupported"
+	ReasonStale                      = "stale"
+	ReasonNotObserved                = "not_observed"
 )
 
 // AllReasons is every reason code, for the test that holds them stable.
@@ -67,7 +71,8 @@ var AllReasons = []string{
 	ReasonDatabaseUnreachable, ReasonSchemaBehind, ReasonSchemaAhead, ReasonListenerNotServing,
 	ReasonNodeNotReporting, ReasonNodeNotReported, ReasonNodesUnreadable, ReasonMembershipUnavailable,
 	ReasonRollingUpgrade, ReasonEventPlaneLag, ReasonEventPlaneFailures, ReasonFleetUncomputable,
-	ReasonProxiesStale, ReasonProxiesUnreachable, ReasonConfigDrift, ReasonStale, ReasonNotObserved,
+	ReasonProxiesStale, ReasonProxiesUnreachable, ReasonConfigDrift, ReasonProxiesContractUnsupported,
+	ReasonStale, ReasonNotObserved,
 }
 
 // Reason says why a state is what it is, naming what it is about.
@@ -194,25 +199,29 @@ type FleetHealth struct {
 
 // FleetSummary is fleet.FleetSummary on the wire.
 type FleetSummary struct {
-	Enrolled           int            `json:"enrolled"`
-	Live               int            `json:"live"`
-	Stale              int            `json:"stale"`
-	Unreachable        int            `json:"unreachable"`
-	Pending            int            `json:"pending"`
-	Revoked            int            `json:"revoked"`
-	ConfigDrifted      int            `json:"config_drifted"`
-	ContractVersions   map[string]int `json:"contract_versions"`
-	RelayRegistrations int            `json:"relay_registrations"`
-	RecentErrors       int            `json:"recent_errors"`
-	Truncated          bool           `json:"truncated"`
+	Enrolled         int            `json:"enrolled"`
+	Live             int            `json:"live"`
+	Stale            int            `json:"stale"`
+	Unreachable      int            `json:"unreachable"`
+	Pending          int            `json:"pending"`
+	Revoked          int            `json:"revoked"`
+	ConfigDrifted    int            `json:"config_drifted"`
+	ContractVersions map[string]int `json:"contract_versions"`
+	// ContractVersionUnsupported counts the enrolled proxies whose declared
+	// vocabulary this server does not serve (0064); absent at zero.
+	ContractVersionUnsupported int  `json:"contract_version_unsupported,omitempty" since:"7"`
+	RelayRegistrations         int  `json:"relay_registrations"`
+	RecentErrors               int  `json:"recent_errors"`
+	Truncated                  bool `json:"truncated"`
 }
 
 func summaryView(s fleet.FleetSummary) *FleetSummary {
 	return &FleetSummary{
 		Enrolled: s.Enrolled, Live: s.Live, Stale: s.Stale, Unreachable: s.Unreachable,
 		Pending: s.Pending, Revoked: s.Revoked, ConfigDrifted: s.ConfigDrifted,
-		ContractVersions: s.ContractVersions, RelayRegistrations: s.RelayRegistrations,
-		RecentErrors: s.RecentErrors, Truncated: s.Truncated,
+		ContractVersions: s.ContractVersions, ContractVersionUnsupported: s.ContractUnsupported,
+		RelayRegistrations: s.RelayRegistrations,
+		RecentErrors:       s.RecentErrors, Truncated: s.Truncated,
 	}
 }
 
@@ -227,6 +236,13 @@ func fleetState(tenant string, s fleet.FleetSummary) (State, []Reason) {
 	}
 	if s.ConfigDrifted > 0 {
 		reasons = append(reasons, Reason{Code: ReasonConfigDrift, Tenant: tenant, Count: int64(s.ConfigDrifted)})
+	}
+	if s.ContractUnsupported > 0 {
+		// A proxy of the wrong build is not a deployment fault, but every
+		// session through it is an outage, so the fleet is degraded until
+		// the build is replaced — and an operator sees it here rather than
+		// from a user (0064).
+		reasons = append(reasons, Reason{Code: ReasonProxiesContractUnsupported, Tenant: tenant, Count: int64(s.ContractUnsupported)})
 	}
 	if len(reasons) > 0 {
 		return StateDegraded, reasons

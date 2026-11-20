@@ -388,3 +388,22 @@ func TestRollupNeverTurnsAbsentIntoHealthy(t *testing.T) {
 		}
 	}
 }
+
+// A proxy of the wrong contract build degrades its tenant's fleet (0064): every
+// session through it is refused, so a fleet holding one is not healthy, and the
+// reason counts them. The summary carries the count on the wire.
+func TestAProxyOfTheWrongBuildDegradesTheFleet(t *testing.T) {
+	state, reasons := fleetState("acme", fleet.FleetSummary{Enrolled: 3, Live: 3, ContractUnsupported: 2})
+	if state != StateDegraded {
+		t.Errorf("state = %s, want degraded", state)
+	}
+	if len(reasons) != 1 || reasons[0].Code != ReasonProxiesContractUnsupported || reasons[0].Count != 2 || reasons[0].Tenant != "acme" {
+		t.Errorf("reasons = %+v, want one %s counting 2 for acme", reasons, ReasonProxiesContractUnsupported)
+	}
+	if got := summaryView(fleet.FleetSummary{ContractUnsupported: 2}).ContractVersionUnsupported; got != 2 {
+		t.Errorf("the wire summary counts %d, want 2", got)
+	}
+	if state, _ := fleetState("acme", fleet.FleetSummary{Enrolled: 3, Live: 3}); state != StateHealthy {
+		t.Errorf("a fleet on the served vocabulary is %s, want healthy", state)
+	}
+}

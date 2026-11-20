@@ -150,6 +150,15 @@ func (r *Registry) RecordDeclaredVocabulary(ctx context.Context, tenant store.Te
 	return nil
 }
 
+// VocabularyUnsupported reports whether a proxy's stored contract version is a
+// vocabulary this server does not serve (0064). Zero is "declared nothing",
+// which is not evidence of a wrong build, and so is not unsupported. It is the
+// one judgment the fleet view, the fleet summary and the publish-time report
+// share, so the three can never disagree about which proxy is the wrong build.
+func VocabularyUnsupported(declared int) bool {
+	return declared != 0 && declared != int(contract.PolicyVersion)
+}
+
 // AlgorithmDeclarations returns every proxy's latest recorded declaration.
 // The publish-time report reads it once per validate; the north-bound list
 // reads [Registry.AlgorithmDeclarationPage].
