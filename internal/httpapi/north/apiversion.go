@@ -63,13 +63,16 @@ import (
 // `extension_point` on `ca_not_configured` (0062), and 7 adds what names a proxy of the wrong contract build
 // (0064): `contract_version_unsupported` on a proxy in `GET …/proxies` and in
 // a tenant's fleet summary, the health reason `proxies_contract_unsupported`,
-// and the publish-time finding `satisfiability.contract_version_unsupported`. A new request header or query parameter is additive, like a new
-// route, and it still moves the version, so that a client can tell whether a
-// deployment honours it.
+// and the publish-time finding `satisfiability.contract_version_unsupported`,
+// and 8 answers every policy refusal as a code and typed parameters (0065,
+// policycodes.go): a client of 7 or older is served them as before. A new
+// request header or query parameter is additive, like a new route, and it
+// still moves the version, so that a client can tell whether a deployment
+// honours it.
 const (
 	// APIVersion is the version this server serves by default and the
 	// newest it answers in.
-	APIVersion = 7
+	APIVersion = 8
 	// MinAPIVersion is the oldest version it still answers in.
 	MinAPIVersion = 1
 	// APIVersionHeader carries the declared version in, and the served one
