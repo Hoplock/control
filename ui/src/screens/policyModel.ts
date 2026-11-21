@@ -97,10 +97,13 @@ function isolate(v: string): string {
   return `\u2068${v}\u2069`;
 }
 
-/** A rejection's values: its parameters, each an identifier set apart. */
-export function rejectionValues(r: Rejection): Values {
+/**
+ * A rejection's values: its parameters, each an identifier set apart — except
+ * a worded one (policyCodes.ts WORDED), which a select reads as it arrived.
+ */
+export function rejectionValues(r: Rejection, worded: readonly string[] = []): Values {
   const out: Values = {};
-  for (const [k, v] of Object.entries(r.parameters ?? {})) out[k] = isolate(String(v));
+  for (const [k, v] of Object.entries(r.parameters ?? {})) out[k] = worded.includes(k) ? String(v) : isolate(String(v));
   return out;
 }
 

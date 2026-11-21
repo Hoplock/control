@@ -5,9 +5,17 @@
 // the parameters. A code it has no sentence for still renders — naming the
 // code, and the correlation id of the answer that carried it — so an older
 // console meeting a newer server says something true. test/policy.test.ts
-// holds both maps to the server's codes (test/policy-codes.json).
+// holds every map here to the server's codes (test/policy-codes.json).
+//
+// No policy refusal reaches an operator as the server's English (0065): an
+// unreplayable record names its cause as a code, and a refused simulation its
+// field and problem, and each is said here too. A parameter drawn from a
+// closed set — why a document is not YAML, what shape a value is, which
+// vocabulary it is not in — is said with an ICU select over its values
+// (WORDED), never interpolated.
 
-import type { Finding, Rejection } from "../api/types";
+import type { Finding, Rejection, Unreplayable } from "../api/types";
+import type { ApiError } from "../i18n/errors";
 import type { MessageKey } from "../i18n/catalogue";
 import type { Translate } from "../i18n/messages";
 import { findingValues, rejectionValues } from "./policyModel";
@@ -45,20 +53,27 @@ export const REJECTION: Readonly<Record<string, MessageKey>> = {
   "match.empty_term": "policies.reject.match.empty_term",
   "match.invalid_cidr": "policies.reject.match.invalid_cidr",
   "match.invalid_hostname_pattern": "policies.reject.match.invalid_hostname_pattern",
+  "match.invalid_time_window": "policies.reject.match.invalid_time_window",
   "match.unknown_group": "policies.reject.match.unknown_group",
   "match.unknown_label_key": "policies.reject.match.unknown_label_key",
   "match.unknown_label_value": "policies.reject.match.unknown_label_value",
+  "obligation.approvers_unexpected": "policies.reject.obligation.approvers_unexpected",
   "obligation.contradicts_route": "policies.reject.obligation.contradicts_route",
   "obligation.duplicate": "policies.reject.obligation.duplicate",
   "obligation.kind_missing": "policies.reject.obligation.kind_missing",
   "obligation.on_deny": "policies.reject.obligation.on_deny",
   "policy.document_malformed": "policies.reject.policy.document_malformed",
+  "policy.duration_malformed": "policies.reject.policy.duration_malformed",
   "policy.group_vocabulary_malformed": "policies.reject.policy.group_vocabulary_malformed",
+  "policy.key_duplicate": "policies.reject.policy.key_duplicate",
+  "policy.key_unknown": "policies.reject.policy.key_unknown",
   "policy.label_vocabulary_malformed": "policies.reject.policy.label_vocabulary_malformed",
   "policy.no_rules": "policies.reject.policy.no_rules",
   "policy.schema_version_unsupported": "policies.reject.policy.schema_version_unsupported",
   "policy.tenant_missing": "policies.reject.policy.tenant_missing",
   "policy.timezone_unknown": "policies.reject.policy.timezone_unknown",
+  "policy.value_unknown": "policies.reject.policy.value_unknown",
+  "policy.value_wrong_type": "policies.reject.policy.value_wrong_type",
   "route.algorithm_ban_empty": "policies.reject.route.algorithm_ban_empty",
   "route.algorithm_ban_repeated": "policies.reject.route.algorithm_ban_repeated",
   "route.algorithm_floor_profile_conflict": "policies.reject.route.algorithm_floor_profile_conflict",
@@ -72,6 +87,9 @@ export const REJECTION: Readonly<Record<string, MessageKey>> = {
   "route.intent_missing": "policies.reject.route.intent_missing",
   "route.invalid_destination": "policies.reject.route.invalid_destination",
   "route.ladder_empty": "policies.reject.route.ladder_empty",
+  "route.restricted_argument_field_unexpected": "policies.reject.route.restricted_argument_field_unexpected",
+  "route.restricted_argument_invalid": "policies.reject.route.restricted_argument_invalid",
+  "route.restricted_command_field_unexpected": "policies.reject.route.restricted_command_field_unexpected",
   "route.restricted_command_invalid": "policies.reject.route.restricted_command_invalid",
   "route.restricted_exec_empty": "policies.reject.route.restricted_exec_empty",
   "route.session_deadline_invalid": "policies.reject.route.session_deadline_invalid",
@@ -107,6 +125,37 @@ export const FINDING: Readonly<Record<string, MessageKey>> = {
   "satisfiability.target_unproven": "policies.finding.satisfiability.target_unproven",
 };
 
+/**
+ * The parameters each code says in words, by an ICU select over the values
+ * the server names (test/policy-codes.json's `enumerations`): passed to the
+ * sentence as they arrive, never set apart as an identifier is.
+ */
+export const WORDED: Readonly<Record<string, readonly string[]>> = {
+  "policy.document_malformed": ["problem"],
+  "policy.value_unknown": ["vocabulary"],
+  "policy.value_wrong_type": ["expected", "found"],
+};
+
+/** Each cause of a record replay could not read, by its sentence (decision.UnreplayableCodes). */
+export const UNREPLAYABLE: Readonly<Record<string, MessageKey>> = {
+  "unreplayable.explanation_missing": "policies.unreplayable.explanation_missing",
+  "unreplayable.grant_instant_invalid": "policies.unreplayable.grant_instant_invalid",
+  "unreplayable.inputs_undecodable": "policies.unreplayable.inputs_undecodable",
+  "unreplayable.instant_missing": "policies.unreplayable.instant_missing",
+  "unreplayable.source_address_invalid": "policies.unreplayable.source_address_invalid",
+  "unreplayable.standing_denial_disagrees": "policies.unreplayable.standing_denial_disagrees",
+};
+
+/** Each problem a refused simulation names beside its field, by its sentence (authoring.SimulationProblems). */
+export const SIMULATION_PROBLEM: Readonly<Record<string, MessageKey>> = {
+  ambiguous: "policies.sim.refused.ambiguous",
+  invalid: "policies.sim.refused.invalid",
+  not_after_start: "policies.sim.refused.not_after_start",
+  not_in_vocabulary: "policies.sim.refused.not_in_vocabulary",
+  nothing_asked: "policies.sim.refused.nothing_asked",
+  required: "policies.sim.refused.required",
+};
+
 export interface RenderedCode {
   text: string;
   /** Whether the console knew the code: false is the named fallback. */
@@ -118,7 +167,7 @@ export function rejectionText(t: Translate, r: Rejection): RenderedCode {
   const key = REJECTION[r.code];
   if (key) {
     try {
-      return { text: t(key, rejectionValues(r)), known: true };
+      return { text: t(key, rejectionValues(r, WORDED[r.code])), known: true };
     } catch {
       // A parameter the sentence names did not arrive: say which code it was.
     }
@@ -138,4 +187,36 @@ export function findingText(t: Translate, f: Finding): RenderedCode {
     }
   }
   return { text: t("policies.finding.unknown", values), known: false };
+}
+
+/** Why a record could not be replayed, from its cause and parameters. */
+export function unreplayableText(t: Translate, u: Unreplayable): RenderedCode {
+  const key = u.code ? UNREPLAYABLE[u.code] : undefined;
+  if (key) {
+    try {
+      return { text: t(key, rejectionValues({ code: u.code ?? "", parameters: u.parameters, message: "" })), known: true };
+    } catch {
+      // As above.
+    }
+  }
+  return { text: t("policies.unreplayable.unknown", { code: `\u2068${u.code ?? ""}\u2069` }), known: false };
+}
+
+/**
+ * A refused simulation's sentence, from the field and problem it names; null
+ * when the refusal is not one (another code, or a problem this console does
+ * not know), which the generic error message says.
+ */
+export function simulationRefusalText(t: Translate, e: ApiError): string | null {
+  if (e.code !== "invalid_request") return null;
+  const problem = e.parameters?.problem;
+  const field = e.parameters?.field;
+  if (typeof problem !== "string" || typeof field !== "string") return null;
+  const key = SIMULATION_PROBLEM[problem];
+  if (!key) return null;
+  try {
+    return t(key, { field: `\u2068${field}\u2069` });
+  } catch {
+    return null;
+  }
 }

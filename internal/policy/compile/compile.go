@@ -165,7 +165,7 @@ func (c *compiler) compileContext(r *model.Rule, x *model.ContextMatch) *context
 		if !ok {
 			// Unreachable through Parse, which refuses an unknown day at
 			// the enum, but a hand-built bundle gets the same answer.
-			c.add(model.CodeDocumentMalformed, r.ID, r.Line(), "detail", "unknown day "+strconv.Quote(string(d)))
+			c.rs = append(c.rs, model.UnknownDay(r.ID, r.Line(), d))
 			continue
 		}
 		out.days = append(out.days, wd)
@@ -255,9 +255,7 @@ func (c *compiler) checkObligations(r *model.Rule) {
 		}
 		if len(o.ApproverGroups) > 0 {
 			if o.Kind != model.ObligationRequireApproval {
-				c.add(model.CodeObligationContradicts, r.ID, r.Line(),
-					"obligation", string(o.Kind),
-					"detail", "approver groups belong to `require-approval` and mean nothing on this obligation")
+				c.add(model.CodeObligationApprovers, r.ID, r.Line(), "obligation", string(o.Kind))
 			}
 			for _, g := range o.ApproverGroups {
 				c.checkGroup(r, g)
@@ -270,8 +268,7 @@ func (c *compiler) checkObligations(r *model.Rule) {
 		if o.Kind == model.ObligationRecordSession && r.Route != nil &&
 			r.Route.RequireSessionCapture != nil && !*r.Route.RequireSessionCapture {
 			c.add(model.CodeObligationContradicts, r.ID, r.Line(),
-				"obligation", string(o.Kind),
-				"detail", "the route sets `require_session_capture: false`, so the rule both requires and waives the recording")
+				"obligation", string(o.Kind), "field", "require_session_capture")
 		}
 	}
 }
@@ -431,16 +428,16 @@ func (c *compiler) checkFilter(r *model.Rule) {
 		c.add(model.CodeRouteRestrictedExecEmpty, r.ID, r.Line())
 	}
 	for i, fr := range f.Rules {
-		if detail := filterRuleProblem(fr); detail != "" {
+		if field := filterRuleMissing(fr); field != "" {
 			c.add(model.CodeRouteFilterRuleInvalid, r.ID, r.Line(),
-				"index", strconv.Itoa(i+1), "detail", detail)
+				"index", strconv.Itoa(i+1), "field", field)
 		}
 	}
 	if f.RestrictedExec != nil {
 		for i, cmd := range f.RestrictedExec.Commands {
-			if detail := restrictedCommandProblem(cmd); detail != "" {
-				c.add(model.CodeRouteRestrictedCmdInvalid, r.ID, r.Line(),
-					"index", strconv.Itoa(i+1), "executable", cmd.Executable, "detail", detail)
+			if code, kv := restrictedCommandProblem(cmd); code != "" {
+				c.add(code, r.ID, r.Line(),
+					append([]string{"index", strconv.Itoa(i + 1), "executable", cmd.Executable}, kv...)...)
 			}
 		}
 	}
@@ -722,66 +719,80 @@ func validDestination(d model.Destination) bool {
 
 func validPort(p int32) bool { return p >= 1 && p <= 65535 }
 
-func filterRuleProblem(r model.FilterRule) string {
+// filterRuleMissing names the key a filter rule cannot be used without, or
+// nothing when it has both.
+func filterRuleMissing(r model.FilterRule) string {
 	switch {
 	case strings.TrimSpace(r.Match) == "":
-		return "it matches nothing; write the command pattern"
+		return "match"
 	case r.Action == "":
-		return "it names no action"
+		return "action"
 	default:
 		return ""
 	}
 }
 
-func restrictedCommandProblem(cmd model.RestrictedCommand) string {
+// restrictedCommandProblem is what makes one restricted-exec command
+// unusable: the code, and the parameters beside its index and executable —
+// the key it lacks or sets wrongly, and the form or argument kind that says
+// so. No code is a usable command.
+func restrictedCommandProblem(cmd model.RestrictedCommand) (model.Code, []string) {
 	if strings.TrimSpace(cmd.Executable) == "" {
-		return "it names no executable"
+		return model.CodeRouteRestrictedCmdInvalid, []string{"field", "executable"}
 	}
 	switch cmd.Form {
 	case model.CommandFormUnset:
-		return "it names no form; use `exact` or `positional`"
+		return model.CodeRouteRestrictedCmdInvalid, []string{"field", "form"}
 	case model.CommandFormExact:
 		if len(cmd.Argv) == 0 {
-			return "form `exact` names the whole argv, and none is given"
+			return model.CodeRouteRestrictedCmdInvalid, []string{"field", "argv"}
 		}
 		if len(cmd.Args) > 0 {
-			return "form `exact` takes `argv`, not `args`"
+			return model.CodeRouteRestrictedCmdField, []string{"field", "args", "form", string(cmd.Form)}
 		}
 	case model.CommandFormPositional:
 		if len(cmd.Argv) > 0 {
-			return "form `positional` takes `args`, not `argv`"
+			return model.CodeRouteRestrictedCmdField, []string{"field", "argv", "form", string(cmd.Form)}
 		}
 		for i, a := range cmd.Args {
-			if problem := argumentProblem(a); problem != "" {
-				return "argument " + strconv.Itoa(i+1) + ": " + problem
+			argument := strconv.Itoa(i + 1)
+			if field, unexpected := argumentProblem(a); unexpected {
+				return model.CodeRouteRestrictedArgField, []string{"argument", argument, "field", field, "kind", string(a.Kind)}
+			} else if field != "" {
+				return model.CodeRouteRestrictedArgInvalid, []string{"argument", argument, "field", field}
 			}
 		}
 	}
-	return ""
+	return "", nil
 }
 
-func argumentProblem(a model.ArgumentSpec) string {
+// argumentProblem names the key an argument lacks, or the key it sets that
+// its kind does not take (unexpected), or nothing when it is usable.
+func argumentProblem(a model.ArgumentSpec) (field string, unexpected bool) {
 	switch a.Kind {
 	case model.ArgumentKindUnset:
-		return "it names no kind"
+		return "kind", false
 	case model.ArgumentKindLiteral, model.ArgumentKindPrefix:
 		if a.Value == "" {
-			return "kind `" + string(a.Kind) + "` needs a value"
+			return "value", false
 		}
 		if len(a.Values) > 0 {
-			return "kind `" + string(a.Kind) + "` takes `value`, not `values`"
+			return "values", true
 		}
 	case model.ArgumentKindOneOf:
 		if len(a.Values) == 0 {
-			return "kind `oneof` needs values"
+			return "values", false
 		}
 		if a.Value != "" {
-			return "kind `oneof` takes `values`, not `value`"
+			return "value", true
 		}
 	case model.ArgumentKindAny:
-		if a.Value != "" || len(a.Values) > 0 {
-			return "kind `any` is unconstrained and takes neither `value` nor `values`"
+		if a.Value != "" {
+			return "value", true
+		}
+		if len(a.Values) > 0 {
+			return "values", true
 		}
 	}
-	return ""
+	return "", false
 }

@@ -5,6 +5,9 @@
 //      each sentence names only parameters that code carries — the list is
 //      ./policy-codes.json, which a Go test keeps equal to the server's
 //      (internal/authoring/console_codes_test.go);
+//      A parameter drawn from a closed set is said by a select with an option
+//      for every value the server names; an unreplayable record's cause and
+//      a refused simulation's problem are held the same way (0065);
 //   2. a code the catalogue does not know renders the named fallback;
 //   3. the screens' rules — versions, severities, the activation gate, the
 //      lists a finding names — hold;
@@ -16,7 +19,17 @@ import type { Finding, Rejection } from "../src/api/types";
 import { diffCounts, parseUnified } from "../src/components/Diff";
 import { translator } from "../src/i18n/messages";
 import en from "../src/locales/en.json";
-import { FINDING, findingText, REJECTION, rejectionText } from "../src/screens/policyCodes";
+import {
+  FINDING,
+  findingText,
+  REJECTION,
+  rejectionText,
+  SIMULATION_PROBLEM,
+  simulationRefusalText,
+  UNREPLAYABLE,
+  unreplayableText,
+  WORDED,
+} from "../src/screens/policyCodes";
 import {
   findingLists,
   findingValues,
@@ -87,6 +100,111 @@ describe("the compiler's rejections", () => {
     const out = rejectionText(t, { code: "match.unknown_group", message: "x" });
     expect(out.known).toBe(false);
     expect(out.text).toContain("match.unknown_group");
+  });
+});
+
+/** The options of every select over this argument, however deep. */
+function selectOptions(elements: MessageFormatElement[], name: string, out: string[][] = []): string[][] {
+  for (const e of elements) {
+    if (e.type === TYPE.select && e.value === name) out.push(Object.keys(e.options));
+    if (e.type === TYPE.plural || e.type === TYPE.select) for (const o of Object.values(e.options)) selectOptions(o.value, name, out);
+    if (e.type === TYPE.tag) selectOptions(e.children, name, out);
+  }
+  return out;
+}
+
+describe("a parameter drawn from a closed set", () => {
+  const server = codes.enumerations as Record<string, Record<string, string[]>>;
+
+  it("is worded for exactly the codes and parameters the server names", () => {
+    const named = Object.fromEntries(Object.entries(server).map(([c, ps]) => [c, Object.keys(ps).sort()]));
+    const worded = Object.fromEntries(Object.entries(WORDED).map(([c, ps]) => [c, [...ps].sort()]));
+    expect(worded).toEqual(named);
+  });
+
+  it.each(Object.entries(server).flatMap(([c, ps]) => Object.entries(ps).map(([p, vs]) => [c, p, vs] as const)))(
+    "%s says each %s in words, never interpolating it",
+    (code, param, values) => {
+      const parsed = parse(message(REJECTION[code] as string));
+      const selects = selectOptions(parsed, param);
+      expect(selects.length, `${code} has no select over ${param}`).toBeGreaterThan(0);
+      for (const options of selects) {
+        for (const v of values) expect(options, `${code}'s ${param} has no option for ${v}`).toContain(v);
+        expect(options).toContain("other");
+      }
+      // Never a plain argument as well: the value is an identifier, not a word.
+      const plain = parsed.filter((e) => e.type === TYPE.argument && e.value === param);
+      expect(plain).toEqual([]);
+    },
+  );
+
+  it("renders as words, not as the identifier", () => {
+    const r: Rejection = { code: "policy.document_malformed", line: 4, parameters: { problem: "tab_indentation" }, message: "x" };
+    const out = rejectionText(t, r);
+    expect(out.known).toBe(true);
+    expect(out.text).toContain("spaces only");
+    expect(out.text).not.toContain("tab_indentation");
+    const shape = rejectionText(t, { code: "policy.value_wrong_type", parameters: { found: "string", expected: "list" }, message: "x" });
+    expect(shape.text).toContain("a string");
+    expect(shape.text).toContain("a list");
+  });
+});
+
+describe("an unreplayable record's cause", () => {
+  const server = codes.unreplayable as Record<string, string[]>;
+
+  it("has a sentence for every cause the server can name, and none for one it cannot", () => {
+    expect(Object.keys(UNREPLAYABLE).sort()).toEqual(Object.keys(server).sort());
+  });
+
+  it.each(Object.entries(server))("%s's sentence names only its parameters", (code, params) => {
+    const key = UNREPLAYABLE[code] as string;
+    expect(message(key), key).toBeDefined();
+    const used = argumentsOf(parse(message(key)));
+    expect([...used].filter((a) => !params.includes(a))).toEqual([]);
+  });
+
+  it("renders from the cause and parameters, never the reason", () => {
+    const out = unreplayableText(t, {
+      decision_id: "dec-1",
+      code: "unreplayable.source_address_invalid",
+      parameters: { address: "office" },
+      reason: "ENGLISH THE CONSOLE NEVER SHOWS",
+    });
+    expect(out.known).toBe(true);
+    expect(out.text).toContain("office");
+    expect(out.text).not.toContain("ENGLISH");
+  });
+
+  it("renders a cause the console does not know, or none, as the named fallback", () => {
+    const newer = unreplayableText(t, { decision_id: "d", code: "unreplayable.from_a_newer_server", reason: "x" });
+    expect(newer.known).toBe(false);
+    expect(newer.text).toContain("unreplayable.from_a_newer_server");
+    expect(unreplayableText(t, { decision_id: "d", reason: "ENGLISH" }).text).not.toContain("ENGLISH");
+  });
+});
+
+describe("a refused simulation", () => {
+  it("has a sentence for every problem the server can name, each naming only the field", () => {
+    expect(Object.keys(SIMULATION_PROBLEM).sort()).toEqual([...codes.simulation_problems].sort());
+    for (const key of Object.values(SIMULATION_PROBLEM)) {
+      expect(message(key), key).toBeDefined();
+      expect([...argumentsOf(parse(message(key)))].filter((a) => a !== "field")).toEqual([]);
+    }
+  });
+
+  it("says its field and problem, never the reason", () => {
+    const text = simulationRefusalText(t, {
+      code: "invalid_request",
+      parameters: { field: "replay.to", problem: "not_after_start", reason: "ENGLISH" },
+    });
+    expect(text).toContain("replay.to");
+    expect(text).not.toContain("ENGLISH");
+  });
+
+  it("leaves another refusal, or a problem it does not know, to the error's own sentence", () => {
+    expect(simulationRefusalText(t, { code: "policy_invalid" })).toBeNull();
+    expect(simulationRefusalText(t, { code: "invalid_request", parameters: { field: "x", problem: "from_a_newer_server" } })).toBeNull();
   });
 });
 

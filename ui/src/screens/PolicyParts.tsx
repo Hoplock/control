@@ -5,10 +5,9 @@
 // uses too, because a rollback is an activation (§5.6).
 //
 // Every sentence is the console's own, built from a code and its parameters
-// (policyCodes.ts); the English the server sends beside them is never shown.
-// The two places the server sends only English — an unreplayable record's
-// reason and a compiler parameter that is itself prose (`detail`) — are shown
-// as the server's words, marked as such (docs/learnings/0053, raised).
+// (policyCodes.ts); the English the server sends beside them is never shown —
+// not a rejection's, not an unreplayable record's reason, not a refused
+// simulation's (0065).
 
 import { useEffect, useState, type ReactNode } from "react";
 import type { Answer } from "../api/client";
@@ -42,7 +41,7 @@ import { useDeployment } from "../shell/Shell";
 import { ALGORITHM_DETAIL, AlgorithmDetail, needsBuilds } from "./AlgorithmFindings";
 import { useBuilds } from "./AlgorithmParts";
 import type { Build } from "./algorithmModel";
-import { findingText, rejectionText } from "./policyCodes";
+import { findingText, rejectionText, simulationRefusalText, unreplayableText } from "./policyCodes";
 import {
   findingLists,
   findingsOf,
@@ -541,9 +540,7 @@ export function ReplayResult({ replay }: { replay: Replay }) {
               <li key={u.decision_id}>
                 <Ident>{u.decision_id}</Ident>
                 <span className={styles.noteMeta}>{t("policies.sim.unreplayable.reason")}</span>
-                <span className={styles.serverWords} dir="ltr" translate="no">
-                  {u.reason}
-                </span>
+                <span data-unreplayable-code={u.code ?? ""}>{unreplayableText(t, u).text}</span>
               </li>
             ))}
           </ul>
@@ -596,7 +593,7 @@ export function Simulate({
         </Button>
       </div>
       {run.state === "idle" ? <p className={styles.quiet}>{t("policies.sim.idle")}</p> : null}
-      {run.state === "failed" ? <ErrorMessage error={run.error} kind={run.kind} /> : null}
+      {run.state === "failed" ? <ErrorMessage error={run.error} kind={run.kind} text={simulationRefusalText(t, run.error)} /> : null}
       {run.state === "done" ? <ReplayResult replay={run.replay} /> : null}
     </section>
   );

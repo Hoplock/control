@@ -88,7 +88,7 @@ func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "validate policy", err)
 		return
 	}
-	answer(w, http.StatusOK, rep)
+	answer(w, http.StatusOK, reportServed(w, rep))
 }
 
 // versionList is the tenant's policy version history (M26): newest first, by
@@ -271,12 +271,14 @@ func (s *Server) handlePolicyDiffSource(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	d, err := authoring.DiffSources(old, []byte(body.Source))
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, Error{
-			Code: CodePolicyInvalid, CorrelationID: CorrelationIDFrom(r.Context()),
-			Parameters: map[string]any{"reason": err.Error()},
-			Message:    "the candidate does not parse, so there is nothing to diff; validate it for the rejections",
-		})
+	var invalid *authoring.InvalidError
+	switch {
+	case errors.As(err, &invalid):
+		refuseUnparsedDiff(w, r, invalid)
+		return
+	case err != nil:
+		// The candidate parsed, so it is the stored side: an outage.
+		s.fail(w, r, "diff policy", err)
 		return
 	}
 	d.From = against
@@ -360,7 +362,7 @@ func (s *Server) handlePolicySimulate(w http.ResponseWriter, r *http.Request) {
 		s.policyFailure(w, r, "simulate policy", err)
 		return
 	}
-	answer(w, http.StatusOK, res)
+	answer(w, http.StatusOK, simulationServed(w, res))
 }
 
 func (s *Server) policyFailure(w http.ResponseWriter, r *http.Request, op string, err error) {
@@ -384,7 +386,7 @@ func (s *Server) policyFailureFor(w http.ResponseWriter, r *http.Request, op str
 	}
 	switch {
 	case errors.As(err, &invalidErr):
-		params["rejections"] = invalidErr.Report.Rejections
+		params["rejections"] = rejectionsServed(w, invalidErr.Report.Rejections)
 		params["digest"] = invalidErr.Report.Digest
 		writeError(w, http.StatusUnprocessableEntity, Error{
 			Code: CodePolicyInvalid, CorrelationID: id, Parameters: params,
@@ -404,11 +406,7 @@ func (s *Server) policyFailureFor(w http.ResponseWriter, r *http.Request, op str
 			Message: "a registered policy validator blocks this activation",
 		})
 	case errors.As(err, &simErr):
-		writeError(w, http.StatusBadRequest, Error{
-			Code: CodeInvalidRequest, CorrelationID: id,
-			Parameters: map[string]any{"field": "body", "problem": "invalid", "reason": simErr.Reason},
-			Message:    "this simulation cannot be run: " + simErr.Reason,
-		})
+		refuseSimulation(w, r, simErr)
 	case store.IsNotFound(err):
 		writeError(w, http.StatusNotFound, Error{
 			Code: CodeNotFound, CorrelationID: id,

@@ -388,8 +388,9 @@ func (u *Username) UnmarshalYAML(n *yaml.Node) error {
 		return err
 	}
 	if !oneOf(m.From, usernameSources) || m.From == UsernameLiteral {
-		return nodeErr(n, "username source %q is not one of %s (a literal is written as a plain string)",
-			string(m.From), joinEnum([]UsernameSource{UsernameSubject, UsernameSubjectLocalPart}))
+		return nodeReject(n, CodeValueUnknown, "value", string(m.From),
+			"vocabulary", string(VocabularyUsernameSource),
+			"allowed", joinEnum([]UsernameSource{UsernameSubject, UsernameSubjectLocalPart}))
 	}
 	u.Source, u.Value = m.From, ""
 	return nil
@@ -572,7 +573,7 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	}
 	parsed, err := time.ParseDuration(s)
 	if err != nil {
-		return nodeErr(n, "%q is not a duration; use a form such as `8h` or `45m`", s)
+		return nodeReject(n, CodeDurationMalformed, "value", s)
 	}
 	*d = Duration(parsed)
 	return nil

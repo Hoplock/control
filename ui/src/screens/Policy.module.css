@@ -295,11 +295,6 @@
   display: grid;
   gap: var(--sp-2);
 }
-.serverWords {
-  font: var(--t-mono);
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
 
 /* The activation dialog's gate. */
 .gate,

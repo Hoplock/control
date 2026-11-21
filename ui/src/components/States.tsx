@@ -24,12 +24,21 @@ import styles from "./States.module.css";
 export type ErrorKind = "refused" | "outage";
 
 /** An error inline: the sentence and its correlation id. */
-export function ErrorMessage({ error, kind }: { error: ApiError; kind: ErrorKind }) {
+export function ErrorMessage({
+  error,
+  kind,
+  text,
+}: {
+  error: ApiError;
+  kind: ErrorKind;
+  /** The screen's own sentence for this refusal, when it can say more than the code's (a field and its problem). */
+  text?: string | null;
+}) {
   const { t } = useI18n();
   const rendered = errorMessage(t, error);
   return (
     <div className={styles.inline} data-kind={kind} role="alert" data-error-code={error.code}>
-      <p className={styles.text}>{rendered.text}</p>
+      <p className={styles.text}>{text || rendered.text}</p>
       {rendered.correlationId ? <Correlation id={rendered.correlationId} /> : null}
     </div>
   );
