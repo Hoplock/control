@@ -516,7 +516,11 @@ function DefaultDenyCard({ marked }: { marked: boolean }) {
 
 type Commit = (e: Edit, announce: string) => boolean;
 
-/** Typed text, applied when the author leaves the field or presses Enter, so a half-typed value changes nothing. */
+/**
+ * Typed text, applied when the author leaves the field or presses Enter, so a
+ * half-typed value changes nothing. What it holds is operator data — an id, a
+ * description, a reason — and is never translated (M21).
+ */
 function TextField({
   label,
   value,
@@ -562,7 +566,7 @@ function TextField({
             apply();
           }
         }}
-        translate={mono ? "no" : undefined}
+        translate="no"
         data-visual-field={name}
       />
     </Field>
