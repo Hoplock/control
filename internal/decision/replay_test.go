@@ -10,6 +10,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -303,6 +304,12 @@ func TestARecordReplayCannotReadIsListedNeverReplayed(t *testing.T) {
 	h.forge(t, good, "dec-instant", func(doc map[string]any) any { delete(doc, "now"); return doc }, nil)
 	h.forge(t, good, "dec-inputs", func(map[string]any) any { return []any{} }, nil)
 	h.forge(t, good, "dec-explanation", nil, func(map[string]any) any { return map[string]any{} })
+	// A standing denial beside an explanation that allowed: the good record
+	// was an allow, so this pairs a lock with it.
+	h.forge(t, good, "dec-standing", func(doc map[string]any) any {
+		doc["standing"] = []any{map[string]any{"code": "subject_locked", "subject_id": "alice@example.com", "placed_at": h.clock.Format(time.RFC3339)}}
+		return doc
+	}, nil)
 
 	rep, err := decision.Replay(t.Context(), h.store.Decisions(), testTenant, compileSource(t, testBundle), decision.ReplayQuery{
 		From: h.clock.Add(-time.Minute), To: h.clock.Add(time.Minute),
@@ -310,15 +317,42 @@ func TestARecordReplayCannotReadIsListedNeverReplayed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
+	// Each is listed with its cause as a code and typed parameters, and the
+	// English beside them for policyctl (0065).
+	causes := map[string]struct {
+		code   string
+		params map[string]string
+	}{
+		"dec-addr":        {decision.UnreplayableSourceAddressInvalid, map[string]string{"address": "not-an-address"}},
+		"dec-grant":       {decision.UnreplayableGrantInstantInvalid, map[string]string{"grant": "g-1", "field": "expires_at", "value": "yesterday"}},
+		"dec-window":      {decision.UnreplayableGrantInstantInvalid, map[string]string{"grant": "g-2", "field": "external.window_end", "value": "soon"}},
+		"dec-instant":     {decision.UnreplayableInstantMissing, nil},
+		"dec-inputs":      {decision.UnreplayableInputsUndecodable, nil},
+		"dec-explanation": {decision.UnreplayableExplanationMissing, nil},
+		"dec-standing":    {decision.UnreplayableStandingDisagrees, map[string]string{"effect": "allow"}},
+	}
 	var listed []string
 	for _, u := range rep.Unreplayable {
 		if u.Reason == "" {
 			t.Errorf("%s is listed with no reason", u.DecisionID)
 		}
+		want := causes[u.DecisionID]
+		if u.Code != want.code || !maps.Equal(u.Parameters, want.params) {
+			t.Errorf("%s is listed as %s %v, want %s %v", u.DecisionID, u.Code, u.Parameters, want.code, want.params)
+		}
+		params, known := decision.UnreplayableCodes[u.Code]
+		if !known {
+			t.Errorf("%s's code %q is not a cause UnreplayableCodes names", u.DecisionID, u.Code)
+		}
+		for k := range u.Parameters {
+			if !slices.Contains(params, k) {
+				t.Errorf("%s carries %s, which %s does not name", u.DecisionID, k, u.Code)
+			}
+		}
 		listed = append(listed, u.DecisionID)
 	}
 	slices.Sort(listed)
-	want := []string{"dec-addr", "dec-explanation", "dec-grant", "dec-inputs", "dec-instant", "dec-window"}
+	want := []string{"dec-addr", "dec-explanation", "dec-grant", "dec-inputs", "dec-instant", "dec-standing", "dec-window"}
 	if !slices.Equal(listed, want) {
 		t.Errorf("unreplayable = %v, want %v", listed, want)
 	}

@@ -47,9 +47,70 @@ import (
 // a DIFFERENT question — no recorded instant, a source address or a grant
 // window that does not parse — because a zero value in its place is not what
 // was asked: a grant whose expiry does not parse reads as expired.
+//
+// The error is an *UnreplayableError, which names its cause as a code.
 func ReplayInput(raw json.RawMessage) (model.Input, error) {
 	out, _, err := replayInput(raw)
 	return out, err
+}
+
+// The causes of an unreplayable record (0065; PLAN §5.6, M21): a closed set,
+// each a stable code with typed parameters, so a client builds its own
+// sentence and policyctl prints the reason beside it. Never reuse one for a
+// different cause.
+const (
+	// UnreplayableInputsUndecodable: the recorded inputs are not the
+	// document this server writes.
+	UnreplayableInputsUndecodable = "unreplayable.inputs_undecodable"
+	// UnreplayableInstantMissing: the inputs carry no instant, and time is
+	// an input to evaluation.
+	UnreplayableInstantMissing = "unreplayable.instant_missing"
+	// UnreplayableSourceAddressInvalid: the recorded source address
+	// (`address`) does not parse.
+	UnreplayableSourceAddressInvalid = "unreplayable.source_address_invalid"
+	// UnreplayableGrantInstantInvalid: one of a recorded grant's instants
+	// does not parse — the grant (`grant`), which of its instants
+	// (`field`: not_before, expires_at, external.window_start or
+	// external.window_end) and what was recorded (`value`).
+	UnreplayableGrantInstantInvalid = "unreplayable.grant_instant_invalid"
+	// UnreplayableExplanationMissing: the record carries no explanation, or
+	// one with no effect, to compare the candidate's against.
+	UnreplayableExplanationMissing = "unreplayable.explanation_missing"
+	// UnreplayableStandingDisagrees: the record carries a standing denial
+	// (M28) and an explanation whose effect (`effect`) is not a deny.
+	UnreplayableStandingDisagrees = "unreplayable.standing_denial_disagrees"
+)
+
+// UnreplayableCodes is every cause, with the parameters it carries, so a test
+// can hold the console's sentences to them.
+var UnreplayableCodes = map[string][]string{
+	UnreplayableInputsUndecodable:    {},
+	UnreplayableInstantMissing:       {},
+	UnreplayableSourceAddressInvalid: {"address"},
+	UnreplayableGrantInstantInvalid:  {"field", "grant", "value"},
+	UnreplayableExplanationMissing:   {},
+	UnreplayableStandingDisagrees:    {"effect"},
+}
+
+// UnreplayableError is why a record cannot be replayed faithfully: its cause
+// and parameters, and the English policyctl prints.
+type UnreplayableError struct {
+	Code       string
+	Parameters map[string]string
+	Reason     string
+}
+
+func (e *UnreplayableError) Error() string { return e.Reason }
+
+func unreplayable(code, reason string, kv ...string) *UnreplayableError {
+	var params map[string]string
+	if len(kv) > 0 {
+		params = make(map[string]string, len(kv)/2)
+		for i := 0; i+1 < len(kv); i += 2 {
+			params[kv[i]] = kv[i+1]
+		}
+	}
+	return &UnreplayableError{Code: code, Parameters: params, Reason: reason}
 }
 
 // replayInput is ReplayInput and the standing denials the record carries. A
@@ -58,10 +119,12 @@ func ReplayInput(raw json.RawMessage) (model.Input, error) {
 func replayInput(raw json.RawMessage) (model.Input, []recordedStanding, error) {
 	var in recordedInputs
 	if err := json.Unmarshal(raw, &in); err != nil {
-		return model.Input{}, nil, fmt.Errorf("decision: the recorded inputs do not decode: %w", err)
+		return model.Input{}, nil, unreplayable(UnreplayableInputsUndecodable,
+			fmt.Sprintf("decision: the recorded inputs do not decode: %v", err))
 	}
 	if in.Now.IsZero() {
-		return model.Input{}, nil, errors.New("decision: the recorded inputs carry no instant, and time is an input")
+		return model.Input{}, nil, unreplayable(UnreplayableInstantMissing,
+			"decision: the recorded inputs carry no instant, and time is an input")
 	}
 	out := model.Input{
 		Now: in.Now,
@@ -84,7 +147,9 @@ func replayInput(raw json.RawMessage) (model.Input, []recordedStanding, error) {
 	if in.Context.SourceAddr != "" {
 		addr, err := netip.ParseAddr(in.Context.SourceAddr)
 		if err != nil {
-			return model.Input{}, nil, fmt.Errorf("decision: the recorded source address %q does not parse", in.Context.SourceAddr)
+			return model.Input{}, nil, unreplayable(UnreplayableSourceAddressInvalid,
+				fmt.Sprintf("decision: the recorded source address %q does not parse", in.Context.SourceAddr),
+				"address", in.Context.SourceAddr)
 		}
 		out.Context.SourceAddr = addr
 	}
@@ -129,7 +194,9 @@ func parseRecordedTime(grant, field, s string, into *time.Time) error {
 	}
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {
-		return fmt.Errorf("decision: grant %s's recorded %s %q does not parse", grant, field, s)
+		return unreplayable(UnreplayableGrantInstantInvalid,
+			fmt.Sprintf("decision: grant %s's recorded %s %q does not parse", grant, field, s),
+			"grant", grant, "field", field, "value", s)
 	}
 	*into = t
 	return nil
@@ -143,7 +210,8 @@ func parseRecordedTime(grant, field, s string, into *time.Time) error {
 func recordedEffect(d store.Decision) (string, string, error) {
 	var expl recordedExplanation
 	if err := json.Unmarshal(d.Explanation, &expl); err != nil || expl.Effect == "" {
-		return "", "", fmt.Errorf("decision: %s carries no explanation to compare against", d.ID)
+		return "", "", unreplayable(UnreplayableExplanationMissing,
+			fmt.Sprintf("decision: %s carries no explanation to compare against", d.ID))
 	}
 	return expl.Effect, expl.Rule, nil
 }
@@ -189,10 +257,27 @@ type FlipGroup struct {
 	Flips   []Flip `json:"flips"`
 }
 
-// Unreplayable is a record replay could not read, and why.
+// Unreplayable is a record replay could not read, and why: the cause as a
+// code and typed parameters (UnreplayableCodes), which the console renders,
+// and the same in English, which policyctl prints. Code and Parameters are
+// north-bound version 8's (0065); a client declaring an older version is
+// served the reason alone, as it was before.
 type Unreplayable struct {
-	DecisionID string `json:"decision_id"`
-	Reason     string `json:"reason"`
+	DecisionID string            `json:"decision_id"`
+	Code       string            `json:"code,omitempty" since:"8"`
+	Parameters map[string]string `json:"parameters,omitempty" since:"8"`
+	Reason     string            `json:"reason"`
+}
+
+// unreplayableOf lists a record with the cause its error names.
+func unreplayableOf(id string, err error) Unreplayable {
+	var u *UnreplayableError
+	if errors.As(err, &u) {
+		return Unreplayable{DecisionID: id, Code: u.Code, Parameters: u.Parameters, Reason: u.Reason}
+	}
+	// Every cause replay meets is one of the above; anything else is still
+	// listed, as the input it could not read.
+	return Unreplayable{DecisionID: id, Code: UnreplayableInputsUndecodable, Reason: err.Error()}
 }
 
 // ReplayReport is what a candidate would have changed over a window.
@@ -230,12 +315,12 @@ func Replay(ctx context.Context, records RecordWindow, tenant store.Tenant, cand
 	for _, d := range window {
 		was, wasRule, err := recordedEffect(d)
 		if err != nil {
-			rep.Unreplayable = append(rep.Unreplayable, Unreplayable{DecisionID: d.ID, Reason: err.Error()})
+			rep.Unreplayable = append(rep.Unreplayable, unreplayableOf(d.ID, err))
 			continue
 		}
 		in, standing, err := replayInput(d.Inputs)
 		if err != nil {
-			rep.Unreplayable = append(rep.Unreplayable, Unreplayable{DecisionID: d.ID, Reason: err.Error()})
+			rep.Unreplayable = append(rep.Unreplayable, unreplayableOf(d.ID, err))
 			continue
 		}
 		if len(standing) > 0 {
@@ -246,10 +331,9 @@ func Replay(ctx context.Context, records RecordWindow, tenant store.Tenant, cand
 			// pairs a standing denial with an allow is not a record replay
 			// can read.
 			if was != string(model.EffectDeny) {
-				rep.Unreplayable = append(rep.Unreplayable, Unreplayable{
-					DecisionID: d.ID,
-					Reason:     fmt.Sprintf("decision: %s carries a standing denial and an explanation that says %q", d.ID, was),
-				})
+				rep.Unreplayable = append(rep.Unreplayable, unreplayableOf(d.ID, unreplayable(UnreplayableStandingDisagrees,
+					fmt.Sprintf("decision: %s carries a standing denial and an explanation that says %q", d.ID, was),
+					"effect", was)))
 				continue
 			}
 			rep.Replayed++
