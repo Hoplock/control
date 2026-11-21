@@ -26,6 +26,80 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.52.0
+
+Phase 0065, policy's refusals as codes (M3, M19, M21, M23). Every policy
+refusal an operator meets now arrives as a stable code and typed parameters,
+never a sentence the server wrote, and the console builds each sentence: a
+compiler rejection whose parameter was prose (`detail`) is split into codes
+and parameters, an unreplayable record names its cause, a refused simulation
+names its field and problem, and a candidate diff that does not parse carries
+its rejections. The north-bound API moves to version `8`; a client declaring
+`7` or older is served exactly what it was served before, so `north_api_min`
+stays `1`. `policyctl` and CI print the compiler's English as before, worded
+from the codes. No migration; `ext`, `server` and the contract are untouched.
+
+### Breaking
+
+Each of these is a change to what a client declaring version `8`, or none,
+is answered. A client declaring `7` or older is answered as before.
+
+- **A bundle that does not decode is refused with one of six codes, not
+  always `policy.document_malformed`.** `policy.document_malformed` now means
+  the document is not YAML at all, and carries `problem` — `tab_indentation`,
+  `structure`, `unterminated`, `character`, `encoding`, `tag`, `alias` or
+  `unreadable` — in place of `detail`. Valid YAML outside the schema is
+  `policy.key_unknown` (`key`), `policy.key_duplicate` (`key`, `other_line`),
+  `policy.value_wrong_type` (`found`, `expected`: `string`, `integer`,
+  `number`, `boolean`, `list`, `mapping`, `null`, `timestamp` or `other`),
+  `policy.value_unknown` (`value`, `vocabulary`, `allowed`; `vocabulary` is
+  one of 23 identifiers such as `channel_type`, `day` or `username_source`),
+  `policy.duration_malformed` (`value`) or `match.invalid_time_window`
+  (`value`). Each keeps the line it is about.
+- **`route.filter_rule_invalid`** carries `field` (`match` or `action`, the
+  key the rule names no value for) in place of `detail`.
+- **`route.restricted_command_invalid`** now means a command names no
+  `field` (`executable`, `form`, or `argv` for form `exact`), in place of
+  `detail`. A command setting a key its form does not take is
+  `route.restricted_command_field_unexpected` (`field`, `form`); an argument
+  naming no `kind`, `value` or `values` is `route.restricted_argument_invalid`
+  (`argument`, `field`); an argument setting a key its kind does not take is
+  `route.restricted_argument_field_unexpected` (`argument`, `field`, `kind`).
+  All four carry `index` and `executable`.
+- **`obligation.contradicts_route`** carries `field` (the route key the
+  obligation contradicts, `require_session_capture`) in place of `detail`.
+  Approver groups on an obligation other than `require-approval`, which it
+  also covered, are `obligation.approvers_unexpected` (`obligation`).
+- **An unreplayable record carries `code` and `parameters`** beside its
+  `reason`: `unreplayable.inputs_undecodable`, `unreplayable.instant_missing`,
+  `unreplayable.source_address_invalid` (`address`),
+  `unreplayable.grant_instant_invalid` (`grant`, `field`, `value`),
+  `unreplayable.explanation_missing`, and
+  `unreplayable.standing_denial_disagrees` (`effect`).
+- **A refused simulation is `400 invalid_request` with `{field, problem}`**
+  and no `reason`: `field` is the request's own path (`version`, `body`,
+  `replay.from`, `replay.to`, `cases[i].now`,
+  `cases[i].context.source_addr`, `cases[i].subject.auth_method`,
+  `cases[i].grants[j].origin`, `cases[i].grants[j].expires_at`) and `problem`
+  one of `required`, `invalid`, `ambiguous`, `not_after_start`,
+  `nothing_asked` and `not_in_vocabulary`. A replay window with no `from` or
+  no `to` is `required`; one that ends at or before it starts is
+  `not_after_start`.
+- **`POST …/policy/diff` on a candidate that does not parse** answers `422
+  policy_invalid` with the candidate's `rejections` and `digest`, as an upload
+  of it is refused, in place of `reason`.
+
+### Changed
+
+- The console renders every new code and cause, says a parameter drawn from
+  a closed set in its own words, shows an unparsed candidate's rejections at
+  their lines on the changes tab, and says a refused simulation's field and
+  problem. It no longer shows any of the server's English.
+- `ErrorMessage` (the component set) takes an optional `text`, a screen's own
+  sentence for a refusal it can say more about than its code.
+- `policyctl diff` prints an unparsed candidate's rejections, one per line,
+  as `validate` does.
+
 ## v0.51.0
 
 Phase 0064, one contract version, end to end (M1, M11, M17, M19, M23). This

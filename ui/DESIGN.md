@@ -729,6 +729,14 @@ the same reason.
   name, a target label, a grant reason. The console does not guess at the
   language of data it did not author, and a translated rule name would make
   "explain why" cite a rule that is not in the bundle.
+- **A server value drawn from a closed set is worded, never interpolated**
+  (0065). An identifier the server sends as data — a rule id, a field path —
+  is set apart and shown as it is. One that stands for words — why a policy is
+  not YAML, the shape a value has, a vocabulary's name — is said by an ICU
+  `select` with an option for every value the server can send and `other`
+  beside them, and passed to it unisolated (`policyCodes.ts`'s `WORDED`); a
+  test holds the options to the server's list. The server's English beside a
+  code is for curl and `policyctl`, and is never shown.
 - **Locale resolution happens in the browser**: the operator's stored preference
   → `navigator.languages` → the deployment default. It persists alongside the
   theme choice and is reachable from the chrome, not buried. Note that this is
