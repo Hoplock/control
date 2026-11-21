@@ -73,6 +73,7 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: grab;
+  touch-action: none;
   transition:
     background-color var(--m-fast) var(--ease),
     border-color var(--m-fast) var(--ease);

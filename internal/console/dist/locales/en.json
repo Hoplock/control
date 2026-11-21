@@ -747,7 +747,6 @@
   "policies.visual.off.title": "The visual view cannot show this candidate",
   "policies.visual.off.notYaml": "The source does not parse, so it has no rules to show. Each problem is set at its line below; put them right in the source.",
   "policies.visual.off.notMapping": "The source is not one bundle — a mapping of keys at its top level — so it has no rules to show. Put it right in the source.",
-  "policies.visual.editor.title": "Rule {id}",
   "policies.visual.editor.rule": "Rule",
   "policies.visual.editor.unmodelled": "Edited in the source",
   "policies.visual.editor.done": "Done",

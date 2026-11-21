@@ -2,14 +2,16 @@
 // point — the rules of a policy, tried top to bottom — that an operator
 // reorders by dragging or by keyboard, and never by one alone. Each item has a
 // rail at its inline start: its position, a handle and a move up and a move
-// down button. The handle is dragged with a pointer, and with focus on it the
+// down button. The handle is dragged with a pointer — pointer events captured
+// by the handle, so a mouse, a pen and a finger drag alike, where the
+// platform's own drag and drop never starts from a button — and with focus on it the
 // up and down arrows move the item one place, Home and End to the ends; the
 // buttons do the same for a pointer that does not drag. Every move is
 // announced ("moved … to position 2 of 5") and focus follows the item it moved,
 // so a keyboard user keeps their place. A last, fixed item (`fixedEnd`: the
 // default deny) is shown in the same list and cannot be moved or passed.
 
-import { useEffect, useId, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { useI18n } from "../i18n/I18n";
 import { IconButton } from "./Button";
 import { Skeleton } from "./States";
@@ -97,23 +99,49 @@ export function SortableList<T>({
     move(index, Math.max(0, Math.min(count - 1, to)), "handle");
   };
 
-  const over = (e: DragEvent<HTMLLIElement>, index: number) => {
-    if (!drag) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const box = e.currentTarget.getBoundingClientRect();
-    const side = e.clientY < box.top + box.height / 2 ? "before" : "after";
-    if (drag.over !== index || drag.side !== side) setDrag({ ...drag, over: index, side });
+  // A drag: where it started, whether it has moved far enough to be one, and where it would land.
+  const dragging = useRef<{ from: number; y: number; moved: boolean; over: number | null; side: "before" | "after" } | null>(null);
+
+  const press = (e: PointerEvent<HTMLButtonElement>, index: number) => {
+    if (disabled || e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragging.current = { from: index, y: e.clientY, moved: false, over: null, side: "before" };
   };
 
-  const drop = (e: DragEvent<HTMLLIElement>) => {
-    e.preventDefault();
-    if (!drag || drag.over === null) return setDrag(null);
-    // The place the item lands, counted after it leaves its own.
-    let to = drag.side === "before" ? drag.over : drag.over + 1;
-    if (to > drag.from) to -= 1;
+  const dragTo = (e: PointerEvent<HTMLButtonElement>) => {
+    const d = dragging.current;
+    if (!d) return;
+    if (!d.moved && Math.abs(e.clientY - d.y) < 4) return;
+    d.moved = true;
+    const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>(":scope > li[data-sortable-key]") ?? []);
+    let over: number | null = null;
+    let side: "before" | "after" = "before";
+    rows.forEach((row, i) => {
+      const box = row.getBoundingClientRect();
+      if (e.clientY >= box.top && e.clientY <= box.bottom) {
+        over = i;
+        side = e.clientY < box.top + box.height / 2 ? "before" : "after";
+      }
+    });
+    if (over === null && rows.length) {
+      const first = rows[0]?.getBoundingClientRect();
+      over = first && e.clientY < first.top ? 0 : rows.length - 1;
+      side = first && e.clientY < first.top ? "before" : "after";
+    }
+    d.over = over;
+    d.side = side;
+    setDrag({ from: d.from, over, side });
+  };
+
+  const release = () => {
+    const d = dragging.current;
+    dragging.current = null;
     setDrag(null);
-    move(drag.from, to, "handle");
+    if (!d || !d.moved || d.over === null) return;
+    // The place the item lands, counted after it leaves its own.
+    let to = d.side === "before" ? d.over : d.over + 1;
+    if (to > d.from) to -= 1;
+    move(d.from, to, "handle");
   };
 
   return (
@@ -130,8 +158,6 @@ export function SortableList<T>({
               data-sortable-key={key}
               data-dragging={drag?.from === index || undefined}
               data-drop={marked}
-              onDragOver={(e) => over(e, index)}
-              onDrop={drop}
             >
               <div className={styles.rail}>
                 <span className={styles.position} aria-hidden="true">
@@ -140,21 +166,19 @@ export function SortableList<T>({
                 <button
                   type="button"
                   className={styles.handle}
-                  draggable={!disabled}
                   disabled={disabled}
                   aria-label={t("component.sortable.handle", { name, position: f.number(index + 1), count: f.number(count) })}
                   aria-describedby={hintId}
                   title={t("component.sortable.hint")}
                   data-sortable-control="handle"
                   onKeyDown={(e) => keys(e, index)}
-                  onDragStart={(e) => {
-                    e.dataTransfer.effectAllowed = "move";
-                    e.dataTransfer.setData("text/plain", key);
-                    const li = e.currentTarget.closest("li");
-                    if (li) e.dataTransfer.setDragImage(li, 16, 16);
-                    setDrag({ from: index, over: null, side: "before" });
+                  onPointerDown={(e) => press(e, index)}
+                  onPointerMove={dragTo}
+                  onPointerUp={release}
+                  onPointerCancel={() => {
+                    dragging.current = null;
+                    setDrag(null);
                   }}
-                  onDragEnd={() => setDrag(null)}
                 >
                   <span className={styles.glyph} aria-hidden="true">
                     {GripGlyph}
