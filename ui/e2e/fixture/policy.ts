@@ -46,7 +46,7 @@ export async function seedPolicy(admin: APIRequestContext): Promise<void> {
  * line, `- id:`), and one it accepts, which is v3 reworded (so uploading it
  * stores a new version rather than finding v3).
  */
-export function candidates(): { invalid: string; lines: { group: number; duplicate: number }; valid: string } {
+export function candidates(): { invalid: string; lines: { group: number; duplicate: number }; valid: string; unparsable: string } {
   const v1 = source("policy.yaml");
   const lines = v1.split("\n");
   // The second `groups: [sre]` is the first rule's subject (the first declares the bundle's groups).
@@ -60,5 +60,7 @@ export function candidates(): { invalid: string; lines: { group: number; duplica
     "description: the console browser checks' fixture policy, as an author rewrote it",
   );
   const rule = lines.findIndex((l) => l.trim() === "- id: ops-db-shell");
-  return { invalid: lines.join("\n"), lines: { group: rule + 1, duplicate: duplicate + 1 }, valid };
+  // A flow list left open on the line of the groups' declaration: not YAML at all (0066's visual view is off).
+  const unparsable = v1.replace("groups: [sre]", "groups: [sre");
+  return { invalid: lines.join("\n"), lines: { group: rule + 1, duplicate: duplicate + 1 }, valid, unparsable };
 }

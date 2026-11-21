@@ -667,7 +667,15 @@ function RuleEditor({
   const route = r.route;
   const allow = r.effect === "allow";
   return (
-    <Drawer open title={<span>{t("policies.visual.editor.title", { id: name })}</span>} onClose={onClose}>
+    <Drawer
+      open
+      title={
+        <span className={styles.ruleId} dir="ltr" translate="no">
+          {r.id || t("policies.visual.unnamed")}
+        </span>
+      }
+      onClose={onClose}
+    >
       <div className={styles.editor} data-rule-editor={r.id}>
         {refusal ? (
           <Notice tone="warn" data-visual-refused={refusal}>
@@ -1140,7 +1148,7 @@ function TracePanel({
           <Input mono value={zone} onChange={(e) => setZone(e.target.value)} data-trace-field="zone" />
         </Field>
         <Field label={t("policies.visual.trace.at")} hint={t("policies.visual.trace.atHint")}>
-          <Input type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} data-trace-field="at" />
+          <Input type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} data-trace-field="at" data-volatile="" />
         </Field>
         <div className={styles.actions}>
           <Button type="submit" variant="primary" loading={run.state === "busy"} disabled={hostname.trim() === "" || subject.trim() === ""} data-trace-run="">
