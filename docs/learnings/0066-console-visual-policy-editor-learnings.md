@@ -161,5 +161,6 @@ No shared surface changed (`ext`, `server`, the contract and the cross-repo
 protocol are untouched; no API version move). The component set
 Enterprise's screens build from gained `SortableList`, `ChipEditor` and
 `ViewLink.query`, and DESIGN.md §7/§8/§11 changed, so a downstream sync for
-`hoplock/enterprise` is queued (`prompts/downstream/queued/`, named by this
-PR's number). Proxy: none.
+`hoplock/enterprise` is queued:
+`prompts/downstream/queued/control-PR#176-console-visual-policy-editor.md`.
+Proxy: none.
