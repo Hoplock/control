@@ -30,9 +30,20 @@ import (
 // rejection nobody can read.
 type Code string
 
-// Document-scope codes: the bundle as a whole.
+// Document-scope codes: the bundle as a whole, and the document as YAML.
+//
+// The first six are the document failing to decode, each with its position
+// (the rejection's Line) and typed parameters rather than the YAML library's
+// sentence (0065): the problem a document that is not YAML at all has, a key
+// the schema does not know or that is given twice, a value of the wrong shape,
+// a value outside a closed vocabulary, and a duration that does not parse.
 const (
 	CodeDocumentMalformed        Code = "policy.document_malformed"
+	CodeKeyUnknown               Code = "policy.key_unknown"
+	CodeKeyDuplicate             Code = "policy.key_duplicate"
+	CodeValueWrongType           Code = "policy.value_wrong_type"
+	CodeValueUnknown             Code = "policy.value_unknown"
+	CodeDurationMalformed        Code = "policy.duration_malformed"
 	CodeSchemaVersionUnsupported Code = "policy.schema_version_unsupported"
 	CodeTenantMissing            Code = "policy.tenant_missing"
 	CodeNoRules                  Code = "policy.no_rules"
@@ -60,6 +71,7 @@ const (
 	CodeMatchInvalidCIDR     Code = "match.invalid_cidr"
 	CodeMatchInvalidHostname Code = "match.invalid_hostname_pattern"
 	CodeMatchEmptyTerm       Code = "match.empty_term"
+	CodeMatchInvalidWindow   Code = "match.invalid_time_window"
 )
 
 // Route-scope codes: the snapshot a rule emits.
@@ -76,6 +88,9 @@ const (
 	CodeRouteExecModeMismatch      Code = "route.exec_mode_mismatch"
 	CodeRouteFilterRuleInvalid     Code = "route.filter_rule_invalid"
 	CodeRouteRestrictedCmdInvalid  Code = "route.restricted_command_invalid"
+	CodeRouteRestrictedCmdField    Code = "route.restricted_command_field_unexpected"
+	CodeRouteRestrictedArgInvalid  Code = "route.restricted_argument_invalid"
+	CodeRouteRestrictedArgField    Code = "route.restricted_argument_field_unexpected"
 	CodeRouteDeadlineInvalid       Code = "route.session_deadline_invalid"
 	CodeRouteConcurrencyInvalid    Code = "route.concurrency_invalid"
 	CodeRouteFloorProfileConflict  Code = "route.algorithm_floor_profile_conflict"
@@ -134,6 +149,7 @@ const (
 	CodeObligationDuplicate   Code = "obligation.duplicate"
 	CodeObligationOnDeny      Code = "obligation.on_deny"
 	CodeObligationContradicts Code = "obligation.contradicts_route"
+	CodeObligationApprovers   Code = "obligation.approvers_unexpected"
 )
 
 // messages is the English catalogue, one entry per Code. `{name}` is replaced
@@ -144,7 +160,12 @@ const (
 // is a rejection an author cannot act on, and this is the one place the
 // omission is cheap to catch.
 var messages = map[Code]string{
-	CodeDocumentMalformed:        "the bundle is not valid YAML: {detail}",
+	CodeDocumentMalformed:        "the bundle is not valid YAML: {problem}",
+	CodeKeyUnknown:               "key `{key}` is not part of the bundle's schema at this place; remove it, or correct the spelling — a key this server does not know is a policy somebody believes is in force and is not",
+	CodeKeyDuplicate:             "key `{key}` is already set at line {other_line}; a key is given once in its mapping, so remove one of the two",
+	CodeValueWrongType:           "this value is {found}, where the schema expects {expected}",
+	CodeValueUnknown:             "\"{value}\" is not a known {vocabulary}; use one of {allowed}",
+	CodeDurationMalformed:        "\"{value}\" is not a duration; use a form such as `8h` or `45m`",
 	CodeSchemaVersionUnsupported: "schema_version {found} is not supported; this server understands {supported}",
 	CodeTenantMissing:            "the bundle names no tenant; add `tenant: <name>` (the tenant selects which compiled program is served)",
 	CodeNoRules:                  "the bundle has no rules; add at least one, or delete the bundle — an empty bundle denies everything by default-deny and says nothing about why",
@@ -166,6 +187,7 @@ var messages = map[Code]string{
 	CodeMatchInvalidCIDR:     "{cidr} is not a valid address or CIDR prefix",
 	CodeMatchInvalidHostname: "{pattern} is not a valid hostname pattern; use an exact name or a single leading wildcard such as `*.prod.example.com`",
 	CodeMatchEmptyTerm:       "the {axis} match declares {term} with no values; list at least one, or remove the key — an empty list matches nothing and is almost never what was meant",
+	CodeMatchInvalidWindow:   "\"{value}\" is not a time window; use `HH:MM-HH:MM` in 24-hour form",
 
 	CodeRouteIntentMissing:         "the route states no intent; add `intent: direct` or `intent: hops-permitted`",
 	CodeRouteChannelsMissing:       "the route names no `channels:` key; state the channel types explicitly — `channels: []` denies all of them and is a policy, but an omission is not",
@@ -177,8 +199,11 @@ var messages = map[Code]string{
 	CodeRouteInvalidDestination:    "{destination} is not a valid forwarding destination; use a host, a wildcard such as `*.prod`, or a CIDR prefix, with an optional port or port range",
 	CodeRouteLadderEmpty:           "the route declares a `credentials:` ladder with no entries; list at least one method, or omit the key to leave the proxy its locally configured method",
 	CodeRouteExecModeMismatch:      "the route declares a restricted-exec allow-list but its `exec_mode` is not `restricted`; the allow-list would never decide anything — set `exec_mode: restricted`, or remove it",
-	CodeRouteFilterRuleInvalid:     "filter rule {index} is not usable: {detail}",
-	CodeRouteRestrictedCmdInvalid:  "restricted-exec command {index} ({executable}) is not usable: {detail}",
+	CodeRouteFilterRuleInvalid:     "filter rule {index} is not usable: it names no `{field}`; a filter rule needs the command pattern it matches (`match`) and the `action` it takes",
+	CodeRouteRestrictedCmdInvalid:  "restricted-exec command {index} ({executable}) is not usable: it names no `{field}`; a command names its `executable` and its `form`, and form `exact` names the whole `argv`",
+	CodeRouteRestrictedCmdField:    "restricted-exec command {index} ({executable}) sets `{field}`, which form `{form}` does not take; form `exact` takes the whole `argv`, and form `positional` takes `args`",
+	CodeRouteRestrictedArgInvalid:  "argument {argument} of restricted-exec command {index} ({executable}) names no `{field}`; an argument names its `kind`, kinds `literal` and `prefix` take a `value`, and kind `oneof` takes `values`",
+	CodeRouteRestrictedArgField:    "argument {argument} of restricted-exec command {index} ({executable}) sets `{field}`, which kind `{kind}` does not take; kinds `literal` and `prefix` take `value`, kind `oneof` takes `values`, and kind `any` takes neither",
 	CodeRouteDeadlineInvalid:       "session deadline {duration} is not a positive duration; use a form such as `8h` or `45m`",
 	CodeRouteConcurrencyInvalid:    "concurrency cap {field} is negative; use a positive cap, or 0 for uncapped",
 	CodeRouteFloorProfileConflict:  "the route sets algorithm_floor {floor} with algorithm_profile {profile}, which widens the key-exchange axis the floor narrows; the proxy refuses the pair because the leg could never connect — drop the floor, or use `default` or `legacy-rsa-sha1`",
@@ -220,7 +245,8 @@ var messages = map[Code]string{
 	CodeObligationKindMissing:   "obligation {index} names no kind; use `record-session`, `require-approval` or `require-step-up`",
 	CodeObligationDuplicate:     "obligation {obligation} is listed twice; remove the duplicate",
 	CodeObligationOnDeny:        "a deny rule carries obligation {obligation}; obligations are things a permitted session must do, and a denied one has none",
-	CodeObligationContradicts:   "obligation {obligation} contradicts the route: {detail}",
+	CodeObligationContradicts:   "obligation {obligation} contradicts the route, which sets `{field}: false`; the rule both requires and waives the same thing — remove one of the two",
+	CodeObligationApprovers:     "obligation {obligation} names approver groups; approver groups belong to `require-approval` and mean nothing on this obligation — remove them, or change the kind",
 }
 
 // Codes lists every rejection code, sorted. The console's catalogue holds a
@@ -296,7 +322,7 @@ func (r Rejection) Message() string {
 	keys := slices.Sorted(maps.Keys(r.Params))
 	pairs := make([]string, 0, len(keys)*2)
 	for _, k := range keys {
-		pairs = append(pairs, "{"+k+"}", r.Params[k])
+		pairs = append(pairs, "{"+k+"}", wordsFor(r.Code, k, r.Params[k]))
 	}
 	return strings.NewReplacer(pairs...).Replace(tmpl)
 }

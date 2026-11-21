@@ -67,7 +67,10 @@ type rejectionCase struct {
 	// wants are substrings the message must contain, so the test asserts the
 	// message is actionable rather than merely present.
 	wants []string
-	src   string
+	// params are parameters the rejection must carry, value for value: the
+	// typed payload a console builds its sentence from (0065).
+	params map[string]string
+	src    string
 }
 
 func TestCompilerRejections(t *testing.T) {
@@ -102,6 +105,11 @@ func TestCompilerRejections(t *testing.T) {
 					t.Errorf("message does not mention %q: %s", want, msg)
 				}
 			}
+			for k, want := range tc.params {
+				if got := found.Params[k]; got != want {
+					t.Errorf("parameter %s = %q, want %q", k, got, want)
+				}
+			}
 			// The rendered error is what policyctl and CI print: it has to
 			// place the rejection and carry the stable code.
 			rendered := found.Error()
@@ -115,6 +123,23 @@ func TestCompilerRejections(t *testing.T) {
 	}
 }
 
+// restrictedSource is a rule whose route is a restricted-exec allow-list of
+// these commands, so a case about one command is about nothing else.
+func restrictedSource(commands string) string {
+	return header(`rules:
+  - id: r
+    effect: allow
+    route:
+      intent: direct
+      channels: [session]
+      filter:
+        mode: whitelist
+        exec_mode: restricted
+        restricted_exec:
+          commands: [` + commands + `]
+`)
+}
+
 // allowRoute is a minimal, valid route, so that a case about one thing is not
 // also a case about six others.
 const allowRoute = `{intent: direct, channels: [session], filter: {mode: whitelist}}`
@@ -126,14 +151,36 @@ func header(extra string) string {
 var rejectionCases = []rejectionCase{
 	// -- the document ------------------------------------------------------
 	{
-		name: "malformed document",
-		code: model.CodeDocumentMalformed,
-		src:  "schema_version: 1\ntenant: acme\nrules: [ unterminated",
+		name:   "malformed document",
+		code:   model.CodeDocumentMalformed,
+		wants:  []string{"never closed"},
+		params: map[string]string{"problem": "unterminated"},
+		src:    "schema_version: 1\ntenant: acme\nrules: [ unterminated",
 	},
 	{
-		name:  "unknown enum member",
-		code:  model.CodeDocumentMalformed,
-		wants: []string{"channel type"},
+		name:   "tab indentation",
+		code:   model.CodeDocumentMalformed,
+		wants:  []string{"spaces only"},
+		params: map[string]string{"problem": "tab_indentation"},
+		src:    "schema_version: 1\ntenant: acme\nrules:\n\t- id: r\n",
+	},
+	{
+		name:   "a line out of its structure",
+		code:   model.CodeDocumentMalformed,
+		params: map[string]string{"problem": "structure"},
+		src:    "schema_version: 1\ntenant: acme\n  description: indented\nrules: []\n",
+	},
+	{
+		name:   "an undefined alias",
+		code:   model.CodeDocumentMalformed,
+		params: map[string]string{"problem": "alias"},
+		src:    "schema_version: 1\ntenant: *nowhere\nrules: []\n",
+	},
+	{
+		name:   "unknown enum member",
+		code:   model.CodeValueUnknown,
+		wants:  []string{"channel type", `"teleport"`, `"session"`},
+		params: map[string]string{"value": "teleport", "vocabulary": "channel_type"},
 		src: header(`rules:
   - id: r
     effect: allow
@@ -141,13 +188,90 @@ var rejectionCases = []rejectionCase{
 `),
 	},
 	{
-		name:  "unknown key",
-		code:  model.CodeDocumentMalformed,
-		wants: []string{"field"},
+		name:   "unknown key",
+		code:   model.CodeKeyUnknown,
+		wants:  []string{"permissions"},
+		params: map[string]string{"key": "permissions"},
 		src: header(`rules:
   - id: r
     effect: allow
     permissions: root
+    route: ` + allowRoute + `
+`),
+	},
+	{
+		name:   "a key given twice",
+		code:   model.CodeKeyDuplicate,
+		wants:  []string{"effect", "line 5"},
+		params: map[string]string{"key": "effect", "other_line": "5"},
+		src: header(`rules:
+  - id: r
+    effect: allow
+    effect: deny
+    route: ` + allowRoute + `
+`),
+	},
+	{
+		name:   "a value of the wrong shape",
+		code:   model.CodeValueWrongType,
+		wants:  []string{"a string", "a list"},
+		params: map[string]string{"found": "string", "expected": "list"},
+		src: header(`groups: sre
+rules:
+  - {id: r, effect: allow, route: ` + allowRoute + `}
+`),
+	},
+	{
+		name:   "a mapping where a list belongs",
+		code:   model.CodeValueWrongType,
+		params: map[string]string{"found": "mapping", "expected": "list"},
+		src: header(`rules:
+  - {id: r, effect: allow, route: {intent: direct, channels: {session: true}, filter: {mode: whitelist}}}
+`),
+	},
+	{
+		name:   "a list where a mapping belongs",
+		code:   model.CodeValueWrongType,
+		params: map[string]string{"found": "list", "expected": "mapping"},
+		src: header(`rules:
+  - {id: r, effect: allow, route: [direct]}
+`),
+	},
+	{
+		name:   "a username derived from nothing it knows",
+		code:   model.CodeValueUnknown,
+		wants:  []string{"username source", `"subject"`},
+		params: map[string]string{"value": "login", "vocabulary": "username_source"},
+		src: header(`rules:
+  - id: r
+    effect: allow
+    route:
+      intent: direct
+      channels: [session]
+      filter: {mode: whitelist}
+      credentials: [{method: ephemeral-user, username: {from: login}}]
+`),
+	},
+	{
+		name:   "a session deadline that is not a duration",
+		code:   model.CodeDurationMalformed,
+		wants:  []string{`"a day"`},
+		params: map[string]string{"value": "a day"},
+		src: header(`rules:
+  - id: r
+    effect: allow
+    route: {intent: direct, channels: [session], filter: {mode: whitelist}, max_session_duration: a day}
+`),
+	},
+	{
+		name:   "a time of day that is not a window",
+		code:   model.CodeMatchInvalidWindow,
+		wants:  []string{`"nine to five"`, "HH:MM-HH:MM"},
+		params: map[string]string{"value": "nine to five"},
+		src: header(`rules:
+  - id: r
+    effect: allow
+    match: {context: {time_of_day: nine to five}}
     route: ` + allowRoute + `
 `),
 	},
@@ -463,9 +587,10 @@ rules:
 `),
 	},
 	{
-		name: "filter rule matching nothing",
-		code: model.CodeRouteFilterRuleInvalid,
-		rule: "r",
+		name:   "filter rule matching nothing",
+		code:   model.CodeRouteFilterRuleInvalid,
+		rule:   "r",
+		params: map[string]string{"index": "1", "field": "match"},
 		src: header(`rules:
   - id: r
     effect: allow
@@ -478,10 +603,10 @@ rules:
 `),
 	},
 	{
-		name:  "restricted command with the wrong argument shape",
-		code:  model.CodeRouteRestrictedCmdInvalid,
-		rule:  "r",
-		wants: []string{"/bin/ls"},
+		name:   "filter rule taking no action",
+		code:   model.CodeRouteFilterRuleInvalid,
+		rule:   "r",
+		params: map[string]string{"index": "1", "field": "action"},
 		src: header(`rules:
   - id: r
     effect: allow
@@ -489,11 +614,77 @@ rules:
       intent: direct
       channels: [session]
       filter:
-        mode: whitelist
-        exec_mode: restricted
-        restricted_exec:
-          commands: [{executable: /bin/ls, form: positional, args: [{kind: oneof}]}]
+        mode: blacklist
+        rules: [{match: "rm -rf"}]
 `),
+	},
+	{
+		name:   "restricted command with no form",
+		code:   model.CodeRouteRestrictedCmdInvalid,
+		rule:   "r",
+		wants:  []string{"/bin/ls", "`form`"},
+		params: map[string]string{"index": "1", "executable": "/bin/ls", "field": "form"},
+		src:    restrictedSource(`{executable: /bin/ls}`),
+	},
+	{
+		name:   "restricted command naming no executable",
+		code:   model.CodeRouteRestrictedCmdInvalid,
+		rule:   "r",
+		params: map[string]string{"index": "1", "field": "executable"},
+		src:    restrictedSource(`{form: exact, argv: [ls]}`),
+	},
+	{
+		name:   "an exact command with no argv",
+		code:   model.CodeRouteRestrictedCmdInvalid,
+		rule:   "r",
+		params: map[string]string{"index": "1", "executable": "/bin/ls", "field": "argv"},
+		src:    restrictedSource(`{executable: /bin/ls, form: exact}`),
+	},
+	{
+		name:   "an exact command given args",
+		code:   model.CodeRouteRestrictedCmdField,
+		rule:   "r",
+		wants:  []string{"`args`", "`exact`"},
+		params: map[string]string{"index": "2", "executable": "/bin/cat", "field": "args", "form": "exact"},
+		src: restrictedSource(`{executable: /bin/ls, form: exact, argv: [ls]},
+                     {executable: /bin/cat, form: exact, argv: [cat], args: [{kind: any}]}`),
+	},
+	{
+		name:   "a positional command given argv",
+		code:   model.CodeRouteRestrictedCmdField,
+		rule:   "r",
+		params: map[string]string{"field": "argv", "form": "positional"},
+		src:    restrictedSource(`{executable: /bin/ls, form: positional, argv: [ls]}`),
+	},
+	{
+		name:   "restricted command with the wrong argument shape",
+		code:   model.CodeRouteRestrictedArgInvalid,
+		rule:   "r",
+		wants:  []string{"/bin/ls", "`values`"},
+		params: map[string]string{"index": "1", "executable": "/bin/ls", "argument": "1", "field": "values"},
+		src:    restrictedSource(`{executable: /bin/ls, form: positional, args: [{kind: oneof}]}`),
+	},
+	{
+		name:   "an argument naming no kind",
+		code:   model.CodeRouteRestrictedArgInvalid,
+		rule:   "r",
+		params: map[string]string{"argument": "2", "field": "kind"},
+		src:    restrictedSource(`{executable: /bin/ls, form: positional, args: [{kind: any}, {value: x}]}`),
+	},
+	{
+		name:   "an argument setting what its kind does not take",
+		code:   model.CodeRouteRestrictedArgField,
+		rule:   "r",
+		wants:  []string{"`value`", "`any`"},
+		params: map[string]string{"argument": "1", "field": "value", "kind": "any"},
+		src:    restrictedSource(`{executable: /bin/ls, form: positional, args: [{kind: any, value: x}]}`),
+	},
+	{
+		name:   "a literal argument given values",
+		code:   model.CodeRouteRestrictedArgField,
+		rule:   "r",
+		params: map[string]string{"argument": "1", "field": "values", "kind": "literal"},
+		src:    restrictedSource(`{executable: /bin/ls, form: positional, args: [{kind: literal, value: x, values: [y]}]}`),
 	},
 
 	// -- the cache hint ----------------------------------------------------
@@ -936,10 +1127,11 @@ rules:
 `),
 	},
 	{
-		name:  "obligation contradicting the route",
-		code:  model.CodeObligationContradicts,
-		rule:  "r",
-		wants: []string{"record-session", "require_session_capture"},
+		name:   "obligation contradicting the route",
+		code:   model.CodeObligationContradicts,
+		rule:   "r",
+		wants:  []string{"record-session", "require_session_capture"},
+		params: map[string]string{"obligation": "record-session", "field": "require_session_capture"},
 		src: header(`rules:
   - id: r
     effect: allow
@@ -952,10 +1144,11 @@ rules:
 `),
 	},
 	{
-		name:  "approver groups on another obligation",
-		code:  model.CodeObligationContradicts,
-		rule:  "r",
-		wants: []string{"record-session", "approver"},
+		name:   "approver groups on another obligation",
+		code:   model.CodeObligationApprovers,
+		rule:   "r",
+		wants:  []string{"record-session", "approver"},
+		params: map[string]string{"obligation": "record-session"},
 		src: header(`groups: [sre]
 rules:
   - id: r
@@ -1163,7 +1356,7 @@ func TestTheFloorMatchesTheProxysProfileRule(t *testing.T) {
 
 func TestAnUnknownFloorLevelIsRefusedNeverCoerced(t *testing.T) {
 	rs := compileSource(t, floorRoute("default", "fips-kex"))
-	if !rs.Has(model.CodeDocumentMalformed) {
+	if !rs.Has(model.CodeValueUnknown) {
 		t.Fatalf("an unknown floor level compiled: %v", rs.Codes())
 	}
 }

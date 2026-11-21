@@ -247,7 +247,7 @@ func (w *TimeWindow) UnmarshalYAML(n *yaml.Node) error {
 	}
 	parsed, ok := parseTimeWindow(s)
 	if !ok {
-		return nodeErr(n, "%q is not a time window; use `HH:MM-HH:MM` in 24-hour form", s)
+		return nodeReject(n, CodeMatchInvalidWindow, "value", s)
 	}
 	*w = parsed
 	return nil

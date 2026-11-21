@@ -57,8 +57,11 @@ rulez:
 		t.Fatal("an unknown key was accepted")
 	}
 	var rs model.Rejections
-	if !errors.As(err, &rs) || !rs.Has(model.CodeDocumentMalformed) {
-		t.Fatalf("want a malformed-document rejection, got %v", err)
+	if !errors.As(err, &rs) || !rs.Has(model.CodeKeyUnknown) {
+		t.Fatalf("want an unknown-key rejection, got %v", err)
+	}
+	if got := rs[0].Params["key"]; got != "rulez" {
+		t.Errorf("the rejection names key %q, want rulez", got)
 	}
 	if rs[0].Line == 0 {
 		t.Error("the rejection does not say where the unknown key is")

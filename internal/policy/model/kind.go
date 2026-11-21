@@ -42,7 +42,9 @@ const (
 var effects = []Effect{EffectAllow, EffectDeny}
 
 // UnmarshalYAML decodes an Effect, rejecting anything outside the vocabulary.
-func (e *Effect) UnmarshalYAML(n *yaml.Node) error { return decodeEnum(n, e, effects, "effect") }
+func (e *Effect) UnmarshalYAML(n *yaml.Node) error {
+	return decodeEnum(n, e, effects, VocabularyEffect)
+}
 
 // Basis is why a decision came out the way it did: a rule matched, or nothing
 // did and the always-present default-deny fired (PLAN §5.3).
@@ -92,7 +94,7 @@ var routeIntents = []RouteIntent{RouteIntentDirect, RouteIntentHopsPermitted}
 
 // UnmarshalYAML decodes a RouteIntent.
 func (r *RouteIntent) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, r, routeIntents, "route intent")
+	return decodeEnum(n, r, routeIntents, VocabularyRouteIntent)
 }
 
 // ChannelType is an SSH channel a session may open, in either direction — the
@@ -121,7 +123,7 @@ var channelTypes = []ChannelType{
 
 // UnmarshalYAML decodes a ChannelType.
 func (c *ChannelType) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, c, channelTypes, "channel type")
+	return decodeEnum(n, c, channelTypes, VocabularyChannelType)
 }
 
 // RequestType is an in-channel request (proxy D5a axis 2). `subsystem` is
@@ -144,7 +146,7 @@ var requestTypes = []RequestType{
 
 // UnmarshalYAML decodes a RequestType.
 func (r *RequestType) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, r, requestTypes, "request type")
+	return decodeEnum(n, r, requestTypes, VocabularyRequestType)
 }
 
 // Interactive reports whether permitting this request gives the session an
@@ -192,7 +194,7 @@ var credentialMethods = []CredentialMethod{
 
 // UnmarshalYAML decodes a CredentialMethod.
 func (m *CredentialMethod) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, m, credentialMethods, "credential method")
+	return decodeEnum(n, m, credentialMethods, VocabularyCredentialMethod)
 }
 
 // Provisions reports whether this method has the proxy administer the account
@@ -257,7 +259,7 @@ var credentialKinds = []CredentialKind{CredentialKindPassword, CredentialKindPub
 
 // UnmarshalYAML decodes a CredentialKind.
 func (k *CredentialKind) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, k, credentialKinds, "credential kind")
+	return decodeEnum(n, k, credentialKinds, VocabularyCredentialKind)
 }
 
 // ExpiryPosture is the `expiry_posture` parameter of an ephemeral-account
@@ -278,7 +280,7 @@ var expiryPostures = []ExpiryPosture{
 
 // UnmarshalYAML decodes an ExpiryPosture.
 func (p *ExpiryPosture) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, p, expiryPostures, "expiry posture")
+	return decodeEnum(n, p, expiryPostures, VocabularyExpiryPosture)
 }
 
 // AlgorithmProfile is the per-route algorithm profile for targets that speak
@@ -299,7 +301,7 @@ var algorithmProfiles = []AlgorithmProfile{
 
 // UnmarshalYAML decodes an AlgorithmProfile.
 func (p *AlgorithmProfile) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, p, algorithmProfiles, "algorithm profile")
+	return decodeEnum(n, p, algorithmProfiles, VocabularyAlgorithmProfile)
 }
 
 // AlgorithmFloor is the minimum key exchange a route's proxy→target leg must
@@ -319,7 +321,7 @@ var algorithmFloors = []AlgorithmFloor{AlgorithmFloorModernKex, AlgorithmFloorPQ
 
 // UnmarshalYAML decodes an AlgorithmFloor.
 func (f *AlgorithmFloor) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, f, algorithmFloors, "algorithm floor")
+	return decodeEnum(n, f, algorithmFloors, VocabularyAlgorithmFloor)
 }
 
 // Rank orders the levels: unset 0, modern-kex 1, pq-hybrid-kex 2. A later level
@@ -366,7 +368,7 @@ var filterModes = []FilterMode{FilterModeWhitelist, FilterModeBlacklist}
 
 // UnmarshalYAML decodes a FilterMode.
 func (m *FilterMode) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, m, filterModes, "filter mode")
+	return decodeEnum(n, m, filterModes, VocabularyFilterMode)
 }
 
 // ExecMode is which of the two tiers decides an exec request (proxy D12). The
@@ -388,7 +390,7 @@ var execModes = []ExecMode{ExecModeFiltered, ExecModeRestricted}
 
 // UnmarshalYAML decodes an ExecMode.
 func (m *ExecMode) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, m, execModes, "exec mode")
+	return decodeEnum(n, m, execModes, VocabularyExecMode)
 }
 
 // FilterAction is what a matched filter rule does.
@@ -408,7 +410,7 @@ var filterActions = []FilterAction{
 
 // UnmarshalYAML decodes a FilterAction.
 func (a *FilterAction) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, a, filterActions, "filter action")
+	return decodeEnum(n, a, filterActions, VocabularyFilterAction)
 }
 
 // CommandForm is how a restricted-exec command's arguments are specified.
@@ -426,7 +428,7 @@ var commandForms = []CommandForm{CommandFormExact, CommandFormPositional}
 
 // UnmarshalYAML decodes a CommandForm.
 func (f *CommandForm) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, f, commandForms, "command form")
+	return decodeEnum(n, f, commandForms, VocabularyCommandForm)
 }
 
 // ArgumentKind is the permitted shape of one argument position. `any` is named
@@ -448,7 +450,7 @@ var argumentKinds = []ArgumentKind{
 
 // UnmarshalYAML decodes an ArgumentKind.
 func (k *ArgumentKind) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, k, argumentKinds, "argument kind")
+	return decodeEnum(n, k, argumentKinds, VocabularyArgumentKind)
 }
 
 // ExecutionRung is where the limit on what a session may EXECUTE is enforced.
@@ -478,7 +480,7 @@ var executionRungs = []ExecutionRung{
 
 // UnmarshalYAML decodes an ExecutionRung.
 func (r *ExecutionRung) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, r, executionRungs, "execution rung")
+	return decodeEnum(n, r, executionRungs, VocabularyExecutionRung)
 }
 
 // Attested reports whether the target already enforces this rung and the proxy
@@ -529,7 +531,7 @@ var reachRungs = []ReachRung{
 
 // UnmarshalYAML decodes a ReachRung.
 func (r *ReachRung) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, r, reachRungs, "reach rung")
+	return decodeEnum(n, r, reachRungs, VocabularyReachRung)
 }
 
 // Attested reports whether the target already constrains what the account can
@@ -578,7 +580,7 @@ var obligationKinds = []ObligationKind{
 
 // UnmarshalYAML decodes an ObligationKind.
 func (k *ObligationKind) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, k, obligationKinds, "obligation kind")
+	return decodeEnum(n, k, obligationKinds, VocabularyObligationKind)
 }
 
 // GrantOrigin is where a live grant came from (M10, M16). All three are the
@@ -603,7 +605,7 @@ var grantOrigins = []GrantOrigin{
 
 // UnmarshalYAML decodes a GrantOrigin.
 func (o *GrantOrigin) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, o, grantOrigins, "grant origin")
+	return decodeEnum(n, o, grantOrigins, VocabularyGrantOrigin)
 }
 
 // Unanswered is what a decision does with an external window whose probe could
@@ -639,7 +641,7 @@ var unansweredAnswers = []Unanswered{UnansweredClosed, UnansweredOutage, Unanswe
 
 // UnmarshalYAML decodes an Unanswered.
 func (u *Unanswered) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, u, unansweredAnswers, "unanswered setting")
+	return decodeEnum(n, u, unansweredAnswers, VocabularyUnanswered)
 }
 
 // CacheKeyComponent is one input a cache hint's key is derived from (PLAN
@@ -673,7 +675,7 @@ var cacheKeyComponents = []CacheKeyComponent{
 
 // UnmarshalYAML decodes a CacheKeyComponent.
 func (c *CacheKeyComponent) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, c, cacheKeyComponents, "cache key component")
+	return decodeEnum(n, c, cacheKeyComponents, VocabularyCacheKeyComponent)
 }
 
 // AuthMethod is how the identity authenticated to the proxy.
@@ -689,7 +691,7 @@ var authMethods = []AuthMethod{AuthMethodCert, AuthMethodPasswordMFA}
 
 // UnmarshalYAML decodes an AuthMethod.
 func (m *AuthMethod) UnmarshalYAML(n *yaml.Node) error {
-	return decodeEnum(n, m, authMethods, "authentication method")
+	return decodeEnum(n, m, authMethods, VocabularyAuthMethod)
 }
 
 // Day is a day of the week, as a rule's context match names it.
@@ -708,7 +710,7 @@ const (
 var days = []Day{Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday}
 
 // UnmarshalYAML decodes a Day.
-func (d *Day) UnmarshalYAML(n *yaml.Node) error { return decodeEnum(n, d, days, "day") }
+func (d *Day) UnmarshalYAML(n *yaml.Node) error { return decodeEnum(n, d, days, VocabularyDay) }
 
 // oneOf reports whether v is a member of set.
 func oneOf[T ~string](v T, set []T) bool {

@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -42,7 +41,7 @@ import (
 func Parse(src []byte) (*Bundle, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(src, &root); err != nil {
-		return nil, Rejections{Reject(CodeDocumentMalformed, "", yamlLine(err), "detail", yamlDetail(err))}
+		return nil, Rejections{yamlRejection(err, src)}
 	}
 
 	var b Bundle
@@ -55,7 +54,7 @@ func Parse(src []byte) (*Bundle, error) {
 	// document, it is a bundle with no rules, and Validate has a message for
 	// it that tells the author something useful.
 	if err := dec.Decode(&b); err != nil && !errors.Is(err, io.EOF) {
-		return nil, decodeRejections(err)
+		return nil, decodeRejections(err, src)
 	}
 
 	sum := sha256.Sum256(src)
@@ -214,18 +213,44 @@ func attachScopeLines(m *yaml.Node, b *Bundle) {
 // decodeRejections turns yaml.v3's errors into rejections that keep the line.
 // yaml.TypeError carries one string per problem, each already prefixed with
 // "line N:", which is the position an author needs and the only place it is
-// available.
-func decodeRejections(err error) Rejections {
+// available; rejectionOf reads the rest into a code (yamlerror.go).
+func decodeRejections(err error, src []byte) Rejections {
 	var te *yaml.TypeError
 	if errors.As(err, &te) {
 		rs := make(Rejections, 0, len(te.Errors))
 		for _, e := range te.Errors {
-			line, detail := splitYAMLError(e)
-			rs = append(rs, Reject(CodeDocumentMalformed, "", line, "detail", detail))
+			rs = append(rs, rejectionOf(splitYAMLError(e)))
 		}
 		return rs.Sorted()
 	}
-	return Rejections{Reject(CodeDocumentMalformed, "", yamlLine(err), "detail", yamlDetail(err))}
+	return Rejections{yamlRejection(err, src)}
+}
+
+// yamlRejection is one error the library returned whole: the document does
+// not parse, or an alias in it does not resolve.
+//
+// A tab the scanner meets where indentation goes is reported as a character
+// that "cannot start any token", which is the commonest way an author meets
+// it and the least telling. The line it names says which it was.
+func yamlRejection(err error, src []byte) Rejection {
+	r := rejectionOf(splitYAMLError(cleanYAML(err)))
+	if r.Code == CodeDocumentMalformed && r.Params["problem"] == string(YAMLCharacter) && indentedByTab(src, r.Line) {
+		r.Params["problem"] = string(YAMLTabIndentation)
+	}
+	return r
+}
+
+// indentedByTab reports whether the 1-based line's indentation holds a tab.
+func indentedByTab(src []byte, line int) bool {
+	if line < 1 {
+		return false
+	}
+	lines := bytes.Split(src, []byte("\n"))
+	if line > len(lines) {
+		return false
+	}
+	indent := lines[line-1][:len(lines[line-1])-len(bytes.TrimLeft(lines[line-1], " \t"))]
+	return bytes.ContainsRune(indent, '\t')
 }
 
 func splitYAMLError(msg string) (int, string) {
@@ -245,9 +270,6 @@ func splitYAMLError(msg string) (int, string) {
 	return n, strings.TrimSpace(rest[colon+1:])
 }
 
-func yamlLine(err error) int      { l, _ := splitYAMLError(cleanYAML(err)); return l }
-func yamlDetail(err error) string { _, d := splitYAMLError(cleanYAML(err)); return d }
-
 // cleanYAML strips yaml.v3's own prefix so the author reads the problem rather
 // than the library's name.
 func cleanYAML(err error) string {
@@ -257,33 +279,29 @@ func cleanYAML(err error) string {
 	return strings.TrimSpace(s)
 }
 
-// nodeErr reports a problem at the node it was found on.
-//
-// It is a *yaml.TypeError rather than a plain error on purpose: yaml.v3 aborts
-// the whole decode on a plain error from an Unmarshaler and drops the position,
-// while a TypeError is collected and the decode carries on. So this is what
-// makes "every reason at once, each with its line" true for the enums as well
-// as for the keys.
-func nodeErr(n *yaml.Node, format string, args ...any) error {
-	return &yaml.TypeError{
-		Errors: []string{fmt.Sprintf("line %d: %s", n.Line, fmt.Sprintf(format, args...))},
-	}
-}
-
 // decodeEnum decodes one member of a closed vocabulary, naming every member in
-// the error. An enum error is the most common thing an author hits, and "not
-// one of a, b, c" is the difference between a fix and a search.
-func decodeEnum[T ~string](n *yaml.Node, out *T, valid []T, axis string) error {
+// the rejection. An enum error is the most common thing an author hits, and
+// "not one of a, b, c" is the difference between a fix and a search.
+func decodeEnum[T ~string](n *yaml.Node, out *T, valid []T, vocabulary Vocabulary) error {
 	var s string
 	if err := n.Decode(&s); err != nil {
 		return err
 	}
 	v := T(s)
 	if !oneOf(v, valid) {
-		return nodeErr(n, "%q is not a known %s; use one of %s", s, axis, joinEnum(valid))
+		return nodeReject(n, CodeValueUnknown,
+			"value", s, "vocabulary", string(vocabulary), "allowed", joinEnum(valid))
 	}
 	*out = v
 	return nil
+}
+
+// UnknownDay is the rejection for a day outside the vocabulary, for a bundle
+// built in Go rather than parsed: Parse refuses one at the enum, with the
+// same code.
+func UnknownDay(rule string, line int, d Day) Rejection {
+	return Reject(CodeValueUnknown, rule, line,
+		"value", string(d), "vocabulary", string(VocabularyDay), "allowed", joinEnum(days))
 }
 
 // joinEnum renders a vocabulary for an error message.
