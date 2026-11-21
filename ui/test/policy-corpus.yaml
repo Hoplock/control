@@ -1,0 +1,226 @@
+# THE VISUAL EDITOR'S ROUND-TRIP CORPUS (0066). A bundle that uses every key of
+# the policy schema at least once, so the console's round trip (load into the
+# visual view, write back, compare bytes) is tried against all of it, not only
+# against what the browser fixture happens to use. Both halves are held by a
+# test: `TestTheConsolesPolicyCorpusCompiles` (internal/authoring) compiles it
+# and walks the schema's keys, and `ui/test/policyDocument.test.ts` round-trips
+# it. The hostnames are fixtures, not anybody's estate.
+#
+# It is written in more than one style on purpose — flow and block lists, a
+# quoted and a plain scalar, comments above, beside and inside — because a
+# round trip that only ever saw one style proves nothing about the others.
+
+schema_version: 1
+tenant: default
+description: "every section of the schema, once at least"   # quoted on purpose
+timezone: Europe/Lisbon
+
+labels:
+  env: [prod, dev]
+  kind:
+    - db
+    - vault   # a block list, beside the flow one above
+    - fw
+
+groups: [sre, dba, approvers]
+
+scopes:
+  db-maintenance:
+    description: a database's maintenance window
+    privileged: true
+    unanswered: closed
+  scan:
+    unanswered: outage
+
+algorithm_bans:
+  ciphers: [3des-cbc]
+
+rules:
+  # Every subject, context and target term; a guardrail filter; obligations
+  # with what they carry; a cache hint.
+  - id: dba-shell
+    description: a DBA's shell on a production database, in office hours
+    effect: allow
+    match:
+      subject:
+        ids: [alice]
+        sources: [corp-oidc]
+        groups: [dba]
+        claims: {department: [data]}
+        auth_methods: [cert]
+        mfa: true
+      device:
+        required: true
+        posture: {managed: ["true"]}
+      context:
+        days: [monday, tuesday, wednesday, thursday, friday]
+        time_of_day: "08:00-18:00"
+        source_cidrs: [10.40.0.0/16]
+        proxy_ids: [px-core-01]
+      target:
+        hostnames: ["*.db.example.internal"]
+        labels: {env: [prod], kind: [db]}
+        zones: [core]
+    route:
+      intent: direct
+      channels: [session]
+      requests:
+        types: [pty-req, shell]
+      filter:
+        mode: blacklist
+        rules:
+          - match: "^rm -rf /"
+            action: block_command
+            message: not on a database host
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 900
+      require_session_capture: true
+    obligations:
+      - kind: record-session
+      - kind: require-approval
+        approver_groups: [approvers]
+        message: a second DBA approves a production shell
+    cache:
+      key: [subject, target, rule]
+      ttl_seconds: 60
+
+  # A grant, forwards, global requests, a restricted allow-list, the
+  # algorithm siblings, a deadline and the concurrency caps.
+  - id: maintenance-window
+    description: maintenance under a grant, on an allow-list
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      grant:
+        required: true
+        scopes: [db-maintenance]
+        origins: [administrator, workflow]
+    route:
+      intent: hops-permitted
+      target: bastion.example.internal
+      port: 22
+      channels: [session, direct-tcpip, forwarded-tcpip]
+      requests:
+        types: [exec]
+        subsystems: [sftp]
+      forwards:
+        direct_tcpip:
+          - host: postgres.example.internal
+            port: 5432
+        forwarded_tcpip:
+          - host: 127.0.0.1
+            port_range: {from: 8000, to: 8010}
+      global_requests:
+        types: [tcpip-forward]
+      filter:
+        mode: whitelist
+        exec_mode: restricted
+        restricted_exec:
+          commands:
+            - executable: /usr/bin/systemctl
+              form: positional
+              args:
+                - kind: oneof
+                  values: [status, restart]
+                - kind: prefix
+                  value: hoplock-
+                  optional: true
+            - executable: /usr/bin/uptime
+              form: exact
+              argv: [/usr/bin/uptime, -p]
+      credentials:
+        - method: ephemeral-user
+          username: {from: subject}
+          key_type: ed25519
+          lifetime_seconds: 600
+      algorithm_profile: default
+      algorithm_floor: modern-kex
+      algorithm_bans:
+        key_exchanges: [diffie-hellman-group1-sha1]
+        macs: [hmac-sha1]
+        host_keys: [ssh-dss]
+        public_key_auth: [ssh-dss]
+      enforcement:
+        execution: account-confined
+        reach: account-egress-restricted
+        permitted_destinations:
+          - host: postgres.example.internal
+            port: 5432
+      max_session_duration: 2h
+      concurrency:
+        max_sessions_per_subject: 2
+        max_sessions_per_target: 8
+
+  # A device's account, with the fields a driver reads, and an attested
+  # platform role.
+  - id: firewall-vdom
+    description: a VDOM-scoped administrator
+    effect: allow
+    match:
+      subject:
+        groups: [sre]
+      target:
+        labels: {kind: [fw]}
+    route:
+      intent: hops-permitted
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: ephemeral-account
+          username: hoplock-ops
+          platform: fortigate
+          credential_kind: password
+          expiry_posture: target-enforced
+          lifetime_seconds: 900
+          device_fields:
+            vdom: root
+        - method: brokered-certificate
+          username: {from: subject-local-part}
+          key_type: ed25519
+          lifetime_seconds: 300
+        - method: static-key
+          username: 'fw-admin'
+
+      algorithm_profile: legacy-device
+      enforcement:
+        execution: platform-authorized
+        platform_role: read-write
+        reach: platform-attested
+        attestation:
+          asserted_by: network-engineering
+          reference: CR-1187
+          asserted_at: "2026-01-12T09:00:00Z"
+      require_session_capture: true
+
+  # A brokered key, and the step-up obligation.
+  - id: build-hosts
+    description: the build hosts' standing account
+    effect: allow
+    match:
+      target:
+        hostnames: [build-01.example.internal]
+    route:
+      intent: direct
+      channels: [session]
+      filter:
+        mode: blacklist
+      credentials:
+        - method: brokered-key
+          username: buildsvc
+          credential_ref: local://build-01
+    obligations:
+      - kind: require-step-up
+
+  # A deny, with the reason an operator reads.
+  - id: no-dev-from-outside
+    description: development hosts are not reached from outside the office
+    effect: deny
+    reason: development hosts are reached from the office only
+    match:
+      target:
+        labels: {env: [dev]}

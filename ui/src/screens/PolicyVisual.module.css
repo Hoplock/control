@@ -1,0 +1,223 @@
+/* The visual policy editor (0066; DESIGN.md §3, §7). Policy is read, not
+   scanned: comfortable, on the panels Policy already uses. The rules take the
+   main column; the trace and the bundle's vocabulary sit in a rail beside
+   them (--rail-width), and below the rules under 1280px. A traced card is
+   marked by the accent, which marks selection (§3.3) — never by a status
+   hue, because "this is where it lands" is not a state. */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-24);
+  align-items: start;
+}
+@media (width >= 1280px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) var(--rail-width);
+  }
+}
+.rules,
+.side {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+  min-inline-size: 0;
+}
+.panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  min-inline-size: 0;
+}
+.head,
+.cardHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+  min-inline-size: 0;
+}
+.headActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+  margin-inline-start: auto;
+}
+.title {
+  margin: 0;
+  font: var(--t-h2);
+  color: var(--text-primary);
+}
+.cardTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+  min-inline-size: 0;
+}
+.ruleId {
+  font: var(--t-mono);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.sectionTitle {
+  margin: 0;
+  padding: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.para {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.meta {
+  margin: 0;
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+.description {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.said {
+  margin: 0;
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-8);
+  min-inline-size: 0;
+}
+.card[data-trace="matched"] {
+  padding-inline-start: var(--sp-12);
+  border-inline-start: var(--sp-2) solid var(--accent);
+}
+.traced {
+  margin: 0;
+  font: var(--t-label);
+  color: var(--text-primary);
+}
+.facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-8);
+  margin: 0;
+}
+.fact {
+  display: grid;
+  grid-template-columns: var(--sp-64) minmax(0, 1fr);
+  gap: var(--sp-12);
+  align-items: baseline;
+}
+.fact dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.fact dd {
+  margin: 0;
+  min-inline-size: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.axes {
+  display: grid;
+  gap: var(--sp-6);
+}
+.axis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-6);
+}
+.axisName {
+  font: var(--t-caption);
+  color: var(--text-secondary);
+  min-inline-size: var(--sp-48);
+}
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-inline-size: 0;
+}
+.term[data-matched] > span {
+  border-color: var(--accent);
+  background: var(--bg-selected);
+}
+.route {
+  font: var(--t-mono);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.cardNotes,
+.docNotes {
+  display: grid;
+  gap: var(--sp-8);
+  min-inline-size: 0;
+}
+.unmodelled {
+  display: grid;
+  gap: var(--sp-4);
+}
+.unmodelledItem {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-6);
+  font: var(--t-caption);
+}
+.editor {
+  display: grid;
+  gap: var(--sp-24);
+}
+.section {
+  display: grid;
+  gap: var(--sp-12);
+}
+.ladder {
+  display: grid;
+  gap: var(--sp-12);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+.entry {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.labelDecl {
+  display: grid;
+}
+.addKey {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--sp-64), 1fr));
+  gap: var(--sp-8);
+  align-items: end;
+}
+.traceForm {
+  display: grid;
+  gap: var(--sp-12);
+}
+.traceResult {
+  display: grid;
+  gap: var(--sp-8);
+  justify-items: start;
+}

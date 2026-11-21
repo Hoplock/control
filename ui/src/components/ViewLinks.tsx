@@ -12,6 +12,8 @@ export interface ViewLink {
   id: string;
   /** Its path inside the console. */
   to: string;
+  /** Its query, where a view is one of a screen's (`?view=visual`, 0066). */
+  query?: Record<string, string>;
   label: ReactNode;
 }
 
@@ -19,7 +21,7 @@ export function ViewLinks({ label, views, current }: { label: string; views: rea
   return (
     <nav className={styles.views} aria-label={label}>
       {views.map((v) => (
-        <Link key={v.id} to={v.to} className={styles.view} aria-current={current === v.id ? "page" : undefined} data-view={v.id}>
+        <Link key={v.id} to={v.to} query={v.query} className={styles.view} aria-current={current === v.id ? "page" : undefined} data-view={v.id}>
           {v.label}
         </Link>
       ))}

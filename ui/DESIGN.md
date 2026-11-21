@@ -509,7 +509,9 @@ rule, a wait, a receipt, a refusal — in one of four tones, `info`, `warn`,
 a panel's ground with a hairline border and its tone along its inline
 start, never on `--bg-sunken`, which is for code and logs),
 pagination, skeleton, spinner (overlay only), code block, source
-view, diff view, empty state, error state, keyboard hint.
+view, diff view, empty state, error state, keyboard hint, chip editor (a
+list of values edited as chips, bound to a closed set or to checked typed
+text, 0066).
 
 **Composites** — data table (sticky header, pinned first column, column sort,
 column visibility, row selection, per-row actions, saved views), filter bar
@@ -517,12 +519,16 @@ column visibility, row selection, per-row actions, saved views), filter bar
 detail drawer, timeline (Explain), tree (fleet graph, hop path), JSON viewer
 (collapsible, copyable), command palette, page header (title, id, status,
 actions), copyable id (mono, click-to-copy, truncated with full value in the
-title), feed lag (a downstream consumer's lag, 0056).
+title), feed lag (a downstream consumer's lag, 0056), sortable list (an
+ordered list whose order is its content, reordered by drag and by keyboard,
+0066).
 
 **One component per job.** A screen renders the set's control, overlay,
 instant and notice, never one of its own: no `<button>`, `<input>`,
 `<select>`, `<textarea>`, `<dialog>` or `<time>` outside
-`ui/src/components/`, and a list is the data table. A status hue is drawn by
+`ui/src/components/`, and a list is the data table — except a list whose
+order is what it says, which the data table's sort would hide: the rules of
+a policy, tried in turn, are the sortable list (0066). A status hue is drawn by
 the status component and the set; outside them only by Fleet's health bar
 (§11), a finding card's edge beside its own status pill, and the chrome's
 supervised and break-glass badges (§5) — and a badge carries a hue only for
@@ -534,7 +540,8 @@ a detail, then the title, the object's id and its status on one line, the
 actions at the line's end, and the lede beneath. A view has at most one
 primary action, and it is the header's last (the sign-in page's connectors
 are the one exception: one choice among equals, each primary). A screen's
-views are view links beneath the header. A row whose object has a page of
+views are view links beneath the header — a path each, or, for two views of
+one object, a query (`/console/policy/candidate?view=visual`, 0066). A row whose object has a page of
 its own opens it from its first column, a link; a row whose object has none
 (a proxy, an audit record) opens the detail drawer from its first column, a
 text button, its id in the URL (`?proxy=`, `?record=`).
@@ -589,6 +596,29 @@ compiler's rejection, a finding — beneath the line it is about, the line's
 gutter marked in the worst note's status hue; a note about the whole document
 heads it. A line is focusable, so a list beside it can go to one. A textarea
 holding source is `mono`: LTR, mono, unchecked for spelling and untranslated.
+
+**The sortable list** (`SortableList.tsx`, 0066) is an ordered list whose
+order is the point — a policy's rules, tried top to bottom — each item a
+panel with a rail at its inline start: its position, a handle and a step up
+and a step down button. The handle is dragged with a pointer (pointer events
+captured by the handle, so a mouse, a pen and a finger drag alike; the
+platform's drag and drop never starts from a button), and where the item
+would land is a bar of accent between two items — the accent marks
+selection (§3.3). With focus on the handle the up and down arrows move the
+item a place, Home and End to the ends; the step buttons do the same for a
+pointer that does not drag. Every move is announced ("moved … to position 2
+of 5") and focus follows the moved item. A last, fixed item (the default
+deny) is shown in the list, numbered, and never moved. Its states are the
+items, empty (the fixed item alone), disabled (no handle or step answers)
+and loading (`SortableListSkeleton`). **The chip editor**
+(`ChipEditor.tsx`, 0066) is a list of values edited as chips: each a
+removable data chip (mono, LTR, untranslated), then one control that adds a
+value — bound to a closed set, a choice of the members not yet chosen, so a
+value outside the set cannot be typed; otherwise typed text, checked before
+it is added and refused at the field in the caller's words, which for
+policy is the server's code's sentence. Adding and removing are announced,
+and removing a chip moves focus to the control. Its states are the chips,
+none, every value chosen, an error at the field, and disabled.
 
 **The feed lag** (`FeedLag.tsx`, 0056) renders one consumer of the audit
 store's lag in the caller's tenant — a sink's on the Extensions screen, the
@@ -664,7 +694,9 @@ Not a separate pass; part of "done".
 - Focus visible on every interactive element: 2px `--a-500` ring, 2px offset,
   never `outline: none` without a replacement.
 - Full keyboard operation. Dialogs trap and restore focus. A skip-to-content
-  link. Logical tab order that matches the visual one.
+  link. Logical tab order that matches the visual one. A drag always has a
+  keyboard path that does the same thing, and both announce what they did
+  (the sortable list, §7).
 - Every control has an accessible name; icon-only buttons carry `aria-label`.
 - Tables are real `<table>` markup with `<th scope>`; live regions announce
   async results.
@@ -887,6 +919,14 @@ are in the registry too. In detail:
   file per locale under `ui/src/locales/`, keys stable and never reused for a
   different sentence — a renamed key is a new key. `en.json` is the only one
   committed in the console phases (0049–0060).
+- **One YAML document library**, `yaml` (pinned exactly in
+  `ui/package.json`, ISC, no dependencies of its own; 0066). The visual policy
+  editor works on a policy's source, never on a re-serialised copy (PLAN
+  §5.6: a version is its source and that source's digest), and this library's
+  concrete syntax tree writes back every byte it read, with each node's place
+  in the text — which is what lets an edit be the smallest change to the
+  text. It costs about 30 KB of the first-load budget. A second policy-shaped
+  editor (0067's claim mapping) uses it too, never another.
 - **No chart library until there is a third chart.** The two §7 allows are
   hand-written SVG — Fleet's health bar (0050) and the audit view's counts of
   the records on a page (0051), a table whose bars are one neutral ink beside

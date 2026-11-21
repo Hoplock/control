@@ -470,3 +470,33 @@ func TestValidScopeName(t *testing.T) {
 		}
 	}
 }
+
+// Every vocabulary the console offers as a choice (0066) has members, and each
+// is the set the decoder refuses everything outside of.
+func TestEveryVocabularyHasMembers(t *testing.T) {
+	vs := model.Vocabularies()
+	named := model.Enumerations()[model.CodeValueUnknown]["vocabulary"]
+	if len(vs) != len(named) {
+		t.Fatalf("Vocabularies lists %d vocabularies, a refused value can name %d", len(vs), len(named))
+	}
+	for _, v := range named {
+		if _, ok := vs[model.Vocabulary(v)]; !ok {
+			t.Errorf("vocabulary %q can be named by a refusal but is not listed", v)
+		}
+	}
+	for v, ms := range vs {
+		if len(ms) == 0 {
+			t.Errorf("vocabulary %q has no members", v)
+		}
+		seen := map[string]bool{}
+		for _, m := range ms {
+			if m == "" || seen[m] {
+				t.Errorf("vocabulary %q: member %q is empty or repeated", v, m)
+			}
+			seen[m] = true
+		}
+	}
+	if got := model.MatchAxes(); len(got) != 5 {
+		t.Errorf("MatchAxes = %v, want the five axes of §5.1", got)
+	}
+}
