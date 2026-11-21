@@ -762,7 +762,17 @@ export function PolicyCandidateScreen() {
             <ChangesSkeleton />
           ) : changes.state === "failed" ? (
             changes.error.code === "policy_invalid" ? (
-              <EmptyState title={t("policies.candidate.unparsed.title")} body={t("policies.candidate.unparsed.body")} />
+              // The candidate does not parse: its rejections, each at its
+              // line, as an upload of it would be refused (0065).
+              <>
+                <EmptyState title={t("policies.candidate.unparsed.title")} body={t("policies.candidate.unparsed.body")} />
+                <Rejections
+                  rejections={rejectionsOf(changes.error.parameters)}
+                  source={checked ?? text}
+                  idPrefix={`${idPrefix}-changes`}
+                  correlationId={changes.error.correlation_id}
+                />
+              </>
             ) : (
               <ErrorState error={changes.error} kind={changes.kind} onRetry={compare} />
             )

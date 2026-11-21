@@ -575,7 +575,17 @@ export interface Replay {
   truncated: boolean;
   allow_to_deny: FlipGroup[];
   deny_to_allow: FlipGroup[];
-  unreplayable?: { decision_id: string; reason: string }[];
+  unreplayable?: Unreplayable[];
+}
+
+/** decision.Unreplayable: a record replay could not read, and why (0065). */
+export interface Unreplayable {
+  decision_id: string;
+  /** The cause (decision.UnreplayableCodes); absent from a server before API version 8. */
+  code?: string;
+  parameters?: Record<string, string>;
+  /** English, for policyctl; the console never shows it. */
+  reason: string;
 }
 
 /** authoring.SimulateResult */

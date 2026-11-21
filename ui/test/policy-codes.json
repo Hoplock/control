@@ -99,6 +99,9 @@
     "match.invalid_hostname_pattern": [
       "pattern"
     ],
+    "match.invalid_time_window": [
+      "value"
+    ],
     "match.unknown_group": [
       "group"
     ],
@@ -109,8 +112,11 @@
       "label_key",
       "label_value"
     ],
+    "obligation.approvers_unexpected": [
+      "obligation"
+    ],
     "obligation.contradicts_route": [
-      "detail",
+      "field",
       "obligation"
     ],
     "obligation.duplicate": [
@@ -123,9 +129,19 @@
       "obligation"
     ],
     "policy.document_malformed": [
-      "detail"
+      "problem"
+    ],
+    "policy.duration_malformed": [
+      "value"
     ],
     "policy.group_vocabulary_malformed": [],
+    "policy.key_duplicate": [
+      "key",
+      "other_line"
+    ],
+    "policy.key_unknown": [
+      "key"
+    ],
     "policy.label_vocabulary_malformed": [
       "label_key"
     ],
@@ -137,6 +153,15 @@
     "policy.tenant_missing": [],
     "policy.timezone_unknown": [
       "timezone"
+    ],
+    "policy.value_unknown": [
+      "allowed",
+      "value",
+      "vocabulary"
+    ],
+    "policy.value_wrong_type": [
+      "expected",
+      "found"
     ],
     "route.algorithm_ban_empty": [
       "axis",
@@ -158,7 +183,7 @@
     "route.filter_mode_missing": [],
     "route.filter_policy_both_tiers": [],
     "route.filter_rule_invalid": [
-      "detail",
+      "field",
       "index"
     ],
     "route.forward_destinations_missing": [
@@ -170,9 +195,28 @@
       "destination"
     ],
     "route.ladder_empty": [],
-    "route.restricted_command_invalid": [
-      "detail",
+    "route.restricted_argument_field_unexpected": [
+      "argument",
       "executable",
+      "field",
+      "index",
+      "kind"
+    ],
+    "route.restricted_argument_invalid": [
+      "argument",
+      "executable",
+      "field",
+      "index"
+    ],
+    "route.restricted_command_field_unexpected": [
+      "executable",
+      "field",
+      "form",
+      "index"
+    ],
+    "route.restricted_command_invalid": [
+      "executable",
+      "field",
       "index"
     ],
     "route.restricted_exec_empty": [],
@@ -222,5 +266,94 @@
     "advice",
     "warning",
     "blocking"
+  ],
+  "enumerations": {
+    "policy.document_malformed": {
+      "problem": [
+        "alias",
+        "character",
+        "encoding",
+        "structure",
+        "tab_indentation",
+        "tag",
+        "unreadable",
+        "unterminated"
+      ]
+    },
+    "policy.value_unknown": {
+      "vocabulary": [
+        "algorithm_floor",
+        "algorithm_profile",
+        "argument_kind",
+        "auth_method",
+        "cache_key_component",
+        "channel_type",
+        "command_form",
+        "credential_kind",
+        "credential_method",
+        "day",
+        "effect",
+        "exec_mode",
+        "execution_rung",
+        "expiry_posture",
+        "filter_action",
+        "filter_mode",
+        "grant_origin",
+        "obligation_kind",
+        "reach_rung",
+        "request_type",
+        "route_intent",
+        "unanswered",
+        "username_source"
+      ]
+    },
+    "policy.value_wrong_type": {
+      "expected": [
+        "boolean",
+        "integer",
+        "list",
+        "mapping",
+        "null",
+        "number",
+        "other",
+        "string",
+        "timestamp"
+      ],
+      "found": [
+        "boolean",
+        "integer",
+        "list",
+        "mapping",
+        "null",
+        "number",
+        "other",
+        "string",
+        "timestamp"
+      ]
+    }
+  },
+  "unreplayable": {
+    "unreplayable.explanation_missing": [],
+    "unreplayable.grant_instant_invalid": [
+      "field",
+      "grant",
+      "value"
+    ],
+    "unreplayable.inputs_undecodable": [],
+    "unreplayable.instant_missing": [],
+    "unreplayable.source_address_invalid": [
+      "address"
+    ],
+    "unreplayable.standing_denial_disagrees": [
+      "effect"
+    ]
+  },
+  "simulation_problems": [
+    "ambiguous",
+    "invalid",
+    "not_after_start",
+    "not_in_vocabulary",
+    "nothing_asked",
+    "required"
   ]
 }
