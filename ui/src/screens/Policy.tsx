@@ -14,7 +14,7 @@
 // The console offers each only to a role holding it, and the API refuses it to
 // anyone else (M2).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Answer } from "../api/client";
 import { offered } from "../api/permit";
 import type {
@@ -38,6 +38,7 @@ import { Pagination, type PageState } from "../components/Pagination";
 import { EmptyState, ErrorMessage, ErrorState, ScreenFrame, Skeleton, type ErrorKind } from "../components/States";
 import { StatusOf } from "../components/Status";
 import { Tabs } from "../components/Tabs";
+import { ViewLinks } from "../components/ViewLinks";
 import { useToast } from "../components/Toast";
 import type { ApiError } from "../i18n/errors";
 import { useI18n } from "../i18n/I18n";
@@ -59,6 +60,7 @@ import {
   VersionName,
 } from "./PolicyParts";
 import { isRollback, readVersion, rejectionsOf, versionName, versionStatus } from "./policyModel";
+import { VisualSkeleton, VisualView } from "./PolicyVisual";
 import styles from "./Policy.module.css";
 import { Timestamp } from "../components/Timestamp";
 
@@ -379,6 +381,9 @@ export function PolicyVersionScreen({ version: raw }: { version: string }) {
               <ButtonLink to="policy/candidate" query={{ from: String(version) }} data-edit-candidate="">
                 {t("policies.version.edit")}
               </ButtonLink>
+              <ButtonLink to="policy/candidate" query={{ from: String(version), view: "visual" }} data-edit-visual="">
+                {t("policies.version.editVisual")}
+              </ButtonLink>
               {canActivate && !bundle.active ? (
                 <Button variant="danger" onClick={() => setActivating(version)} data-activate={isRollback(version, activeVersion) ? "rollback" : "activate"}>
                   {isRollback(version, activeVersion) ? t("policies.action.rollback") : t("policies.action.activate")}
@@ -582,6 +587,11 @@ export function PolicyCandidateScreen() {
   const from = readVersion(location.search.get("from") ?? undefined);
   const tabParam = location.search.get("tab") as CandidateTab | null;
   const tab: CandidateTab = tabParam && CANDIDATE_TABS.includes(tabParam) ? tabParam : "validation";
+  // One candidate, two views of it (0066): its source, and its rules shown visually.
+  const view = location.search.get("view") === "visual" ? "visual" : "source";
+  const ruleParam = location.search.get("rule");
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const [jump, setJump] = useState<number | null>(null);
   const [source, setSource] = useState<string | null>(() => (from === null ? loadDraft(tenant) : null));
   const [started, setStarted] = useState<number | null>(null);
   // Where the editor's text came from: this tab's kept draft, a stored version, or nothing (no version active).
@@ -652,6 +662,40 @@ export function PolicyCandidateScreen() {
     setChecked(text);
   };
 
+  // The source view at a line: the textarea's caret moved to it, and the line scrolled into view.
+  useEffect(() => {
+    if (view !== "source" || jump === null || !editor.current) return;
+    selectLine(editor.current, jump);
+    setJump(null);
+  }, [view, jump]);
+  const goToSource = (line?: number) => {
+    setQuery({ view: undefined, rule: undefined });
+    setJump(line ?? 1);
+  };
+  const viewQuery = (v: "source" | "visual"): Record<string, string> => ({
+    ...(from !== null ? { from: String(from) } : {}),
+    ...(v === "visual" ? { view: "visual" } : {}),
+  });
+
+  const actions = (
+    <div className={styles.actions}>
+      <Button variant="primary" onClick={validate} disabled={empty} loading={validation.state === "busy"} data-validate="">
+        {t("policies.candidate.validate")}
+      </Button>
+      <Button onClick={compare} disabled={empty} loading={changes.state === "busy"} data-compare="">
+        {t("policies.candidate.diff")}
+      </Button>
+      <Button onClick={() => setQuery({ tab: "simulate" })} disabled={empty} data-simulate-tab="">
+        {t("policies.candidate.simulate")}
+      </Button>
+      {canUpload ? (
+        <Button onClick={send} disabled={empty} loading={upload.state === "busy"} data-upload="">
+          {t("policies.candidate.upload")}
+        </Button>
+      ) : null}
+    </div>
+  );
+
   const idPrefix = "policy-candidate";
   const uploadRejections = upload.state === "failed" ? upload.rejections : [];
   return (
@@ -661,6 +705,15 @@ export function PolicyCandidateScreen() {
         title={t("policies.candidate.title")}
         lede={t("policies.candidate.lede")}
       />
+      <ViewLinks
+        label={t("policies.candidate.views")}
+        current={view}
+        views={[
+          { id: "source", to: "policy/candidate", query: viewQuery("source"), label: t("policies.candidate.view.source") },
+          { id: "visual", to: "policy/candidate", query: viewQuery("visual"), label: t("policies.candidate.view.visual") },
+        ]}
+      />
+      {view === "source" ? (
       <section
         className={styles.panel}
         aria-labelledby="policy-candidate-editor"
@@ -688,6 +741,7 @@ export function PolicyCandidateScreen() {
           error={upload.state === "failed" ? undefined : empty && validation.state !== "idle" ? t("policies.candidate.required") : undefined}
         >
           <Textarea
+            ref={editor}
             mono
             wrap="off"
             rows={20}
@@ -697,22 +751,7 @@ export function PolicyCandidateScreen() {
             data-candidate-source=""
           />
         </Field>
-        <div className={styles.actions}>
-          <Button variant="primary" onClick={validate} disabled={empty} loading={validation.state === "busy"} data-validate="">
-            {t("policies.candidate.validate")}
-          </Button>
-          <Button onClick={compare} disabled={empty} loading={changes.state === "busy"} data-compare="">
-            {t("policies.candidate.diff")}
-          </Button>
-          <Button onClick={() => setQuery({ tab: "simulate" })} disabled={empty} data-simulate-tab="">
-            {t("policies.candidate.simulate")}
-          </Button>
-          {canUpload ? (
-            <Button onClick={send} disabled={empty} loading={upload.state === "busy"} data-upload="">
-              {t("policies.candidate.upload")}
-            </Button>
-          ) : null}
-        </div>
+        {actions}
         {upload.state === "failed" ? <ErrorMessage error={upload.error} kind={upload.kind} /> : null}
         {stale ? (
           <p className={styles.quiet} role="status">
@@ -720,6 +759,35 @@ export function PolicyCandidateScreen() {
           </p>
         ) : null}
       </section>
+      ) : (
+        <div className={styles.stack} data-start={origin ?? start.state}>
+          {start.state === "loading" && source === null ? (
+            <VisualSkeleton />
+          ) : (start.state === "refused" || start.state === "outage") && source === null ? (
+            <ErrorState error={start.error} kind={start.state} />
+          ) : (
+            <VisualView
+              source={text}
+              onSource={edit}
+              rule={ruleParam}
+              onRule={(r) => setQuery({ rule: r ?? undefined })}
+              goToSource={goToSource}
+            />
+          )}
+          <section className={styles.panel} aria-labelledby="policy-candidate-actions" data-visual-actions="">
+            <h2 id="policy-candidate-actions" className={styles.panelTitle}>
+              {t("policies.candidate.results")}
+            </h2>
+            {actions}
+            {upload.state === "failed" ? <ErrorMessage error={upload.error} kind={upload.kind} /> : null}
+            {stale ? (
+              <p className={styles.quiet} role="status">
+                {t("policies.candidate.stale")}
+              </p>
+            ) : null}
+          </section>
+        </div>
+      )}
       <Tabs
         label={t("policies.candidate.results")}
         selected={tab}
@@ -817,4 +885,14 @@ function CandidateValidation({
       <SourceView source={source} label={t("policies.source.label")} idPrefix={idPrefix} notes={notes} />
     </div>
   );
+}
+
+/** Puts a textarea's caret at the start of a line and scrolls that line into view. */
+function selectLine(area: HTMLTextAreaElement, line: number): void {
+  const lines = area.value.split("\n");
+  const at = lines.slice(0, Math.max(0, line - 1)).reduce((n, l) => n + l.length + 1, 0);
+  area.focus();
+  area.setSelectionRange(at, at + (lines[line - 1]?.length ?? 0));
+  const height = Number.parseFloat(getComputedStyle(area).lineHeight) || 0;
+  area.scrollTop = Math.max(0, (line - 3) * height);
 }

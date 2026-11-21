@@ -1,0 +1,117 @@
+/* Sortable list (DESIGN.md §7, §8; 0066). Each item is a panel on the
+   surface with a rail at its inline start: its position, the drag handle and
+   the two step buttons. Where a dragged item would land is a bar of accent
+   between two items — the accent marks selection (§3.3), and this is one. */
+.wrap {
+  display: grid;
+  gap: var(--sp-8);
+  min-inline-size: 0;
+}
+.list {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-inline-size: 0;
+}
+.item {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-inline-size: 0;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  transition: border-color var(--m-fast) var(--ease);
+}
+.item[data-dragging] {
+  border-style: dashed;
+  border-color: var(--border-strong);
+  background: var(--bg-sunken);
+}
+.item[data-drop]::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  block-size: var(--sp-2);
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
+.item[data-drop="before"]::before {
+  inset-block-start: calc(var(--sp-6) * -1);
+}
+.item[data-drop="after"]::before {
+  inset-block-end: calc(var(--sp-6) * -1);
+}
+.item[data-sortable-fixed] {
+  border-style: dashed;
+}
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  min-inline-size: var(--sp-40);
+  padding: var(--sp-8) var(--sp-4);
+  border-inline-end: var(--border-width) solid var(--border-subtle);
+}
+.position {
+  font: var(--t-label);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--control-height);
+  block-size: var(--control-height);
+  padding: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: grab;
+  transition:
+    background-color var(--m-fast) var(--ease),
+    border-color var(--m-fast) var(--ease);
+}
+.handle:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+.handle:active:not(:disabled) {
+  background: var(--bg-sunken);
+  cursor: grabbing;
+}
+.handle:disabled {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+.glyph {
+  display: inline-flex;
+  inline-size: var(--icon-size);
+  block-size: var(--icon-size);
+}
+.glyph svg {
+  inline-size: 100%;
+  block-size: 100%;
+}
+.body {
+  display: grid;
+  gap: var(--sp-8);
+  min-inline-size: 0;
+  padding: var(--sp-12) var(--sp-16);
+}
+.hint {
+  margin: 0;
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+.said {
+  margin: 0;
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
