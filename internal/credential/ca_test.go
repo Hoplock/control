@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"errors"
 	"slices"
 	"strings"
@@ -544,11 +545,15 @@ func TestNoPrivateKeyIsEverStoredInTheClear(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("software keys: %d rows", len(rows))
 	}
-	// A PKCS#8 DER private key starts with a SEQUENCE tag. Ciphertext under a
-	// random nonce does not, and a second read of the same key gives different
-	// bytes — which is what the per-call nonce buys.
-	if rows[0].PrivateKey[0] == 0x30 {
-		t.Fatal("the stored private key looks like plaintext DER")
+	// No private key can be read out of the row at any offset: not as stored,
+	// and not after a prefix such as the nonce. (The stored value is the random
+	// nonce and then the ciphertext, so its first byte is random, and one row
+	// in 256 begins with the 0x30 a DER SEQUENCE does: that byte proves
+	// nothing either way.)
+	for i := range rows[0].PrivateKey {
+		if _, err := x509.ParsePKCS8PrivateKey(rows[0].PrivateKey[i:]); err == nil {
+			t.Fatalf("the stored private key holds a plaintext PKCS#8 key at offset %d", i)
+		}
 	}
 	if bytes.Contains(rows[0].PrivateKey, rows[0].PublicKey) {
 		t.Fatal("the stored private key carries its public half in the clear")
