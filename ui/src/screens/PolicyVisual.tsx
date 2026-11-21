@@ -385,7 +385,6 @@ function RuleCard({
           </TextButton>
         </h3>
         <StatusOf name={effectStatus(r.effect)} pill />
-        {marked ? <StatusOf name="inProgress" /> : null}
         <span className={styles.headActions}>
           <Button variant="ghost" onClick={onEdit} data-rule-edit={r.id}>
             {t("policies.visual.edit")}
@@ -500,7 +499,6 @@ function DefaultDenyCard({ marked }: { marked: boolean }) {
           {t("policies.visual.defaultDeny.title")}
         </h3>
         <StatusOf name="denied" pill />
-        {marked ? <StatusOf name="inProgress" /> : null}
       </header>
       {marked ? (
         <p className={styles.traced} data-trace-here="">
