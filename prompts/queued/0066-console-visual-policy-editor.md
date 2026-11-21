@@ -17,8 +17,11 @@
   diff views, how a rejection and a finding render from their codes, and
   `ui/test/policy-codes.json` as the pattern for holding the console to the
   server), `0049` and `0050` (registering a screen with every harness), `0005`
-  (the bundle schema and every rejection) and `0060` (the consistency audit,
-  which ran before this phase — see "Why last").
+  (the bundle schema and every rejection), `0065` (every refusal as a code:
+  the `model.Vocabulary` identifiers, a closed-set parameter worded by an ICU
+  select and held by `model.Enumerations`, and a decode failure's own codes,
+  which a card can set at the key it names) and `0060` (the consistency
+  audit, which ran before this phase — see "Why last").
 
 ## Why last
 The operator asked for this after 0053 shipped a text editor: "it would be
