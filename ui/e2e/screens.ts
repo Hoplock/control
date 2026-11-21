@@ -72,6 +72,19 @@ const outage = (correlation: string): Substitute => ({
 });
 const main = (page: Page) => page.locator("main#content");
 
+/** Traces a production database request through the candidate (0066): an SRE, at a db labelled prod. */
+export async function traceRequest(page: Page): Promise<void> {
+  const trace = main(page).locator("[data-visual-trace]");
+  await trace.locator("[data-trace-field=subject]").fill("alice");
+  await trace.locator("[data-chip-editor='trace.groups'] [data-chip-add]").selectOption("sre");
+  await trace.locator("[data-trace-field=hostname]").fill("db-01.prod.internal");
+  await trace.locator("[data-trace-label=env]").selectOption("prod");
+  await trace.locator("[data-trace-label=kind]").selectOption("db");
+  await trace.locator("[data-trace-field=at]").fill("2026-11-02T10:00");
+  await trace.locator("[data-trace-run]").click();
+  await trace.locator("[data-trace-result]:not([data-trace-result=''])").first().waitFor();
+}
+
 /** Fleet's summary bar, drawn once the shell's health read has answered. */
 const fleetBar = (page: Page) => main(page).locator("[aria-labelledby=fleet-summary] svg[data-total]");
 
@@ -97,6 +110,7 @@ const GALLERY_PAGES = [
   "time",
   "diff",
   "lag",
+  "editor",
   "overlay-dialog",
   "overlay-confirm",
   "overlay-confirm-failed",
@@ -1574,6 +1588,90 @@ export const SCREENS: readonly E2EScreen[] = [
       await main(page).locator("[data-validate]").click();
       await main(page).locator("[data-floor-impact=below]").waitFor();
       await main(page).locator("[data-ban-progress]").first().waitFor();
+    },
+  },
+  // The visual policy editor (0066): the active version's rules shown as cards
+  // in the order they are tried, the default deny last, the publish-time
+  // findings heading the list; the trace beside them and the bundle's own
+  // vocabulary. Its partial state is the server's check of the candidate not
+  // read: the rules without their notes, the gap named.
+  {
+    id: "policy-candidate-visual",
+    kind: "console",
+    path: "/console/policy/candidate?view=visual",
+    densities: false,
+    ready: (page) => main(page).locator("[data-start=version] [data-visual-check=ok]").waitFor(),
+    states: {
+      loading: {
+        substitute: [[`${API}/policy/active`, { kind: "hang" }]],
+        ready: (page) => main(page).locator("[data-start=loading] [data-visual=loading]").waitFor(),
+      },
+      // No version active: no rules, only the default deny, and the one action.
+      empty: {
+        substitute: [[`${API}/policy/active`, notFound("corr-e2e-visual-404")]],
+        ready: (page) => main(page).locator("[data-start=none] [data-visual=on] [data-default-deny]").waitFor(),
+      },
+      error: {
+        substitute: [[`${API}/policy/active`, outage("corr-e2e-visual")]],
+        ready: (page) => main(page).locator("[data-start=outage] [role=alert]").waitFor(),
+      },
+      partial: {
+        substitute: [[`${API}/policy/validate`, outage("corr-e2e-visual-check")]],
+        ready: (page) => main(page).locator("[data-visual-check=failed] [data-notice=partial]").waitFor(),
+      },
+    },
+    mutations: [
+      {
+        route: "policyUpload",
+        method: "POST",
+        path: `${API}/policy/bundles`,
+        body: { source: "schema_version: 1\n" },
+        permission: "policy:write",
+        control: (page) => main(page).locator("[data-visual-actions] [data-upload]"),
+      },
+    ],
+  },
+  // A rule's editor (0066): every enumerated field a choice from the
+  // server's vocabulary, the bundle's groups and labels as the choices for a
+  // match, typed text only where the schema is free. Opened by its deep link.
+  {
+    id: "policy-candidate-visual-editor",
+    kind: "console",
+    path: "/console/policy/candidate?view=visual&rule=ops-db-shell",
+    densities: false,
+    ready: (page) => page.locator("dialog[open] [data-rule-editor=ops-db-shell]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      await main(page).locator("[data-visual-check=ok]").waitFor();
+    },
+  },
+  // "Where would this land?" (0066): a request traced through the candidate,
+  // its rule marked, the terms that matched marked on its card.
+  {
+    id: "policy-candidate-visual-trace",
+    kind: "console",
+    path: "/console/policy/candidate?view=visual",
+    densities: false,
+    ready: (page) => main(page).locator("[data-visual-check=ok]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      await traceRequest(page);
+      await main(page).locator("[data-rule-card=ops-db-shell][data-trace=matched] [data-matched]").first().waitFor();
+    },
+  },
+  // A candidate whose source does not parse (0066): the visual view is off,
+  // and the rejections are at their lines, as the source view sets them.
+  {
+    id: "policy-candidate-visual-off",
+    kind: "console",
+    path: "/console/policy/candidate",
+    densities: false,
+    ready: (page) => main(page).locator("[data-start=version]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      await main(page).locator("[data-candidate-source]").fill(candidates().unparsable);
+      await page.locator('nav [data-view="visual"]').click();
+      await main(page).locator("[data-visual=off] [data-rejections] [data-source-view]").waitFor();
     },
   },
   // Explain (0051): a session crossing two hops under a grant, opened on its

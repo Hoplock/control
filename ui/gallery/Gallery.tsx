@@ -15,9 +15,11 @@ import { DataTable, TableSkeleton, type Column } from "../src/components/DataTab
 import { ConfirmDialog, Dialog, Drawer } from "../src/components/Dialog";
 import { DiffSkeleton, DiffView } from "../src/components/Diff";
 import { FeedLagSkeleton, FeedLagView } from "../src/components/FeedLag";
+import { ChipEditor } from "../src/components/ChipEditor";
 import { Checkbox, Choices, Field, Input, Radio, Select, Switch, Textarea } from "../src/components/Field";
 import { FilterBar } from "../src/components/FilterBar";
 import { Ident } from "../src/components/Ident";
+import { SortableList, SortableListSkeleton } from "../src/components/SortableList";
 import { Menu, Tooltip } from "../src/components/Menu";
 import { PageHeader } from "../src/components/PageHeader";
 import { Pagination } from "../src/components/Pagination";
@@ -32,6 +34,9 @@ import { Timeline, TimelineSkeleton, type TimelineEvent } from "../src/component
 import { Tree } from "../src/components/Tree";
 import { ViewLinks } from "../src/components/ViewLinks";
 import { useI18n } from "../src/i18n/I18n";
+import { rejectionText } from "../src/screens/policyCodes";
+import { checkHostPattern } from "../src/screens/policyDocument";
+import { vocabulary } from "../src/screens/policyVocabulary";
 import styles from "./Gallery.module.css";
 
 const STATES = ["default", "hover", "focus-visible", "active", "disabled", "loading", "error", "empty"] as const;
@@ -823,6 +828,111 @@ function Lags() {
   );
 }
 
+const RULES = ["ops-db-shell", "vault-through-dmz", "no-shell-on-build-hosts"];
+
+/**
+ * The visual policy editor's two components (0066): the sortable list rules
+ * are reordered in — by drag, by the handle's arrow keys, by the step
+ * buttons — with the default deny fixed last; and the chip editor, bound to a
+ * closed set (a vocabulary the server states) or to checked typed text.
+ */
+function Editors() {
+  const { t } = useI18n();
+  const [order, setOrder] = useState(RULES);
+  const [channels, setChannels] = useState(["session"]);
+  const [hosts, setHosts] = useState(["db-01.example.internal"]);
+  const rule = (id: string) => (
+    <code dir="ltr" translate="no">
+      {id}
+    </code>
+  );
+  const end = <span>{t("policies.visual.defaultDeny.title")}</span>;
+  const list = (items: string[], disabled = false) => (
+    <SortableList
+      label={t("policies.visual.rules.label")}
+      items={items}
+      itemKey={(x) => x}
+      itemName={(x) => x}
+      renderItem={rule}
+      disabled={disabled}
+      fixedEnd={end}
+      onMove={(from, to) => {
+        const next = [...order];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved as string);
+        setOrder(next);
+      }}
+    />
+  );
+  const channelsLabel = t("policies.visual.field.channels");
+  const hostsLabel = t("policies.visual.field.hostnames");
+  const refused = rejectionText(t, { code: "match.unknown_group", parameters: { group: "sre-oncall" }, message: "" }).text;
+  return (
+    <div className={styles.stack}>
+      <div className={styles.grid} data-component="sortable list">
+        <Cell state="default">{list(order)}</Cell>
+        <Cell state="hover">
+          <div data-force-child="hover">{list(RULES.slice(0, 1))}</div>
+        </Cell>
+        <Cell state="focus-visible">
+          <div data-force-child="focus-visible">{list(RULES.slice(0, 1))}</div>
+        </Cell>
+        <Cell state="active">
+          <div data-force-child="active">{list(RULES.slice(0, 1))}</div>
+        </Cell>
+        <Cell state="disabled">{list(RULES.slice(0, 2), true)}</Cell>
+        <Cell state="loading">
+          <SortableListSkeleton rows={2} />
+        </Cell>
+        <Cell state="empty">{list([])}</Cell>
+      </div>
+      <div className={styles.grid} data-component="chip editor, closed set">
+        <Cell state="default">
+          <ChipEditor label={channelsLabel} values={channels} options={vocabulary("channel_type")} onChange={setChannels} />
+        </Cell>
+        <Cell state="hover">
+          <div data-force-child="hover">
+            <ChipEditor label={channelsLabel} values={["session"]} options={vocabulary("channel_type")} onChange={() => {}} />
+          </div>
+        </Cell>
+        <Cell state="focus-visible">
+          <div data-force-child="focus-visible">
+            <ChipEditor label={channelsLabel} values={["session"]} options={vocabulary("channel_type")} onChange={() => {}} />
+          </div>
+        </Cell>
+        <Cell state="disabled">
+          <ChipEditor label={channelsLabel} values={["session", "x11"]} options={vocabulary("channel_type")} onChange={() => {}} disabled />
+        </Cell>
+        <Cell state="error">
+          <ChipEditor label={t("policies.visual.field.groups")} values={["sre-oncall"]} options={["sre"]} onChange={() => {}} error={refused} />
+        </Cell>
+        <Cell state="empty">
+          <ChipEditor label={channelsLabel} values={[]} options={vocabulary("channel_type")} onChange={() => {}} />
+        </Cell>
+        <Cell state="all chosen">
+          <ChipEditor label={t("policies.visual.field.effect")} values={vocabulary("effect")} options={vocabulary("effect")} onChange={() => {}} />
+        </Cell>
+      </div>
+      <div className={styles.grid} data-component="chip editor, typed">
+        <Cell state="default">
+          <ChipEditor label={hostsLabel} values={hosts} onChange={setHosts} check={(v) => (checkHostPattern(v) ? rejectionText(t, { ...(checkHostPattern(v) as { code: string }), message: "" }).text : null)} />
+        </Cell>
+        <Cell state="error">
+          <ChipEditor
+            label={hostsLabel}
+            values={["db-01.example.internal"]}
+            onChange={() => {}}
+            error={rejectionText(t, { code: "match.invalid_hostname_pattern", parameters: { pattern: "db*.example" }, message: "" }).text}
+          />
+        </Cell>
+        <Cell state="empty">
+          <ChipEditor label={hostsLabel} values={[]} onChange={() => {}} />
+        </Cell>
+      </div>
+    </div>
+  );
+}
+
 const SECTIONS: Record<string, () => ReactNode> = {
   buttons: () => <Buttons />,
   fields: () => <Fields />,
@@ -834,6 +944,7 @@ const SECTIONS: Record<string, () => ReactNode> = {
   time: () => <Time />,
   diff: () => <Diffs />,
   lag: () => <Lags />,
+  editor: () => <Editors />,
 };
 
 /** The gallery's pages: one per section, and one per overlay state. */

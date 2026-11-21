@@ -26,6 +26,25 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.53.0
+
+Phase 0066, a visual policy editor (M3, M20, M21, M23). The console's policy
+candidate gains a second view, `/console/policy/candidate?view=visual`
+("Edit visually" from a stored version): the rules in the order they are
+tried, as cards, with the default deny last; rules added, removed and
+reordered by drag or by keyboard; every enumerated field chosen from the
+server's own vocabulary, and labels, values and groups from the bundle's
+declarations; each rejection and publish-time finding on the card of the rule
+it names; and "where would this land?", which dry-runs one request against
+the candidate and marks the rule that answers it. An edit made there is the
+smallest change to the source text, so comments, key order and quoting are
+kept and a round trip changes no byte. The component set Hoplock
+Enterprise's screens build from gains `SortableList` (with
+`SortableListSkeleton`) and `ChipEditor`, and a view link may carry a query
+(`ViewLink.query`). The console's bundle gains one dependency, `yaml` 2.9.1.
+No migration; the north-bound API is unchanged at version `8`; `ext`,
+`server` and the contract are untouched.
+
 ## v0.52.0
 
 Phase 0065, policy's refusals as codes (M3, M19, M21, M23). Every policy
