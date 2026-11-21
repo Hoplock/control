@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/hoplock/control/internal/authoring"
+	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/policy/model"
 )
 
@@ -38,6 +40,16 @@ type consolePolicyCodes struct {
 	Findings []string `json:"findings"`
 	// Severities are a finding's three.
 	Severities []string `json:"severities"`
+	// Enumerations are, for each rejection code with a parameter drawn from
+	// a closed set, every value it can take (0065): the console says each
+	// in its own words, with an ICU select, and never interpolates it.
+	Enumerations map[string]map[string][]string `json:"enumerations"`
+	// Unreplayable are the causes of a record replay cannot read, each with
+	// the parameters it carries (decision.UnreplayableCodes, 0065).
+	Unreplayable map[string][]string `json:"unreplayable"`
+	// SimulationProblems are the problems a refused simulation names beside
+	// its field (authoring.SimulationProblems, 0065).
+	SimulationProblems []string `json:"simulation_problems"`
 }
 
 func TestTheConsolesPolicyCodesAreTheServers(t *testing.T) {
@@ -56,6 +68,12 @@ func TestTheConsolesPolicyCodesAreTheServers(t *testing.T) {
 	}
 	// The tenant a bundle names against the tenant it was sent to (service.go).
 	codes.Rejections[authoring.CodeTenantMismatch] = []string{"bundle", "tenant"}
+	codes.Enumerations = map[string]map[string][]string{}
+	for c, params := range model.Enumerations() {
+		codes.Enumerations[string(c)] = params
+	}
+	codes.Unreplayable = decision.UnreplayableCodes
+	codes.SimulationProblems = slices.Sorted(slices.Values(authoring.SimulationProblems))
 
 	got, err := json.MarshalIndent(codes, "", "  ")
 	if err != nil {
@@ -77,5 +95,39 @@ func TestTheConsolesPolicyCodesAreTheServers(t *testing.T) {
 		t.Fatalf("ui/test/policy-codes.json is not this server's codes: regenerate it with\n" +
 			"  HOPLOCK_UPDATE_POLICY_CODES=1 go test ./internal/authoring -run TestTheConsolesPolicyCodesAreTheServers\n" +
 			"and give every new code a sentence in the console (cd ui && npx vitest run test/policy.test.ts)")
+	}
+}
+
+// NO POLICY PARAMETER IS PROSE (0065; PLAN M21). A parameter is what a client
+// builds its own sentence from, so a parameter whose value is a sentence the
+// server wrote puts this server's English inside a translated one. `detail`
+// and `reason` are the names prose went by; neither may be a parameter of any
+// code a policy answer carries — a compiler rejection, this package's own, or
+// an unreplayable record's cause. (`reason` stays a member beside a cause, for
+// policyctl; it is never interpolated.)
+func TestNoPolicyParameterIsProse(t *testing.T) {
+	params := map[string][]string{authoring.CodeTenantMismatch: {"bundle", "tenant"}}
+	for _, c := range model.Codes() {
+		params[string(c)] = model.Parameters(c)
+	}
+	for c, ps := range decision.UnreplayableCodes {
+		params[c] = ps
+	}
+	for code, ps := range params {
+		for _, p := range ps {
+			if p == "detail" || p == "reason" {
+				t.Errorf("%s carries the parameter %q, which is prose: split it into codes or typed parameters", code, p)
+			}
+		}
+	}
+	// And a worded parameter's values are identifiers, never the words.
+	for code, worded := range model.Enumerations() {
+		for name, values := range worded {
+			for _, v := range values {
+				if strings.ContainsAny(v, " .,;:") {
+					t.Errorf("%s's %s value %q reads as words; it travels as an identifier", code, name, v)
+				}
+			}
+		}
 	}
 }

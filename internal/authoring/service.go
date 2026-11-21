@@ -124,6 +124,17 @@ func Digest(source []byte) string {
 
 // Compile parses and compiles a source for a tenant. An invalid one answers
 // the rejections and no candidate; it is not an error.
+// unreadable is the rejection for a failure the compiler did not phrase as
+// rejections: unreachable while Parse and Compile return only those, and
+// still a code with its parameter rather than the error's text.
+func unreadable(err error) Rejection {
+	return Rejection{
+		Code:       string(model.CodeDocumentMalformed),
+		Parameters: map[string]string{"problem": string(model.YAMLUnreadable)},
+		Message:    err.Error(),
+	}
+}
+
 func Compile(tenant store.Tenant, source []byte) ([]Rejection, *Candidate) {
 	var rejections []Rejection
 	b, err := model.Parse(source)
@@ -132,7 +143,7 @@ func Compile(tenant store.Tenant, source []byte) ([]Rejection, *Candidate) {
 		if errors.As(err, &rs) {
 			return rejectionsOf(rs), nil
 		}
-		return []Rejection{{Code: string(model.CodeDocumentMalformed), Message: err.Error()}}, nil
+		return []Rejection{unreadable(err)}, nil
 	}
 	if string(b.Tenant) != "" && string(b.Tenant) != string(tenant) {
 		rejections = append(rejections, Rejection{
@@ -145,7 +156,7 @@ func Compile(tenant store.Tenant, source []byte) ([]Rejection, *Candidate) {
 	if err != nil {
 		var rs model.Rejections
 		if !errors.As(err, &rs) {
-			return append(rejections, Rejection{Code: string(model.CodeDocumentMalformed), Message: err.Error()}), nil
+			return append(rejections, unreadable(err)), nil
 		}
 		rejections = append(rejections, rejectionsOf(rs)...)
 	}

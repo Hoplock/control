@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/decision"
 	"github.com/hoplock/control/internal/policy/model"
 	"github.com/hoplock/control/internal/store"
@@ -85,11 +86,16 @@ type DryRunGrant struct {
 // External context enters a dry run the way the engine reads it: as a grant
 // of origin `external` (M16). The window an external system asserted bounds
 // only the session's deadline, which a dry-run answer does not carry.
-func (in DryRunInput) input() (model.Input, error) {
+//
+// A refusal is an *ErrSimulation naming the case's field by its path under
+// `cases[index]`.
+func (in DryRunInput) input(index int) (model.Input, error) {
+	field := func(name string) string { return fmt.Sprintf("cases[%d].%s", index, name) }
 	switch m := model.AuthMethod(in.Subject.AuthMethod); m {
 	case model.AuthMethodUnset, model.AuthMethodCert, model.AuthMethodPasswordMFA:
 	default:
-		return model.Input{}, fmt.Errorf("case %q: subject.auth_method %q is none the engine knows (cert, password-mfa)", in.Name, m)
+		return model.Input{}, refuseSimulation(field("subject.auth_method"), ProblemNotInVocabulary,
+			"case %q: subject.auth_method %q is none the engine knows (cert, password-mfa)", in.Name, m)
 	}
 	out := model.Input{
 		Now: in.Now,
@@ -103,30 +109,33 @@ func (in DryRunInput) input() (model.Input, error) {
 		Context: model.Context{ProxyID: in.Context.ProxyID},
 	}
 	if out.Now.IsZero() {
-		return model.Input{}, fmt.Errorf("case %q: `now` is required; time is an input to evaluation", in.Name)
+		return model.Input{}, refuseSimulation(field("now"), access.ProblemRequired,
+			"case %q: `now` is required; time is an input to evaluation", in.Name)
 	}
 	if in.Context.SourceAddr != "" {
 		addr, err := netip.ParseAddr(in.Context.SourceAddr)
 		if err != nil {
-			return model.Input{}, fmt.Errorf("case %q: source_addr %q is not an address", in.Name, in.Context.SourceAddr)
+			return model.Input{}, refuseSimulation(field("context.source_addr"), access.ProblemInvalid,
+				"case %q: source_addr %q is not an address", in.Name, in.Context.SourceAddr)
 		}
 		out.Context.SourceAddr = addr
 	}
 	if in.Device != nil {
 		out.Device = &model.Device{Posture: in.Device.Posture}
 	}
-	for _, g := range in.Grants {
+	for j, g := range in.Grants {
 		origin := model.GrantOrigin(g.Origin)
 		switch origin {
 		case "":
 			origin = model.GrantOriginAdministrator
 		case model.GrantOriginAdministrator, model.GrantOriginWorkflow, model.GrantOriginExternal:
 		default:
-			return model.Input{}, fmt.Errorf("case %q: grant %q's origin %q is none the engine knows "+
-				"(administrator, workflow, external)", in.Name, g.ID, g.Origin)
+			return model.Input{}, refuseSimulation(field(fmt.Sprintf("grants[%d].origin", j)), ProblemNotInVocabulary,
+				"case %q: grant %q's origin %q is none the engine knows (administrator, workflow, external)", in.Name, g.ID, g.Origin)
 		}
 		if g.ExpiresAt.IsZero() {
-			return model.Input{}, fmt.Errorf("case %q: grant %q needs expires_at; a grant with no expiry is never live", in.Name, g.ID)
+			return model.Input{}, refuseSimulation(field(fmt.Sprintf("grants[%d].expires_at", j)), access.ProblemRequired,
+				"case %q: grant %q needs expires_at; a grant with no expiry is never live", in.Name, g.ID)
 		}
 		out.Grants = append(out.Grants, model.Grant{
 			ID: g.ID, Subject: in.Subject.ID, Origin: origin,
@@ -166,10 +175,42 @@ type SimulateResult struct {
 	Replay  *decision.ReplayReport  `json:"replay,omitempty"`
 }
 
-// ErrSimulation is a simulation request this server will not run.
-type ErrSimulation struct{ Reason string }
+// ErrSimulation is a simulation request this server will not run (0065; PLAN
+// M21): the field it is about and the problem with it, in the grammar every
+// malformed parameter on this surface uses, and the same in English for
+// policyctl and curl. Field is the request's own path — `version`,
+// `replay.to`, `cases[0].grants[1].expires_at` — and Problem one of
+// SimulationProblems.
+type ErrSimulation struct {
+	Field   string
+	Problem string
+	Reason  string
+}
 
 func (e *ErrSimulation) Error() string { return "authoring: " + e.Reason }
+
+// The problems only a simulation names. The rest are access's: a field that
+// is `required`, `invalid`, `ambiguous` or `not_after_start`.
+const (
+	// ProblemNothingAsked is a simulation that asks nothing: no dry-run
+	// case and no replay window (field `body`).
+	ProblemNothingAsked = "nothing_asked"
+	// ProblemNotInVocabulary is a value outside the engine's closed
+	// vocabulary — an authentication method, a grant origin — which no rule
+	// naming one would match, so the case would ask another question.
+	ProblemNotInVocabulary = "not_in_vocabulary"
+)
+
+// SimulationProblems is every problem a refused simulation can name, so a
+// test can hold the console's sentences to them.
+var SimulationProblems = []string{
+	access.ProblemRequired, access.ProblemInvalid, access.ProblemAmbiguous, access.ProblemNotAfterStart,
+	ProblemNothingAsked, ProblemNotInVocabulary,
+}
+
+func refuseSimulation(field, problem, format string, args ...any) *ErrSimulation {
+	return &ErrSimulation{Field: field, Problem: problem, Reason: fmt.Sprintf(format, args...)}
+}
 
 // MaxReplayRecords bounds a replay, whatever the request asks.
 const MaxReplayRecords = 10000
@@ -180,7 +221,8 @@ func (s *Service) Simulate(ctx context.Context, tenant store.Tenant, req Simulat
 	var version int64
 	switch {
 	case len(source) > 0 && req.Version != 0:
-		return SimulateResult{}, &ErrSimulation{Reason: "name a candidate source or a stored version, not both"}
+		return SimulateResult{}, refuseSimulation("version", access.ProblemAmbiguous,
+			"name a candidate source or a stored version, not both")
 	case len(source) == 0 && req.Version != 0:
 		b, err := s.st.PolicyBundles().Get(ctx, tenant, req.Version)
 		if err != nil {
@@ -199,24 +241,30 @@ func (s *Service) Simulate(ctx context.Context, tenant store.Tenant, req Simulat
 		return SimulateResult{}, &InvalidError{Report: Report{Digest: Digest(source), Rejections: rejections, Findings: []Finding{}}}
 	}
 	if len(req.Cases) == 0 && req.Replay == nil {
-		return SimulateResult{}, &ErrSimulation{Reason: "a simulation asks something: give dry-run cases, a replay window, or both"}
+		return SimulateResult{}, refuseSimulation("body", ProblemNothingAsked,
+			"a simulation asks something: give dry-run cases, a replay window, or both")
 	}
 
 	out := SimulateResult{Digest: cand.Digest, Version: version, DryRun: []decision.DryRunResult{}}
 	if len(req.Cases) > 0 {
 		cases := make([]decision.DryRunCase, 0, len(req.Cases))
-		for _, c := range req.Cases {
-			in, err := c.input()
+		for i, c := range req.Cases {
+			in, err := c.input(i)
 			if err != nil {
-				return SimulateResult{}, &ErrSimulation{Reason: err.Error()}
+				return SimulateResult{}, err
 			}
 			cases = append(cases, decision.DryRunCase{Name: c.Name, Input: in})
 		}
 		out.DryRun = decision.DryRun(cand.Program, cases)
 	}
 	if w := req.Replay; w != nil {
-		if w.From.IsZero() || w.To.IsZero() || !w.From.Before(w.To) {
-			return SimulateResult{}, &ErrSimulation{Reason: "a replay window needs `from` before `to`"}
+		switch {
+		case w.From.IsZero():
+			return SimulateResult{}, refuseSimulation("replay.from", access.ProblemRequired, "a replay window needs `from` before `to`")
+		case w.To.IsZero():
+			return SimulateResult{}, refuseSimulation("replay.to", access.ProblemRequired, "a replay window needs `from` before `to`")
+		case !w.From.Before(w.To):
+			return SimulateResult{}, refuseSimulation("replay.to", access.ProblemNotAfterStart, "a replay window needs `from` before `to`")
 		}
 		limit := w.Limit
 		if limit <= 0 || limit > MaxReplayRecords {

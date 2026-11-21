@@ -4,10 +4,13 @@
 package authoring
 
 import (
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/hoplock/control/internal/policy/model"
 )
 
 func allowFor(id, host string) string {
@@ -100,6 +103,16 @@ func TestADiffAgainstNothingAndAgainstNonsense(t *testing.T) {
 		if _, err := DiffSources([]byte(bad[0]), []byte(bad[1])); err == nil {
 			t.Errorf("a source that does not parse was diffed: %q → %q", bad[0][:8], bad[1][:8])
 		}
+	}
+	// A candidate that does not parse is refused with its rejections, as an
+	// upload of it would be, never with the parser's text (0065).
+	_, err = DiffSources([]byte(b), []byte("rules: ["))
+	var invalid *InvalidError
+	if !errors.As(err, &invalid) || len(invalid.Report.Rejections) != 1 ||
+		invalid.Report.Rejections[0].Code != string(model.CodeDocumentMalformed) ||
+		invalid.Report.Rejections[0].Parameters["problem"] != string(model.YAMLStructure) ||
+		invalid.Report.Digest != Digest([]byte("rules: [")) {
+		t.Errorf("an unparsable candidate's diff = %v, want its rejections", err)
 	}
 }
 

@@ -6,6 +6,7 @@ package authoring
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -69,6 +70,11 @@ func (s *Service) DiffVersions(ctx context.Context, tenant store.Tenant, from, t
 }
 
 // DiffSources diffs two sources. Both must parse; an empty one is no bundle.
+//
+// A new source that does not parse is an *InvalidError carrying its
+// rejections, as an upload of it would (0065): what to fix is the same
+// question whichever act found it. An old one that does not parse is a stored
+// version, which always parses, so it is a plain error.
 func DiffSources(a, b []byte) (Diff, error) {
 	var ba, bb *model.Bundle
 	var err error
@@ -78,6 +84,10 @@ func DiffSources(a, b []byte) (Diff, error) {
 		}
 	}
 	if bb, err = model.Parse(b); err != nil {
+		var rs model.Rejections
+		if errors.As(err, &rs) {
+			return Diff{}, &InvalidError{Report: Report{Digest: Digest(b), Rejections: rejectionsOf(rs), Findings: []Finding{}}}
+		}
 		return Diff{}, fmt.Errorf("authoring: the new bundle does not parse: %w", err)
 	}
 	d := Diff{Added: []string{}, Removed: []string{}, Changed: []string{}, Moved: []string{}, Document: []string{}}

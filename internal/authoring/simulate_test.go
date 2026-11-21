@@ -4,8 +4,10 @@
 package authoring
 
 import (
+	"errors"
 	"net/netip"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +30,7 @@ func TestADryRunCaseMapsFieldForField(t *testing.T) {
 		Grants: []DryRunGrant{{ID: "g-1", Origin: "external", Scope: "ops", Targets: []string{"h.example.com"},
 			Labels: map[string]string{"env": "prod"}, Zones: []string{"edge"}, NotBefore: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour)}},
 	}
-	got, err := in.input()
+	got, err := in.input(0)
 	if err != nil {
 		t.Fatalf("input: %v", err)
 	}
@@ -49,7 +51,7 @@ func TestADryRunCaseMapsFieldForField(t *testing.T) {
 
 	// The defaults of what a case may omit: no device, no grants, an open
 	// start, and an administrator's grant.
-	minimal, err := DryRunInput{Now: now, Grants: []DryRunGrant{{ID: "g", Scope: "ops", ExpiresAt: now.Add(time.Hour)}}}.input()
+	minimal, err := DryRunInput{Now: now, Grants: []DryRunGrant{{ID: "g", Scope: "ops", ExpiresAt: now.Add(time.Hour)}}}.input(0)
 	if err != nil {
 		t.Fatalf("minimal: %v", err)
 	}
@@ -65,20 +67,32 @@ func TestADryRunCaseMapsFieldForField(t *testing.T) {
 func TestADryRunCaseThatAsksAnotherQuestionIsRefused(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	okGrant := DryRunGrant{ID: "ok", Scope: "ops", ExpiresAt: now.Add(time.Hour)}
 	for _, tc := range []struct {
-		name string
-		in   DryRunInput
-		says string
+		name           string
+		in             DryRunInput
+		field, problem string
 	}{
-		{"no instant", DryRunInput{}, "now"},
-		{"a source address that is not one", DryRunInput{Now: now, Context: DryRunContext{SourceAddr: "office"}}, "source_addr"},
-		{"a grant with no expiry", DryRunInput{Now: now, Grants: []DryRunGrant{{ID: "g", Scope: "ops"}}}, "expires_at"},
-		{"an origin nobody grants from", DryRunInput{Now: now, Grants: []DryRunGrant{{ID: "g", Scope: "ops", Origin: "admin", ExpiresAt: now.Add(time.Hour)}}}, "origin"},
-		{"a method nobody authenticates with", DryRunInput{Now: now, Subject: DryRunSubject{AuthMethod: "password"}}, "auth_method"},
+		{"no instant", DryRunInput{}, "cases[2].now", "required"},
+		{"a source address that is not one", DryRunInput{Now: now, Context: DryRunContext{SourceAddr: "office"}}, "cases[2].context.source_addr", "invalid"},
+		{"a grant with no expiry", DryRunInput{Now: now, Grants: []DryRunGrant{okGrant, {ID: "g", Scope: "ops"}}}, "cases[2].grants[1].expires_at", "required"},
+		{"an origin nobody grants from", DryRunInput{Now: now, Grants: []DryRunGrant{{ID: "g", Scope: "ops", Origin: "admin", ExpiresAt: now.Add(time.Hour)}}}, "cases[2].grants[0].origin", "not_in_vocabulary"},
+		{"a method nobody authenticates with", DryRunInput{Now: now, Subject: DryRunSubject{AuthMethod: "password"}}, "cases[2].subject.auth_method", "not_in_vocabulary"},
 	} {
-		_, err := tc.in.input()
-		if err == nil || !strings.Contains(err.Error(), tc.says) {
-			t.Errorf("%s: %v, want a refusal naming %s", tc.name, err, tc.says)
+		_, err := tc.in.input(2)
+		var sim *ErrSimulation
+		if !errors.As(err, &sim) {
+			t.Errorf("%s: %v, want a refused simulation", tc.name, err)
+			continue
+		}
+		// The field and the problem are the refusal; the English beside them
+		// still names the field, for policyctl.
+		if sim.Field != tc.field || sim.Problem != tc.problem || !slices.Contains(SimulationProblems, sim.Problem) {
+			t.Errorf("%s: refused as {%s, %s}, want {%s, %s}", tc.name, sim.Field, sim.Problem, tc.field, tc.problem)
+		}
+		last := tc.field[strings.LastIndex(tc.field, ".")+1:]
+		if !strings.Contains(sim.Reason, last) {
+			t.Errorf("%s: the reason %q does not name %s", tc.name, sim.Reason, last)
 		}
 	}
 }
