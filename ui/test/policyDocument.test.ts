@@ -128,7 +128,7 @@ describe("reading", () => {
     const v = visual(corpus.source);
     expect(v.unmodelled.map((u) => u.path)).toEqual(["algorithm_bans"]);
     const paths = v.rules.flatMap((r) => r.unmodelled.map((u) => u.path));
-    for (const p of ["match.subject.claims", "match.device.required", "match.device.posture", "match.context.time_of_day", "route.forwards", "route.global_requests", "route.max_session_duration", "route.concurrency", "route.algorithm_bans", "route.filter.rules", "route.filter.restricted_exec", "route.requests.subsystems", "route.enforcement.attestation", "obligations.require-approval.approver_groups"]) {
+    for (const p of ["match.subject.claims", "match.device.required", "match.device.posture", "match.context.time_of_day", "route.port", "route.forwards", "route.global_requests", "route.max_session_duration", "route.concurrency", "route.algorithm_bans", "route.filter.rules", "route.filter.restricted_exec", "route.requests.subsystems", "route.enforcement.attestation", "obligations.require-approval.approver_groups"]) {
       expect(paths).toContain(p);
     }
     const lines = corpus.source.split("\n");

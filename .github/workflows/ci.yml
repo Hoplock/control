@@ -328,6 +328,18 @@ jobs:
           # no lag with no archive.
           - check: stream gaps and retention
             args: e2e/audit-gaps.spec.ts --project checks
+          # The visual policy editor (0066): one edit is the one change the
+          # server's diff names, every comment kept; rule.unreachable on the
+          # card it names; a source that does not parse turns the view off;
+          # reordering, adding, removing and editing by keyboard, announced;
+          # typed values refused with the server's codes; a trace marking its
+          # rule and terms, or the default deny; an auditor building and
+          # tracing, refused an upload at the API. Then, on a fresh server of
+          # its own, the author's flow: built, dragged into place, validated,
+          # traced, uploaded and activated through 0053's dialog.
+          - check: visual policy editor
+            args: e2e/policy-visual.spec.ts --project checks
+            then: npx playwright test e2e/policy-visual-mutations.spec.ts --project mutations --no-deps
           # Algorithm posture and the emergency runbook (0058): three builds
           # mid-upgrade, in progress and never a fault, a proxy that declared
           # nothing Not reported; the floor's impact preview and a ban's

@@ -79,7 +79,6 @@ export interface Credential {
 export interface RouteView {
   intent?: string;
   target?: string;
-  port?: number;
   channels: string[];
   requestTypes: string[];
   filterMode?: string;
@@ -152,7 +151,6 @@ const MODELLED_TERMS: Readonly<Record<string, ReadonlySet<string>>> = {
 const ROUTE_MODELLED = new Set([
   "intent",
   "target",
-  "port",
   "channels",
   "requests",
   "filter",
@@ -334,10 +332,6 @@ function routeOf(v: YAMLMap, rule: RuleView, line: (n: unknown) => number): Rout
     }
     if (k === "intent") route.intent = str(x);
     if (k === "target") route.target = str(x);
-    if (k === "port") {
-      const n = Number(str(x));
-      route.port = Number.isFinite(n) ? n : undefined;
-    }
     if (k === "channels") route.channels = strings(x);
     if (k === "algorithm_profile") route.algorithmProfile = str(x);
     if (k === "algorithm_floor") route.algorithmFloor = str(x);
