@@ -14,6 +14,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   applyEdit,
+  checkCidr,
+  checkHostPattern,
+  checkReason,
+  checkRuleId,
   applyEdits,
   commentsOf,
   freshRuleId,
@@ -124,7 +128,7 @@ describe("reading", () => {
     const v = visual(corpus.source);
     expect(v.unmodelled.map((u) => u.path)).toEqual(["algorithm_bans"]);
     const paths = v.rules.flatMap((r) => r.unmodelled.map((u) => u.path));
-    for (const p of ["match.subject.claims", "match.device", "match.context.time_of_day", "route.forwards", "route.global_requests", "route.max_session_duration", "route.concurrency", "route.algorithm_bans", "route.filter.rules", "route.filter.restricted_exec", "route.requests.subsystems", "route.enforcement.attestation", "obligations.require-approval.approver_groups"]) {
+    for (const p of ["match.subject.claims", "match.device.required", "match.device.posture", "match.context.time_of_day", "route.forwards", "route.global_requests", "route.max_session_duration", "route.concurrency", "route.algorithm_bans", "route.filter.rules", "route.filter.restricted_exec", "route.requests.subsystems", "route.enforcement.attestation", "obligations.require-approval.approver_groups"]) {
       expect(paths).toContain(p);
     }
     const lines = corpus.source.split("\n");
@@ -140,7 +144,8 @@ describe("reading", () => {
   it("cannot show a source that is not a mapping, or not YAML", () => {
     expect(visualOf(parsePolicy("rules: [a\n"))).toBe("not_yaml");
     expect(visualOf(parsePolicy("- a\n- b\n"))).toBe("not_mapping");
-    expect(visualOf(parsePolicy("a: 1\n---\nb: 2\n"))).toBe("not_mapping");
+    // A stream of several documents is not one bundle.
+    expect(visualOf(parsePolicy("a: 1\n---\nb: 2\n"))).toBe("not_yaml");
   });
 });
 
@@ -276,5 +281,35 @@ describe("rules move, arrive and leave as their own lines", () => {
   it("names a rule id nobody uses", () => {
     expect(freshRuleId([{ id: "rule-2" }, { id: "x" }])).toBe("rule-3");
     expect(freshRuleId([{ id: "rule-1" }])).toBe("rule-2");
+  });
+});
+
+describe("free text is checked where the server checks it, with its codes", () => {
+  // What Go's netip answers for each (compile.parseNetwork: ParsePrefix, then
+  // ParseAddr), taken by running it; a zone swallows whatever follows `%`.
+  const NETIP: [string, boolean][] = [
+    ["10.40.0.0/16", true], ["10.0.0.1", true], ["10.0.0.256", false], ["10.0.0.01", false],
+    ["10.0.0.0/33", false], ["10.0.0.0/08", false], ["fd00::/8", true], ["::1", true], ["::", true],
+    ["1::2::3", false], ["fe80::1%eth0", true], ["fe80::1%eth0/64", true], ["::ffff:10.0.0.1", true],
+    ["1:2:3:4:5:6:7:8", true], ["1:2:3:4:5:6:7:8:9", false], ["1:2:3:4:5:6:7::", true],
+    ["1:2:3:4:5:6:7:8::", false], ["gggg::", false], ["10.0.0.0/", false], ["/8", false], ["", false],
+    ["10.0.0", false], ["fe80::1%", false], ["::/129", false], ["12345::", false],
+  ];
+  it.each(NETIP)("a network %j is %s", (s, ok) => {
+    expect(checkCidr(s)).toEqual(ok ? null : { code: "match.invalid_cidr", parameters: { cidr: s } });
+  });
+  it("checks a hostname pattern as model.ValidHostPattern does", () => {
+    for (const ok of ["db-01.example.internal", "*.example.internal"]) expect(checkHostPattern(ok)).toBeNull();
+    for (const bad of ["", "*", "*.", "db*.example", "*.*.example"]) expect(checkHostPattern(bad)?.code).toBe("match.invalid_hostname_pattern");
+  });
+  it("checks an id is there and used once, naming the other's line", () => {
+    const v = visual(v1);
+    expect(checkRuleId(" ", v.rules, 0)).toEqual({ code: "rule.id_missing" });
+    expect(checkRuleId("vault-through-dmz", v.rules, 0)).toEqual({
+      code: "rule.id_duplicate",
+      parameters: { id: "vault-through-dmz", other_line: String(v.rules[1]!.line) },
+    });
+    expect(checkRuleId("ops-db-shell", v.rules, 0)).toBeNull();
+    expect(checkReason("")).toEqual({ code: "rule.deny_needs_reason" });
   });
 });

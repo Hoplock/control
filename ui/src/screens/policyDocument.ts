@@ -666,6 +666,11 @@ function replaceValue(d: PolicyDocument, path: Path, node: unknown, value: Inner
     }
     return setBlockList(d, path, node, value);
   }
+  if ((isMap(node) || isSeq(node)) && node.flow && !isList(value) && !isMapValue(value)) {
+    // A flow collection that becomes a scalar (`{from: subject}` → `svc`), where it stands.
+    if (hasComment(src, start, end)) throw new Refused("structure");
+    return splice(src, start, end, isRaw(value) ? value.raw : inFlow(d, path) ? flowScalar(value) : blockScalar(value));
+  }
   if (isMap(node) && isMapValue(value)) {
     if (node.flow) {
       if (hasComment(src, start, end)) throw new Refused("structure");
@@ -1050,3 +1055,79 @@ export function freshRuleId(rules: readonly { id: string }[]): string {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Free text, checked where the server checks it, with the server's codes.
+// ---------------------------------------------------------------------------
+
+/** A check's refusal: a compiler code and its parameters, rendered by policyCodes.ts like the server's own. */
+export interface FieldRefusal {
+  code: string;
+  parameters?: Record<string, string>;
+}
+
+/** A rule's id: present, and used once (model.Bundle.Validate's `rule.id_missing`, `rule.id_duplicate`). */
+export function checkRuleId(id: string, rules: readonly RuleView[], index: number): FieldRefusal | null {
+  if (id.trim() === "") return { code: "rule.id_missing" };
+  const other = rules.find((r) => r.index !== index && r.id === id);
+  return other ? { code: "rule.id_duplicate", parameters: { id, other_line: String(other.line) } } : null;
+}
+
+/** A deny's reason: what an operator reads, so never blank (`rule.deny_needs_reason`). */
+export function checkReason(reason: string): FieldRefusal | null {
+  return reason.trim() === "" ? { code: "rule.deny_needs_reason" } : null;
+}
+
+/** A hostname or `*.suffix` pattern (model.ValidHostPattern, `match.invalid_hostname_pattern`). */
+export function checkHostPattern(p: string): FieldRefusal | null {
+  const ok = p !== "" && p !== "*" && (p.startsWith("*.") ? p.length > 2 && !p.slice(2).includes("*") : !p.includes("*"));
+  return ok ? null : { code: "match.invalid_hostname_pattern", parameters: { pattern: p } };
+}
+
+/** A network: a prefix, or one address (compile.parseNetwork over Go's netip, `match.invalid_cidr`). */
+export function checkCidr(s: string): FieldRefusal | null {
+  return isNetwork(s) ? null : { code: "match.invalid_cidr", parameters: { cidr: s } };
+}
+
+function isIPv4(s: string): boolean {
+  const parts = s.split(".");
+  return parts.length === 4 && parts.every((p) => /^(0|[1-9][0-9]{0,2})$/.test(p) && Number(p) <= 255);
+}
+
+function isIPv6(s: string): boolean {
+  let body = s;
+  let groups = 8;
+  const lastColon = body.lastIndexOf(":");
+  if (lastColon >= 0 && body.slice(lastColon + 1).includes(".")) {
+    if (!isIPv4(body.slice(lastColon + 1))) return false;
+    body = body.slice(0, lastColon + 1) + "0:0";
+  }
+  const halves = body.split("::");
+  if (halves.length > 2) return false;
+  const group = (g: string) => /^[0-9a-fA-F]{1,4}$/.test(g);
+  const side = (h: string) => (h === "" ? [] : h.split(":"));
+  if (halves.length === 1) {
+    const gs = side(body);
+    return gs.length === groups && gs.every(group);
+  }
+  const [a, b] = [side(halves[0] ?? ""), side(halves[1] ?? "")];
+  groups -= 1; // `::` stands for at least one group
+  return a.length + b.length <= groups && [...a, ...b].every(group);
+}
+
+function isNetwork(s: string): boolean {
+  // netip.ParsePrefix first: an address, `/`, and bits within its length.
+  const slash = s.indexOf("/");
+  if (slash >= 0) {
+    const addr = s.slice(0, slash);
+    const bits = s.slice(slash + 1);
+    if (/^(0|[1-9][0-9]*)$/.test(bits) && !addr.includes("%")) {
+      if (isIPv4(addr) && Number(bits) <= 32) return true;
+      if (isIPv6(addr) && Number(bits) <= 128) return true;
+    }
+  }
+  // Then netip.ParseAddr: one address, an IPv6 one with any zone after `%`.
+  if (isIPv4(s)) return true;
+  const zone = s.indexOf("%");
+  return zone < 0 ? isIPv6(s) : zone < s.length - 1 && isIPv6(s.slice(0, zone));
+}
