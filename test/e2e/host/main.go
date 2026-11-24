@@ -5,7 +5,7 @@
 
 // Command host is the Control the end-to-end topology runs (deploy/README.md):
 // Hoplock Control exactly as hoplock-control is, started the way a host starts
-// it, so that the phase adding fake extensions (0071) registers them as a host
+// it, so that the phase adding fake extensions (0072) registers them as a host
 // registers its own (M15).
 //
 // It starts Control through internal/daemon, which server.Main forwards to,

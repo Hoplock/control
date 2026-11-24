@@ -1,4 +1,4 @@
-# 0071 — E2E scenarios through a test host's extensions
+# 0072 — E2E scenarios through a test host's extensions
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow.
@@ -112,5 +112,5 @@ way), or raise it under `## Upstream request` when the contract is
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move to `implemented/`; add
-`docs/learnings/0071-e2e-scenarios-through-a-test-host-learnings.md`, whose
+`docs/learnings/0072-e2e-scenarios-through-a-test-host-learnings.md`, whose
 summary says how the suite drives the fakes and what each new scenario proves.

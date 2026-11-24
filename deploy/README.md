@@ -128,7 +128,7 @@ the uid assertion spans all of them.
 
 The scenarios that need a test host's fake extensions — an inbound action, the
 directory's de-provisioning, two directories — and the uid-lease refusal, the
-fleet configuration round trip and the stream-unhealthy hint are phase 0071.
+fleet configuration round trip and the stream-unhealthy hint are phase 0072.
 
 ## The proxy pin
 

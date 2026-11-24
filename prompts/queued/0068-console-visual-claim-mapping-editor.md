@@ -1,4 +1,4 @@
-# 0067 — Management console 14: a visual claim-mapping editor
+# 0068 — Management console 14: a visual claim-mapping editor
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow, and §8's "A console phase shows what
@@ -173,7 +173,7 @@ side by side, both pseudolocales, the preview panel and the confirm, and the
 base's claim-mapping screen beside the head's.
 
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`; add
-`docs/learnings/0067-console-visual-claim-mapping-editor-learnings.md`. Its
+`docs/learnings/0068-console-visual-claim-mapping-editor-learnings.md`. Its
 summary block names the YAML document model reused from 0066, the two routes
 and their shapes, how the server's patterns reach the console, and what the
 visual view does not model, so a later phase can extend it. Record any change

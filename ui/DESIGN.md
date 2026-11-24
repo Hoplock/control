@@ -926,7 +926,7 @@ are in the registry too. In detail:
   concrete syntax tree writes back every byte it read, with each node's place
   in the text — which is what lets an edit be the smallest change to the
   text. It costs about 30 KB of the first-load budget. A second policy-shaped
-  editor (0067's claim mapping) uses it too, never another.
+  editor (0068's claim mapping) uses it too, never another.
 - **No chart library until there is a third chart.** The two §7 allows are
   hand-written SVG — Fleet's health bar (0050) and the audit view's counts of
   the records on a page (0051), a table whose bars are one neutral ink beside

@@ -59,7 +59,7 @@ describe("one component per job (item 1)", () => {
   }
 
   // A list is the data table. These are the tables that are not yet, each a
-  // count that may only fall: 0070 moves them onto DataTable. AuditCounts is
+  // count that may only fall: 0071 moves them onto DataTable. AuditCounts is
   // the second chart (DESIGN.md §11), a table by design.
   const TABLES: Record<string, number> = {
     "screens/AuditCounts.tsx": 1,
@@ -69,7 +69,7 @@ describe("one component per job (item 1)", () => {
     "screens/PolicyParts.tsx": 1,
     "screens/Runbook.tsx": 1,
   };
-  it("renders a list through the data table, but for the tables 0070 moves", () => {
+  it("renders a list through the data table, but for the tables 0071 moves", () => {
     const found: Record<string, number> = {};
     for (const file of outsideTheSet) {
       const n = jsxTags(file).get("table") ?? 0;
