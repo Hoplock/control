@@ -420,66 +420,141 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-// Computing health takes nothing the authorize path needs: polled at its
-// maximum rate, from several callers at once, the decision path's latency is
-// unaffected — health reads through a pool of its own, at most once per its
-// interval.
-func TestHealthPolledAtItsMaximumRateLeavesTheDecisionPathAlone(t *testing.T) {
+// Computing health takes nothing the authorize path needs (M5): health reads
+// through a pool of its own, computes at most once per its interval, and does
+// so under a mutex of its own. This test holds that claim two ways, and
+// neither is a latency bound. Health and the decision path legitimately
+// share one Postgres server and one box, so a wall-clock comparison measures
+// the runner rather than the claim. The bound this test used to assert, an
+// authorize p95 under load of at most 3 x baseline + 25ms, failed in CI under
+// `go test -race ./...` on changes that touched no Go code.
+//
+//   - Polled at its maximum rate by several callers at once, health computes
+//     everything it serves (deployment, nodes, fleet, event plane) while
+//     authorize keeps answering, and the race detector watches both.
+//   - Stuck, health holds every connection of its pool, its computation, and
+//     every caller queued behind it, for as long as this test holds a lock on
+//     deployment_nodes, which only health reads and writes. A decision that
+//     needed any of that would come back only after health answered one of
+//     those callers, or not at all. Every decision comes back first.
+func TestHealthTakesNothingTheDecisionPathNeeds(t *testing.T) {
 	d := newDecisionPath(t)
 	cfg := d.config(t, "")
+	// Two, said here rather than inherited from the default: health runs at
+	// most two things against its pool at once, its computation and its node
+	// report, so two stuck connections are every connection it has.
+	cfg.Instance.HealthConnections = 2
 	self, stop, err := buildInstance(t.Context(), cfg, d.bus, d.extensions, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer stop()
 
-	p95 := func() time.Duration {
-		var took []time.Duration
-		for range 60 {
-			_, d := d.authorize(t)
-			took = append(took, d)
+	allowed := func(when string) {
+		t.Helper()
+		if got, _ := d.authorize(t); !strings.HasPrefix(got, "200 route=") {
+			t.Fatalf("%s: authorize answered %q, want an allow", when, got)
 		}
-		slices.Sort(took)
-		return took[len(took)*95/100]
 	}
-	for range 10 { // warm the decision path's caches
-		d.authorize(t)
+	// poll starts n callers asking for health in a tight loop. It returns how
+	// many answers they have had, and a stop that waits for every caller.
+	poll := func(n int) (*atomic.Int64, func()) {
+		ctx, cancel := context.WithCancel(t.Context())
+		var wg sync.WaitGroup
+		var answered atomic.Int64
+		for range n {
+			wg.Go(func() {
+				for ctx.Err() == nil {
+					self.Health(ctx, []store.Tenant{isolationTenant}, nil)
+					answered.Add(1)
+				}
+			})
+		}
+		return &answered, func() { cancel(); wg.Wait() }
 	}
-	baseline := p95()
+	allowed("before health is polled")
 
-	ctx, cancel := context.WithCancel(t.Context())
-	var wg sync.WaitGroup
-	var polls atomic.Int64
-	for range 8 {
-		wg.Go(func() {
-			for ctx.Err() == nil {
-				self.Health(ctx, []store.Tenant{isolationTenant}, nil)
-				polls.Add(1)
-			}
-		})
-	}
-	// The load is on before the measurement starts and still on when it
-	// ends: what is asserted is concurrency, not a count a slow box misses.
-	for polls.Load() < 16 {
+	// At its maximum rate. health_interval is 1ms here, so nearly every
+	// answer is a computation of its own. The load is on before the first
+	// decision and still on after the last: what is asserted is concurrency,
+	// not a count a slow box misses.
+	answered, stopPolling := poll(8)
+	for answered.Load() < 16 {
 		time.Sleep(time.Millisecond)
 	}
-	before := polls.Load()
-	loaded := p95()
-	during := polls.Load() - before
-	cancel()
-	wg.Wait()
-
+	before := answered.Load()
+	for range 60 {
+		allowed("while health is polled at its maximum rate")
+	}
+	during := answered.Load() - before
+	stopPolling()
 	if during == 0 {
-		t.Fatalf("no health poll ran while authorize was measured; the load this test claims was not applied")
+		t.Fatalf("no health poll was answered while authorize was driven; the load this test claims was not applied")
 	}
-	// Generous on purpose: the claim is "unaffected", and a shared CI box
-	// jitters. What this bound refuses is the decision path queueing behind
-	// health for connections, which costs far more than this.
-	if bound := 3*baseline + 25*time.Millisecond; loaded > bound {
-		t.Fatalf("authorize p95 went from %s to %s under %d health polls (bound %s)", baseline, loaded, polls.Load(), bound)
+
+	// Stuck. The lock is ACCESS EXCLUSIVE on deployment_nodes, which nothing
+	// on the decision path touches. Health's computation waits there, inside
+	// its single-flight mutex. The node report waits there too. Between them
+	// they hold every connection of health's pool, and every other caller
+	// queues on the mutex.
+	holder, err := store.Open(t.Context(), d.dsn, store.WithMaxConns(1))
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer holder.Close()
+	tx, err := holder.Pool().Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := true
+	unlock := func() {
+		if locked {
+			locked = false
+			if err := tx.Rollback(context.Background()); err != nil {
+				t.Errorf("releasing deployment_nodes: %v", err)
+			}
+		}
+	}
+	defer unlock()
+	if _, err := tx.Exec(t.Context(), `LOCK TABLE deployment_nodes IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	answered, stopPolling = poll(8)
+	pool := cfg.Instance.HealthConnections
+	stuckBy := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		if err := tx.QueryRow(t.Context(), `
+			SELECT count(DISTINCT pid) FROM pg_locks
+			WHERE relation = 'deployment_nodes'::regclass AND NOT granted`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting >= pool {
+			break
+		}
+		if time.Now().After(stuckBy) {
+			t.Fatalf("%d of health's %d connections wait on deployment_nodes after 10s; the stall this test claims was not applied", waiting, pool)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	before = answered.Load()
+	start := time.Now()
+	for i := range 10 {
+		allowed("while health is stuck")
+		// Health's computation gives up on its own after its timeout (5s),
+		// so decisions that took that long between them would fail this
+		// too. The message says how long they took, which tells that case
+		// from a decision that waited.
+		if n := answered.Load() - before; n != 0 {
+			t.Fatalf("health answered %d callers before decision %d of 10 came back (%s in): a decision waited on something health holds",
+				n, i+1, time.Since(start).Round(time.Millisecond))
+		}
+	}
+	unlock()
+	stopPolling()
+
 	h := self.Health(t.Context(), []store.Tenant{isolationTenant}, nil)
 	if h.State == instance.StateDegraded {
-		t.Fatalf("health under its own load reads degraded: %v", h.Reasons)
+		t.Fatalf("health after its own load reads degraded: %v", h.Reasons)
 	}
 }

@@ -51,8 +51,17 @@ read the body after writing headers; the test supervisor in
 `daemon.buildInstance` opens a second pool (`store.WithMaxConns`), builds its
 own `fleet.Registry` over it, and computes at most once per interval under a
 single-flight mutex: eight goroutines polling in a tight loop cost one
-computation per second. `TestHealthPolledAtItsMaximumRateLeavesTheDecisionPathAlone`
-measures authorize p95 before and under that load (bound: 3 × baseline + 25 ms).
+computation per second. `TestHealthTakesNothingTheDecisionPathNeeds` holds
+it without a latency bound. Authorize keeps answering while eight callers
+poll health at its maximum rate. Then health is stuck, with every connection
+of its pool waiting on a lock the test holds on `deployment_nodes`, and every
+decision still comes back before any health caller is answered.
+
+History, not needed to know the current state: the test was
+`TestHealthPolledAtItsMaximumRateLeavesTheDecisionPathAlone` until it was
+replaced. It asserted authorize p95 under that load of at most
+3 × baseline + 25 ms, and it failed in CI on changes that touched no Go
+code. It was measuring the shared runner and Postgres server, not health.
 
 ### Degraded is legible
 A node silent for 3 × report interval is `stale` and makes the nodes level
