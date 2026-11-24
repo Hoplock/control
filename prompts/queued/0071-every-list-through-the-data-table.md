@@ -1,4 +1,4 @@
-# 0070 — Every list through the data table
+# 0071 — Every list through the data table
 
 ## Read first
 - `docs/PROTOCOL.md`: §3 (scope discipline), §4 (the Definition of Done),
@@ -61,7 +61,7 @@ New columns, sorting or filters these lists did not have; any API change.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`: move this prompt to `implemented/`, add
-`docs/learnings/0070-every-list-through-the-data-table-learnings.md`, and
+`docs/learnings/0071-every-list-through-the-data-table-learnings.md`, and
 cut the next MINOR (`make release-check`). **Cross-repo impact:** the data
 table's contract gains members Enterprise's screens may use; queue the
 downstream sync for `hoplock/enterprise` (`docs/CROSS-REPO-PROTOCOL.md` §4.1).

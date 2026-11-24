@@ -1,4 +1,4 @@
-# 0068 — A host's console reaches the shell
+# 0069 — A host's console reaches the shell
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow; §3 on `ext/` and `server/` as a
@@ -82,7 +82,7 @@ named by its code (0056).
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`, with screenshots of the Reports screen named through
 the host's catalogue, light and dark. Move this prompt to `implemented/`; add
-`docs/learnings/0068-host-console-handover-learnings.md`. A field added to
+`docs/learnings/0069-host-console-handover-learnings.md`. A field added to
 `server.Options` changes what Enterprise can call: queue the downstream sync
 (`docs/CROSS-REPO-PROTOCOL.md` §4.1).
 

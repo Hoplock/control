@@ -1,4 +1,4 @@
-# 0069 — A retention pass that deleted nothing is recorded too
+# 0070 — A retention pass that deleted nothing is recorded too
 
 ## Read first
 - `docs/PROTOCOL.md` — session workflow; §3 on revising the plan in place;
@@ -140,7 +140,7 @@ The user ruled that it does: it is recorded, as the capture pass already is.
 
 ## Definition of Done & hand-off
 Per `docs/PROTOCOL.md`. Move this prompt to `implemented/`; add
-`docs/learnings/0069-retention-records-a-pass-that-deleted-nothing-learnings.md`.
+`docs/learnings/0070-retention-records-a-pass-that-deleted-nothing-learnings.md`.
 Its summary names the record's fields for a pass that deleted nothing, and
 says that no marker is written for one.
 
