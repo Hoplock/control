@@ -14,9 +14,12 @@
 //   4. the diff view reads a unified diff as the server writes it.
 
 import { parse, TYPE, type MessageFormatElement } from "@formatjs/icu-messageformat-parser";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Finding, Rejection } from "../src/api/types";
 import { diffCounts, parseUnified } from "../src/components/Diff";
+import { I18nProvider } from "../src/i18n/I18n";
 import { translator } from "../src/i18n/messages";
 import en from "../src/locales/en.json";
 import {
@@ -30,6 +33,7 @@ import {
   unreplayableText,
   WORDED,
 } from "../src/screens/policyCodes";
+import { sourceNotes } from "../src/screens/PolicyParts";
 import {
   findingLists,
   findingValues,
@@ -259,6 +263,46 @@ describe("the publish-time findings", () => {
     expect(out.known).toBe(false);
     expect(out.text).toContain("acme/governance");
     expect(out.text).toContain("acme.second_author");
+  });
+
+  // The server places a validator's finding at the line of the rule its Path
+  // names (0067); the source view sets every finding that carries a line, and
+  // only those. This holds what already worked, so that it keeps working.
+  it("set a validator's finding beneath the line the report gives it, and one with no line nowhere", () => {
+    const placed = finding({
+      id: "acme.reviewed/acme/governance/sre",
+      code: "acme.reviewed",
+      source: "acme/governance",
+      rule: "sre",
+      line: 7,
+    });
+    const unplaced = finding({
+      id: "acme.pointer/acme/governance//rules/0",
+      code: "acme.pointer",
+      source: "acme/governance",
+      rule: "/rules/0",
+    });
+    const notes = sourceNotes([], [placed, unplaced]);
+    expect(notes).toHaveLength(1);
+    const [note] = notes;
+    expect(note).toMatchObject({ line: 7, key: `f:${placed.id}`, tone: "warn" });
+    const html = renderToStaticMarkup(createElement(I18nProvider, { locale: "en", children: note?.content }));
+    expect(html).toContain(`data-finding-line="${placed.id}"`);
+    // Its text is the fallback that names its provider and its code.
+    const text = /<p(?:\s[^>]*)?>([\s\S]*?)<\/p>/.exec(html)?.[1] ?? "";
+    const fallback = findingText(t, placed);
+    expect(fallback.known).toBe(false);
+    expect(text).toBe(
+      fallback.text
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#x27;"),
+    );
+    expect(text).toContain("acme/governance");
+    expect(text).toContain("acme.reviewed");
+    expect(html).not.toContain("acme.pointer");
   });
 });
 

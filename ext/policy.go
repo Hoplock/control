@@ -96,9 +96,17 @@ type Finding struct {
 	// an author accepts a warning by, so it must not vary from one run to
 	// the next for the same finding.
 	Code string
-	// Path locates the finding inside the bundle — a rule name, a document
+	// Path locates the finding inside the bundle — a rule's id, a document
 	// pointer. A finding an author cannot locate is a finding they cannot
 	// act on.
+	//
+	// When Path is the id of a rule in the bundle, Control's report places
+	// the finding at that rule's line, where its own findings about the rule
+	// and the compiler's rejections of it are set: Control resolves the line
+	// from the program it compiled. So a validator sets the rule's id alone,
+	// and never computes a line or carries one in Path or Detail — either
+	// would change what the finding is, and Path is part of its id. A Path
+	// that names no rule of the bundle is listed and placed nowhere.
 	Path string
 	// Detail carries the finding's structured fields.
 	Detail map[string]string

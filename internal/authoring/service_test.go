@@ -319,8 +319,10 @@ func TestSatisfiabilityAgainstTheFleet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if f := findingWith(rep, authoring.CodeTargetCannotTake); f == nil || f.Severity != authoring.SeverityWarning || f.Rule != "tight" {
-		t.Errorf("a target that cannot take the rung: %+v", rep.Findings)
+	tight := bundle(restricted("tight", "rungless.example.com", "/usr/bin/uptime"))
+	if f := findingWith(rep, authoring.CodeTargetCannotTake); f == nil || f.Severity != authoring.SeverityWarning ||
+		f.Rule != "tight" || f.Line != ruleLine(t, tight, "tight") {
+		t.Errorf("a target that cannot take the rung: %+v, want rule tight at its line", rep.Findings)
 	}
 
 	// A rung no enrolled proxy provides: a warning naming the rule, and the
@@ -333,8 +335,8 @@ func TestSatisfiabilityAgainstTheFleet(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	f := findingWith(rep, authoring.CodeNoProxyProvides)
-	if f == nil || f.Rule != "confined" {
-		t.Fatalf("a rung no proxy provides: %+v", rep.Findings)
+	if f == nil || f.Rule != "confined" || f.Line != ruleLine(t, bundle(confined), "confined") {
+		t.Fatalf("a rung no proxy provides: %+v, want rule confined at its line", rep.Findings)
 	}
 	if params, _ := json.Marshal(f.Parameters); !strings.Contains(string(params), `"proxy_id":"proxy-1"`) ||
 		f.Parameters["proxies_count"] != 1 || strings.Contains(f.Message, "proxy-1") {
@@ -349,8 +351,9 @@ func TestSatisfiabilityAgainstTheFleet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}
-	if f := findingWith(up.Report, authoring.CodeTargetUnproven); f == nil || f.Severity != authoring.SeverityAdvice {
-		t.Fatalf("a stale record: %+v, want advice", up.Report.Findings)
+	if f := findingWith(up.Report, authoring.CodeTargetUnproven); f == nil || f.Severity != authoring.SeverityAdvice ||
+		f.Rule != "stale" || f.Line != ruleLine(t, stale, "stale") {
+		t.Fatalf("a stale record: %+v, want advice on rule stale at its line", up.Report.Findings)
 	}
 	if _, err := h.svc.Activate(ctx, tenant, up.Version.Version, nil, author); err != nil {
 		t.Errorf("a bundle whose target's record is stale was refused: %v", err)
@@ -431,6 +434,131 @@ func findingWith(rep authoring.Report, code string) *authoring.Finding {
 		}
 	}
 	return nil
+}
+
+// ruleLine is the line of a rule's `- id:` in a source, read from the text so
+// the expectation is not the code under test.
+func ruleLine(t *testing.T, source []byte, id string) int {
+	t.Helper()
+	for i, line := range strings.Split(string(source), "\n") {
+		if strings.TrimSpace(line) == "- id: "+id {
+			return i + 1
+		}
+	}
+	t.Fatalf("no rule %q in the source", id)
+	return 0
+}
+
+func findingByID(fs []authoring.Finding, id string) *authoring.Finding {
+	for i := range fs {
+		if fs[i].ID == id {
+			return &fs[i]
+		}
+	}
+	return nil
+}
+
+// A registered validator's finding whose Path is the id of a rule in the
+// bundle is placed at that rule's line — the line Control's own finding about
+// the same rule carries — in every answer the report reaches: validate,
+// upload, and activation's refusals. Its Rule is Path verbatim and its id is
+// what it was before 0067, so an acceptance carried forward still accepts it.
+// A Path that names no rule is placed nowhere, and its JSON has no line.
+func TestAValidatorsFindingIsPlacedAtTheRuleItsPathNames(t *testing.T) {
+	t.Parallel()
+	const provider = "example.com/governance"
+	source := bundle(plain + restricted("logs", "app.example.com", "/usr/bin/python3"))
+	logs := ruleLine(t, source, "logs")
+	h := newHarness(t, ext.Bound[ext.PolicyValidator]{
+		Registration: ext.Registration{Provider: provider},
+		Impl: governance{findings: []ext.Finding{
+			{Severity: ext.FindingWarning, Code: "acme.reviewed", Path: "logs", Detail: map[string]string{"reviewer": "none"}},
+			{Severity: ext.FindingAdvice, Code: "acme.document", Path: ""},
+			{Severity: ext.FindingAdvice, Code: "acme.pointer", Path: "/rules/0"},
+			{Severity: ext.FindingAdvice, Code: "acme.elsewhere", Path: "nowhere"},
+		}},
+	})
+	placed := "acme.reviewed/" + provider + "/logs"
+	unplaced := []string{"acme.document/" + provider + "/", "acme.pointer/" + provider + "//rules/0", "acme.elsewhere/" + provider + "/nowhere"}
+
+	check := func(answer string, fs []authoring.Finding) {
+		t.Helper()
+		control := findingWith(authoring.Report{Findings: fs}, authoring.CodeInterpreter)
+		if control == nil || control.Rule != "logs" || control.Line != logs {
+			t.Fatalf("%s: Control's finding about rule logs is %+v, want it at line %d", answer, control, logs)
+		}
+		f := findingByID(fs, placed)
+		if f == nil {
+			t.Fatalf("%s: no finding %q in %+v", answer, placed, fs)
+		}
+		if f.Rule != "logs" || f.Line != control.Line || f.Source != provider || f.Parameters["reviewer"] != "none" {
+			t.Errorf("%s: the validator's finding about rule logs is %+v, want rule logs at line %d", answer, *f, control.Line)
+		}
+		for _, id := range unplaced {
+			f := findingByID(fs, id)
+			if f == nil {
+				continue // activation's refusals list warnings alone
+			}
+			raw, err := json.Marshal(f)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var members map[string]any
+			if err := json.Unmarshal(raw, &members); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if _, ok := members["line"]; ok || f.Line != 0 {
+				t.Errorf("%s: %s names no rule of the bundle and is placed: %s", answer, id, raw)
+			}
+		}
+	}
+
+	rep, _, err := h.svc.Validate(t.Context(), tenant, source, "")
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	check("validate", rep.Findings)
+	for _, id := range unplaced {
+		if findingByID(rep.Findings, id) == nil {
+			t.Errorf("validate: %s is not listed", id)
+		}
+	}
+
+	up, err := h.svc.Upload(t.Context(), tenant, source, author)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	check("upload", up.Report.Findings)
+
+	_, err = h.svc.Activate(t.Context(), tenant, up.Version.Version, nil, author)
+	var notAccepted *authoring.NotAcceptedError
+	if !errors.As(err, &notAccepted) {
+		t.Fatalf("activating with two warnings unaccepted answered %v, want NotAcceptedError", err)
+	}
+	check("activation's 409", notAccepted.Findings)
+
+	// Accepted by the id it carried before 0067, and by nothing else.
+	control := findingWith(up.Report, authoring.CodeInterpreter)
+	if _, err := h.svc.Activate(t.Context(), tenant, up.Version.Version, []string{control.ID, placed}, author); err != nil {
+		t.Errorf("activating with both warnings accepted by id: %v", err)
+	}
+
+	blocked := newHarness(t, ext.Bound[ext.PolicyValidator]{
+		Registration: ext.Registration{Provider: provider},
+		Impl:         governance{findings: []ext.Finding{{Severity: ext.FindingBlocking, Code: "acme.reviewed", Path: "logs"}}},
+	})
+	up, err = blocked.svc.Upload(t.Context(), tenant, source, author)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	_, err = blocked.svc.Activate(t.Context(), tenant, up.Version.Version, nil, author)
+	var refused *authoring.BlockedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("activating over a blocking finding answered %v, want BlockedError", err)
+	}
+	if len(refused.Findings) != 1 || refused.Findings[0].ID != placed || refused.Findings[0].Line != logs {
+		t.Errorf("activation's 422 lists %+v, want %s at line %d", refused.Findings, placed, logs)
+	}
 }
 
 // A validator's severity is ext's closed enum. One this server does not know

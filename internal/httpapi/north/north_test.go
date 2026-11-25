@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/access"
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/authoring"
@@ -113,7 +114,7 @@ func withLifecycle(t *testing.T, st *store.Store, o north.Options) north.Options
 	return o
 }
 
-func newLifecycle(t *testing.T, st *store.Store) *lifecycle {
+func newLifecycle(t *testing.T, st *store.Store, validators ...ext.Bound[ext.PolicyValidator]) *lifecycle {
 	t.Helper()
 	log := slog.New(slog.DiscardHandler)
 	bus, err := revoke.New(revoke.Options{Logger: log})
@@ -138,7 +139,7 @@ func newLifecycle(t *testing.T, st *store.Store) *lifecycle {
 		t.Fatalf("emitter: %v", err)
 	}
 	lifecycleSvc, err := authoring.New(authoring.Options{
-		Store: st, Fleet: registry, Emitter: emitter, Reader: audit.NewReader(st),
+		Store: st, Fleet: registry, Emitter: emitter, Reader: audit.NewReader(st), Validators: validators,
 	})
 	if err != nil {
 		t.Fatalf("authoring: %v", err)
@@ -164,6 +165,19 @@ func newServer(t *testing.T) *serverFixture {
 // registered approval workflow, say.
 func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture {
 	t.Helper()
+	return newServerOf(t, grantOpts)
+}
+
+// newServerWithValidators is newServer with policy validators registered
+// (ext.PolicyValidator), which the publish-time report runs after Control's
+// own checks.
+func newServerWithValidators(t *testing.T, validators ...ext.Bound[ext.PolicyValidator]) *serverFixture {
+	t.Helper()
+	return newServerOf(t, access.Options{}, validators...)
+}
+
+func newServerOf(t *testing.T, grantOpts access.Options, validators ...ext.Bound[ext.PolicyValidator]) *serverFixture {
+	t.Helper()
 	st := storetest.New(t)
 
 	federation, err := identity.NewFederation(st)
@@ -179,7 +193,7 @@ func newServerWithGrants(t *testing.T, grantOpts access.Options) *serverFixture 
 		t.Fatalf("ca: %v", err)
 	}
 
-	lifecycle := newLifecycle(t, st)
+	lifecycle := newLifecycle(t, st, validators...)
 
 	// Every server these tests build carries a host's routes (M15), so the
 	// tests that enumerate the router cover host routes on the day they are

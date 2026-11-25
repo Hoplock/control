@@ -5,6 +5,7 @@ package north_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/audit"
 	"github.com/hoplock/control/internal/authoring"
 	"github.com/hoplock/control/internal/contract"
@@ -293,6 +295,96 @@ func TestTheInterpreterWarningIsAcceptedOverTheWire(t *testing.T) {
 	if recs[0].Attributes[audit.AttrPrincipalID] == "" {
 		t.Errorf("the activation record names no actor")
 	}
+}
+
+// pathValidator is a registered validator that says one thing about each Path
+// it is given.
+type pathValidator []string
+
+func (v pathValidator) Validate(context.Context, ext.PolicyDocument) ([]ext.Finding, error) {
+	out := make([]ext.Finding, 0, len(v))
+	for _, path := range v {
+		out = append(out, ext.Finding{
+			Severity: ext.FindingAdvice, Code: "acme.reviewed", Path: path,
+			Detail: map[string]string{"reviewer": "none"}, Message: "not reviewed",
+		})
+	}
+	return out, nil
+}
+
+// A registered validator's finding whose Path is the id of a rule in the
+// bundle is answered with that rule's `line` (0067), and one whose Path names
+// no rule is answered exactly as before, with no `line`. `line` is a member
+// every served version has on a finding, meaning what it always meant — the
+// line of the rule `rule` names — so the version does not move.
+func TestAValidatorsFindingCarriesItsRulesLineOverTheWire(t *testing.T) {
+	const provider = "example.com/governance"
+	f := newServerWithValidators(t, ext.Bound[ext.PolicyValidator]{
+		Registration: ext.Registration{Provider: provider}, Impl: pathValidator{"sre", "/rules/0"},
+	})
+	source := bundleFor(sreRule)
+	line := 0
+	for i, l := range strings.Split(source, "\n") {
+		if strings.TrimSpace(l) == "- id: sre" {
+			line = i + 1
+		}
+	}
+	common := func(path string) map[string]any {
+		return map[string]any{
+			"id": "acme.reviewed/" + provider + "/" + path, "severity": "advice", "code": "acme.reviewed",
+			"source": provider, "rule": path, "parameters": map[string]any{"reviewer": "none"}, "message": "not reviewed",
+		}
+	}
+	placed := common("sre")
+	placed["line"] = float64(line)
+	unplaced := common("/rules/0")
+
+	token := f.roleToken(t, identity.RoleAuditor)
+	body, err := json.Marshal(map[string]any{"source": source})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// The newest version, and the oldest still served: both read `line`.
+	for _, declared := range []string{"", "1"} {
+		req, err := http.NewRequest("POST", f.http.URL+api+"/policy/validate", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		if declared != "" {
+			req.Header.Set(north.APIVersionHeader, declared)
+		}
+		resp, err := f.http.Client().Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		mustStatus(t, resp, http.StatusOK)
+		var rep struct {
+			Valid    bool             `json:"valid"`
+			Findings []map[string]any `json:"findings"`
+		}
+		decodeInto(t, resp, &rep)
+		if !rep.Valid {
+			t.Fatalf("the bundle did not validate")
+		}
+		byID := map[string]map[string]any{}
+		for _, finding := range rep.Findings {
+			byID[finding["id"].(string)] = finding
+		}
+		for _, want := range []map[string]any{placed, unplaced} {
+			if got := byID[want["id"].(string)]; !equalJSON(got, want) {
+				t.Errorf("declaring %q, finding %s answered\n  %v\nwant\n  %v", declared, want["id"], got, want)
+			}
+		}
+	}
+}
+
+func equalJSON(a, b map[string]any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return bytes.Equal(x, y)
 }
 
 // ---------------------------------------------------------------------------
