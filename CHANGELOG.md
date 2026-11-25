@@ -26,6 +26,33 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.54.0
+
+Phase 0067, a registered validator's finding at its rule's line (M3, M4,
+M15, M17, M21, M23). Every finding in the publish-time report whose `rule`
+names a rule of the compiled bundle now carries that rule's `line`, whoever
+said it: Control resolves the line from the program it compiled. So a
+registered `ext.PolicyValidator`'s finding whose `Path` is the id of a rule
+in the bundle is placed at that rule's line — the rule's `- id:` line, where
+Control's own findings about the rule and the compiler's rejections of it
+are — in every answer that carries the report (`POST …/policy/validate`,
+`POST …/policy/bundles`, `POST …/policy/apply`, and the findings listed by
+activation's `409 findings_not_accepted` and `422 policy_blocked`), and the
+console sets it beneath that line in a version's source and the candidate
+editor. A validator sets the rule's id in `Path` and nothing else. A `Path`
+that names no rule of the bundle — empty, a document pointer, an id the
+bundle does not hold — is listed as before and placed nowhere. The finding's
+`rule`, its id (`<code>/<provider>/<path>`), its severity and its acceptance
+are unchanged, so an acceptance a CI run carries forward still accepts it.
+Three of Control's own findings that named a rule and no line —
+`satisfiability.no_proxy_provides`, `satisfiability.target_cannot_take` and
+`satisfiability.target_unproven` — are placed the same way. `ext` changes by
+`Finding.Path`'s doc comment alone, which says what Control does with a
+rule's id; no type, field or signature changes. No migration; the north-bound
+API is unchanged at version `8` (`line` is a member every served version
+already has on a finding, meaning what it always meant); `server` and the
+contract are untouched.
+
 ## v0.53.0
 
 Phase 0066, a visual policy editor (M3, M20, M21, M23). The console's policy
