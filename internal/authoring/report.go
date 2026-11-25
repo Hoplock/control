@@ -35,6 +35,7 @@ import (
 	"strings"
 
 	"github.com/hoplock/control/ext"
+	"github.com/hoplock/control/internal/policy/compile"
 	"github.com/hoplock/control/internal/policy/model"
 )
 
@@ -140,7 +141,13 @@ type Finding struct {
 	Code     string `json:"code"`
 	// Source is SourceControl, or the provider of the validator that said it.
 	Source string `json:"source"`
-	// Rule and Line locate it; empty and zero at document scope.
+	// Rule and Line locate it. A finding whose Rule names a rule of the
+	// bundle carries that rule's line — the rule's `- id:` line, where a
+	// compiler rejection is set — whichever source said it: Control
+	// resolves it from the program it compiled (locate), so a validator
+	// says only the rule's id. Both are empty at document scope, and a Rule
+	// that names no rule of the bundle has no Line: Control never guesses a
+	// place.
 	Rule string `json:"rule,omitempty"`
 	Line int    `json:"line,omitempty"`
 	// Parameters are typed and named (M21).
@@ -234,6 +241,27 @@ func sortFindings(fs []Finding) {
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
+}
+
+// locate sets each finding's line from the rule it names. A finding whose Rule
+// names no rule of the program — the document's scope, or a validator's Path
+// that is not a rule's id — keeps Line 0, which the report omits. A line a
+// check already set is the same rule's line and is left as it is.
+//
+// Rule ids are unique within a bundle (the compiler refuses a second), so the
+// lookup is unambiguous, and a report's findings exist only for a source that
+// compiled, so the program is always there.
+func locate(fs []Finding, prog *compile.Program) {
+	lines := make(map[string]int, prog.Len())
+	for i := 0; i < prog.Len(); i++ {
+		r := prog.Rule(i)
+		lines[r.ID()] = r.Line()
+	}
+	for i := range fs {
+		if fs[i].Line == 0 && fs[i].Rule != "" {
+			fs[i].Line = lines[fs[i].Rule]
+		}
+	}
 }
 
 // findingID joins a code and what it is about into an id. An author copies it

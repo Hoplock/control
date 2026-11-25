@@ -227,20 +227,31 @@ func (s *Service) findings(ctx context.Context, tenant store.Tenant, cand *Candi
 					return nil, fmt.Errorf("authoring: policy validator %s: finding %q has severity %d, "+
 						"outside ext.FindingSeverity", v.Registration.Provider, f.Code, int(f.Severity))
 				}
-				params := make(map[string]any, len(f.Detail))
-				for k, val := range f.Detail {
-					params[k] = val
-				}
-				out = append(out, Finding{
-					ID:       findingID(f.Code, v.Registration.Provider, f.Path),
-					Severity: severityOf(f.Severity), Code: f.Code, Source: v.Registration.Provider,
-					Rule: f.Path, Parameters: params, Message: f.Message,
-				})
+				out = append(out, validatorFinding(v.Registration.Provider, f))
 			}
 		}
 	}
+	// Every finding is placed by the rule it names, whoever said it, before
+	// the report is ordered; nothing is appended after this.
+	locate(out, cand.Program)
 	sortFindings(out)
 	return out, nil
+}
+
+// validatorFinding is a registered validator's finding as the report carries
+// it. Rule is Path verbatim and the id is built from it unchanged, so an
+// acceptance a CI run carries forward still names the same finding. Its line
+// is not the validator's to say: locate sets it from the rule Path names.
+func validatorFinding(provider string, f ext.Finding) Finding {
+	params := make(map[string]any, len(f.Detail))
+	for k, val := range f.Detail {
+		params[k] = val
+	}
+	return Finding{
+		ID:       findingID(f.Code, provider, f.Path),
+		Severity: severityOf(f.Severity), Code: f.Code, Source: provider,
+		Rule: f.Path, Parameters: params, Message: f.Message,
+	}
 }
 
 func (s *Service) gather(ctx context.Context, tenant store.Tenant, b *model.Bundle) (Facts, error) {

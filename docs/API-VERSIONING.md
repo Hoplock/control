@@ -50,6 +50,14 @@ what it was served before. Concretely:
   api_version_unexpressible` when it holds anything else, because leaving it
   out would tell that client something false. (This is the south-bound rule:
   a restriction an old reader cannot see is not silently dropped.)
+- **An existing member set in more cases, with the meaning it always had,**
+  moves nothing: a client of every served version already reads it, and it
+  tells that client nothing it did not already mean. A publish-time
+  finding's `line` is the example (0067, `v0.54.0`): Control's own findings
+  have carried it since `1`, and a registered validator's finding about a
+  rule now carries it too, still the line of the rule `rule` names. A member
+  whose presence or absence comes to mean something else is a changed
+  meaning (below), never this.
 - **A new route** is additive. An older client does not call it.
 - **A new request header** is additive, like a new route: an older client does
   not send it, and is served exactly as before. It still moves the version, so
