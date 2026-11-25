@@ -1,0 +1,296 @@
+/* The claim mapping (0055, 0068): the active version's facts, its draft in two
+   views of one document, what the draft changes and what it would produce, and
+   the sign-in connectors. Read more than scanned, so comfortable (DESIGN.md
+   §3.7). */
+.screen,
+.stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-24);
+}
+.stack {
+  gap: var(--sp-16);
+}
+.panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  min-inline-size: 0;
+}
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-12);
+}
+.headActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+  margin-inline-start: auto;
+}
+.panelTitle {
+  margin: 0;
+  font: var(--t-h2);
+  color: var(--text-primary);
+}
+.sectionTitle {
+  margin: 0;
+  font: var(--t-h3);
+  color: var(--text-primary);
+}
+.nameTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-6);
+  margin: 0;
+  font: var(--t-label);
+  color: var(--text-primary);
+}
+.para {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+}
+.quiet {
+  margin: 0;
+  font: var(--t-body);
+  color: var(--text-secondary);
+}
+.meta,
+.said {
+  margin: 0;
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+.operator {
+  overflow-wrap: anywhere;
+}
+.facts,
+.changeFacts {
+  display: grid;
+  grid-template-columns: minmax(max-content, auto) minmax(0, 1fr);
+  gap: var(--sp-8) var(--sp-24);
+  margin: 0;
+}
+.changeFacts {
+  gap: var(--sp-4) var(--sp-16);
+}
+.facts dt,
+.changeFacts dt {
+  font: var(--t-label);
+  color: var(--text-secondary);
+}
+.facts dd,
+.changeFacts dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  margin: 0;
+  min-inline-size: 0;
+  font: var(--t-body);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.actions,
+.rowActions,
+.addAction {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.rowActions {
+  justify-content: flex-end;
+}
+.addAction {
+  align-self: end;
+}
+.source {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+}
+.visual {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16);
+}
+.visual .panel {
+  background: var(--bg-canvas);
+}
+.rejections {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rejections li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-4) var(--sp-12);
+}
+.unmodelled {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.unmodelledItem {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-6);
+  font: var(--t-caption);
+}
+
+/* A row: a claim, or a group entry. Its fields share a line where they fit. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  min-inline-size: 0;
+}
+.rowFields,
+.add {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--form-column-min), 1fr));
+  gap: var(--sp-12) var(--sp-16);
+  align-items: start;
+}
+.add {
+  padding-block-start: var(--sp-12);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+}
+.require {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+/* The entries for one name, seen together. */
+.names {
+  display: grid;
+  gap: var(--sp-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.name {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding: var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.name > .row + .row {
+  padding-block-start: var(--sp-12);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+}
+.addEntry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  padding-block-start: var(--sp-12);
+  border-block-start: var(--border-width) solid var(--border-subtle);
+}
+
+/* What a draft would produce, beside the active version. */
+.previewForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  max-inline-size: var(--form-max);
+}
+.compared {
+  display: grid;
+  gap: var(--sp-12);
+}
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--form-column-min), 1fr));
+  gap: var(--sp-16);
+}
+.produced {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.producedList {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.producedList li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-6);
+  padding: var(--sp-2) var(--sp-6);
+  border-radius: var(--r-sm);
+}
+
+/* A difference, on the diff's grounds (§3.8): its side is said by its sign
+   and word, never by the tint alone. */
+.gained,
+.added {
+  background: var(--diff-add-bg);
+}
+.lost,
+.removed {
+  background: var(--diff-remove-bg);
+}
+.changed {
+  background: var(--bg-sunken);
+}
+.mark {
+  font: var(--t-caption);
+  color: var(--text-secondary);
+}
+
+/* What a draft changes, row by row. */
+.changes {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.change {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--r-sm);
+}
+.changeHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-6);
+  margin: 0;
+  font: var(--t-label);
+  color: var(--text-primary);
+}
+.beforeAfter {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--form-column-min), 1fr));
+  gap: var(--sp-12);
+}
+.confirm {
+  display: grid;
+  gap: var(--sp-8);
+}

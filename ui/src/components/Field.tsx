@@ -9,7 +9,9 @@ import {
   cloneElement,
   forwardRef,
   isValidElement,
+  useEffect,
   useId,
+  useState,
   type InputHTMLAttributes,
   type ReactElement,
   type ReactNode,
@@ -142,5 +144,95 @@ export function Choices({ legend, children }: { legend: ReactNode; children: Rea
       <legend className={styles.label}>{legend}</legend>
       {children}
     </fieldset>
+  );
+}
+
+/**
+ * Typed text that changes something only when it is applied — on leaving the
+ * field or pressing Enter — so a half-typed value changes nothing (0066, 0068).
+ * It is checked before it is applied (`check`, the caller's words for why
+ * not) and refused at the field; `error` is a refusal of the value as it
+ * stands, from whoever checks it (the server). `suggestions` are offered as
+ * the operator types and bind nothing: a value outside them may be typed (a
+ * new group). What it holds is operator data when `mono`: LTR, mono and never
+ * translated (DESIGN.md §9).
+ */
+export function TextField({
+  label,
+  value,
+  onApply,
+  check,
+  error,
+  hint,
+  mono = false,
+  type = "text",
+  suggestions,
+  disabled = false,
+  data,
+}: {
+  label: ReactNode;
+  value: string;
+  onApply(v: string): void;
+  check?(v: string): ReactNode | null;
+  error?: ReactNode | null;
+  hint?: ReactNode;
+  mono?: boolean;
+  type?: "text" | "number";
+  suggestions?: readonly string[];
+  disabled?: boolean;
+  /** Data attributes for the control, which tests and deep links name it by. */
+  data?: Readonly<Record<`data-${string}`, string>>;
+}) {
+  const listId = useId();
+  const [draft, setDraft] = useState(value);
+  const [refused, setRefused] = useState<ReactNode | null>(null);
+  useEffect(() => setDraft(value), [value]);
+  const apply = () => {
+    if (draft === value) return;
+    const r = check?.(draft) ?? null;
+    setRefused(r);
+    if (!r) onApply(draft);
+  };
+  return (
+    <>
+      <Field label={label} hint={hint} error={refused ?? error ?? undefined}>
+        <Input
+        mono={mono}
+        type={type}
+        value={draft}
+        disabled={disabled}
+        list={suggestions?.length ? listId : undefined}
+        autoComplete={suggestions?.length ? "off" : undefined}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setRefused(null);
+        }}
+        onBlur={apply}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            apply();
+          }
+        }}
+        translate={mono ? "no" : undefined}
+        {...data}
+        />
+      </Field>
+      {suggestions?.length ? <Suggestions id={listId} values={suggestions} /> : undefined}
+    </>
+  );
+}
+
+/**
+ * Values an input offers as the operator types, which bind nothing: an
+ * `Input` names it by `list={id}`. Each is data, offered as it is (§9).
+ */
+export function Suggestions({ id, values }: { id: string; values: readonly string[] }) {
+  return (
+    <datalist id={id}>
+      {values.map((v) => (
+        <option key={v} value={v} translate="no" />
+      ))}
+    </datalist>
   );
 }
