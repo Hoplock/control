@@ -49,6 +49,8 @@ func TestTheConsolesMappingCorpusParses(t *testing.T) {
 				used[key] = true
 				walk(n.Content[i+1], key)
 			}
+		case yaml.ScalarNode, yaml.AliasNode:
+			// A value: it names no key.
 		}
 	}
 	walk(&node, "")

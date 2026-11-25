@@ -120,8 +120,12 @@
   grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-16);
 }
-.visual .panel {
-  background: var(--bg-canvas);
+/* The draft: a heading, its views, then its sections as the page's own panels. */
+.document {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-12);
+  min-inline-size: 0;
 }
 .rejections {
   display: grid;
@@ -186,10 +190,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-12);
-  padding: var(--sp-12);
-  border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--r-md);
-  background: var(--bg-surface);
+  padding-block: var(--sp-12);
+  border-block-start: var(--border-width) solid var(--border-subtle);
 }
 .name > .row + .row {
   padding-block-start: var(--sp-12);

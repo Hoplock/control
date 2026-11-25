@@ -235,7 +235,12 @@ function Mapping({
         </Notice>
       ) : null}
       <Facts mapping={m} />
-      <section className={styles.panel} aria-labelledby="mapping-document" data-mapping-draft={edited ? "edited" : "unchanged"}>
+      <section
+        className={styles.document}
+        aria-labelledby="mapping-document"
+        data-mapping-draft={edited ? "edited" : "unchanged"}
+        data-mapping-check={checked ?? (check.state === "failed" ? "failed" : "pending")}
+      >
         <div className={styles.head}>
           <h2 id="mapping-document" className={styles.panelTitle}>
             {t("claimMapping.document")}
@@ -273,7 +278,7 @@ function Mapping({
           ]}
         />
         {view === "source" ? (
-          <div className={styles.source}>
+          <div className={[styles.panel, styles.source].join(" ")}>
             <Field label={t("claimMapping.source.label")} hint={t("claimMapping.source.hint")}>
               <Textarea mono rows={22} value={draft} onChange={(e) => setDraft(e.target.value)} name="document" data-mapping-source="" />
             </Field>

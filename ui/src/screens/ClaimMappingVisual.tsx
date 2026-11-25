@@ -208,7 +208,7 @@ function DocumentPanel({ visual, commit, goToSource }: { visual: VisualMapping; 
   return (
     <section className={styles.panel} aria-labelledby="mapping-visual-document" data-mapping-section="document">
       <h3 id="mapping-visual-document" className={styles.sectionTitle}>
-        {t("claimMapping.visual.document")}
+        {t("claimMapping.visual.about")}
       </h3>
       <dl className={styles.facts}>
         <dt>{t("claimMapping.visual.schema")}</dt>
@@ -504,6 +504,8 @@ function NameEntries({
         <EntryEditor
           key={e.index}
           entry={e}
+          // A directory another entry lists for this name is not offered: listed twice, the server refuses it (mapping.directory_duplicate).
+          taken={name.entries.filter((x) => x.index !== e.index).flatMap((x) => x.directories ?? [])}
           required={required}
           commit={commit}
           rejections={rejections.get(e.index)}
@@ -519,6 +521,7 @@ function NameEntries({
 
 function EntryEditor({
   entry,
+  taken,
   required,
   commit,
   rejections,
@@ -527,6 +530,7 @@ function EntryEditor({
   goToSource,
 }: {
   entry: EntryRow;
+  taken: readonly string[];
   required: boolean;
   commit: Commit;
   rejections: MappingRejection[] | undefined;
@@ -537,7 +541,10 @@ function EntryEditor({
   const { t } = useI18n();
   const at = (key: string) => (target: RejectionTarget) => target.kind === "entry" && target.key === key;
   const scoped = entry.directories !== null;
-  const options = useMemo(() => [...new Set([...(offered.sources ?? []), ...(entry.directories ?? [])])].sort(), [offered.sources, entry.directories]);
+  const options = useMemo(
+    () => [...new Set([...(offered.sources ?? []).filter((x) => !taken.includes(x)), ...(entry.directories ?? [])])].sort(),
+    [offered.sources, entry.directories, taken],
+  );
   const serves = scoped ? t("claimMapping.visual.entry.scoped") : required ? t("claimMapping.entry.loginsOnly") : t("claimMapping.entry.unscoped");
   const name = `\u2068${entry.external}\u2069`;
   const rowLevel = errorAt(t, rejections, (x) => x.kind === "entry" && (x.key === "row" || x.key === "external"));
@@ -595,11 +602,22 @@ function EntryEditor({
 function AddScoped({ external, listed, commit, offered }: { external: string; listed: readonly string[]; commit: Commit; offered: Offered }) {
   const { t } = useI18n();
   const listId = useId();
+  const [open, setOpen] = useState(false);
   const [source, setSource] = useState("");
   const [group, setGroup] = useState("");
   const [error, setError] = useState<string | null>(null);
   const choices = (offered.sources ?? []).filter((s) => !listed.includes(s));
   if (offered.sources === null) return null;
+  if (choices.length === 0) return <p className={styles.meta}>{t("claimMapping.visual.entry.noDirectory")}</p>;
+  if (!open) {
+    return (
+      <div className={styles.rowActions}>
+        <Button variant="ghost" onClick={() => setOpen(true)} aria-expanded="false" data-mapping-open-scoped={external}>
+          {t("claimMapping.visual.entry.addScoped")}
+        </Button>
+      </div>
+    );
+  }
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const problem = source === "" ? t("claimMapping.visual.entry.chooseDirectory") : codeText(t, checkMappingField("group", group));
@@ -609,12 +627,13 @@ function AddScoped({ external, listed, commit, offered }: { external: string; li
     if (commit({ op: "addEntry", external, group: g, directories: [source] }, t("claimMapping.visual.said.entryAdded", { name: `\u2068${external}\u2069`, group: `\u2068${g}\u2069` }))) {
       setSource("");
       setGroup("");
+      setOpen(false);
     }
   };
   return (
     <form className={styles.add} onSubmit={submit} noValidate data-mapping-add="scoped" data-mapping-add-name={external} aria-label={t("claimMapping.visual.entry.addScoped")}>
-      <Field label={t("claimMapping.visual.entry.directory")} hint={choices.length ? undefined : t("claimMapping.visual.entry.noDirectory")}>
-        <Select value={source} onChange={(e) => setSource(e.target.value)} disabled={choices.length === 0} data-mapping-add-field="directory">
+      <Field label={t("claimMapping.visual.entry.directory")}>
+        <Select value={source} onChange={(e) => setSource(e.target.value)} autoFocus data-mapping-add-field="directory">
           <option value="">{t("claimMapping.visual.entry.chooseDirectory")}</option>
           {choices.map((s) => (
             <option key={s} value={s} translate="no">
@@ -628,8 +647,9 @@ function AddScoped({ external, listed, commit, offered }: { external: string; li
       </Field>
       <Suggestions id={listId} values={offered.groups} />
       <div className={styles.addAction}>
-        <Button type="submit" disabled={choices.length === 0}>
-          {t("claimMapping.visual.entry.addScoped")}
+        <Button type="submit">{t("claimMapping.visual.entry.add.submit")}</Button>
+        <Button variant="ghost" onClick={() => setOpen(false)}>
+          {t("inventory.cancel")}
         </Button>
       </div>
     </form>

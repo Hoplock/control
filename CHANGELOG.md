@@ -26,6 +26,39 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.55.0
+
+Phase 0068, the console's visual claim-mapping editor (M7, M4, M19, M20,
+M21, M23, M26). No public package changes: `ext/`, `server/` and the
+vendored contract are untouched, and there is no migration.
+
+- **North-bound API version `9`** (`north_api_min` stays `1`; a client of
+  `1` to `8` is served exactly as before). Two routes, both identity:read,
+  neither storing nor recording anything:
+  - `POST …/identity/claim-mapping/validate`, the claim mapping's dry run.
+    Body `{document, samples?}`. A document the `PUT` refuses is refused
+    exactly as the `PUT` refuses it (`400 invalid_request`, with
+    `parameters.rejections`); one that parses is answered `{digest,
+    attributes, groups, directories, require_directories, group_map,
+    samples}`, each sample mapped as the server maps a sign-in (`{claims,
+    groups}`) or a directory's identity (`directory_source` beside them),
+    `{attributes, groups, directory_source?}`. A sample may instead be
+    `{subject}` alone: a provisioned directory identity, mapped from what its
+    directory last wrote as the recalculation maps it — answered to
+    identity:write only, `403 forbidden` to anyone else, because what a
+    directory wrote is not otherwise readable here. At most 16 samples.
+  - `GET …/identity/directories`: every directory source that has written a
+    link or a group in the tenant, by source, `{source, linked,
+    deactivated}`, paged and bounded like every list (M26).
+- **The console's claim-mapping screen** edits a draft of the next version
+  visually (the default) or as its document (`?view=source`), checks it with
+  the dry run as the operator works and shows each refusal on the field it
+  names, previews what it would produce beside the active version, lists what
+  it changes, and writes it only through a confirm typed with the tenant's
+  id, offered to identity:write alone. `?edit=1` (0055's editor) is gone:
+  the editor is always on the page.
+- The console's component set gains `TextField` and `Suggestions`.
+
 ## v0.54.0
 
 Phase 0067, a registered validator's finding at its rule's line (M3, M4,

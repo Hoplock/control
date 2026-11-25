@@ -16,7 +16,7 @@ import { ConfirmDialog, Dialog, Drawer } from "../src/components/Dialog";
 import { DiffSkeleton, DiffView } from "../src/components/Diff";
 import { FeedLagSkeleton, FeedLagView } from "../src/components/FeedLag";
 import { ChipEditor } from "../src/components/ChipEditor";
-import { Checkbox, Choices, Field, Input, Radio, Select, Switch, Textarea } from "../src/components/Field";
+import { Checkbox, Choices, Field, Input, Radio, Select, Switch, Textarea, TextField } from "../src/components/Field";
 import { FilterBar } from "../src/components/FilterBar";
 import { Ident } from "../src/components/Ident";
 import { SortableList, SortableListSkeleton } from "../src/components/SortableList";
@@ -927,6 +927,32 @@ function Editors() {
         </Cell>
         <Cell state="empty">
           <ChipEditor label={hostsLabel} values={[]} onChange={() => {}} />
+        </Cell>
+      </div>
+      <div className={styles.grid} data-component="text field, applied">
+        <Cell state="default">
+          <TextField label={t("claimMapping.visual.claim.attribute")} value="department" mono onApply={() => {}} />
+        </Cell>
+        <Cell state="suggestions">
+          <TextField
+            label={t("claimMapping.visual.entry.group")}
+            hint={t("claimMapping.visual.entry.group.hint")}
+            value="payments-eng"
+            mono
+            suggestions={["payments-eng", "payments-lab", "sre"]}
+            onApply={() => {}}
+          />
+        </Cell>
+        <Cell state="focus-visible">
+          <div data-force-child="focus-visible">
+            <TextField label={t("claimMapping.visual.claim.claim")} value="dept" mono onApply={() => {}} />
+          </div>
+        </Cell>
+        <Cell state="error">
+          <TextField label={t("claimMapping.visual.claim.attribute")} value="hoplock.proxy" mono onApply={() => {}} error={t("claimMapping.reject.attribute_reserved")} />
+        </Cell>
+        <Cell state="disabled">
+          <TextField label={t("claimMapping.visual.description")} value="" onApply={() => {}} disabled />
         </Cell>
       </div>
     </div>

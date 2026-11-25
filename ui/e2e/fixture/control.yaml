@@ -41,7 +41,9 @@ console:
 # directories feed the tenant, `corp` and `lab`, and both call somebody
 # `00u1`: two people, two subjects. Every subject id is Control's to allocate
 # (`dir-…`, random), so the browser checks find them by their directory id.
-#   dana       corp 00u1, active, in Payments Engineering
+#   dana       corp 00u1, active, in Payments Engineering and in Platform
+#              Guild, which the seeded mapping does not map (0068's write
+#              scopes an entry to corp for it)
 #   dana-lab   lab 00u1, active, in lab's Payments Engineering
 #   eli        corp 00u7, deactivated (offboarded)
 #   sam        corp 00u9, deactivated, and locked by an operator (inventory.ts)
@@ -51,13 +53,14 @@ e2e_directory:
   groups:
     - { source: corp, external_id: g-payments, name: Payments Engineering }
     - { source: lab, external_id: g-payments, name: Payments Engineering }
+    - { source: corp, external_id: g-platform, name: Platform Guild }
   subjects:
     - source: corp
       external_id: 00u1
       username: dana
       display_name: Dana Directory
       email: dana@corp.example
-      groups: [g-payments]
+      groups: [g-payments, g-platform]
       attributes: { department: payments }
     - source: lab
       external_id: 00u1

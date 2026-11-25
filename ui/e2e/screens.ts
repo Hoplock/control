@@ -425,16 +425,17 @@ const STANDING: E2EScreen[] = [
     ready: (page) => main(page).locator("[data-denial=deactivated]").waitFor(),
     states: {},
   },
-  // The claim mapping (0043): its facts, each group entry with its
-  // directories, the document, and the connectors' ties. Partial: some
-  // directory identities not yet on this version (the server's answer, its
-  // count changed) and the connectors unreadable.
+  // The claim mapping (0043, 0068): the active version's facts, its draft in
+  // the visual view (the default) once the server's dry run has judged it,
+  // and the connectors' ties. Partial: some directory identities not yet on
+  // this version (the server's answer, its count changed), and the
+  // connectors and the tenant's directories unreadable.
   {
     id: "inventory-claim-mapping",
     kind: "console",
     path: "/console/inventory/claim-mapping",
     densities: false,
-    ready: (page) => main(page).locator("[data-connectors] table tbody tr[data-row]").first().waitFor(),
+    ready: (page) => main(page).locator("[data-mapping-check=valid] [data-mapping-visual=on]").waitFor().then(() => main(page).locator("[data-connectors] table tbody tr[data-row]").first().waitFor()),
     states: {
       loading: { substitute: [[`${API}/identity/claim-mapping`, { kind: "hang" }]], ready: (page) => main(page).locator("[data-state=loading]").waitFor() },
       error: { substitute: [[`${API}/identity/claim-mapping`, outage("corr-e2e-claim-mapping")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
@@ -442,28 +443,119 @@ const STANDING: E2EScreen[] = [
         substitute: [
           [`${API}/identity/claim-mapping`, { kind: "patch", patch: (b) => ({ ...(b as object), stale_directory_subjects: 3 }) }],
           ["/api/v1/session/methods", outage("corr-e2e-methods")],
+          [`${API}/identity/directories`, outage("corr-e2e-directories")],
         ],
-        ready: (page) => main(page).locator("[data-state=partial] [data-stale]").waitFor(),
+        ready: (page) => main(page).locator("[data-state=partial] [data-stale]").waitFor().then(() => main(page).locator("[data-mapping-check=valid]").waitFor()),
       },
     },
     mutations: [
-      { route: "claimMappingPut", method: "PUT", path: `${API}/identity/claim-mapping`, body: { document: "schema_version: 1\n" }, permission: "identity:write", control: (page) => main(page).locator("[data-edit]") },
+      {
+        route: "claimMappingPut",
+        method: "PUT",
+        path: `${API}/identity/claim-mapping`,
+        body: { document: "schema_version: 1\n" },
+        permission: "identity:write",
+        control: (page) => main(page).locator("[data-mapping-write]"),
+      },
+      // A preview that names an identity is mapped from what its directory
+      // wrote, which only identity:write may read so (0068): the API refuses
+      // it to any other role, whatever the console offers.
+      {
+        route: "claimMappingValidate",
+        method: "POST",
+        path: `${API}/identity/claim-mapping/validate`,
+        body: { document: "schema_version: 1\n", samples: [{ subject: "dir-anyone" }] },
+        permission: "identity:write",
+        control: (page) => main(page).locator("[data-preview-field=through] option[value^='identity:']").first(),
+      },
     ],
   },
-  // A write refused for the three directory faults (0043), each at its field.
+  // The same draft as its document (`?view=source`).
+  {
+    id: "inventory-claim-mapping-source",
+    kind: "console",
+    path: "/console/inventory/claim-mapping?view=source",
+    densities: false,
+    ready: (page) => main(page).locator("[data-mapping-check=valid] textarea[data-mapping-source]").waitFor(),
+    states: {},
+  },
+  // A draft refused for the three directory faults (0043): each rejection on
+  // the row and field it names, in the visual view.
   {
     id: "inventory-claim-mapping-refused",
     kind: "console",
-    path: "/console/inventory/claim-mapping?edit=1",
+    path: "/console/inventory/claim-mapping?view=source",
     densities: false,
     ready: (page) => main(page).locator("[data-mapping-version]").waitFor(),
     states: {},
     prepare: async (page) => {
-      const form = main(page).locator("form[data-mapping-form]");
-      if (!(await form.count())) return;
-      await form.locator("textarea[name=document]").fill(REFUSED_MAPPING);
-      await form.locator("button[type=submit]").click();
-      await form.locator("[data-rejections]").waitFor();
+      await main(page).locator("textarea[data-mapping-source]").fill(REFUSED_MAPPING);
+      await main(page).locator("[data-mapping-check=invalid] [data-rejections]").waitFor();
+      await main(page).locator("[data-mapping-draft] nav a").first().click();
+      await main(page).locator("[data-mapping-check=invalid] [data-mapping-visual=on] [data-entry-row] [aria-invalid=true]").first().waitFor();
+    },
+  },
+  // A draft that is not YAML cannot be shown visually: the view says so, with the server's refusal.
+  {
+    id: "inventory-claim-mapping-off",
+    kind: "console",
+    path: "/console/inventory/claim-mapping?view=source",
+    densities: false,
+    ready: (page) => main(page).locator("[data-mapping-version]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      await main(page).locator("textarea[data-mapping-source]").fill("schema_version: 1\nclaims: [a\n");
+      await main(page).locator("[data-mapping-check=invalid]").waitFor();
+      await main(page).locator("[data-mapping-draft] nav a").first().click();
+      await main(page).locator("[data-mapping-visual=off] [data-rejections]").waitFor();
+    },
+  },
+  // What a draft would produce: a claim added, then a lab identity's claims
+  // and groups mapped through the active version and the draft, side by side,
+  // and what the draft changes.
+  {
+    id: "inventory-claim-mapping-preview",
+    kind: "console",
+    path: "/console/inventory/claim-mapping",
+    densities: false,
+    ready: (page) => main(page).locator("[data-mapping-check=valid] [data-mapping-visual=on]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      const add = main(page).locator("form[data-mapping-add=claim]");
+      await add.locator("[data-mapping-add-field=claim]").fill("title");
+      await add.locator("[data-mapping-add-field=attribute]").fill("title");
+      await add.locator("button[type=submit]").click();
+      await main(page).locator("[data-mapping-draft=edited][data-mapping-check=valid]").waitFor();
+      const preview = main(page).locator("[data-mapping-preview]");
+      await preview.locator("[data-preview-field=through]").selectOption("directory:lab");
+      for (const [editor, value] of [
+        ["preview.claims", "title=staff"],
+        ["preview.claims", "department=payments"],
+        ["preview.groups", "Payments Engineering"],
+      ] as const) {
+        const chips = preview.locator(`[data-chip-editor="${editor}"]`);
+        await chips.locator("input").fill(value);
+        await chips.locator("[data-chip-add-button]").click();
+      }
+      await preview.locator("[data-preview-run]").click();
+      await preview.locator("[data-preview-side=draft] [data-mark=gained]").first().waitFor();
+    },
+  },
+  // Writing is an activation: the change summary, and the confirm by typing the tenant's id.
+  {
+    id: "inventory-claim-mapping-confirm",
+    kind: "console",
+    path: "/console/inventory/claim-mapping",
+    densities: false,
+    ready: (page) => main(page).locator("[data-mapping-check=valid] [data-mapping-visual=on]").waitFor(),
+    states: {},
+    prepare: async (page) => {
+      const write = main(page).locator("[data-mapping-write]");
+      if (!(await write.count())) return;
+      await main(page).locator("[data-mapping-section=groups] [data-require-directories] input[role=switch]").check();
+      await main(page).locator("[data-mapping-draft=edited][data-mapping-check=valid]").waitFor();
+      await write.click();
+      await page.locator("dialog[open] [data-mapping-confirm]").waitFor();
     },
   },
   // Explain for a subject the directory provisioned: its groups' directory beside the mapping version.
