@@ -65,14 +65,17 @@ import (
 // a tenant's fleet summary, the health reason `proxies_contract_unsupported`,
 // and the publish-time finding `satisfiability.contract_version_unsupported`,
 // and 8 answers every policy refusal as a code and typed parameters (0065,
-// policycodes.go): a client of 7 or older is served them as before. A new
+// policycodes.go): a client of 7 or older is served them as before, and 9
+// adds the claim mapping's dry run (`POST …/identity/claim-mapping/validate`)
+// and the tenant's directory sources (`GET …/identity/directories`) for its
+// editor (0068). A new
 // request header or query parameter is additive, like a new route, and it
 // still moves the version, so that a client can tell whether a deployment
 // honours it.
 const (
 	// APIVersion is the version this server serves by default and the
 	// newest it answers in.
-	APIVersion = 8
+	APIVersion = 9
 	// MinAPIVersion is the oldest version it still answers in.
 	MinAPIVersion = 1
 	// APIVersionHeader carries the declared version in, and the served one

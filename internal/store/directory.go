@@ -493,6 +493,77 @@ func (r directoryLinkRepo) Sources(ctx context.Context, tenant Tenant) ([]string
 	return out, wrap(op, rows.Err())
 }
 
+// DirectorySource is one directory that has written in a tenant, as the
+// directory sources list answers it (0068): its source, how many identities
+// it has provisioned, and how many of those it has deactivated.
+type DirectorySource struct {
+	Source string
+	// Linked counts the source's provisioned links, deactivated ones
+	// included: every identity this directory has provisioned in the tenant.
+	// A deactivation kept ahead of its create has provisioned nothing and is
+	// not counted.
+	Linked int64
+	// Deactivated counts the provisioned links among them the directory has
+	// deactivated (M28).
+	Deactivated int64
+}
+
+// directorySourceOrder is the directory sources list's order (M26.4): the
+// source, unique by construction because the list is of distinct sources. It
+// is the leading column after the tenant of both tables' primary keys, so the
+// position is an index seek on each; the two counts read the source's own
+// links, by the same key.
+var directorySourceOrder = order{columns: []string{"source"}}
+
+// directorySourceNamesSQL is every source a link or a group of the tenant ($1)
+// comes from, once: the same union Sources and HasSource read, a source that
+// holds only a group (even a tombstone) included.
+const directorySourceNamesSQL = `
+	SELECT source FROM (
+		SELECT source FROM directory_links WHERE tenant = $1
+		UNION
+		SELECT source FROM directory_groups WHERE tenant = $1
+	) sources
+	WHERE true`
+
+// directorySourcePageSQL counts each source of the inner selection, which ends
+// in its own ORDER BY and LIMIT.
+func directorySourcePageSQL(names string) string {
+	return `
+		WITH page AS (` + names + `)
+		SELECT page.source,
+			(SELECT count(*) FROM directory_links d
+				WHERE d.tenant = $1 AND d.source = page.source AND d.provisioned),
+			(SELECT count(*) FROM directory_links d
+				WHERE d.tenant = $1 AND d.source = page.source AND d.provisioned AND d.deactivated_at IS NOT NULL)
+		FROM page
+		ORDER BY page.source`
+}
+
+// SourcePage returns one page of the directory sources that have written in
+// the tenant, by source, each with its counts (0068, M26).
+func (r directoryLinkRepo) SourcePage(ctx context.Context, tenant Tenant, p Page) (Paged[DirectorySource], error) {
+	const op = "store.DirectoryLinks.SourcePage"
+	if err := checkTenant(op, tenant); err != nil {
+		return Paged[DirectorySource]{}, err
+	}
+	if err := checkPage(op, directorySourceOrder, p); err != nil {
+		return Paged[DirectorySource]{}, err
+	}
+	ctx, cancel := r.s.withTimeout(ctx)
+	defer cancel()
+
+	tail, args := directorySourceOrder.clause(p, []any{tenant})
+	return queryPage(ctx, r.s.db, op, p, directorySourcePageSQL(directorySourceNamesSQL+tail), args,
+		func(op string, row rowScanner) (DirectorySource, error) {
+			var d DirectorySource
+			if err := row.Scan(&d.Source, &d.Linked, &d.Deactivated); err != nil {
+				return DirectorySource{}, wrap(op, err)
+			}
+			return d, nil
+		})
+}
+
 // ---------------------------------------------------------------------------
 // groups
 // ---------------------------------------------------------------------------

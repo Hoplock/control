@@ -221,6 +221,12 @@ func DirectoryClaimProblem(claim string) string {
 // to 62 more.
 const MaxDirectorySourceLen = 63
 
+// DirectorySourcePattern is DirectorySourceProblem's rule as one regular
+// expression, for a reader that checks a source where it is typed (the
+// console's claim-mapping editor, 0068). A test holds the two to the same
+// answer.
+const DirectorySourcePattern = `^[a-z0-9][a-z0-9-]{0,62}$`
+
 // DirectorySourceProblem says why a name cannot be a directory source — what
 // a registered identity sync calls the directory an identity comes from, and
 // what a tied connector names (0042): "" when it can. A source matches

@@ -294,6 +294,21 @@ func (s *Sink) recordDeactivated(ctx context.Context, tx *store.Store, tenant st
 	})
 }
 
+// Mapped is what a mapping produces for what a link holds: the directory's
+// attributes and email offered as claims, and its groups resolved to the
+// names its own source gave them (0043). It is the one place a link meets a
+// mapping — derive writes a subject row from it, and the claim mapping's dry
+// run previews a provisioned identity through it under a document not yet
+// written (0068) — so a preview is what the recalculation would write.
+func Mapped(ctx context.Context, st *store.Store, tenant store.Tenant, link store.DirectoryLink, mapping *identity.Mapping) (identity.Attributes, error) {
+	names, err := st.DirectoryGroups().Names(ctx, tenant, link.Source, link.GroupIDs)
+	if err != nil {
+		return identity.Attributes{}, err
+	}
+	groupNames := slices.Compact(slices.Sorted(maps.Values(names)))
+	return mapping.ApplyDirectory(link.Source, link.Attributes, link.Email, groupNames), nil
+}
+
 // derive builds the subject row a link stands for, through the tenant's claim
 // mapping (0040's item 3): the directory's attributes and email offered as
 // claims, and its groups resolved to the names its own source gave them and
@@ -304,12 +319,10 @@ func (s *Sink) recordDeactivated(ctx context.Context, tx *store.Store, tenant st
 // The subject's source is the link's provider, so a recalculation that runs
 // with no sync registered writes what the sink would (0043).
 func derive(ctx context.Context, tx *store.Store, tenant store.Tenant, link store.DirectoryLink, mapping *identity.Mapping) (store.Subject, error) {
-	names, err := tx.DirectoryGroups().Names(ctx, tenant, link.Source, link.GroupIDs)
+	attrs, err := Mapped(ctx, tx, tenant, link, mapping)
 	if err != nil {
 		return store.Subject{}, err
 	}
-	groupNames := slices.Compact(slices.Sorted(maps.Values(names)))
-	attrs := mapping.ApplyDirectory(link.Source, link.Attributes, link.Email, groupNames)
 	local, err := tx.Groups().GroupsOf(ctx, tenant, link.SubjectID)
 	if err != nil {
 		return store.Subject{}, err

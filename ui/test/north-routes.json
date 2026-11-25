@@ -296,6 +296,18 @@
       "permission": "identity:write"
     },
     {
+      "method": "POST",
+      "pattern": "/api/v1/tenants/{tenant}/identity/claim-mapping/validate",
+      "access": "tenant",
+      "permission": "identity:read"
+    },
+    {
+      "method": "GET",
+      "pattern": "/api/v1/tenants/{tenant}/identity/directories",
+      "access": "tenant",
+      "permission": "identity:read"
+    },
+    {
       "method": "GET",
       "pattern": "/api/v1/tenants/{tenant}/instance",
       "access": "tenant",

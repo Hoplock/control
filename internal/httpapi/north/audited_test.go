@@ -406,6 +406,7 @@ func everyWrite(t *testing.T, f *serverFixture, setup string) (writes map[string
 	}
 	others = map[string]string{
 		"POST /policy/validate":                               "a read: compiles and reports, stores nothing",
+		"POST /identity/claim-mapping/validate":               "a read: parses and maps samples, stores and records nothing (0068)",
 		"POST /policy/diff":                                   "a read: diffs a source against a stored version",
 		"POST /policy/simulate":                               "a read: simulation stores nothing",
 		"POST /reports/generate":                              "a read under audit:read: a registered pack summarises the audit store, and Control records nothing of a generation (0044)",
