@@ -161,6 +161,12 @@ over page-level panels, and a name's entries are rule-separated, not boxed.
 - The identity a writer previews is chosen from the first page of
   identities; a tenant with more than 100 needs a search, which the
   subjects list has no filter for (directory-managed).
+- `policy-candidate-loading-dark.png` came out 6 px taller once in a full
+  baseline run here and passed alone, the flake 0055 recorded; no policy
+  screen's look changed in this phase.
+- The e2e server embeds `dist` when `serve.sh` builds it: a console change
+  needs `npm run build` and a server restart before a browser run sees it
+  (0066's gotcha, met again — the symptom is a `ready` that never matches).
 - The preview's identity sample maps the directory's own data; an identity's
   local group membership merges in beside it (§6) and the panel says it is
   not shown.
