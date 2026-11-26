@@ -277,7 +277,7 @@ function Produced({
             const m = attrMark(k);
             return (
               <li key={k} className={shown(m) ? styles[m] : undefined} data-preview-attribute={k} data-mark={shown(m) ? m : "same"}>
-                <Ident value={k} /> <Ident value={out.attributes[k] as string} />
+                <Ident value={`${k}=${out.attributes[k] as string}`} />
                 {shown(m) ? <MarkWord mark={m} t={t} /> : null}
               </li>
             );

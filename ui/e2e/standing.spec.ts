@@ -232,14 +232,16 @@ test.describe("the directory's door", () => {
 
   test("the claim mapping shows each entry's directories, require_directories and the connectors' ties", async ({ browser }) => {
     const page = await openScreen(browser, screen("inventory-claim-mapping"));
-    const entries = main(page).locator("[data-entries] tbody tr");
+    // The entries are the visual view's (0068), the entries for one name together.
+    const entries = main(page).locator("[data-mapping-visual=on] [data-entry-row]");
     await expect(entries).toHaveCount(3);
-    await expect(entries.nth(0)).toContainText("payments-eng");
-    await expect(entries.nth(0)).toContainText("corp");
-    await expect(entries.nth(1)).toContainText("lab");
-    await expect(entries.nth(2)).toContainText("every directory not listed for this name");
-    await expect(main(page).locator("[data-require-directories]")).toHaveAttribute("data-require-directories", "false");
-    await expect(main(page).locator("[data-directories]")).toHaveAttribute("data-directories", "corp lab");
+    await expect(main(page).locator('[data-mapping-field="groups.map[0].group"]')).toHaveValue("payments-eng");
+    await expect(main(page).locator('[data-chip-editor="groups.map[0].directories"]')).toContainText("corp");
+    await expect(main(page).locator('[data-chip-editor="groups.map[1].directories"]')).toContainText("lab");
+    await expect(entries.nth(2).locator("[data-entry-serves]")).toContainText("every directory not listed for this name");
+    const facts = main(page).locator("[data-mapping-version]");
+    await expect(facts.locator("[data-require-directories]")).toHaveAttribute("data-require-directories", "false");
+    await expect(facts.locator("[data-directories]")).toHaveAttribute("data-directories", "corp lab");
     await expect(main(page).locator("[data-stale]")).toHaveCount(0);
     const corp = main(page).locator('[data-connectors] tr[data-row="corp-sso"]');
     await expect(corp).toContainText("employee_number");
@@ -254,17 +256,16 @@ test.describe("the directory's door", () => {
   });
 
   test("each of the three directory rejections renders with its field", async ({ browser }) => {
+    // The refused draft in the visual view (0068): each rejection on the chip editor of the entry it names, in words.
     const page = await openScreen(browser, screen("inventory-claim-mapping-refused"));
-    const list = main(page).locator("[data-rejections]");
-    for (const [code, field] of [
-      ["mapping.directory_name", "groups.map[0].directories[0]"],
+    for (const [code, editor] of [
+      ["mapping.directory_name", "groups.map[0].directories"],
       ["mapping.directories_empty", "groups.map[1].directories"],
-      ["mapping.directory_duplicate", "groups.map[3].directories[0]"],
+      ["mapping.directory_duplicate", "groups.map[3].directories"],
     ] as const) {
-      const item = list.locator(`li[data-rejection="${code}"][data-field="${field}"]`);
-      await expect(item, code).toHaveCount(1);
-      await expect(item).toContainText(field);
-      await expect(item).not.toContainText(code);
+      const at = main(page).locator(`[data-chip-editor="${editor}"][data-invalid]`);
+      await expect(at, code).toHaveCount(1);
+      await expect(at).not.toContainText(code);
     }
     await page.context().close();
   });
