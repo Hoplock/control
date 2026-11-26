@@ -1,9 +1,10 @@
 # Downstream syncs
 
 Syncs this repository's merged changes owe `hoplock/enterprise` — a change to
-`ext/` (M15), or to any other surface Enterprise consumes
-(`docs/CROSS-REPO-PROTOCOL.md` §3.1, §4.1, §4.3). Each file is the "Downstream
-sync" block from `docs/KICKOFF.md`, filled in and queued by the PR that owes it.
+its public Go API, `ext/` or `server/` (M15), or to any other surface Enterprise
+consumes (`docs/CROSS-REPO-PROTOCOL.md` §3.1, §4.1, §4.3). Each file is the
+"Downstream sync" block from `docs/KICKOFF.md`, filled in and queued by the PR
+that owes it.
 
 - **The work is done in `hoplock/enterprise`.**
 - **Named `control-PR#<n>-<short-description>.md`**, after the PR that queued

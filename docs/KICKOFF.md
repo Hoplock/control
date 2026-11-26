@@ -143,8 +143,8 @@ This repository sits in the middle of the chain
 below runs **both ways**. A merged `hoplock/proxy` change to the contract or to
 the cross-repo protocol arrives queued in the proxy's
 `prompts/downstream/queued/`, and the kickoff above answers it **here**. A change
-*this* repository merges to `ext/` (M15) owes the same block to
-`hoplock/enterprise`: fill it in and queue it as
+*this* repository merges to its public Go API, `ext/` or `server/` (M15), owes
+the same block to `hoplock/enterprise`: fill it in and queue it as
 `prompts/downstream/queued/control-PR#<n>-<short-description>.md` (that
 protocol's §4.1, §4.3), committed once the PR is open, since the name carries
 its number. So this section is both what arrives here and what you copy from

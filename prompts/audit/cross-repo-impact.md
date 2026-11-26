@@ -327,7 +327,9 @@ periodic check quietly becomes a one-off.
   its own number and prompt. Raising it is in scope; doing it is not, and the
   two are not the same line.
 - `hoplock/enterprise`. Control→Enterprise is a different direction with a
-  different owner (M15), and `ext/` does not exist yet.
+  different owner (M15), over a different surface: Control's public Go API,
+  `ext/` and `server/` (§1 of the cross-repo protocol), which this repository
+  owns rather than consumes.
 - Re-vendoring or bumping the contract (that is a sync, §3.1).
 - The north-bound API version and its negotiation (M19, phase 0046) — a separate
   number with a separate lifecycle.

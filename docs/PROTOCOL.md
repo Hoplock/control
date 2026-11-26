@@ -138,15 +138,16 @@ approaching it, prefer finishing a smaller, correct slice over reading more.
   reading the entry to the end has already spent the context the register exists
   to save.
 - **Cross-repo changes follow `docs/CROSS-REPO-PROTOCOL.md`.** This repo sits in
-  the middle of the chain: it consumes the proxy's contract (M1) and owns `ext/`,
-  which Hoplock Enterprise imports (M15). Both directions create work that has no
-  prompt number, so nothing in *this* file covers it. That one does: the ordering
-  (upstream merges first), the downstream-impact check your PR owes — including
-  the ready-to-run sync kickoff it must queue for Hoplock Enterprise in
-  `prompts/downstream/queued/` (§4.1, §4.3), taken from `docs/KICKOFF.md`'s
-  "Downstream sync" block — and the conventions for a sync PR. It lists the
-  shared surfaces in its Section 1; if your change touches none of them, you do
-  not need to read it.
+  the middle of the chain: it consumes the proxy's contract (M1) and owns its
+  public Go API, `ext/` and `server/`, which Hoplock Enterprise imports (M15) — a
+  change to either package is a change to a shared surface, the second as much as
+  the first. Both directions create work that has no prompt number, so nothing
+  in *this* file covers it. That one does: the ordering (upstream merges first),
+  the downstream-impact check your PR owes — including the ready-to-run sync
+  kickoff it must queue for Hoplock Enterprise in `prompts/downstream/queued/`
+  (§4.1, §4.3), taken from `docs/KICKOFF.md`'s "Downstream sync" block — and the
+  conventions for a sync PR. It lists the shared surfaces in its Section 1; if
+  your change touches none of them, you do not need to read it.
 
   **This repository owes both hand-over obligations, and it is the only one of
   the three that does.** §4.1 is the duty looking downstream, above. §4.2 is the
