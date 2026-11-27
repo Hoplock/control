@@ -1426,6 +1426,7 @@
   "reports.empty.body": "Nothing that packages reports is registered with this deployment, so the audit view is the reporting available: query records by subject, target, session, kind and period, and Explain any decision. That is Control's own answer, and nothing is broken.",
   "reports.empty.action": "Open the audit view",
   "reports.partial.provider": "The report pack {provider} could not list its reports.",
+  "reports.partial.hostCatalogue": "The names {host} gives the reports it registered could not be loaded, so each report is named by its code.",
   "reports.provider.version": "version {version}",
   "reports.provider.unlisted": "Its reports are not listed because it could not answer. That is not a pack with no reports.",
   "reports.provider.none": "This pack offers no report for this tenant.",

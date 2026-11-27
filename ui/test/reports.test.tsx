@@ -110,7 +110,7 @@ describe("a pack and its reports (M15, M11)", () => {
   });
 
   it("names a report through the catalogue of the host that registered it, under its <host>: keys (M27)", () => {
-    const host: HostCatalogue = { host: "hoplock/enterprise", messages: { [reportNameKey("hoplock/enterprise", PACK, "access-review")]: "Quarterly access review" } };
+    const host: HostCatalogue = { host: "hoplock/enterprise", state: "ok", messages: { [reportNameKey("hoplock/enterprise", PACK, "access-review")]: "Quarterly access review" } };
     const html = render({ provider: PACK, reports: [review] }, host);
     expect(html).toContain("Quarterly access review");
     expect(html).not.toContain('data-named-by="code"');
@@ -119,7 +119,7 @@ describe("a pack and its reports (M15, M11)", () => {
   });
 
   it("never reads a key that is not the host's own, or one Control could hold", () => {
-    const host: HostCatalogue = { host: "hoplock/enterprise", messages: { "reports.title": "x", "other/host:reports.a.b": "y" } };
+    const host: HostCatalogue = { host: "hoplock/enterprise", state: "ok", messages: { "reports.title": "x", "other/host:reports.a.b": "y" } };
     expect(hostText(host, "reports.title", "en")).toBeUndefined();
     expect(hostText(host, "other/host:reports.a.b", "en")).toBeUndefined();
     expect(hostText(null, reportNameKey("hoplock/enterprise", PACK, "x"), "en")).toBeUndefined();

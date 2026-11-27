@@ -12,7 +12,10 @@
 //   - a pack listed with an error is unavailable, never "no reports": its
 //     reports are unknown, not absent (M11);
 //   - a report is named through its host's catalogue (i18n/host.ts), and by
-//     its code where no catalogue names it (M21);
+//     its code where no catalogue names it (M21). The screen waits for that
+//     catalogue as it waits for the listing, so a name never replaces a code
+//     under the operator's eye; one that could not be loaded is a gap, and
+//     every report is then named by its code;
 //   - a generation that ends broken is Failed, and nothing is saved: the
 //     server aborts a report rather than end it short, and the console
 //     never offers what arrived as a report.
@@ -35,7 +38,7 @@ import { useLoad } from "../shell/load";
 import { saveFile } from "../shell/save";
 import { useDeployment } from "../shell/Shell";
 import { useSetQuery } from "./InventoryParts";
-import { check, faultKey, faultOf, FORMAT_LABEL, initialForm, requestBody, unavailable, type Fault, type ReportForm } from "./reportsModel";
+import { check, faultKey, faultOf, FORMAT_LABEL, initialForm, requestBody, unavailable, unnamedBy, type Fault, type ReportForm } from "./reportsModel";
 import styles from "./Extensions.module.css";
 import reportStyles from "./Reports.module.css";
 
@@ -48,6 +51,15 @@ export function ReportsScreen() {
     api.call("reports", { params: { tenant: tenant as string }, signal }),
   );
   const open = { provider: location.search.get("provider"), report: location.search.get("report") };
+  const host = useContext(HostCatalogueContext);
+  const frame = host?.state === "loading" ? ({ state: "loading" } as const) : load;
+  const gaps =
+    load.state === "ok"
+      ? [
+          ...unavailable(load.data).map((p) => t("reports.partial.provider", { provider: p.provider })),
+          ...(unnamedBy(load.data, host) ? [t("reports.partial.hostCatalogue", { host: unnamedBy(load.data, host) as string })] : []),
+        ]
+      : [];
 
   return (
     <div className={styles.screen}>
@@ -61,9 +73,9 @@ export function ReportsScreen() {
         }
       />
       <ScreenFrame
-        load={load}
+        load={frame}
         onRetry={refresh}
-        gaps={load.state === "ok" ? unavailable(load.data).map((p) => t("reports.partial.provider", { provider: p.provider })) : []}
+        gaps={gaps}
         isEmpty={(d) => d.providers.length === 0}
         empty={
           <EmptyState

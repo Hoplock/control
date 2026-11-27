@@ -5,6 +5,7 @@
 // lists. `provider` and `report` go back exactly as listed, in the body.
 
 import type { ApiError } from "../i18n/errors";
+import type { HostCatalogue } from "../i18n/host";
 import type { MessageKey } from "../i18n/catalogue";
 import { fromLocalInput, isoBefore, localInput } from "../i18n/format";
 import type { ReportDescriptor, ReportFormat, ReportListing, ReportProvider, ReportRequestBody } from "../api/types";
@@ -29,6 +30,15 @@ export interface ReportForm {
 /** The providers that could not list their reports: each listed, unavailable, and a gap — never "no packs". */
 export function unavailable(listing: ReportListing): ReportProvider[] {
   return listing.providers.filter((p) => p.error);
+}
+
+/**
+ * The host whose names for these reports could not be loaded, or null: a
+ * gap only where its catalogue failed and a report is listed that it would
+ * have named (0069). Every report is then named by its code (M21).
+ */
+export function unnamedBy(listing: ReportListing, host: HostCatalogue | null): string | null {
+  return host?.state === "failed" && listing.providers.some((p) => p.reports.length > 0) ? host.host : null;
 }
 
 /** A report's form as it opens. */
