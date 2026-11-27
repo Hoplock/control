@@ -72,6 +72,9 @@ export const ROUTES = {
   // The claim mapping (0011, 0043; shown from 0055).
   claimMapping: { method: "GET", pattern: "/api/v1/tenants/{tenant}/identity/claim-mapping", permission: "identity:read" },
   claimMappingPut: { method: "PUT", pattern: "/api/v1/tenants/{tenant}/identity/claim-mapping", permission: "identity:write" },
+  // The visual editor's dry run and the tenant's directory sources (0068).
+  claimMappingValidate: { method: "POST", pattern: "/api/v1/tenants/{tenant}/identity/claim-mapping/validate", permission: "identity:read" },
+  directories: { method: "GET", pattern: "/api/v1/tenants/{tenant}/identity/directories", permission: "identity:read" },
   groups: { method: "GET", pattern: "/api/v1/tenants/{tenant}/groups", permission: "identity:read" },
   group: { method: "GET", pattern: "/api/v1/tenants/{tenant}/groups/{group}", permission: "identity:read" },
   roleBindings: { method: "GET", pattern: "/api/v1/tenants/{tenant}/role-bindings", permission: "identity:read" },

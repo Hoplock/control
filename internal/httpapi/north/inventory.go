@@ -1122,13 +1122,7 @@ func (s *Server) handleClaimMappingPut(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var rejected *identity.MappingRejected
 		if errors.As(err, &rejected) {
-			// The mapping's own rejections, field by field, as the
-			// compiler's are for a bundle (M21).
-			writeError(w, http.StatusBadRequest, Error{
-				Code: CodeInvalidRequest, CorrelationID: CorrelationIDFrom(r.Context()),
-				Parameters: map[string]any{"field": "document", "problem": "invalid", "rejections": viewMappingRejections(rejected.Rejections)},
-				Message:    rejected.Error(),
-			})
+			refuseMapping(w, r, rejected)
 			return
 		}
 		s.inventoryFailure(w, r, "write claim mapping", err)

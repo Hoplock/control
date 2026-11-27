@@ -763,6 +763,39 @@ export interface ClaimMappingWritten {
 }
 
 /** mappingRejectionView: one of a refused mapping's rejections, in `parameters.rejections`. */
+/** One sample a dry run maps: typed claims and groups through a sign-in or a directory, or a directory identity by its id (identity:write). */
+export type MappingSample = { claims: Record<string, string>; groups: string[]; directory_source?: string } | { subject: string };
+
+/** A sample as the document maps it: `directory_source` is the door, absent for a sign-in. */
+export interface MappedSample {
+  attributes: Record<string, string>;
+  groups: string[];
+  directory_source?: string;
+}
+
+/** POST …/identity/claim-mapping/validate (0068): what a document would be and produce, storing nothing. */
+export interface MappingDryRun {
+  digest: string;
+  attributes: string[];
+  groups: string[];
+  directories: string[];
+  require_directories: boolean;
+  group_map: GroupEntry[];
+  samples: MappedSample[];
+}
+
+/** One directory source that has written in the tenant (0068). */
+export interface DirectorySource {
+  source: string;
+  linked: number;
+  deactivated: number;
+}
+
+/** GET …/identity/directories */
+export interface DirectorySourcePage extends Paged {
+  directories: DirectorySource[];
+}
+
 export interface MappingRejection {
   code: string;
   field?: string;

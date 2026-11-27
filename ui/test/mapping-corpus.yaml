@@ -1,0 +1,43 @@
+# A claim mapping that uses every key of schema version 1 at least once
+# (0068): claims with and without permitted values, scoped and unscoped
+# entries for one name, require_directories, a description, and comments in
+# every place a comment can sit. TestTheConsolesMappingCorpusParses
+# (internal/identity) holds it to the server's parser, and
+# test/claimMappingDocument.test.ts round-trips it byte for byte.
+schema_version: 1   # the only version this build reads
+description: "Corp and lab, scoped apart: reviewed in CHG-1182"
+
+claims:
+  # Who someone works for, trusted only for these two values.
+  - claim: dept
+    attribute: department
+    values: [engineering, operations]   # anything else maps nothing
+
+  - claim: email   # the address both doors offer
+    attribute: email
+  - claim: cost_center
+    attribute: finance.cost_center
+    values:
+      - "4100"
+      - '4200'
+
+groups:
+  claim: groups
+  # A directory group matches only an entry that lists its source.
+  require_directories: true
+  map:
+    # Sign-ins only, while require_directories is set.
+    - external: Payments Engineering
+      group: payments-eng
+    - external: Payments Engineering
+      directories: [corp]   # the corporate directory
+      group: payments-eng
+    - external: Payments Engineering
+      directories:
+        - lab
+        - lab-2
+      group: payments-lab
+
+    - external: sre
+      group: sre
+# The end of the mapping.

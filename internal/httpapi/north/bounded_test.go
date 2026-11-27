@@ -176,6 +176,36 @@ var pagedLists = map[string][]pagedList{
 			return len(got.Rows)
 		},
 	}},
+	// The directory sources (0068): a source of links, one of a group alone,
+	// and one in another tenant that the walk must not see.
+	"GET /api/v1/tenants/{tenant}/identity/directories": {{
+		member: "directories", path: "/api/v1/tenants/tenant-a/identity/directories",
+		seed: func(t *testing.T, f *serverFixture) int {
+			t.Helper()
+			now := time.Now().UTC()
+			for i, at := range []struct {
+				tenant store.Tenant
+				source string
+			}{{"tenant-a", "okta"}, {"tenant-a", "azure"}, {"tenant-a", "lab"}, {"tenant-b", "corp"}} {
+				if err := f.st.DirectoryLinks().Put(t.Context(), at.tenant, store.DirectoryLink{
+					Source: at.source, ExternalID: "u-1", SubjectID: fmt.Sprintf("dir-bounded-%d", i),
+					Provider: "hoplock/test", LinkedAt: now, Provisioned: true, UpdatedAt: now,
+				}); err != nil {
+					t.Fatalf("seed directory link: %v", err)
+				}
+			}
+			if err := f.st.DirectoryGroups().Put(t.Context(), "tenant-a", store.DirectoryGroup{
+				Source: "groups-only", ExternalID: "g-1", Provider: "hoplock/test", Name: "admins",
+			}); err != nil {
+				t.Fatalf("seed directory group: %v", err)
+			}
+			got, err := f.st.DirectoryLinks().SourcePage(t.Context(), "tenant-a", store.Page{Limit: store.MaxPageLimit})
+			if err != nil || got.More {
+				t.Fatalf("count directory sources: %v (more=%t)", err, got.More)
+			}
+			return len(got.Rows)
+		},
+	}},
 	"GET /api/v1/tenants/{tenant}/proxies": {{
 		member: "proxies", path: "/api/v1/tenants/tenant-a/proxies",
 		seed: func(t *testing.T, f *serverFixture) int {

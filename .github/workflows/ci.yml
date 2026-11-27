@@ -340,6 +340,19 @@ jobs:
           - check: visual policy editor
             args: e2e/policy-visual.spec.ts --project checks
             then: npx playwright test e2e/policy-visual-mutations.spec.ts --project mutations --no-deps
+          # The visual claim-mapping editor (0068): every mapping code the
+          # server answers on the row and field it names, and one about the
+          # whole document heading the view; a refused write writing nothing;
+          # an edit changing only what it names, every comment kept; adding,
+          # reordering, editing and removing by keyboard, announced; an
+          # auditor editing, checking and previewing, refused the write at
+          # the API. Then, on a fresh server of its own, an administrator's
+          # write: a claim with two permitted values, an entry scoped to a
+          # directory, a directory identity's preview gaining its group, the
+          # change summary, and the typed confirm.
+          - check: visual claim-mapping editor
+            args: e2e/claim-mapping.spec.ts --project checks
+            then: npx playwright test e2e/claim-mapping-mutations.spec.ts --project mutations --no-deps
           # Algorithm posture and the emergency runbook (0058): three builds
           # mid-upgrade, in progress and never a fault, a proxy that declared
           # nothing Not reported; the floor's impact preview and a ban's

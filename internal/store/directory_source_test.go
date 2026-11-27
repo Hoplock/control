@@ -80,6 +80,59 @@ func TestTheSourceReadsNameWhatTheTenantHolds(t *testing.T) {
 	}
 }
 
+// The directory sources list (0068): every source a link or a group of the
+// tenant comes from, once, by source, each counting its provisioned identities
+// and the deactivated ones among them. A deactivation kept ahead of its create
+// has provisioned nothing and is counted in neither; a source with only a
+// group counts zero of both; another tenant's rows are not read.
+func TestTheSourcePageCountsEachDirectorysIdentities(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+
+	if got, err := st.DirectoryLinks().SourcePage(ctx, tenantA, store.Page{Limit: 10}); err != nil || len(got.Rows) != 0 || got.More {
+		t.Fatalf("SourcePage of an empty tenant = %+v, %v", got, err)
+	}
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	put := func(tenant store.Tenant, source, external, subject string, provisioned, deactivated bool) {
+		t.Helper()
+		l := directoryLink(external, subject)
+		l.Source, l.Provisioned = source, provisioned
+		if deactivated {
+			l.DeactivatedAt, l.DeactivationReason = at, "terminated"
+		}
+		if err := st.DirectoryLinks().Put(ctx, tenant, l); err != nil {
+			t.Fatalf("put %s/%s: %v", source, external, err)
+		}
+	}
+	put(tenantA, sourceA, "u-1", "dir-a1", true, false)
+	put(tenantA, sourceA, "u-2", "dir-a2", true, true)
+	put(tenantA, sourceA, "u-3", "dir-a3", false, true) // ahead of its create
+	put(tenantA, sourceB, "u-1", "dir-b1", true, false)
+	put(tenantB, sourceA, "u-9", "dir-x9", true, true)
+	if err := st.DirectoryGroups().Put(ctx, tenantA, store.DirectoryGroup{
+		Source: "groups-only", ExternalID: "grp-1", Provider: "hoplock/scim", Name: "admins",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.DirectoryLinks().SourcePage(ctx, tenantA, store.Page{Limit: 10})
+	if err != nil || got.More {
+		t.Fatalf("SourcePage = %+v, %v", got, err)
+	}
+	want := []store.DirectorySource{
+		{Source: sourceB, Linked: 1}, {Source: sourceA, Linked: 2, Deactivated: 1}, {Source: "groups-only"},
+	}
+	slices.SortFunc(want, func(a, b store.DirectorySource) int { return strings.Compare(a.Source, b.Source) })
+	if !slices.Equal(got.Rows, want) {
+		t.Errorf("SourcePage = %+v; want %+v", got.Rows, want)
+	}
+	if b, err := st.DirectoryLinks().SourcePage(ctx, tenantB, store.Page{Limit: 10}); err != nil ||
+		!slices.Equal(b.Rows, []store.DirectorySource{{Source: sourceA, Linked: 1, Deactivated: 1}}) {
+		t.Errorf("tenant B's SourcePage = %+v, %v", b.Rows, err)
+	}
+}
+
 // A group's members are the links of its own source: another directory's
 // person whose group ids name the same id is not one, and a group's name
 // resolves within its own source. The read is served by the GIN index on

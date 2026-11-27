@@ -100,6 +100,10 @@ type DirectoryLinkRepository interface {
 	// Sources returns the sources the tenant's links and groups come from,
 	// in order, at most MaxListedSources of them.
 	Sources(ctx context.Context, tenant Tenant) ([]string, error)
+	// SourcePage returns one page of the sources the tenant's links and
+	// groups come from, by source, each with its counts of provisioned and
+	// of deactivated identities (0068, M26).
+	SourcePage(ctx context.Context, tenant Tenant, p Page) (Paged[DirectorySource], error)
 	// Stale returns at most limit provisioned links of the tenant, in subject
 	// order after a subject id ("" for the first), whose subject row names a
 	// claim mapping version other than version, or which owe a cache

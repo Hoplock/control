@@ -511,7 +511,11 @@ start, never on `--bg-sunken`, which is for code and logs),
 pagination, skeleton, spinner (overlay only), code block, source
 view, diff view, empty state, error state, keyboard hint, chip editor (a
 list of values edited as chips, bound to a closed set or to checked typed
-text, 0066).
+text, 0066), text field (typed text that changes something only when it is
+applied — on leaving the field or pressing Enter — checked before it
+applies and refused at the field, 0066, 0068), suggestions (values an input
+offers as the operator types, which bind nothing: a new value may be typed,
+0068).
 
 **Composites** — data table (sticky header, pinned first column, column sort,
 column visibility, row selection, per-row actions, saved views), filter bar
@@ -528,7 +532,9 @@ instant and notice, never one of its own: no `<button>`, `<input>`,
 `<select>`, `<textarea>`, `<dialog>` or `<time>` outside
 `ui/src/components/`, and a list is the data table — except a list whose
 order is what it says, which the data table's sort would hide: the rules of
-a policy, tried in turn, are the sortable list (0066). A status hue is drawn by
+a policy, tried in turn, are the sortable list (0066), and so are a claim
+mapping's claims, whose order changes nothing they map but is the order of
+the document a version is (0068). A status hue is drawn by
 the status component and the set; outside them only by Fleet's health bar
 (§11), a finding card's edge beside its own status pill, and the chrome's
 supervised and break-glass badges (§5) — and a badge carries a hue only for
@@ -920,13 +926,17 @@ are in the registry too. In detail:
   different sentence — a renamed key is a new key. `en.json` is the only one
   committed in the console phases (0049–0060).
 - **One YAML document library**, `yaml` (pinned exactly in
-  `ui/package.json`, ISC, no dependencies of its own; 0066). The visual policy
-  editor works on a policy's source, never on a re-serialised copy (PLAN
-  §5.6: a version is its source and that source's digest), and this library's
-  concrete syntax tree writes back every byte it read, with each node's place
-  in the text — which is what lets an edit be the smallest change to the
-  text. It costs about 30 KB of the first-load budget. A second policy-shaped
-  editor (0068's claim mapping) uses it too, never another.
+  `ui/package.json`, ISC, no dependencies of its own; 0066), and **one
+  document core** over it, `ui/src/screens/yamlDocument.ts` (0068). Both
+  document editors — the visual policy editor and the visual claim-mapping
+  editor — work on the document an operator wrote, never on a re-serialised
+  copy (PLAN §5.6, M7: a version is its document and that document's
+  digest), and this library's concrete syntax tree writes back every byte it
+  read, with each node's place in the text — which is what lets an edit be
+  the smallest change to the text. The core holds the reading, the round
+  trip and every edit that does not know whose document it is; each editor
+  holds what it reads and which edits it offers. It costs about 30 KB of the
+  first-load budget. A third document editor uses both, never another.
 - **No chart library until there is a third chart.** The two §7 allows are
   hand-written SVG — Fleet's health bar (0050) and the audit view's counts of
   the records on a page (0051), a table whose bars are one neutral ink beside

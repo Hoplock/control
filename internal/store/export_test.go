@@ -121,6 +121,17 @@ func DeleteAuditRecord(ctx context.Context, s *Store, tenant Tenant, recordID st
 		`DELETE FROM audit_records WHERE tenant = $1 AND record_id = $2`, tenant, recordID)
 }
 
+// DeleteDirectorySource removes every link and group of one source, for the
+// paging tests' writes between and during a walk. Nothing in Control deletes
+// a directory's rows: a directory deactivates and tombstones (0040).
+func DeleteDirectorySource(ctx context.Context, s *Store, tenant Tenant, source string) error {
+	if _, err := s.db.Exec(ctx, `DELETE FROM directory_groups WHERE tenant = $1 AND source = $2`, tenant, source); err != nil {
+		return err
+	}
+	return deleteOne(ctx, s, "test.DeleteDirectorySource",
+		`DELETE FROM directory_links WHERE tenant = $1 AND source = $2`, tenant, source)
+}
+
 // RoleBindingPageSQL and OutstandingPageSQL are the statements
 // RoleBindings().Page and SSHCertificates().OutstandingPage run, for the test
 // that asks Postgres how it would plan them. They are compiled into the test

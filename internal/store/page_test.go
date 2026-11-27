@@ -90,6 +90,27 @@ var pagedReaders = map[string]pagedReader{
 			return got.Rows, got.More, err
 		},
 	},
+	// The directory sources (0068): one link per source, each its own
+	// subject so the tenant's unique subject key holds.
+	"DirectoryLinks.SourcePage": {
+		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return st.DirectoryLinks().Put(ctx, tenant, store.DirectoryLink{
+				Source: id, ExternalID: "u-1", SubjectID: "dir-" + id, Provider: "hoplock/page-test",
+				LinkedAt: time.Now().UTC(), Provisioned: true, UpdatedAt: time.Now().UTC(),
+			})
+		},
+		del: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
+			return store.DeleteDirectorySource(ctx, st, tenant, id)
+		},
+		page: func(ctx context.Context, st *store.Store, tenant store.Tenant, p store.Page) ([]string, bool, error) {
+			got, err := st.DirectoryLinks().SourcePage(ctx, tenant, p)
+			ids := make([]string, 0, len(got.Rows))
+			for _, d := range got.Rows {
+				ids = append(ids, d.Source)
+			}
+			return ids, got.More, err
+		},
+	},
 	"Proxies.Page": {
 		put: func(ctx context.Context, st *store.Store, tenant store.Tenant, id string) error {
 			return st.Proxies().Upsert(ctx, tenant, storetest.Proxy(id, "zone-a"))

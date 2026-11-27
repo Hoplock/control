@@ -113,6 +113,42 @@ var attributeNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`
 // no rule can name produces nothing.
 var groupNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
+// MappingRules are the rules a mapping document's names are held to, as data:
+// the patterns and the reserved names [ParseMapping] checks. The console's
+// claim-mapping editor checks each field against them where it is typed
+// (0068), from ui/src/screens/claimMappingRules.json, which
+// TestTheConsolesMappingRulesAreTheServers generates from this and holds
+// equal to it; the server stays the authority on every write.
+type MappingRules struct {
+	// SchemaVersion is the one schema version this build reads.
+	SchemaVersion int
+	// MaxEntries bounds a document, counted as ParseMapping counts it.
+	MaxEntries int
+	// AttributePattern, GroupPattern and DirectorySourcePattern are the
+	// regular expressions an attribute, a mapped group and a listed
+	// directory source must match, in the syntax both Go and ECMAScript read.
+	AttributePattern       string
+	GroupPattern           string
+	DirectorySourcePattern string
+	// ReservedAttributes and ReservedPrefix are the names no mapping may
+	// produce ([ReservedName]).
+	ReservedAttributes []string
+	ReservedPrefix     string
+}
+
+// Rules returns the rules ParseMapping holds a document's names to.
+func Rules() MappingRules {
+	return MappingRules{
+		SchemaVersion:          MappingSchemaVersion,
+		MaxEntries:             MaxMappingEntries,
+		AttributePattern:       attributeNamePattern.String(),
+		GroupPattern:           groupNamePattern.String(),
+		DirectorySourcePattern: DirectorySourcePattern,
+		ReservedAttributes:     slices.Clone(reservedAttributes),
+		ReservedPrefix:         reservedPrefix,
+	}
+}
+
 // Mapping is a parsed, validated claim mapping.
 //
 // Version is NOT in the document: it is allocated by the store when the
@@ -681,6 +717,11 @@ func (m *Mapping) GroupEntries() []GroupEntry {
 	}
 	return out
 }
+
+// GroupClaim is the claim a login's groups are read from (`groups.claim`):
+// empty when the mapping maps no group. A dry run offers a sample's groups
+// under it, as a broker's assertion carries them.
+func (m *Mapping) GroupClaim() string { return m.groupFrom }
 
 // RequiresDirectories reports `groups.require_directories`: every directory
 // group matches only an entry that lists its source (0043).

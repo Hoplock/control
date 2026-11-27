@@ -225,6 +225,20 @@ func (s *Server) routes() []Route {
 			Summary:    "write and activate a new claim mapping version",
 			Handler:    s.handleClaimMappingPut,
 		},
+		{
+			Method: "POST", Pattern: APIPrefix + "/tenants/{tenant}/identity/claim-mapping/validate",
+			Access:     AccessTenant,
+			Permission: identity.PermIdentityRead,
+			Summary:    "what a claim mapping document would be and produce, storing nothing",
+			Handler:    s.handleClaimMappingValidate,
+		},
+		{
+			Method: "GET", Pattern: APIPrefix + "/tenants/{tenant}/identity/directories",
+			Access:     AccessTenant,
+			Permission: identity.PermIdentityRead,
+			Summary:    "the directory sources that have written in the tenant, with their identities counted",
+			Handler:    s.handleDirectorySourceList,
+		},
 	}
 	routes = append(routes, s.policyRoutes()...)
 	routes = append(routes, s.inventoryRoutes()...)

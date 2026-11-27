@@ -344,6 +344,10 @@ func TestEmptyTenantIsRefusedBeforeAnyQuery(t *testing.T) {
 			_, err := s.DirectoryLinks().Sources(ctx, "")
 			return err
 		},
+		"DirectoryLinks.SourcePage": func() error {
+			_, err := s.DirectoryLinks().SourcePage(ctx, "", Page{Limit: 1})
+			return err
+		},
 		"DirectoryLinks.Stale": func() error {
 			_, err := s.DirectoryLinks().Stale(ctx, "", 1, "", 1)
 			return err

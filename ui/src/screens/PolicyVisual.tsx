@@ -24,7 +24,7 @@ import { Button, TextButton } from "../components/Button";
 import { Chip } from "../components/Badge";
 import { ChipEditor } from "../components/ChipEditor";
 import { Drawer } from "../components/Dialog";
-import { Field, Input, Select, Switch } from "../components/Field";
+import { Field, Input, Select, Switch, TextField as SetField } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { SortableList, SortableListSkeleton } from "../components/SortableList";
 import { EmptyState, ErrorMessage, PartialNotice, Skeleton, type ErrorKind } from "../components/States";
@@ -516,61 +516,9 @@ function DefaultDenyCard({ marked }: { marked: boolean }) {
 
 type Commit = (e: Edit, announce: string) => boolean;
 
-/**
- * Typed text, applied when the author leaves the field or presses Enter, so a
- * half-typed value changes nothing. What it holds is operator data — an id, a
- * description, a reason — and is never translated (M21).
- */
-function TextField({
-  label,
-  value,
-  onApply,
-  check,
-  error,
-  mono = false,
-  type = "text",
-  name,
-}: {
-  label: string;
-  value: string;
-  onApply(v: string): void;
-  check?(v: string): string | null;
-  error?: string | null;
-  mono?: boolean;
-  type?: "text" | "number";
-  name: string;
-}) {
-  const [draft, setDraft] = useState(value);
-  const [refused, setRefused] = useState<string | null>(null);
-  useEffect(() => setDraft(value), [value]);
-  const apply = () => {
-    if (draft === value) return;
-    const r = check?.(draft) ?? null;
-    setRefused(r);
-    if (!r) onApply(draft);
-  };
-  return (
-    <Field label={label} error={refused ?? error ?? undefined}>
-      <Input
-        mono={mono}
-        type={type}
-        value={draft}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          setRefused(null);
-        }}
-        onBlur={apply}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            apply();
-          }
-        }}
-        translate="no"
-        data-visual-field={name}
-      />
-    </Field>
-  );
+/** The set's TextField, named for this view's tests and deep links (`data-visual-field`). */
+function TextField({ name, ...rest }: Omit<Parameters<typeof SetField>[0], "data"> & { name: string }) {
+  return <SetField {...rest} data={{ "data-visual-field": name }} />;
 }
 
 /** One member of a closed vocabulary, or none where the schema lets the key be left out. */
