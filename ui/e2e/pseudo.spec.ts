@@ -11,7 +11,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { THEMES } from "./harness";
 import { openScreen, statesOf } from "./open";
-import { SCREENS } from "./screens";
+import { COMPLIANCE, SCREENS } from "./screens";
 
 /** Every visible text and every read-aloud attribute that comes out unaccented. */
 async function unaccented(page: Page): Promise<string[]> {
@@ -156,3 +156,20 @@ for (const screen of SCREENS) {
     });
   });
 }
+
+// A host's catalogue is pseudolocalised as Control's is (0069): what the
+// fixture host names in its own words comes out accented and padded, and a
+// report it does not name stays its code, untranslated.
+test("en-XA: a host's names are accented as Control's strings are", async ({ browser }) => {
+  const reports = SCREENS.find((s) => s.id === "reports");
+  if (!reports) throw new Error("reports is not registered");
+  const page = await openScreen(browser, reports, { locale: "en-XA" });
+  const report = (code: string) => page.locator(`main#content [data-provider="${COMPLIANCE}"] [data-report="${code}"] h3`);
+  const named = (await report("access-review").textContent()) ?? "";
+  expect(named).toMatch(/^\[.*[À-ÿ].*\]$/);
+  expect(named).not.toContain("Quarterly access review");
+  expect(named.length).toBeGreaterThanOrEqual(Math.ceil("Quarterly access review".length * 1.4));
+  await expect(report("privileged-sessions")).toHaveAttribute("data-named-by", "code");
+  await expect(report("privileged-sessions")).toHaveText("privileged-sessions");
+  await page.context().close();
+});

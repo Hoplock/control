@@ -938,6 +938,9 @@ const reread = (s: Substitute, ready: string) => async (page: Page) => {
 };
 
 export const COMPLIANCE = "example.com/e2e/compliance";
+/** The fixture host, and its catalogue's URL, which Control's shell loads (0069; fixture/host/console.go). */
+export const FIXTURE_HOST = "hoplock/e2e-fixture";
+export const HOST_CATALOGUE = `/host-console/${FIXTURE_HOST}/locales/en.json`;
 const reportPath = (report: string) => `/console/reports?${new URLSearchParams({ provider: COMPLIANCE, report })}`;
 
 const EXTENSIONS: E2EScreen[] = [
@@ -991,8 +994,17 @@ const EXTENSIONS: E2EScreen[] = [
         ready: (page) => main(page).locator("[data-state=empty]").waitFor(),
       },
       error: { substitute: [[`${API}/reports`, outage("corr-e2e-reports")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
-      // The flaky pack cannot list its reports: the seeded answer is partial.
-      partial: { seeded: true, ready: (page) => main(page).locator("[data-state=partial] [data-provider-state=unavailable]").waitFor() },
+      // The flaky pack cannot list its reports, so the seeded answer is
+      // partial already; and here the host's catalogue cannot be loaded
+      // either, so every report is named by its code and that gap is named
+      // beside the pack's (0069).
+      partial: {
+        substitute: [[HOST_CATALOGUE, outage("corr-e2e-host-catalogue")]],
+        ready: async (page) => {
+          await main(page).locator("[data-state=partial] [data-provider-state=unavailable]").waitFor();
+          await main(page).locator('[data-report="access-review"] [data-named-by="code"]').waitFor();
+        },
+      },
     },
   },
   {
