@@ -109,14 +109,20 @@ func realConsole() Console {
 }
 
 // testConsoles are Control's real console and a stub of a host's, shaped as
-// a single-page app is: an index at the root, assets, a catalogue, and a
-// history fallback over the rest of the prefix.
+// a host hands one over through server.Options.Console (0069) and as a
+// single-page app is: an index at the root, assets, the catalogue Control's
+// shell requests, and a history fallback over the rest of the prefix.
 func testConsoles() []Console {
 	return []Console{
 		realConsole(),
 		{
-			Provider:  testProvider,
-			Patterns:  []string{HostConsoleRoot(testProvider) + "screens.js", HostConsoleRoot(testProvider) + "{deep...}"},
+			Provider: testProvider,
+			Patterns: []string{
+				HostConsoleRoot(testProvider) + "{$}",
+				HostConsoleRoot(testProvider) + "screens.js",
+				HostCatalogueDefault(testProvider),
+				HostConsoleRoot(testProvider) + "{deep...}",
+			},
 			Catalogue: []string{testProvider + ":approvals.title"},
 			Handler:   stubConsole("host"),
 		},
@@ -158,7 +164,7 @@ func TestEveryPathIsInsideItsOwnNamespaceAndNoOther(t *testing.T) {
 		owners[m.owner]++
 	}
 	if owners["Control's API"] < 70 || owners["a host's API"] != 3 ||
-		owners["Control's console"] != len(realConsole().Patterns) || owners["Control's console"] < 4 || owners["a host's console"] != 2 {
+		owners["Control's console"] != len(realConsole().Patterns) || owners["Control's console"] < 4 || owners["a host's console"] != 4 {
 		t.Fatalf("walked %v, so this asserted little", owners)
 	}
 	for _, p := range namespaceProblems(testProvider, all) {
@@ -216,6 +222,11 @@ func TestEachNamespaceAnswersOnlyInsideItsOwnPrefix(t *testing.T) {
 		{"/console/index.html", "control"},
 		{HostConsoleRoot(testProvider) + "approvals/1", "host"},
 		{HostConsoleRoot(testProvider) + "screens.js", "host"},
+		{HostConsoleRoot(testProvider), "host"},
+		{HostCatalogueDefault(testProvider), "host"},
+		{"/host-console/test/", "not_found"},
+		{"/host-console/test/hostx/locales/en.json", "not_found"},
+		{"/console/host-console/test/host/locales/en.json", "control"},
 		{"/nowhere", "not_found"},
 		{"/consoles/x", "not_found"},
 		{"/console-x", "not_found"},
@@ -307,6 +318,8 @@ func TestAConsoleOutsideItsPrefixIsRefused(t *testing.T) {
 		"a host's screens under another host":          {with(host, HostConsoleRoot("other/host")+"x")},
 		"a host's screens at the host-console root":    {with(host, HostConsolePrefix+"{deep...}")},
 		"a host's screens under the API":               {with(host, HostAPIRoot(testProvider)+"screens/")},
+		"a host's screens serving no catalogue":        {with(host, HostConsoleRoot(testProvider)+"screens.js")},
+		"a host's catalogue for another locale only":   {with(host, HostCatalogueDir(testProvider)+"de.json")},
 		"a host that is not this server's":             {func() Console { c := host; c.Provider = "other/host"; return c }()},
 		"a console with no handler":                    {{Patterns: []string{ConsolePrefix}}},
 		"a console that mounts nothing":                {{Handler: stubConsole("x")}},

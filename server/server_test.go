@@ -205,6 +205,42 @@ func hostCrossAPI(base, rel string) string {
 	return base + "/api/v1/hosts/" + hostProvider + "/cross-tenant/" + rel
 }
 
+// hostConsoleRoot is where the test host's console is mounted (M27).
+const hostConsoleRoot = "/host-console/" + hostProvider + "/"
+
+// hostCatalogue is the test host's catalogue: what its console serves at
+// locales/en.json, and every key it declares.
+var hostCatalogue = map[string]string{
+	hostProvider + ":reports.example.com/pack.access-review": "Access review",
+}
+
+// hostConsole is the test host's console, shaped as a single-page app is:
+// its index, its assets, its catalogue and a history fallback.
+func hostConsole() *server.Console {
+	keys := make([]string, 0, len(hostCatalogue))
+	for k := range hostCatalogue {
+		keys = append(keys, k)
+	}
+	return &server.Console{
+		Patterns: []string{
+			hostConsoleRoot + "{$}",
+			hostConsoleRoot + "assets/",
+			hostConsoleRoot + "locales/en.json",
+			hostConsoleRoot + "{path...}",
+		},
+		Catalogue: keys,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == hostConsoleRoot+"locales/en.json" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(hostCatalogue)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = io.WriteString(w, "<!doctype html><title>the host's console</title>")
+		}),
+	}
+}
+
 func hostOptions(rec *sectionRecorder, registry *ext.Registry) server.Options {
 	return server.Options{
 		Provider:     hostProvider,
@@ -213,6 +249,7 @@ func hostOptions(rec *sectionRecorder, registry *ext.Registry) server.Options {
 		HostConfig:   rec.config,
 		Routes:       hostRoutes(),
 		ErrorCodes:   []string{"schedule_exists"},
+		Console:      hostConsole(),
 	}
 }
 
@@ -350,6 +387,41 @@ func TestAHostStartsWithItsExtensionItsSectionAndItsRoutes(t *testing.T) {
 		t.Errorf("a named supervisor's call gave the host %+v", caller)
 	}
 
+	// The host's console is served under its own prefix and nowhere else
+	// (M27), to a caller who is not signed in, as Control's is; Control's
+	// shell names the host and where its catalogue is, before its first
+	// paint (0069).
+	resp = get(t, base+hostConsoleRoot+"locales/en.json", "")
+	var served map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&served); err != nil || resp.StatusCode != http.StatusOK ||
+		served[hostProvider+":reports.example.com/pack.access-review"] != "Access review" {
+		t.Errorf("the host's catalogue answered %d %v (%v)", resp.StatusCode, served, err)
+	}
+	for _, path := range []string{hostConsoleRoot, hostConsoleRoot + "approvals/42"} {
+		resp := get(t, base+path, "")
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "the host's console") {
+			t.Errorf("%s answered %d %q, want the host's console", path, resp.StatusCode, body)
+		}
+	}
+	for _, path := range []string{
+		"/host-console/other/host/locales/en.json",
+		"/host-console/" + hostProvider + "x/locales/en.json",
+		"/api/v1/hosts/" + hostProvider + "/locales/en.json",
+		"/locales/en.json",
+	} {
+		resp := get(t, base+path, "")
+		if resp.StatusCode != http.StatusNotFound || envelopeCode(t, resp) != "not_found" {
+			t.Errorf("%s answered %d, want Control's 404 envelope", path, resp.StatusCode)
+		}
+	}
+	resp = get(t, base+"/console/reports", "")
+	shell, _ := io.ReadAll(resp.Body)
+	if want := `data-host="` + hostProvider + `" data-host-catalogue="` + hostConsoleRoot + `locales/"`; resp.StatusCode != http.StatusOK ||
+		!strings.Contains(string(shell), want) {
+		t.Errorf("Control's shell answered %d without %s:\n%s", resp.StatusCode, want, shell)
+	}
+
 	for _, c := range []struct {
 		name, token string
 		status      int
@@ -473,6 +545,25 @@ func TestAHostThatCannotStartIsRefusedAtOnce(t *testing.T) {
 		"a 0019 error code":                     func(o *server.Options) { o.ErrorCodes = []string{"findings_not_accepted"} },
 		"an error code Control owns":            func(o *server.Options) { o.ErrorCodes = []string{"forbidden"} },
 		"an error code not in snake_case":       func(o *server.Options) { o.ErrorCodes = []string{"ScheduleExists"} },
+
+		// A host's console is mounted under its own prefix and nowhere else,
+		// and its catalogue's keys are its own (M27, M21; 0069).
+		"a console and no provider": func(o *server.Options) {
+			*o = server.Options{Console: hostConsole()}
+		},
+		"a console pattern outside its prefix":      func(o *server.Options) { o.Console.Patterns[0] = "/console/enterprise/" },
+		"a console pattern under another host":      func(o *server.Options) { o.Console.Patterns[0] = "/host-console/other/host/" },
+		"a console pattern at the root":             func(o *server.Options) { o.Console.Patterns[0] = "/{path...}" },
+		"a console pattern under the host's API":    func(o *server.Options) { o.Console.Patterns[0] = "/api/v1/hosts/" + hostProvider + "/screens/" },
+		"a console pattern climbing out":            func(o *server.Options) { o.Console.Patterns[0] = hostConsoleRoot + "../../../console/x" },
+		"a console pattern with a method":           func(o *server.Options) { o.Console.Patterns[0] = "GET " + hostConsoleRoot },
+		"a console that serves no catalogue":        func(o *server.Options) { o.Console.Patterns = o.Console.Patterns[:2] },
+		"a console with no handler":                 func(o *server.Options) { o.Console.Handler = nil },
+		"a console that mounts nothing":             func(o *server.Options) { o.Console.Patterns = nil },
+		"a catalogue key equal to Control's":        func(o *server.Options) { o.Console.Catalogue = []string{"reports.title"} },
+		"a catalogue key not the provider's":        func(o *server.Options) { o.Console.Catalogue = []string{"approvals.title"} },
+		"a catalogue key under another provider":    func(o *server.Options) { o.Console.Catalogue = []string{"other/host:approvals.title"} },
+		"a catalogue key that is only the provider": func(o *server.Options) { o.Console.Catalogue = []string{hostProvider + ":"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			o := hostOptions(&sectionRecorder{}, nil)
@@ -484,8 +575,18 @@ func TestAHostThatCannotStartIsRefusedAtOnce(t *testing.T) {
 			if strings.Contains(err.Error(), "absent.yaml") {
 				t.Fatalf("the file was read before the host was refused: %v", err)
 			}
-			if p := o.Routes[0].Pattern; strings.HasPrefix(name, "a pattern") && !strings.Contains(err.Error(), p) {
+			if strings.HasPrefix(name, "a pattern") && !strings.Contains(err.Error(), o.Routes[0].Pattern) {
+				p := o.Routes[0].Pattern
 				t.Errorf("the refusal does not name the route %q: %v", p, err)
+			}
+			if strings.HasPrefix(name, "a console pattern") && !strings.Contains(err.Error(), o.Console.Patterns[0]) {
+				t.Errorf("the refusal does not name the pattern %q: %v", o.Console.Patterns[0], err)
+			}
+			if strings.HasPrefix(name, "a catalogue key") && !strings.Contains(err.Error(), fmt.Sprintf("%q", o.Console.Catalogue[0])) {
+				t.Errorf("the refusal does not name the key %q: %v", o.Console.Catalogue[0], err)
+			}
+			if name == "a catalogue key equal to Control's" && !strings.Contains(err.Error(), "is Control's") {
+				t.Errorf("refused, but not as Control's key: %v", err)
 			}
 		})
 	}
