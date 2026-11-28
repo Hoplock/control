@@ -102,8 +102,10 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 	}
 
 	// The operator console (0049), mounted inside its own namespace (M27):
-	// files and a history fallback under /console/, and nothing else.
-	shell, err := console.New(console.Options{Stripe: cfg.Console.Stripe})
+	// files and a history fallback under /console/, and nothing else. A
+	// host's console is mounted beside it, under its own prefix, and the
+	// shell is told where its catalogue is (0069).
+	shell, err := console.New(console.Options{Stripe: cfg.Console.Stripe, Host: h.shellHost()})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -138,11 +140,11 @@ func buildNorth(ctx context.Context, cfg *config.Config, d northDeps, h Host, lo
 		HostProvider:   h.Provider,
 		HostRoutes:     h.Routes,
 		HostErrorCodes: h.ErrorCodes,
-		Consoles: []north.Console{{
+		Consoles: h.consoles(north.Console{
 			Patterns:  shell.Patterns(),
 			Catalogue: shell.Catalogue(),
 			Handler:   shell,
-		}},
+		}),
 	})
 	if err != nil {
 		return nil, nil, err

@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -60,6 +61,25 @@ const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 
 type Options struct {
 	// Stripe is one of config.ConsoleStripes; empty is the default.
 	Stripe string
+	// Host names a host whose console is mounted beside this one (M27), so
+	// that the shell loads the host's catalogue. The zero Host is none, and
+	// the shell is then byte-for-byte the build: it names no host and
+	// requests nothing under /host-console/.
+	Host Host
+}
+
+// Host is what the shell is told about a host's console before its first
+// paint, as it is told the stripe: on <html>, as data-host and
+// data-host-catalogue. The shell never guesses a host from anything else.
+type Host struct {
+	// Provider is the host's <owner>/<name>.
+	Provider string
+	// Catalogue is the URL of the directory the host's catalogues are
+	// served from, ending in "/": the shell requests <Catalogue><locale>.json
+	// for its active locale. It is inside the host's own console prefix,
+	// which the daemon computes and this package cannot (it does not import
+	// north).
+	Catalogue string
 }
 
 // Console is the built console, ready to serve.
@@ -119,20 +139,50 @@ func newFrom(build embed.FS, o Options) (*Console, error) {
 	if !bytes.Contains(index.body, []byte(stripePlaceholder)) {
 		return nil, fmt.Errorf("console: %s does not carry %s for the stripe", indexFile, stripePlaceholder)
 	}
-	c.index = newFile(indexFile, bytes.Replace(index.body, []byte(stripePlaceholder), []byte(`data-stripe="`+stripe+`"`), 1))
+	attrs := `data-stripe="` + stripe + `"`
+	switch h := o.Host; {
+	case h == Host{}:
+	case h.Provider == "" || h.Catalogue == "":
+		return nil, fmt.Errorf("console: a host's console needs both its provider and its catalogue's URL, got %+v", h)
+	case !strings.HasPrefix(h.Catalogue, "/") || !strings.HasSuffix(h.Catalogue, "/") || path.Clean(h.Catalogue)+"/" != h.Catalogue:
+		return nil, fmt.Errorf("console: the host's catalogue URL %q is not an absolute directory on this origin", h.Catalogue)
+	default:
+		attrs += ` data-host="` + html.EscapeString(h.Provider) + `" data-host-catalogue="` + html.EscapeString(h.Catalogue) + `"`
+	}
+	c.index = newFile(indexFile, bytes.Replace(index.body, []byte(stripePlaceholder), []byte(attrs), 1))
 	cat, ok := c.files[cataloguePath]
 	if !ok {
 		return nil, fmt.Errorf("console: the build has no %s", cataloguePath)
 	}
+	if c.catalogue, err = catalogueKeys(cat.body); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// catalogueKeys are the keys of a catalogue file, sorted.
+func catalogueKeys(body []byte) ([]string, error) {
 	var messages map[string]string
-	if err := json.Unmarshal(cat.body, &messages); err != nil {
+	if err := json.Unmarshal(body, &messages); err != nil {
 		return nil, fmt.Errorf("console: %s: %w", cataloguePath, err)
 	}
+	keys := make([]string, 0, len(messages))
 	for k := range messages {
-		c.catalogue = append(c.catalogue, k)
+		keys = append(keys, k)
 	}
-	slices.Sort(c.catalogue)
-	return c, nil
+	slices.Sort(keys)
+	return keys, nil
+}
+
+// CatalogueKeys is every key of the embedded build's catalogue, read without
+// building the rest of the console: what a host's catalogue is judged
+// against when a host is checked, before any file is read or port bound.
+func CatalogueKeys() ([]string, error) {
+	body, err := fs.ReadFile(dist, path.Join("dist", cataloguePath))
+	if err != nil {
+		return nil, fmt.Errorf("console: the build has no %s: %w", cataloguePath, err)
+	}
+	return catalogueKeys(body)
 }
 
 func newFile(name string, body []byte) *file {
@@ -178,7 +228,10 @@ func compressible(ctype string) bool {
 // Patterns are the console's mounts, as north.Console takes them: the shell,
 // its assets, its catalogue, the font licences, and the history fallback,
 // which answers any other path inside the prefix with the shell.
-func (c *Console) Patterns() []string {
+func (c *Console) Patterns() []string { return Patterns() }
+
+// Patterns are every console's mounts; they do not depend on the build.
+func Patterns() []string {
 	return []string{
 		Prefix + "{$}",
 		Prefix + assetsDir,

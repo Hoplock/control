@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/hoplock/control/ext"
 	"github.com/hoplock/control/internal/config"
+	"github.com/hoplock/control/internal/console"
 	"github.com/hoplock/control/internal/extdefault"
 	"github.com/hoplock/control/internal/httpapi/north"
 	"github.com/hoplock/control/internal/store"
@@ -46,13 +48,55 @@ type Host struct {
 	Routes []north.HostRoute
 	// ErrorCodes are the codes the host's routes may answer with (M21).
 	ErrorCodes []string
+	// Console is the host's console, mounted under its own
+	// /host-console/<Provider>/ (M27). Nil is none.
+	Console *HostConsole
+}
+
+// HostConsole is a host's console as server.Console hands it over: north's
+// Console less its Provider, which is always the host's own.
+type HostConsole struct {
+	// Patterns are absolute ServeMux patterns without a method, each under
+	// the host's /host-console/<Provider>/, one of them serving its
+	// catalogue at locales/en.json.
+	Patterns []string
+	// Catalogue is every key the host's catalogues hold, each
+	// <Provider>:<key>, none of them one of Control's.
+	Catalogue []string
+	// Handler serves every pattern.
+	Handler http.Handler
+}
+
+// consoles are the consoles the north-bound listener mounts: Control's, and
+// the host's when it has one. It is the one place that builds the list, so
+// the start-up check and the mount judge the same thing.
+func (h Host) consoles(control north.Console) []north.Console {
+	out := []north.Console{control}
+	if h.Console != nil {
+		out = append(out, north.Console{
+			Provider:  h.Provider,
+			Patterns:  h.Console.Patterns,
+			Catalogue: h.Console.Catalogue,
+			Handler:   h.Console.Handler,
+		})
+	}
+	return out
+}
+
+// shellHost is what Control's shell is told about the host's console: nothing
+// when there is none, so that the shell is then exactly the build.
+func (h Host) shellHost() console.Host {
+	if h.Console == nil {
+		return console.Host{}
+	}
+	return console.Host{Provider: h.Provider, Catalogue: north.HostCatalogueDir(h.Provider)}
 }
 
 // Validate refuses a host that Control cannot start.
 func (h Host) Validate() error {
-	hosted := len(h.Routes) > 0 || len(h.Sections) > 0 || len(h.ErrorCodes) > 0
+	hosted := len(h.Routes) > 0 || len(h.Sections) > 0 || len(h.ErrorCodes) > 0 || h.Console != nil
 	if hosted && strings.TrimSpace(h.Provider) == "" {
-		return fmt.Errorf("server: a host that adds routes, configuration sections or error codes must name itself in Provider, so an operator can tell what is not Control's")
+		return fmt.Errorf("server: a host that adds routes, configuration sections, error codes or a console must name itself in Provider, so an operator can tell what is not Control's")
 	}
 	if h.Provider == ext.ProviderControl {
 		return fmt.Errorf("server: Provider %q is Control's own name; a host names itself", ext.ProviderControl)
@@ -66,7 +110,29 @@ func (h Host) Validate() error {
 		// accepted in silence.
 		return fmt.Errorf("server: host configuration sections %v are declared but HostConfig is nil, so nothing would read them", h.Sections)
 	}
-	return north.CheckHost(h.Provider, h.Routes, h.ErrorCodes)
+	if err := north.CheckHost(h.Provider, h.Routes, h.ErrorCodes); err != nil {
+		return err
+	}
+	return h.checkConsole()
+}
+
+// checkConsole refuses a host's console the mount would refuse — a pattern
+// outside its own prefix, a catalogue key that is Control's or not the
+// host's, no catalogue served — judged against the real build's catalogue,
+// so that a host binary whose console can never mount says so at once.
+func (h Host) checkConsole() error {
+	if h.Console == nil {
+		return nil
+	}
+	keys, err := console.CatalogueKeys()
+	if err != nil {
+		return err
+	}
+	control := north.Console{Patterns: console.Patterns(), Catalogue: keys, Handler: http.NotFoundHandler()}
+	if err := north.CheckConsoles(h.Provider, h.consoles(control)); err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	return nil
 }
 
 // loadConfig is how every subcommand reads the file: Control's schema plus the

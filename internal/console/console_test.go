@@ -211,3 +211,60 @@ func TestTheStripeIsTheOperatorsAndEveryOneHasItsTokens(t *testing.T) {
 		t.Error("a stripe that is not one was accepted")
 	}
 }
+
+// With no host console, the shell is the build byte for byte (0069): it names
+// no host, so it requests nothing under /host-console/. With one, it names
+// the host and its catalogue's URL on <html>, before the first paint, as it
+// names the stripe — and changes nothing else.
+func TestTheShellNamesAHostOnlyWhenOneIsMounted(t *testing.T) {
+	built, err := os.ReadFile(filepath.Join("dist", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	alone := serve(t, mustNew(t, console.Options{}), "GET", "/console/reports", nil).Body.Bytes()
+	if !bytes.Equal(alone, built) {
+		t.Fatalf("with no host the shell is not the build:\n%s", alone)
+	}
+	if bytes.Contains(alone, []byte("data-host")) || bytes.Contains(alone, []byte(north.HostConsolePrefix)) {
+		t.Fatal("with no host the shell names one")
+	}
+
+	const provider = "hoplock/enterprise"
+	host := console.Host{Provider: provider, Catalogue: north.HostCatalogueDir(provider)}
+	hosted := serve(t, mustNew(t, console.Options{Stripe: "orange", Host: host}), "GET", "/console/reports", nil).Body.Bytes()
+	want := `<html lang="en" data-stripe="orange" data-host="hoplock/enterprise" data-host-catalogue="/host-console/hoplock/enterprise/locales/">`
+	if !bytes.Contains(hosted, []byte(want)) {
+		t.Fatalf("the shell does not name the host as %s:\n%s", want, hosted)
+	}
+	if got := bytes.Replace(hosted, []byte(want), []byte(`<html lang="en" data-stripe="accent">`), 1); !bytes.Equal(got, built) {
+		t.Fatalf("naming the host changed more than <html>:\n%s", hosted)
+	}
+
+	for name, h := range map[string]console.Host{
+		"no provider":                            {Catalogue: north.HostCatalogueDir(provider)},
+		"no catalogue":                           {Provider: provider},
+		"a relative catalogue":                   {Provider: provider, Catalogue: "host-console/hoplock/enterprise/locales/"},
+		"a catalogue file":                       {Provider: provider, Catalogue: north.HostCatalogueDefault(provider)},
+		"another origin's page":                  {Provider: provider, Catalogue: "https://cdn.example.com/locales/"},
+		"another origin, relative to the scheme": {Provider: provider, Catalogue: "//cdn.example.com/locales/"},
+		"a climb":                                {Provider: provider, Catalogue: "/host-console/hoplock/enterprise/../../../api/"},
+	} {
+		if _, err := console.New(console.Options{Host: h}); err == nil {
+			t.Errorf("%s: accepted %+v", name, h)
+		}
+	}
+}
+
+// The keys a host is judged against before start-up are the build's own.
+func TestCatalogueKeysAreTheBuildsWithoutBuildingIt(t *testing.T) {
+	keys, err := console.CatalogueKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustNew(t, console.Options{}).Catalogue(); !slices.Equal(keys, got) || len(keys) < 100 {
+		t.Fatalf("CatalogueKeys gave %d keys and the console %d", len(keys), len(got))
+	}
+	if !slices.Equal(console.Patterns(), mustNew(t, console.Options{}).Patterns()) {
+		t.Fatal("the package's patterns are not the console's")
+	}
+}

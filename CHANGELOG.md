@@ -26,6 +26,42 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.56.0
+
+Phase 0069, a host's console reaches the shell (M15, M20, M21, M23, M27).
+An additive change to `server/`; `ext/` and the vendored contract are
+untouched, the north-bound API's routes and version are unchanged, and there
+is no migration.
+
+- **`server.Options.Console`** (`*server.Console`; nil is none) hands Control
+  a host's console: `Patterns` (absolute, method-less, under
+  `/host-console/<Provider>/`), `Catalogue` (every key, each
+  `<Provider>:<key>`) and one `Handler`. Control mounts it on the
+  north-bound listener under that prefix and nowhere else, served as
+  Control's console is — files and a history fallback, without Control's
+  authentication. One pattern must serve `locales/en.json`, the host's
+  catalogue for the deployment default locale.
+- Refused when `Main` or `Run` is called, before the configuration file is
+  read, a database opened or a port bound: a console with no `Provider`, no
+  `Handler` or no `Patterns`; a pattern outside the host's prefix, with a
+  method, a space, a `.`/`..` or empty segment, or that the mux cannot
+  mount; no pattern serving `locales/en.json`; and a catalogue key that is
+  empty, not `<Provider>:<key>`, or one of Control's own.
+- **Control's shell names the host** on `<html>` before its first paint —
+  `data-host="<provider>"` and
+  `data-host-catalogue="/host-console/<provider>/locales/"` — only when a
+  host's console is mounted. Without one the page is byte for byte what it
+  was, and the console requests nothing under `/host-console/`.
+- **The shell loads the host's catalogue** for its active locale from
+  `/host-console/<provider>/locales/<locale>.json` (English: the only locale
+  that ships), keeps only `<provider>:<key>` keys, and pseudolocalises it in
+  the `en-XA`/`en-XB` builds. The Reports screen names a report pack's
+  reports and their parameters through it
+  (`<provider>:reports.<pack>.<report>[.parameters.<name>]`) and by their
+  codes where it names none; a catalogue that cannot be loaded — refused,
+  not JSON, or no answer within ten seconds — is a named gap on the screen,
+  never an error page, and every report is then named by its code.
+
 ## v0.55.0
 
 Phase 0068, the console's visual claim-mapping editor (M7, M4, M19, M20,

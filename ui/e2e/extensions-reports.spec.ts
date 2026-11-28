@@ -6,12 +6,18 @@
 // a sync that did not, Control with nothing registered — the server's own
 // answer is changed in the browser (docs/PROTOCOL.md §8). Generating changes
 // nothing, so nothing here waits for mutations.spec.ts.
+//
+// 0069's: the fixture host hands Control a console (fixture/host/console.go)
+// whose catalogue names access-review and its scope parameter, and Control's
+// shell loads it from the host's own prefix; a catalogue that fails, one
+// holding keys that are not the host's, and a page that names no host are
+// each made in the browser.
 
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { substitute, TENANT } from "./harness";
 import { openScreen } from "./open";
-import { BARE, COMPLIANCE, SCREENS, type E2EScreen } from "./screens";
+import { BARE, COMPLIANCE, FIXTURE_HOST, HOST_CATALOGUE, SCREENS, type E2EScreen } from "./screens";
 
 const API = `/api/v1/tenants/${TENANT}`;
 
@@ -182,5 +188,89 @@ test.describe("reports", () => {
     await expect(empty.locator('a[href="/console/audit/records"]')).toBeVisible();
     await expect(main(page).locator("[data-state=error]")).toHaveCount(0);
     await expect(main(page).locator('[data-tone="outage"], [data-tone="deny"]')).toHaveCount(0);
+  });
+});
+
+test.describe("a host's names for its reports (0069)", () => {
+  const report = (page: Page, code: string) => main(page).locator(`[data-provider="${COMPLIANCE}"] [data-report="${code}"]`);
+
+  test("access-review and its scope are named in the host's words, and what the host does not name by its code", async ({ browser }) => {
+    const asked: string[] = [];
+    const page = await openScreen(browser, screen("reports"), {
+      before: async (context) => {
+        context.on("request", (r) => asked.push(new URL(r.url()).pathname));
+      },
+    });
+    const review = report(page, "access-review");
+    await expect(review.locator("h3")).toHaveText("Quarterly access review");
+    await expect(review.locator("h3")).not.toHaveAttribute("data-named-by", "code");
+    await expect(review.locator('code[translate="no"]').filter({ hasText: /^access-review$/ })).toBeVisible();
+    const privileged = report(page, "privileged-sessions");
+    await expect(privileged.locator('h3[data-named-by="code"]')).toHaveText("privileged-sessions");
+    // The only gap is the pack that could not answer: the host's catalogue loaded.
+    await expect(main(page).getByText("could not be loaded")).toHaveCount(0);
+    expect(asked.filter((p) => p.startsWith("/host-console/"))).toEqual([HOST_CATALOGUE]);
+
+    await review.locator('[data-open-report="access-review"]').click();
+    const form = main(page).locator('form[data-report-form="access-review"]');
+    await expect(form.getByLabel("Who the review covers")).toHaveAttribute("name", "parameters.scope");
+    await expect(form.locator('input[name="parameters.owner"]')).toBeVisible();
+    await expect(form.getByText("owner", { exact: true }).first()).toBeVisible();
+  });
+
+  test("with the catalogue's request failing, every report is named by its code and the gap is named (substituted)", async ({ browser }) => {
+    const page = await openScreen(browser, screen("reports"), { state: "partial" });
+    await expect(report(page, "access-review").locator('h3[data-named-by="code"]')).toHaveText("access-review");
+    await expect(report(page, "privileged-sessions").locator('h3[data-named-by="code"]')).toHaveText("privileged-sessions");
+    await expect(main(page).getByText("Quarterly access review")).toHaveCount(0);
+    const partial = main(page).locator("[data-state=partial]");
+    await expect(partial.getByText(`The names ${FIXTURE_HOST} gives the reports it registered could not be loaded`, { exact: false })).toBeVisible();
+    await expect(main(page).locator("[data-state=error]")).toHaveCount(0);
+  });
+
+  test("a key in the catalogue that is not the host's own is ignored and never rendered (substituted)", async ({ browser }) => {
+    const page = await openScreen(browser, screen("reports"), {
+      before: async (context) => {
+        await context.route(`**${HOST_CATALOGUE}`, (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              [`${FIXTURE_HOST}:reports.${COMPLIANCE}.access-review`]: "Quarterly access review",
+              [`reports.${COMPLIANCE}.privileged-sessions`]: "Unprefixed name",
+              [`other/host:reports.${COMPLIANCE}.privileged-sessions`]: "Another host's name",
+              [`${FIXTURE_HOST}x:reports.${COMPLIANCE}.privileged-sessions`]: "A longer provider's name",
+              "reports.title": "A key of Control's",
+            }),
+          }),
+        );
+      },
+    });
+    await expect(report(page, "access-review").locator("h3")).toHaveText("Quarterly access review");
+    await expect(report(page, "privileged-sessions").locator('h3[data-named-by="code"]')).toHaveText("privileged-sessions");
+    for (const text of ["Unprefixed name", "Another host's name", "A longer provider's name", "A key of Control's"]) {
+      await expect(page.getByText(text)).toHaveCount(0);
+    }
+    await expect(main(page).locator("h1")).toHaveText("Reports");
+  });
+
+  test("a page that names no host requests nothing under /host-console/ and names every report by its code (substituted)", async ({ browser }) => {
+    const asked: string[] = [];
+    const page = await openScreen(browser, screen("reports"), {
+      before: async (context) => {
+        context.on("request", (r) => asked.push(new URL(r.url()).pathname));
+        // The page as Control alone serves it: the server writes data-host
+        // only when a host's console is mounted.
+        await context.route("**/console/reports", async (route) => {
+          const real = await route.fetch();
+          const html = (await real.text()).replace(/ data-host="[^"]*" data-host-catalogue="[^"]*"/, "");
+          await route.fulfill({ response: real, body: html });
+        });
+      },
+    });
+    await expect(report(page, "access-review").locator('h3[data-named-by="code"]')).toHaveText("access-review");
+    await expect(page.locator("html")).not.toHaveAttribute("data-host", /.*/);
+    await expect(main(page).getByText("could not be loaded")).toHaveCount(0);
+    expect(asked.filter((p) => p.startsWith("/host-console/"))).toEqual([]);
   });
 });

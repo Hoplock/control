@@ -736,6 +736,20 @@ the same reason.
   `<host>:reports.<pack provider>.<report>` and its parameter under
   `….parameters.<name>` (0056, `ui/src/i18n/host.ts`), and by its code
   wherever no catalogue names it.
+- **A host's catalogue reaches the shell with its console** (0069). When a
+  host hands Control a console (`server.Options.Console`), the server names
+  the host and its catalogue's directory on `<html>` before the first paint
+  (`data-host`, `data-host-catalogue`), and the shell loads
+  `/host-console/<provider>/locales/<locale>.json` from this origin — never
+  from anywhere else, and never a host it guessed. It keeps only the keys that
+  are `<provider>:<key>`, each an ICU message with no arguments, and a
+  pseudolocale build rewrites them as it rewrites Control's, so §10.7 and
+  §10.8 hold a host's names to the same checks. A screen that names things
+  through it waits for it as it waits for its data; one that cannot be loaded
+  — refused, not JSON, or no answer within ten seconds — is a gap the screen
+  names, and every name falls back to its code. It is never an error page.
+  With no host console the page names none and nothing is requested under
+  `/host-console/`.
 - **Every user-visible string comes from a catalogue**, keyed by a stable id. No
   literal in a component, and nothing user-visible baked into an image or a
   sprite — text in an SVG is text.
@@ -782,7 +796,8 @@ the same reason.
   language, which is the same statement as the last bullet from the other side.
 - **Catalogues load on demand**, one locale at a time, with English inlined so
   the first paint never waits on a fetch. The bundle budget in §11 is per active
-  locale.
+  locale. A host's catalogue is the one that is always fetched, and only the
+  screens that name something through it wait for it.
 - **Script coverage is a bundle decision, not a download.** §2 forbids runtime
   network fetches, so a locale whose script the bundled faces do not cover — CJK,
   Arabic, Devanagari — means bundling another face, which is a real size decision

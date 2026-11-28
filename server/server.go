@@ -8,7 +8,7 @@
 // the package it starts it with. hoplock-control itself is one call to [Main]
 // with zero [Options], so there is one start-up path and not two that drift.
 //
-// A host gets four things, and nothing else:
+// A host gets five things, and nothing else:
 //
 //  1. Control's whole command line — the daemon and every subcommand — through
 //     [Main], so an Enterprise binary can migrate, seed and verify without
@@ -20,6 +20,8 @@
 //     and nowhere else (M2, M18): tenant routes, and cross-tenant reads whose
 //     set of tenants Control resolves ([AccessCrossTenant], M24).
 //  4. Control's error envelope ([WriteError]), with codes it declares (M21).
+//  5. A console of its own ([Options.Console]), under its own prefix on the
+//     north-bound listener, whose catalogue Control's shell loads (M27, M21).
 //
 // THIS PACKAGE IS A COMPATIBILITY PROMISE, exactly as ext is: every exported
 // identifier here is something a host builds against, and changing one breaks
@@ -82,8 +84,9 @@ type Options struct {
 	// the path of every route it serves, which is under
 	// /api/v1/hosts/<Provider>/ (see Route). It is <owner>/<name>, each
 	// lower-case letters, digits and hyphens: "hoplock/enterprise".
-	// Required when Routes, HostSections or ErrorCodes is non-empty;
-	// ext.ProviderControl is refused.
+	// Required when Routes, HostSections or ErrorCodes is non-empty or
+	// Console is set; ext.ProviderControl is refused. The host's console is
+	// under /host-console/<Provider>/ (see Console).
 	Provider string
 
 	// Registry is populated by the host and NOT sealed: Control registers
@@ -113,6 +116,9 @@ type Options struct {
 	// beside Control's own. Each is snake_case and none may be one of
 	// Control's.
 	ErrorCodes []string
+	// Console is the host's console. See Console. Nil is none, and Control's
+	// shell then names no host and requests nothing under /host-console/.
+	Console *Console
 }
 
 // host forwards Options into Control's internals, field for field.
@@ -128,6 +134,14 @@ func (o Options) host() daemon.Host {
 			Handler:    r.Handler,
 		})
 	}
+	var console *daemon.HostConsole
+	if o.Console != nil {
+		console = &daemon.HostConsole{
+			Patterns:  o.Console.Patterns,
+			Catalogue: o.Console.Catalogue,
+			Handler:   o.Console.Handler,
+		}
+	}
 	return daemon.Host{
 		Provider:   o.Provider,
 		Registry:   o.Registry,
@@ -135,6 +149,7 @@ func (o Options) host() daemon.Host {
 		Config:     o.HostConfig,
 		Routes:     routes,
 		ErrorCodes: o.ErrorCodes,
+		Console:    console,
 	}
 }
 

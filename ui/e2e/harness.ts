@@ -79,10 +79,11 @@ export async function serveBuild(context: BrowserContext | Page, dir: string): P
     if (!rel || !existsSync(file) || !extname(rel)) {
       file = join(root, gallery ? "gallery.html" : "index.html");
       if (!gallery) {
-        // Keep the server's stripe: it writes data-stripe before first paint.
+        // Keep what the server writes on <html> before the first paint: the
+        // stripe, and the host whose catalogue the shell loads (0069).
         const real = await route.fetch();
-        const stripe = /data-stripe="([a-z]+)"/.exec(await real.text())?.[1] ?? "accent";
-        const html = readFileSync(file, "utf8").replace(/data-stripe="[a-z]+"/, `data-stripe="${stripe}"`);
+        const served = /<html [^>]*>/.exec(await real.text())?.[0];
+        const html = readFileSync(file, "utf8").replace(/<html [^>]*>/, served ?? "$&");
         return route.fulfill({ status: 200, body: html, headers: { "content-type": TYPES[".html"] as string, "content-security-policy": CSP } });
       }
     }

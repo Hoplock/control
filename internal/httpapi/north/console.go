@@ -6,6 +6,7 @@ package north
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 )
@@ -59,6 +60,14 @@ func consolePrefix(provider string) string {
 	return HostConsoleRoot(provider)
 }
 
+// CheckConsoles refuses consoles that [Options.Consoles] would refuse,
+// mounting them on a router nothing serves: so that a host's console that can
+// never be mounted is refused before any file is read, any database is
+// opened or any port is bound, by the same checks the mount makes.
+func CheckConsoles(host string, consoles []Console) error {
+	return NewRouter(func(Route) http.Handler { return http.NotFoundHandler() }).mountConsoles(host, consoles)
+}
+
 // mountConsoles mounts every console, Control's first so that a host's
 // catalogue is judged against it, refusing one that is not inside its own
 // prefix. host is the server's host provider: a host's screens are its.
@@ -108,6 +117,7 @@ func (r *Router) mountConsole(host string, c Console, control []string) error {
 	if err := checkCatalogue(c.Provider, c.Catalogue, control); err != nil {
 		return fmt.Errorf("httpapi/north: %s: %w", name, err)
 	}
+	own := http.NewServeMux()
 	for _, pattern := range c.Patterns {
 		switch {
 		case strings.ContainsAny(pattern, " \t"):
@@ -120,7 +130,19 @@ func (r *Router) mountConsole(host string, c Console, control []string) error {
 		if err := r.handle(pattern, c.Handler); err != nil {
 			return fmt.Errorf("httpapi/north: %s pattern %q: %w", name, pattern, err)
 		}
+		own.Handle(pattern, c.Handler)
 		r.consoles = append(r.consoles, ConsoleInfo{Provider: c.Provider, Pattern: pattern})
+	}
+	if c.Provider == "" {
+		return nil
+	}
+	// Control's shell requests the host's catalogue whenever the host's
+	// console is mounted. A console whose patterns do not serve it would
+	// leave every name the host registered a gap for good, and say so to
+	// nobody but the operator who opens a screen.
+	want := HostCatalogueDefault(c.Provider)
+	if _, matched := own.Handler(&http.Request{Method: http.MethodGet, Host: "console", URL: &url.URL{Path: want}}); matched == "" {
+		return fmt.Errorf("httpapi/north: %s does not serve its catalogue at %s, which Control's shell requests", name, want)
 	}
 	return nil
 }

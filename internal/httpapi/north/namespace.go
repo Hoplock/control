@@ -81,6 +81,16 @@ func HostCrossTenantPrefix(provider string) string {
 // HostConsoleRoot is where one host's screens live.
 func HostConsoleRoot(provider string) string { return HostConsolePrefix + provider + "/" }
 
+// HostCatalogueDir is where one host's catalogues are served, one file per
+// locale, <locale>.json: the URL Control's shell is told when the host's
+// console is mounted, and the only place it requests the host's strings from.
+func HostCatalogueDir(provider string) string { return HostConsoleRoot(provider) + "locales/" }
+
+// HostCatalogueDefault is the host's catalogue for the deployment default
+// locale (M21: English is the only one that ships), which a host's console
+// must serve: the shell requests it whenever one is mounted.
+func HostCatalogueDefault(provider string) string { return HostCatalogueDir(provider) + "en.json" }
+
 // providerShape is the shape of a host's provider name: <owner>/<name>, as
 // "hoplock/enterprise". It is two path segments in every host prefix, always
 // two, so that two providers' roots never nest: "a/b" can never sit inside
