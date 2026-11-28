@@ -26,6 +26,42 @@ What a release is, when one is cut, and what its number promises is decision
 
 ## Unreleased
 
+## v0.57.0
+
+Phase 0070, a retention pass that deleted nothing is recorded too (M8, M11,
+M23). No public package changed (`ext/` and `server/` are untouched), the
+vendored contract is untouched, the north-bound API's routes, answers and
+version are unchanged, and there is no migration.
+
+- **A pass by instant that deletes nothing is recorded.**
+  `POST …/audit/retention` with `before` now writes an
+  `operator.audit.retained` record on the control stream, in the pass's own
+  transaction, when the instant reaches no record past the stream's marker or
+  a registered archive holds the pass back entirely. Until now such a pass
+  answered and left no trace. Its record carries `operator.stream`,
+  `operator.deleted` `0` and `after`, the sequence the stream is already
+  retained through (`0` with no marker); the existing marker's
+  `operator.through_hash`, `operator.key` and `operator.signature` when there
+  is one, and none of the three when there is none; and, with an archive
+  registered, `operator.held_by_archive` and `operator.archived_through_seq`.
+  Its message says nothing was retained and, when held, that the archive held
+  it back. No marker is written, moved or re-signed, so `audit-verify` reads
+  the stream as before. The answer is unchanged in shape and in values.
+- **Every registered `ext.AuditSink` and the `ext.ArchiveStore` are handed
+  the new record** like any other on the control stream. It has
+  `operator.deleted` `0` and explains no gap: a sink's delivery counts
+  nothing skipped for it.
+- Unchanged: a refused pass — by sequence beyond the archive
+  (`409 retention_not_archived`), one the store refuses, one with no key
+  store (`503 retention_key_not_configured`) or over a start that does not
+  verify (`409 retention_unverified`) — deletes, seals and records nothing,
+  and a pass that deletes is recorded as before.
+- **The console's retention view** shows such a pass in its trail
+  (`Deleted` `0` and, when held, "Held back: archived through N"); a
+  completed pass's answer says it is recorded in the trail whether or not it
+  deleted, and the trail's empty state no longer says only a pass that
+  deletes is recorded.
+
 ## v0.56.0
 
 Phase 0069, a host's console reaches the shell (M15, M20, M21, M23, M27).

@@ -290,14 +290,18 @@ decision.
   defines (a proxy draining its disk buffer after an outage will resend). The
   audit store is the system of record; the SIEM export is a downstream consumer
   and is never read back as truth. Retention is a policy, applied by a documented
-  job, that records what it deleted.
+  job, that records every pass it completes: what it deleted, or that it deleted
+  nothing.
 
   **Retention deletes a prefix and leaves the chain verifiable** (§7). It
   removes the oldest contiguous run of one stream's records, never the head,
   under the stream's append lock, and records where it stopped — the last
   deleted sequence and its hash — in a marker of its own and in an
   `operator.audit.retained` record on the control stream, written in the
-  pass's own transaction so that neither commits without the other. The verifier resumes
+  pass's own transaction so that neither commits without the other. A pass
+  that deletes nothing writes no marker, since there is nothing new for one to
+  vouch for, and is recorded all the same, naming the marker the stream already
+  has (0070); a refused pass deletes, seals and records nothing. The verifier resumes
   from the marker, so a chain with its prefix retained verifies, and one with a
   record removed anywhere else still does not. Capture bytes are retained
   separately, leaving the digest the chain covers, and the verifier counts a
@@ -4159,7 +4163,14 @@ not say why, and a grant the explanation names that the inputs do not hold.
   record on the control stream, committed in the pass's own transaction
   (`audit.Emitter.RetainPrefix`, `RetainCaptures`): a deletion the chain does
   not state, or a statement of one that never happened, would be exactly the
-  silent gap M8 exists to rule out. The marker carries the pass's seal and the
+  silent gap M8 exists to rule out. Every pass that completes is recorded, one
+  that deleted nothing too (0070), because it is still an operator's act: a
+  pass by `before` that reaches no record past the stream's marker deletes
+  nothing and writes no marker and no seal — there is nothing new for a seal to
+  vouch for, so `audit-verify` sees no change — and its record says
+  `operator.deleted` `0`, `after` the sequence the stream is already retained
+  through (`0` with no marker), and the existing marker's `through_hash`, `key`
+  and `signature`, or none of them with no marker. The marker carries the pass's seal and the
   key that made it (`audit_retention.key_name`, `signature`), so a marker signed
   before a rotation still verifies after it, and destroying a key makes every
   marker it signed a break that names it. A pass refuses to sign over a start
@@ -4189,8 +4200,9 @@ not say why, and a grant the explanation names that the inputs do not hold.
   by sequence names exactly what to delete, and deleting less while calling it
   done would be another act. A pass by `before` already means "as far as is
   lawful", so it deletes through the lesser of what the instant reaches and
-  what the archive holds, is sealed and recorded as any pass is, and deletes
-  nothing when the archive is at or behind the marker. A capture pass runs no
+  what the archive holds, and is sealed and recorded as any pass is. When the
+  archive is at or behind the marker it deletes nothing, so it writes no marker
+  and no seal, and it is still recorded, as held back. A capture pass runs no
   further than the `recorded_at` of the earliest capture the archive has not
   confirmed, read under the tenant's capture-retention lock, signs its
   watermark over the instant it ran to, and empties only confirmed captures,
@@ -4508,7 +4520,7 @@ One prompt = one PR = one phase (see `prompts/queued/`).
 | 0067 | A registered validator's finding at its rule's line | **Built, `v0.54.0`.** The publish-time report places every finding whose `rule` names a rule of the compiled bundle at that rule's line, whoever said it: Control resolves it once from the program it compiled (`locate` in `Service.findings`, after every validator and before the sort), so a registered `ext.PolicyValidator`'s finding whose `Path` is a rule's id carries that rule's `line`, in every answer the report reaches (validate, upload, apply, and activation's `409 findings_not_accepted` and `422 policy_blocked`), and the console sets it beneath that line in a version's source and the candidate editor, where Control's own findings are. `Rule` stays `Path` and the id stays `<code>/<provider>/<path>`, so an acceptance carried forward still accepts it; a `Path` that names no rule is not placed. Three of Control's own findings that named a rule and no line (`satisfiability.no_proxy_provides`, `…target_cannot_take`, `…target_unproven`) are placed by the same step. `ext/` changes by `Finding.Path`'s doc comment alone — no `Line` field, which would make every validator parse positions the compiler already holds. `line` is a member every served version already has on a finding, with the meaning it always had, so the north-bound version does not move. Raised by `Hoplock/enterprise#76` and queued first, since it depends on nothing queued and Enterprise is waiting on it (M3, M4, M15, M17, M19, M21, M23) |
 | 0068 | Management console 14: a visual claim-mapping editor | **Built, `v0.55.0`.** The claim-mapping screen's document is a draft of the next version in two views of one text, visual by default and source at `?view=source`: claims that become attributes, with their permitted values as chips, reordered by drag and by keyboard; group entries grouped by the name they read, each saying what it serves, scoped to directories chosen from the tenant's sources and producing a local group offered from its groups; every typed name held to the server's own patterns and reserved names (`ui/src/screens/claimMappingRules.json`, generated from `identity.Rules()` and held to `ParseMapping` by a Go test), and every `mapping.*` rejection on the row and field it names. Each edit is the smallest change to the text, through 0066's text-splice core, now `yamlDocument.ts` for both editors; the round trip is byte-identical over the fixture's mapping and a corpus held to every schema key. The API gains a dry run (`POST …/identity/claim-mapping/validate`, identity:read, storing and recording nothing, samples mapped through `Apply` and `ApplyDirectory`, a sample naming a directory identity answered to identity:write alone) and the tenant's directory sources (`GET …/identity/directories`, paged by source, M26); behind them, "What would this produce?" beside the active version, a change summary row by row, and the write confirmed by typing the tenant's id. `TextField` and `Suggestions` join the component set. North-bound version `9`, `north_api_min` `1`. No change to the schema, the semantics or storage (M7, M4, M19, M20, M21, M23, M26) |
 | 0069 | A host's console reaches the shell | **Built, `v0.56.0`.** `server.Options.Console` (`server.Console`: `Patterns`, `Catalogue`, `Handler`; `daemon.Host.Console`) mounted through `north.Options.Consoles` under the host's own `/host-console/<provider>/`, every way it can be wrong — a pattern outside the prefix, a key equal to Control's or not `<provider>:<key>`, no pattern serving `locales/en.json`, no handler, no provider — refused before a file is read, by the mount's own checks run on a router nothing serves (`north.CheckConsoles`) against the build's real keys. The shell's page names the host and its catalogue's directory on `<html>` (`data-host`, `data-host-catalogue`) only when one is mounted, and is otherwise the build byte for byte; the shell loads the catalogue for the active locale, pseudolocalised under `en-XA`/`en-XB`, keeps only the host's keys, and provides it through `HostCatalogueContext`; Reports waits for it, names a report and its parameters in the host's words, and names the gap — every report by its code — when it cannot be loaded. The fixture host mounts a console naming `access-review` and its `scope`. Additive to `server` (M27, M15, M20, M21, M23) |
-| 0070 | A retention pass that deleted nothing is recorded too | a pass by instant that deletes nothing — the instant reaches no record past the stream's marker, or an archive holds it back entirely — writes an `operator.audit.retained` record in its own transaction (`operator.deleted` `0`, `after` the marker's `through_seq` or `0`, the marker's hash, key and signature when there is one, and with an archive `operator.held_by_archive` and `operator.archived_through_seq`), and no marker or seal, as the capture pass already records one that emptied nothing; a refused pass still records nothing. The console's retention trail shows such a pass, and the browser checks run the real held pass only in `mutations`. Queued after 0057, which found a fully held pass leaving no trace; the user ruled it is recorded (M8, M11, M23) |
+| 0070 | A retention pass that deleted nothing is recorded too | **Built, `v0.57.0`.** A pass by instant that deletes nothing — the instant reaches no record past the stream's marker, or an archive holds it back entirely — writes an `operator.audit.retained` record in its own transaction (`audit.Emitter.RetainPrefix`): `operator.stream`, `operator.deleted` `0`, `after` the marker's `through_seq` or `0`, the marker's `through_hash`, `key` and `signature` when there is one and none of them when there is none, and with an archive `operator.held_by_archive` and `operator.archived_through_seq`; it writes no marker and no seal, and the answer is unchanged. The capture pass already recorded one that emptied nothing; a refused pass still records nothing. Sinks and the archive are handed the record, which explains no gap. The console's retention trail shows such a pass (`Deleted` `0`, held where held) and the answer says it is recorded either way; the browser checks substitute the held answer, and run the real pass only in `mutations`. 0057 found a fully held pass leaving no trace; the user ruled it is recorded (M8, M11, M23) |
 | 0071 | Every list through the data table | 0060's open item: the seven tables a screen draws itself — the Deployment view's nodes, Fleet's algorithms levels and profiles, a floor finding's targets and a ban's proxies, a policy replay's flips, the runbook's sessions — become `DataTable`, which gains what they need (a row's own data attributes, so their checks keep their selectors; a table with no toolbar inside a card), and `ui/test/consistency.test.ts`'s count of them falls to the one chart, AuditCounts (M20, M23) |
 | 0072 | E2E scenarios through a test host's extensions | the 0061 scenarios its session did not reach, on 0061's topology: an inbound action ending a session and locking and unlocking its subject, the directory de-provisioning a person with a live session, two directories feeding one tenant and the groups they share, `ephemeral-user` refused outage-class when no uid block can be had, the fleet configuration round trip, and no cache hint while the event stream is unhealthy (M9, M11, M15, M18, M28) |
 | 0073 | A host's screens in Control's shell | Control's shell loads a host's screen modules from its `/host-console/<provider>/`, under the shell's CSP, and lists them in the navigation, so Enterprise's screens are reached from the console rather than beside it; how a module declares its screens and their permissions, and the checks (DESIGN.md §10) a host's screens are held to over their own registry. Queued by 0069, which handed over the catalogue and left the screens (M27, M15, M20, M21, M23) |

@@ -37,11 +37,14 @@ type PrefixPass struct {
 	Before     time.Time
 }
 
-// PrefixRetained is what a pass did. Deleted is zero, and nothing is deleted or
-// recorded, when a pass by instant found nothing to take: no record received
-// before it, or none an earlier pass had not taken already. ThroughSeq and
-// ThroughHash are where the stream's chain now starts, and KeyName and
-// Signature the seal over them.
+// PrefixRetained is what a pass did. ThroughSeq and ThroughHash are where the
+// stream's chain now starts, and KeyName and Signature the seal over them.
+//
+// Deleted is zero when a pass by instant found nothing to take: no record
+// received before it, none an earlier pass had not taken already, or none the
+// archive had confirmed. Nothing is then deleted and no marker is written,
+// moved or re-signed — the answer carries the stream's existing marker, or
+// nothing with none — and the pass is still recorded (0070).
 //
 // Archived is set when an archive is registered (0025): ArchivedThroughSeq is
 // then how far the archive held the stream whole when the pass read it, and
@@ -86,7 +89,11 @@ func IsNotArchived(err error) bool {
 //
 // A pass by instant is planned inside that transaction: the prefix is every
 // record before the first one received at or after the instant, and never the
-// head. The plan reads before the append lock is taken, which is safe in the
+// head. A pass by instant that takes nothing — the instant reaches no record
+// past the stream's marker, or the archive holds it back entirely — deletes
+// nothing and writes no marker and no seal, because there is nothing new for a
+// seal to vouch for, and is recorded all the same: it is still an operator's
+// act (0070). Its record names the marker the stream already had, or none. The plan reads before the append lock is taken, which is safe in the
 // one direction that matters — a record appended meanwhile is newer than the
 // head the plan stopped short of — and a pass by sequence the store refuses
 // (at or behind the marker, or at the head) is refused whole.
@@ -127,17 +134,16 @@ func (e *Emitter) RetainPrefix(ctx context.Context, tenant store.Tenant, pass Pr
 			if e.archived && n > out.ArchivedThroughSeq {
 				n, out.HeldByArchive = out.ArchivedThroughSeq, true
 			}
+			// A stream nothing has retained has no marker: it is retained
+			// through 0, with no hash and no seal.
 			prior, err := tx.Audit().Retention(ctx, tenant, pass.Stream)
-			switch {
-			case err == nil && n <= prior.ThroughSeq:
-				out.ThroughSeq, out.ThroughHash = prior.ThroughSeq, prior.ThroughHash
-				out.KeyName, out.Signature = prior.KeyName, prior.Signature
-				return nil
-			case err != nil && !store.IsNotFound(err):
+			if err != nil && !store.IsNotFound(err) {
 				return err
 			}
-			if n == 0 {
-				return nil
+			if n <= prior.ThroughSeq {
+				out.ThroughSeq, out.ThroughHash = prior.ThroughSeq, prior.ThroughHash
+				out.KeyName, out.Signature = prior.KeyName, prior.Signature
+				return e.recordPrefixPass(ctx, tx, tenant, actor, out)
 			}
 			through = n
 		}
@@ -170,27 +176,41 @@ func (e *Emitter) RetainPrefix(ctx context.Context, tenant store.Tenant, pass Pr
 		}
 		out.Deleted, out.ThroughSeq, out.ThroughHash = deleted, marker.ThroughSeq, marker.ThroughHash
 		out.KeyName, out.Signature = marker.KeyName, marker.Signature
-		fields := map[string]string{
-			"stream": pass.Stream, "through_hash": marker.ThroughHash, "deleted": strconv.FormatInt(deleted, 10),
-			"key": marker.KeyName, "signature": marker.Signature,
-		}
-		message := fmt.Sprintf("stream %s retained through %d", pass.Stream, marker.ThroughSeq)
-		if e.archived {
-			fields["held_by_archive"] = strconv.FormatBool(out.HeldByArchive)
-			fields["archived_through_seq"] = strconv.FormatInt(out.ArchivedThroughSeq, 10)
-			if out.HeldByArchive {
-				message += ", held back by the archive"
-			}
-		}
-		return e.OperatorEvent(ctx, tx, tenant, OperatorAct{
-			Event: EventAuditRetained, Actor: actor, After: strconv.FormatInt(marker.ThroughSeq, 10),
-			Fields: fields, Message: message,
-		})
+		return e.recordPrefixPass(ctx, tx, tenant, actor, out)
 	})
 	if err != nil {
 		return PrefixRetained{}, err
 	}
 	return out, nil
+}
+
+// recordPrefixPass writes a prefix pass's operator.audit.retained record, in
+// the pass's transaction, from its answer, so the two agree on every fact both
+// carry. A pass that deleted nothing names the marker the stream already had:
+// with none, through_hash, key and signature are absent and after is 0.
+func (e *Emitter) recordPrefixPass(ctx context.Context, tx *store.Store, tenant store.Tenant, actor OperatorActor, out PrefixRetained) error {
+	fields := map[string]string{
+		"stream": out.Stream, "through_hash": out.ThroughHash, "deleted": strconv.FormatInt(out.Deleted, 10),
+		"key": out.KeyName, "signature": out.Signature,
+	}
+	message := fmt.Sprintf("stream %s retained through %d", out.Stream, out.ThroughSeq)
+	switch {
+	case out.Deleted == 0 && out.ThroughSeq == 0:
+		message = fmt.Sprintf("stream %s: nothing retained", out.Stream)
+	case out.Deleted == 0:
+		message = fmt.Sprintf("stream %s: nothing retained, still retained through %d", out.Stream, out.ThroughSeq)
+	}
+	if e.archived {
+		fields["held_by_archive"] = strconv.FormatBool(out.HeldByArchive)
+		fields["archived_through_seq"] = strconv.FormatInt(out.ArchivedThroughSeq, 10)
+		if out.HeldByArchive {
+			message += ", held back by the archive"
+		}
+	}
+	return e.OperatorEvent(ctx, tx, tenant, OperatorAct{
+		Event: EventAuditRetained, Actor: actor, After: strconv.FormatInt(out.ThroughSeq, 10),
+		Fields: fields, Message: message,
+	})
 }
 
 // CapturesRetained is what a capture pass did. Before is the instant it ran to:

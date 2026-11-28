@@ -16,8 +16,10 @@
 //     it, which offers the pass by instant instead — and one by instant
 //     deletes as far as the archive holds, and says it was held back.
 //   - The passes in the trail: each `operator.audit.retained` record on the
-//     control stream, with what it deleted and — with an archive registered —
-//     whether the archive held it back (`operator.held_by_archive`).
+//     control stream — every pass that completed, one that deleted nothing
+//     among them (0070), and no refused one — with what it deleted and, with
+//     an archive registered, whether the archive held it back
+//     (`operator.held_by_archive`).
 
 import { useRef, useState, type FormEvent } from "react";
 import { offered } from "../api/permit";
@@ -257,11 +259,16 @@ function PassOutcome({ outcome, archived, onByInstant }: { outcome: Outcome; arc
       {archived && !p.held_by_archive && p.archived_through_seq !== undefined ? (
         <p className={styles.quiet}>{t("retention.result.archiveHolds", { seq: f.number(p.archived_through_seq) })}</p>
       ) : null}
+      {/* Recorded whether or not it deleted (0070); only a pass that deleted signed a marker. */}
       {p.deleted > 0 ? (
-        <p className={styles.quiet}>
+        <p className={styles.quiet} data-retention-recorded="sealed">
           <span>{t("retention.result.recorded")}</span> {p.key ? <Id>{p.key}</Id> : null}
         </p>
-      ) : null}
+      ) : (
+        <p className={styles.quiet} data-retention-recorded="nothing">
+          {t("retention.result.recordedNothing")}
+        </p>
+      )}
     </div>
   );
 }
@@ -396,7 +403,7 @@ export function AuditRetentionScreen() {
           isEmpty={(d) => d.records.length === 0 && trail.length === 0}
           gaps={unread ? [t("retention.partial.archive")] : []}
           loading={<TableSkeleton headers={headers.slice(0, 5)} />}
-          empty={<EmptyState title={t("retention.trail.empty.title")} body={t("retention.trail.empty.body", { event: RETAINED_EVENT })} />}
+          empty={<EmptyState title={t("retention.trail.none.title")} body={t("retention.trail.none.body", { event: RETAINED_EVENT })} />}
         >
           {(data) => (
             <>

@@ -129,16 +129,69 @@ func TestAPassByInstantIsHeldBackByTheArchive(t *testing.T) {
 	}
 	verify(t, st, tenantA)
 
-	// Held at the marker: nothing more to take, and nothing recorded.
+	// Held at the marker: nothing more to take, no marker moved, and the pass
+	// recorded as held (0070).
+	marker := markerRow(t, st, tenantA, stream)
 	again, err := emitter.RetainPrefix(ctx, tenantA, audit.PrefixPass{Stream: stream, Before: now}, retentionActor)
 	if err != nil || again.Deleted != 0 || again.ThroughSeq != 3 || !again.HeldByArchive {
 		t.Errorf("the pass again = %+v, %v; want nothing deleted, held at the marker", again, err)
+	}
+	if recs := retainedRecords(t, st, tenantA); len(recs) != 2 {
+		t.Errorf("%d records after the held pass, want 2", len(recs))
+	} else {
+		agrees(t, recs[0], again)
+		if recs[0].Message != "stream "+stream+": nothing retained, still retained through 3, held back by the archive" {
+			t.Errorf("the held pass says %q", recs[0].Message)
+		}
+	}
+	if after := markerRow(t, st, tenantA, stream); after != marker {
+		t.Errorf("the held pass changed the marker from %s to %s", marker, after)
 	}
 
 	confirm(t, st, tenantA, stream, 8)
 	all, err := emitter.RetainPrefix(ctx, tenantA, audit.PrefixPass{Stream: stream, Before: now}, retentionActor)
 	if err != nil || all.ThroughSeq != 7 || all.HeldByArchive {
 		t.Errorf("the pass once caught up = %+v, %v; want through 7, the head kept, not held", all, err)
+	}
+	verify(t, st, tenantA)
+}
+
+// A pass by instant over a stream the archive has confirmed nothing of is held
+// back entirely (0070): it deletes nothing, writes no marker, and is recorded
+// once, as held, with the archive at 0. The stream still verifies from 1.
+func TestAPassByInstantTheArchiveHoldsBackEntirelyIsRecorded(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	in := newIngester(t, st)
+	ctx := t.Context()
+	mustIngest(ctx, t, in, tenantA, proxyA, records(5, "sess-unconfirmed")...)
+	stream := audit.StreamFor(proxyA)
+
+	out, err := archivedRetainer(t, st).RetainPrefix(ctx, tenantA, audit.PrefixPass{Stream: stream, Before: time.Now().Add(time.Minute)}, retentionActor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Deleted != 0 || out.ThroughSeq != 0 || !out.HeldByArchive || !out.Archived || out.ArchivedThroughSeq != 0 || out.KeyName != "" {
+		t.Fatalf("pass = %+v, want nothing deleted, held back with the archive at 0", out)
+	}
+	recs := retainedRecords(t, st, tenantA)
+	if len(recs) != 1 {
+		t.Fatalf("%d records of the held pass, want 1", len(recs))
+	}
+	agrees(t, recs[0], out)
+	if a := recs[0].Attributes; a["operator.deleted"] != "0" || a["operator.held_by_archive"] != "true" || a["operator.archived_through_seq"] != "0" {
+		t.Errorf("the held pass's record says %v", a)
+	}
+	if recs[0].Message != "stream "+stream+": nothing retained, held back by the archive" {
+		t.Errorf("the held pass says %q", recs[0].Message)
+	}
+	var markers int
+	if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM audit_retention WHERE tenant = $1`, tenantA).Scan(&markers); err != nil || markers != 0 {
+		t.Errorf("the held pass left %d marker(s), %v; want none", markers, err)
+	}
+	result, err := audit.NewVerifier(st, audit.WithRetentionKeys(retentionKeys(t, st))).VerifyStream(ctx, tenantA, stream)
+	if err != nil || result.Break != nil || result.RetainedThrough != 0 || result.Records != 5 {
+		t.Errorf("verification after the held pass = %+v, %v; want all 5 from 1, no marker", result, err)
 	}
 	verify(t, st, tenantA)
 }

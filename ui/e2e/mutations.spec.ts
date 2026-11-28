@@ -4,9 +4,14 @@
 // and the console makes it look and act destructive — it confirms by typing
 // the proxy's id, refuses a near miss, and then the API's answer is the row.
 // And signing in and out, which writes the audit trail the audit view shows.
+// And a real retention pass by instant, which the fixture's archive holds
+// back entirely and which is recorded all the same (0070).
 
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { candidates } from "./fixture/policy";
+import { TENANT, UI } from "./harness";
 import { openScreen } from "./open";
 import { SCREENS } from "./screens";
 
@@ -290,5 +295,65 @@ test("an administrator quarantines a target and releases it", async ({ browser }
   await dialog.locator("button[type=submit]").click();
   await expect(dialog).toHaveCount(0);
   await expect(main.locator("[data-standing=none]")).toHaveCount(1);
+  await page.context().close();
+});
+
+// A retention pass by instant, run for real as the administrator against the
+// fixture's archive, which confirms nothing (fixture/host/retention.go). It
+// is held back entirely: nothing deleted. It is recorded all the same
+// (0070) — the trail holds one new pass, `Deleted` 0, "Held back: archived
+// through 0" — and it writes no marker, so `audit-verify` reads the stream
+// exactly as it did before the pass.
+test("an administrator's pass by instant the archive holds back entirely is in the trail, and writes no marker", async ({ browser }) => {
+  const retention = SCREENS.find((s) => s.id === "audit-retention");
+  if (!retention) throw new Error("audit-retention is not registered");
+  const stream = "proxy:px-core-01";
+  const verify = () =>
+    execFileSync(join(UI, "build", "e2e", "hoplock-control"), ["audit-verify", "--config", join(UI, "build", "e2e", "control.yaml"), "--tenant", TENANT, "--stream", stream], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  const verified = verify();
+  expect(verified).toMatch(new RegExp(`^tenant ${TENANT} stream ${stream}: OK, \\d+ records, head \\S+$`));
+
+  const page = await openScreen(browser, retention);
+  const main = page.locator("main#content");
+  const passes = async () => {
+    const res = await page.request.get(`/api/v1/tenants/${TENANT}/audit/records?event=operator.audit.retained&limit=100`);
+    expect(res.ok()).toBe(true);
+    return ((await res.json()) as { records: { record_id: string }[] }).records.map((r) => r.record_id);
+  };
+  const before = await passes();
+
+  const form = main.locator("[data-retention-form] form");
+  await form.locator('input[name="stream"]').fill(stream);
+  await form.locator('input[name="retention-by"][value="instant"]').check();
+  await form.locator('input[name="before"]').fill("2099-01-01T00:00");
+  await form.locator("[data-retention-run]").click();
+  const dialog = page.locator("dialog[open]");
+  await dialog.locator("[data-confirm-input]").fill(stream);
+  await dialog.locator("form button[type=submit]").click();
+  await expect(dialog).toHaveCount(0);
+
+  const held = main.locator('[data-retention-result="held"]');
+  await expect(held).toContainText("Held back by the archive");
+  await expect(held).toContainText(`Nothing was deleted from stream ${stream}.`);
+  await expect(held.locator("[data-archived-through]")).toHaveAttribute("data-archived-through", "0");
+  await expect(held.locator('[data-retention-recorded="nothing"]')).toBeVisible();
+
+  // The trail re-read after the pass: one new pass, the one just run.
+  const after = await passes();
+  const added = after.filter((id) => !before.includes(id));
+  expect(added).toHaveLength(1);
+  const row = main.locator(`tr[data-row="${added[0]}"]`);
+  await expect(row).toContainText(stream);
+  // Acting principal, Stream, Through sequence, Deleted, Archive.
+  await expect(row.locator(":scope > td")).toHaveText([/\S/, stream, "0", "0", /Held back: archived through 0$/]);
+  await expect(row.locator('[data-held-by-archive="true"]')).toContainText("Held back: archived through 0");
+
+  // No marker: audit-verify reads the stream as it did, retained through nothing.
+  const reverified = verify();
+  expect(reverified).toBe(verified);
+  expect(reverified).not.toContain("retained through");
   await page.context().close();
 });

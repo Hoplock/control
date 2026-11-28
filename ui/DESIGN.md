@@ -653,8 +653,12 @@ stream a timeline placed by span. The archive's lag is the feed lag
 component on the retention view, where a pass by sequence the archive refused
 (`retention_not_archived`) is shown beside the form as a refusal that
 deleted nothing, offering the pass by instant, and a pass the archive held
-back says so; with no archive registered, none of it appears. A retention
-pass deletes records, so it confirms by typing the stream's name.
+back says so; with no archive registered, none of it appears. The view's
+trail holds every pass that completed, one that deleted nothing among them
+(`Deleted` `0`, and held back where the archive held it), and a completed
+pass's answer says it is recorded there whether or not it deleted; a refused
+pass deleted, sealed and recorded nothing, so it is not in the trail (0070).
+A retention pass deletes records, so it confirms by typing the stream's name.
 
 **A finding's evidence** (0058) is set out inside its card, never in a
 panel beside the report: a floor's impact preview as a table of the targets
