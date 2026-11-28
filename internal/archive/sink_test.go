@@ -473,6 +473,62 @@ func TestARetentionPassOvertakingASinkIsSkippedCountedAndExplained(t *testing.T)
 	}
 }
 
+// A pass that deleted nothing (0070) is one more record on the control
+// stream: a sink is handed it like any other, and it explains no gap, so
+// delivery counts nothing skipped on any stream.
+func TestAPassThatDeletedNothingReachesASinkAndSkipsNothing(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	s := newFakeSink()
+	log := &lockedLog{}
+	consumer := store.SinkConsumer("test/nothing")
+	f := sinkFeed(t, st, s, "test/nothing", 2, slog.New(slog.NewJSONHandler(log, nil)))
+	in := newIngester(t, st, f.Track)
+	ingest(t, in, tenantA, "p1", "", many(4, "s")...)
+	start(t, f)
+	sinkCaughtUp(t, st, consumer, 10*time.Second, tenantA)
+
+	emitter, err := audit.NewEmitter(in, audit.WithRetentionSigner(retentionKeys(t, st)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass, err := emitter.RetainPrefix(context.Background(), tenantA,
+		audit.PrefixPass{Stream: "proxy:p1", Before: time.Now().Add(-time.Hour)}, audit.OperatorActor{Principal: "tok-admin"})
+	if err != nil || pass.Deleted != 0 {
+		t.Fatalf("a pass reaching nothing = %+v, %v", pass, err)
+	}
+	sinkCaughtUp(t, st, consumer, 10*time.Second, tenantA)
+
+	held, problems := s.snapshot()
+	for _, p := range problems {
+		t.Error(p)
+	}
+	var handed int
+	for _, r := range held[key{ext.Tenant(tenantA), audit.StreamControl}] {
+		if r.Attributes["event"] == audit.EventAuditRetained && r.Attributes["operator.stream"] == "proxy:p1" &&
+			r.Attributes["operator.deleted"] == "0" {
+			handed++
+		}
+	}
+	if handed != 1 {
+		t.Errorf("the sink was handed %d records of the pass, want 1: %+v", handed, held[key{ext.Tenant(tenantA), audit.StreamControl}])
+	}
+	if p1 := held[key{ext.Tenant(tenantA), "proxy:p1"}]; len(p1) != 4 {
+		t.Errorf("proxy:p1 arrived as %d records, want all 4", len(p1))
+	}
+	for _, stream := range []string{"proxy:p1", audit.StreamControl} {
+		if pos, _ := st.Feed().Position(context.Background(), tenantA, consumer, stream); pos.SkippedRecords != 0 || pos.SkippedBehind != 0 {
+			t.Errorf("%s: delivery counts %+v skipped for a pass that deleted nothing", stream, pos)
+		}
+	}
+	if lag, err := f.Lag(context.Background(), tenantA); err != nil || lag.SkippedByRetention != 0 {
+		t.Errorf("the lag is %+v, %v; want nothing skipped", lag, err)
+	}
+	if lines := log.events("audit_sink_skipped_by_retention"); len(lines) != 0 {
+		t.Errorf("a pass that deleted nothing logged a skip: %v", lines)
+	}
+}
+
 // A sink registered after a pass begins each stream at its chain start, after
 // the marker, and counts nothing as skipped: those records were never its.
 func TestASinkRegisteredAfterAPassBeginsAtTheMarkerAndSkipsNothing(t *testing.T) {

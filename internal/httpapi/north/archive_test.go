@@ -161,6 +161,54 @@ func TestRetentionIsHeldBackByTheArchiveOverTheWire(t *testing.T) {
 	}
 }
 
+// A pass by instant the archive holds back entirely answers held with nothing
+// deleted, and the trail holds it (0070): one operator.audit.retained record
+// that says the same, and no marker.
+func TestAPassTheArchiveHoldsBackEntirelyIsInTheTrailOverTheWire(t *testing.T) {
+	f := archivedServer(t)
+	admin := f.roleToken(t, identity.RoleAdmin)
+	for range 4 {
+		mustStatus(t, f.send(t, "POST", api+"/revocations", admin, map[string]any{"type": "resync"}), http.StatusOK)
+	}
+	resp := f.send(t, "POST", api+"/audit/retention", admin, map[string]any{"stream": audit.StreamControl, "before": time.Now().Add(time.Minute)})
+	mustStatus(t, resp, http.StatusOK)
+	var held retentionAnswer
+	decodeInto(t, resp, &held)
+	if held.Deleted != 0 || held.ThroughSeq != 0 || held.Key != "" || held.HeldByArchive == nil || !*held.HeldByArchive ||
+		held.ArchivedThroughSeq == nil || *held.ArchivedThroughSeq != 0 {
+		t.Fatalf("a pass the archive holds back entirely answered %+v", held)
+	}
+
+	resp = f.send(t, "GET", api+"/audit/records?event="+audit.EventAuditRetained, f.roleToken(t, identity.RoleAuditor), nil)
+	mustStatus(t, resp, http.StatusOK)
+	var trail struct {
+		Records []struct {
+			Attributes map[string]string `json:"attributes"`
+		} `json:"records"`
+	}
+	decodeInto(t, resp, &trail)
+	if len(trail.Records) != 1 {
+		t.Fatalf("the trail holds %d passes, want the held one", len(trail.Records))
+	}
+	a := trail.Records[0].Attributes
+	for k, v := range map[string]string{
+		"operator.stream": audit.StreamControl, "operator.deleted": "0", "after": "0",
+		"operator.held_by_archive": "true", "operator.archived_through_seq": "0",
+	} {
+		if a[k] != v {
+			t.Errorf("the held pass's record carries %s = %q, want %q", k, a[k], v)
+		}
+	}
+	for _, k := range []string{"operator.through_hash", "operator.key", "operator.signature"} {
+		if v, ok := a[k]; ok {
+			t.Errorf("the held pass's record names a seal it did not make: %s = %q", k, v)
+		}
+	}
+	if _, err := f.st.Audit().Retention(t.Context(), "tenant-a", audit.StreamControl); !store.IsNotFound(err) {
+		t.Errorf("a pass that deleted nothing wrote a marker: %v", err)
+	}
+}
+
 // With no archive registered both answers say held_by_archive false, and the
 // prefix answer names no archive position.
 func TestRetentionAnswersSayNoArchiveHeldThemBack(t *testing.T) {
