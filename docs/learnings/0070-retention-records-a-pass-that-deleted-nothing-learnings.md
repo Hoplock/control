@@ -113,5 +113,5 @@ No shared surface changed, but every registered `ext.AuditSink` and
 `ext.ArchiveStore` is now handed `operator.audit.retained` records with
 `operator.deleted` `0`, which explain no gap. A downstream sync for
 `hoplock/enterprise` is queued
-(`prompts/downstream/queued/control-PR#<n>-retention-records-a-pass-that-deleted-nothing.md`).
+(`prompts/downstream/queued/control-PR#195-retention-records-a-pass-that-deleted-nothing.md`).
 Proxy: none.
