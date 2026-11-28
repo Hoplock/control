@@ -1037,8 +1037,12 @@ const EXTENSIONS: E2EScreen[] = [
 // `refused`), so its replay is partial by its own data, and a gap that
 // belongs to no session, on px-dmz-03's stream. The fixture host's archive is
 // registered and behind (fixture/host/retention.go): a pass by sequence is
-// refused by the server itself, and one by instant is held back — neither
-// deletes or records anything, so both run here, against the seeded data.
+// refused by the server itself, deleting and recording nothing, so it runs
+// here against the seeded data. A pass by instant is held back and deletes
+// nothing, but it completes, and a completed pass is recorded on the control
+// stream (0070) — which would move the records view's baseline — so here its
+// answer, and the trail after it, are substituted in the browser; the real
+// pass runs in the `mutations` project (mutations.spec.ts).
 // ---------------------------------------------------------------------------
 
 /** Nothing on the page is still being read. */
@@ -1069,37 +1073,77 @@ async function runPass(page: Page, by: "sequence" | "instant", result: string): 
   await main(page).locator(`[data-retention-result="${result}"]`).waitFor();
   await page.locator("dialog[open]").waitFor({ state: "detached" });
 }
-/** A by-sequence pass the archive refuses, then the pass by instant it offers. */
+/** The server's answer to a pass by instant the fixture's archive holds back entirely: nothing deleted, archived through 0. */
+export const HELD: Substitute = {
+  kind: "answer",
+  status: 200,
+  body: { stream: "proxy:px-core-01", deleted: 0, through_seq: 0, through_hash: "", key: "", held_by_archive: true, archived_through_seq: 0 },
+};
+
+/** A trail entry as GET …/audit/records answers it: an `operator.audit.retained` record on the control stream. */
+const retainedRecord = (id: string, seq: number, at: string, attrs: Record<string, string>) => ({
+  record_id: id,
+  stream: "control",
+  chain_seq: seq,
+  hash: "sha256:e2e",
+  session_id: "",
+  kind: "policy_decision",
+  severity: "info",
+  event: "operator.audit.retained",
+  message: "stream retained",
+  attributes: { event: "operator.audit.retained", principal_id: "ada", ...attrs },
+  recorded_at: at,
+  received_at: at,
+  body: "{}",
+});
+
+/** The trail once HELD is recorded: the one pass, which deleted nothing (substituted, with HELD). */
+const HELD_TRAIL: Substitute = {
+  kind: "answer",
+  status: 200,
+  body: {
+    records: [
+      retainedRecord("rec-e2e-retained-held", 1, "2026-11-01T12:00:00Z", {
+        after: "0",
+        "operator.stream": "proxy:px-core-01",
+        "operator.deleted": "0",
+        "operator.held_by_archive": "true",
+        "operator.archived_through_seq": "0",
+      }),
+    ],
+    truncated: false,
+  },
+};
+
+/**
+ * A by-sequence pass the archive refuses — the server's own answer — then the
+ * pass by instant it offers, whose answer and the trail it re-reads are
+ * substituted (HELD, HELD_TRAIL): the real pass would be recorded.
+ */
 const refusedThenByInstant = async (page: Page) => {
   if ((await main(page).locator("[data-retention-form]").count()) === 0) return;
   await runPass(page, "sequence", "refused");
+  await substitute(page, `${API}/audit/retention`, HELD);
+  await substitute(page, `${API}/audit/records`, HELD_TRAIL);
   await main(page).locator("[data-retention-by-instant]").click();
   await runPass(page, "instant", "held");
+  await main(page).locator('tr[data-row="rec-e2e-retained-held"]').waitFor();
 };
 
-/** Two passes in the trail, one the archive held back: a substituted answer, as the seed runs none that deletes. */
+/**
+ * Three passes in the trail: the newest held at the marker and deleting
+ * nothing (0070), one the archive held back, one it did not. A substituted
+ * answer, as the checks run no pass that completes.
+ */
 const TRAIL: Substitute = {
   kind: "answer",
   status: 200,
   body: {
     records: [
-      ["rec-e2e-retained-2", 41, "2026-11-01T11:00:00Z", { after: "40", "operator.stream": "proxy:px-core-01", "operator.deleted": "40", "operator.held_by_archive": "true", "operator.archived_through_seq": "40" }],
-      ["rec-e2e-retained-1", 40, "2026-11-01T10:00:00Z", { after: "12", "operator.stream": "proxy:px-dmz-03", "operator.deleted": "12", "operator.held_by_archive": "false", "operator.archived_through_seq": "30" }],
-    ].map(([id, seq, at, attrs]) => ({
-      record_id: id,
-      stream: "control",
-      chain_seq: seq,
-      hash: "sha256:e2e",
-      session_id: "",
-      kind: "policy_decision",
-      severity: "info",
-      event: "operator.audit.retained",
-      message: "stream retained",
-      attributes: { event: "operator.audit.retained", principal_id: "ada", ...(attrs as object) },
-      recorded_at: at,
-      received_at: at,
-      body: "{}",
-    })),
+      retainedRecord("rec-e2e-retained-3", 42, "2026-11-01T12:00:00Z", { after: "40", "operator.stream": "proxy:px-core-01", "operator.deleted": "0", "operator.held_by_archive": "true", "operator.archived_through_seq": "40" }),
+      retainedRecord("rec-e2e-retained-2", 41, "2026-11-01T11:00:00Z", { after: "40", "operator.stream": "proxy:px-core-01", "operator.deleted": "40", "operator.held_by_archive": "true", "operator.archived_through_seq": "40" }),
+      retainedRecord("rec-e2e-retained-1", 40, "2026-11-01T10:00:00Z", { after: "12", "operator.stream": "proxy:px-dmz-03", "operator.deleted": "12", "operator.held_by_archive": "false", "operator.archived_through_seq": "30" }),
+    ],
     truncated: false,
   },
 };
@@ -1187,7 +1231,7 @@ const GAPS: E2EScreen[] = [
           await main(page).locator('[data-archive="registered"] [data-lag-state="behind"]').waitFor();
         },
       },
-      // The seed runs no pass that deletes, so the trail is empty by its own data.
+      // The checks run no pass that completes, so the trail is empty by its own data.
       empty: { seeded: true, ready: (page) => main(page).locator("[data-state=empty]").waitFor() },
       error: { substitute: [[`${API}/audit/records`, outage("corr-e2e-retention")]], ready: (page) => main(page).locator("[data-state=error]").waitFor() },
       // The archive's lag could not be read beside a trail that could.
@@ -1208,7 +1252,8 @@ const GAPS: E2EScreen[] = [
     ],
   },
   // A pass by sequence beyond the archive, refused by the server, then the
-  // pass by instant it offers, which the archive holds back.
+  // pass by instant it offers, which the archive holds back: that answer and
+  // the trail it re-reads are substituted (HELD, HELD_TRAIL).
   {
     id: "audit-retention-refused",
     kind: "console",
@@ -1241,7 +1286,8 @@ const GAPS: E2EScreen[] = [
       await retentionReady(page);
     },
   },
-  // The trail with two passes, one held back by the archive (substituted).
+  // The trail with three passes: one that deleted nothing, one held back by
+  // the archive, one not (substituted).
   {
     id: "audit-retention-trail",
     kind: "console",
@@ -1252,7 +1298,7 @@ const GAPS: E2EScreen[] = [
     prepare: async (page) => {
       await substitute(page, `${API}/audit/records`, TRAIL);
       await page.reload();
-      await main(page).locator('[data-held-by-archive="true"]').waitFor();
+      await main(page).locator('[data-held-by-archive="true"]').first().waitFor();
       await retentionReady(page);
     },
   },

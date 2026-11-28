@@ -12,8 +12,10 @@ package main
 //     (`audit.archive.attempt_timeout`). So it confirms nothing, and nothing
 //     it holds is failing — the archive is registered and behind, and
 //     retention waits on it (M8): a pass by sequence is refused with
-//     `retention_not_archived`, and a pass by instant deletes as far as the
-//     archive holds, which is nothing;
+//     `retention_not_archived`, recording nothing, and a pass by instant
+//     deletes as far as the archive holds, which is nothing, and is recorded
+//     all the same (0070) — so the checks substitute its answer, and the real
+//     pass runs with the mutations;
 //   - `e2e-keys`, a key store in memory: retention is signed, and is refused
 //     without one (0024). Control's CA keeps its keys in it too (0062); no
 //     screen reads the CA, and a key made in a run before this process is

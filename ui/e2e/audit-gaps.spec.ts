@@ -6,12 +6,13 @@
 // no session is on the per-proxy view. With the fixture's archive registered
 // and behind (fixture/host/retention.go), the audit view shows its lag, a
 // pass by sequence beyond it is a refusal that deleted nothing, and the pass
-// by instant it offers is held back by the archive; with none registered, no
-// lag is shown. The data is fixture/audit.ts's.
+// by instant it offers is held back by the archive — that answer substituted,
+// because a real one is recorded (0070) and runs in mutations.spec.ts; with
+// none registered, no lag is shown. The data is fixture/audit.ts's.
 
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { stateFile, substitute, TENANT } from "./harness";
-import { BARE } from "./screens";
+import { BARE, HELD } from "./screens";
 
 const API = `/api/v1/tenants/${TENANT}`;
 const SESSION = "/console/audit/sessions/sess-e2e-gaps/replay";
@@ -171,7 +172,7 @@ test.describe("the archive and retention", () => {
     await page.context().close();
   });
 
-  test("a pass by sequence beyond the archive is a refusal that deleted nothing, and the pass by instant is held back", async ({ browser }) => {
+  test("a pass by sequence beyond the archive is a refusal that deleted nothing, and the pass by instant is held back (its answer substituted)", async ({ browser }) => {
     const page = await open(browser, "/console/audit/retention");
     const passes = async () => {
       const res = await page.request.get(`${API}/audit/records?event=operator.audit.retained&limit=100`);
@@ -197,7 +198,10 @@ test.describe("the archive and retention", () => {
     await expect(refused.locator('[data-tone="outage"]')).toHaveCount(0);
     expect(await passes()).toBe(before);
 
-    // The pass by instant it offers deletes as far as the archive holds.
+    // The pass by instant it offers deletes as far as the archive holds. Run
+    // for real it completes and is recorded, which would move the records
+    // view's baseline, so its answer is the server's substituted (HELD).
+    await substitute(page, `${API}/audit/retention`, HELD);
     await refused.locator("[data-retention-by-instant]").click();
     await expect(form.locator('input[name="before"]')).not.toHaveValue("");
     await form.locator("[data-retention-run]").click();
@@ -206,7 +210,9 @@ test.describe("the archive and retention", () => {
     const held = main(page).locator('[data-retention-result="held"]');
     await expect(held).toContainText("Held back by the archive");
     await expect(held).toContainText("The archive has confirmed stream proxy:px-core-01 through sequence 0");
+    await expect(held.locator('[data-retention-recorded="nothing"]')).toContainText("is recorded in the trail below");
     await expect(held.locator('[data-tone="outage"], [data-tone="deny"]')).toHaveCount(0);
+    expect(await passes()).toBe(before);
     await page.context().close();
   });
 
